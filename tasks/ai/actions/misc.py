@@ -188,11 +188,11 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         checks = []
         # Check LLM services
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
+            from gui.services.service_registry import ServiceRegistry
+            greg = ServiceRegistry.get_instance()
+            for sid, sdef in greg.get_all("global", "").items():
                 if getattr(sdef, "service_type", "") in ("llm", "openai_llm"):
-                    svc = greg.get_live_instance(sid)
+                    svc = greg.get_live_instance("global", "", sid)
                     if svc and hasattr(svc, "get_client"):
                         client = svc.get_client()
                         checks.append({
@@ -257,14 +257,14 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             return [flowfile]
         # Create filesystem service
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
+            from gui.services.service_registry import ServiceRegistry
             import os
-            greg = GlobalServiceRegistry.get_instance()
+            greg = ServiceRegistry.get_instance()
             # Generate name from path
             name = os.path.basename(path.rstrip("/\\")) or "workspace"
             name = f"fs_{name}"
             # Check if already exists
-            existing = greg.get_definition(name)
+            existing = greg.get_definition("global", "", name)
             if existing:
                 flowfile.set_content(json.dumps({
                     "ok": True,
@@ -408,12 +408,12 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
                 "message": "No relays linked to this conversation.\nUse `/relay link <id>` or `/relay list` to see available relays.",
             }).encode())
         else:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            _greg = GlobalServiceRegistry.get_instance()
+            from gui.services.service_registry import ServiceRegistry
+            _greg = ServiceRegistry.get_instance()
             lines = []
             for rid in linked:
                 tag = " ★ (default)" if rid == default else ""
-                _svc = _greg.get_live_instance(rid)
+                _svc = _greg.get_live_instance("global", "", rid)
                 _ri = getattr(_svc, '_relay_info', {}) or {} if _svc else {}
                 line = f"- `{rid}`{tag}"
                 if _ri.get('root'):

@@ -317,29 +317,16 @@ class ToolRelayService(BaseService):
         if _fs_handlers:
             try:
                 available = []
-                from gui.services.global_service_registry import GlobalServiceRegistry
-                greg = GlobalServiceRegistry.get_instance()
-                for sid, sdef in greg.get_all_definitions().items():
-                    stype = getattr(sdef, "service_type", "")
-                    if stype in _FS_TYPES:
-                        svc = greg.get_live_instance(sid)
+                from gui.services.service_registry import ServiceRegistry
+                _sreg = ServiceRegistry.get_instance()
+                for fs_type in _FS_TYPES:
+                    for sdef in _sreg.resolve_by_type(fs_type, user_id=user_id):
+                        svc = _sreg.resolve(sdef.service_id, user_id=user_id)
                         if svc:
                             available.append({
-                                "id": sid, "type": stype,
+                                "id": sdef.service_id, "type": sdef.service_type,
                                 "root": getattr(svc, "root_path", "?"),
                             })
-                if user_id:
-                    from gui.services.user_service_registry import UserServiceRegistry
-                    ureg = UserServiceRegistry.get_instance()
-                    for sid, sdef in ureg.get_all_for_user(user_id).items():
-                        stype = getattr(sdef, "service_type", "")
-                        if stype in _FS_TYPES:
-                            svc = ureg.get_live_instance(user_id, sid)
-                            if svc:
-                                available.append({
-                                    "id": sid, "type": stype,
-                                    "root": getattr(svc, "root_path", "?"),
-                                })
                 if available:
                     for h in _fs_handlers:
                         h._available_services = available
@@ -380,46 +367,20 @@ class ToolRelayService(BaseService):
                     pass
 
             # Find deployed services
-            available = []
-            try:
-                from gui.services.global_service_registry import GlobalServiceRegistry
-                greg = GlobalServiceRegistry.get_instance()
-                for sid, sdef in greg.get_all_definitions().items():
-                    if not getattr(sdef, "enabled", True):
-                        continue
-                    if (getattr(sdef, "service_type", "") or "") in valid_types:
-                        available.append(sid)
-            except Exception:
-                pass
-            if user_id:
-                try:
-                    from gui.services.user_service_registry import UserServiceRegistry
-                    ureg = UserServiceRegistry.get_instance()
-                    for sid, sdef in ureg.get_all_for_user(user_id).items():
-                        if sid not in available and getattr(sdef, "enabled", True):
-                            if (getattr(sdef, "service_type", "") or "") in valid_types:
-                                available.append(sid)
-                except Exception:
-                    pass
+            # Find all matching services across scopes (conv > user > global)
+            from gui.services.service_registry import ServiceRegistry
+            _sreg = ServiceRegistry.get_instance()
+            matching = []
+            for vtype in valid_types:
+                matching.extend(_sreg.resolve_by_type(vtype, user_id=user_id))
 
-            if not available:
+            if not matching:
                 return None, f"No {media_type} generation service deployed"
-            # Resolve the first one (or single one)
-            sid = available[0]
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                svc = UserServiceRegistry.get_instance().get_live_instance(user_id, sid)
-                if svc and hasattr(svc, 'generate'):
-                    return svc, None
-            except Exception:
-                pass
-            try:
-                from gui.services.global_service_registry import GlobalServiceRegistry
-                svc = GlobalServiceRegistry.get_instance().get_live_instance(sid)
-                if svc and hasattr(svc, 'generate'):
-                    return svc, None
-            except Exception:
-                pass
+            # Resolve the first one
+            sid = matching[0].service_id
+            svc = _sreg.resolve(sid, user_id=user_id)
+            if svc and hasattr(svc, 'generate'):
+                return svc, None
             return None, f"{media_type.title()} service '{sid}' failed to connect"
         return resolver
 
@@ -458,8 +419,9 @@ class ToolRelayService(BaseService):
                         _rsid = mcp_def.get("relay_service", "")
                         if _rsid:
                             try:
-                                from gui.services.global_service_registry import GlobalServiceRegistry
-                                relay_svc = GlobalServiceRegistry.get_instance().get_live_instance(_rsid)
+                                from gui.services.service_registry import ServiceRegistry
+                                relay_svc = ServiceRegistry.get_instance().resolve(
+                                    _rsid, user_id=user_id)
                             except Exception:
                                 pass
                         if not relay_svc:
@@ -526,29 +488,16 @@ class ToolRelayService(BaseService):
         Same logic as agent_utils._find_filesystem_service but standalone.
         """
         fs_types = ("relay", "filesystem", "googleDrive", "oneDrive")
-        # Global services
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
-                if getattr(sdef, "service_type", "") in fs_types:
-                    svc = greg.get_live_instance(sid)
+            from gui.services.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            for fs_type in fs_types:
+                for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
+                    svc = reg.resolve(sdef.service_id, user_id=user_id)
                     if svc:
                         return svc
         except Exception:
             pass
-        # User services
-        if user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                ureg = UserServiceRegistry.get_instance()
-                for sid, sdef in ureg.get_all_for_user(user_id).items():
-                    if getattr(sdef, "service_type", "") in fs_types:
-                        svc = ureg.get_live_instance(user_id, sid)
-                        if svc:
-                            return svc
-            except Exception:
-                pass
         return None
 
     def _handle_list_tools(self, request_id: str,

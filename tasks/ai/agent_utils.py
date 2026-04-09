@@ -100,7 +100,7 @@ class AgentUtilsMixin:
                              conversation_id: str = ""):
         """Resolve an LLM service by ID. Returns (LLMClient, service) or (None, None).
 
-        Resolution order: flow services → UserServiceRegistry → GlobalServiceRegistry.
+        Resolution order: flow services → ServiceRegistry (user) → ServiceRegistry (global).
         If the service has an API key pool, uses conversation affinity.
         """
         if not service_id:
@@ -133,22 +133,14 @@ class AgentUtilsMixin:
             svc = self._services.get(service_id)
             if svc and hasattr(svc, 'get_client'):
                 return _get_client_with_pool(svc), svc
-        # 2. User-scoped services
+        # 2. Resolve across scopes (conv > user > global)
         try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            svc = UserServiceRegistry.get_instance().get_live_instance(user_id, service_id)
+            from gui.services.service_registry import ServiceRegistry
+            svc = ServiceRegistry.get_instance().resolve(service_id, user_id=user_id)
             if svc and hasattr(svc, 'get_client'):
                 return _get_client_with_pool(svc), svc
         except Exception as e:
-            logger.debug("User service '%s' for '%s': %s", service_id, user_id, e)
-        # 3. Global services
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            svc = GlobalServiceRegistry.get_instance().get_live_instance(service_id)
-            if svc and hasattr(svc, 'get_client'):
-                return _get_client_with_pool(svc), svc
-        except Exception as e:
-            logger.warning("Global service '%s' resolution failed: %s", service_id, e)
+            logger.warning("Service '%s' resolution failed: %s", service_id, e)
         return None, None
 
 
@@ -287,33 +279,14 @@ class AgentUtilsMixin:
         valid_types = self._get_media_types(base_class)
 
         results = []
-        seen = set()
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
-                if not getattr(sdef, "enabled", True):
-                    continue
-                stype = getattr(sdef, "service_type", "") or ""
-                if stype in valid_types:
-                    results.append((sid, stype, "global"))
-                    seen.add(sid)
+            from gui.services.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            for vtype in valid_types:
+                for sdef in reg.resolve_by_type(vtype, user_id=user_id):
+                    results.append((sdef.service_id, sdef.service_type, sdef.scope))
         except Exception as e:
-            logger.error("Global service discovery failed: %s", e, exc_info=True)
-        if user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                ureg = UserServiceRegistry.get_instance()
-                for sid, sdef in ureg.get_all_for_user(user_id).items():
-                    if sid in seen:
-                        continue
-                    if not getattr(sdef, "enabled", True):
-                        continue
-                    stype = getattr(sdef, "service_type", "") or ""
-                    if stype in valid_types:
-                        results.append((sid, stype, "user"))
-            except Exception as e:
-                logger.error("User service discovery failed: %s", e, exc_info=True)
+            logger.error("Service discovery failed: %s", e, exc_info=True)
         return results
 
 
@@ -323,15 +296,8 @@ class AgentUtilsMixin:
         if not service_id:
             return None
         try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            svc = UserServiceRegistry.get_instance().get_live_instance(user_id, service_id)
-            if svc and hasattr(svc, 'generate'):
-                return svc
-        except Exception:
-            pass
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            svc = GlobalServiceRegistry.get_instance().get_live_instance(service_id)
+            from gui.services.service_registry import ServiceRegistry
+            svc = ServiceRegistry.get_instance().resolve(service_id, user_id=user_id)
             if svc and hasattr(svc, 'generate'):
                 return svc
         except Exception:
@@ -841,28 +807,26 @@ class AgentUtilsMixin:
         for sid, svc in services.items():
             if getattr(svc, 'TYPE', '') in match_types:
                 result.append({"id": sid, "type": getattr(svc, 'TYPE', ''), "root": "?"})
-        # User services
-        if user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                registry = UserServiceRegistry.get_instance()
-                for sid, sdef in registry.get_all_for_user(user_id).items():
-                    if not sdef.enabled or sdef.service_type not in match_types:
-                        continue
-                    if not any(s["id"] == sid for s in result):
+        # Registry services (conv > user > global)
+        try:
+            from gui.services.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            for mtype in match_types:
+                for sdef in reg.resolve_by_type(mtype, user_id=user_id):
+                    if not any(s["id"] == sdef.service_id for s in result):
                         result.append({
-                            "id": sid, "type": sdef.service_type,
+                            "id": sdef.service_id, "type": sdef.service_type,
                             "root": sdef.description or "?",
                         })
-            except Exception:
-                pass
+        except Exception:
+            pass
         return result
 
 
     def _find_filesystem_service(self, user_id: str = ""):
         """Find the first available filesystem service.
 
-        Search order: flow services → UserServiceRegistry (Plan B cross-channel).
+        Search order: flow services → registry (conv > user > global).
         """
         services = getattr(self, '_services', {})
         fs_types = ("relay", "filesystem", "googleDrive", "oneDrive")
@@ -870,58 +834,39 @@ class AgentUtilsMixin:
             svc_type = getattr(svc, 'TYPE', '')
             if svc_type in fs_types:
                 return svc
-        # Check GlobalServiceRegistry
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
-                if not getattr(sdef, "enabled", True):
-                    continue
-                if getattr(sdef, "service_type", "") in fs_types:
-                    svc = greg.get_live_instance(sid)
+            from gui.services.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            for fs_type in fs_types:
+                for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
+                    svc = reg.resolve(sdef.service_id, user_id=user_id)
                     if svc:
                         return svc
         except Exception:
             pass
-        # Check UserServiceRegistry
-        if user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                registry = UserServiceRegistry.get_instance()
-                for fs_type in fs_types:
-                    compatible = registry.get_compatible(fs_type, user_id)
-                    for sdef in compatible:
-                        if sdef.enabled:
-                            svc = registry.get_live_instance(user_id, sdef.service_id)
-                            if svc:
-                                return svc
-            except Exception:
-                pass
         return None
 
 
     def _find_executor_service(self, user_id: str = ""):
         """Find the first available executor service (relay with exec support).
 
-        Search order: flow services → UserServiceRegistry.
+        Search order: flow services → registry (conv > user > global).
         """
         services = getattr(self, '_services', {})
         for svc in services.values():
             svc_type = getattr(svc, 'TYPE', '')
             if svc_type == "relay" and getattr(svc, 'is_connected', lambda: False)():
                 return svc
-        if user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                registry = UserServiceRegistry.get_instance()
-                compatible = registry.get_compatible("relay", user_id)
-                for sdef in compatible:
-                    if sdef.enabled:
-                        svc = registry.get_live_instance(user_id, sdef.service_id)
-                        if svc and getattr(svc, 'is_connected', lambda: False)():
-                            return svc
-            except Exception:
-                pass
+        try:
+            from gui.services.service_registry import ServiceRegistry
+            for sdef in ServiceRegistry.get_instance().resolve_by_type(
+                    "relay", user_id=user_id):
+                svc = ServiceRegistry.get_instance().resolve(
+                    sdef.service_id, user_id=user_id)
+                if svc and getattr(svc, 'is_connected', lambda: False)():
+                    return svc
+        except Exception:
+            pass
         return None
 
 

@@ -354,28 +354,14 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
     if action == "fs_list_services":
         from core.handlers._fs_base import find_fs_service as _find_svc, _FS_TYPES
         services = []
-        # Try GlobalServiceRegistry
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
-                if not getattr(sdef, "enabled", True):
-                    continue
-                if getattr(sdef, "service_type", "") in _FS_TYPES:
-                    services.append({"id": sid, "type": getattr(sdef, "service_type", ""), "scope": "global"})
+            from gui.services.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            for fs_type in _FS_TYPES:
+                for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
+                    services.append({"id": sdef.service_id, "type": sdef.service_type, "scope": sdef.scope})
         except Exception:
             pass
-        # Try UserServiceRegistry
-        if user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                ureg = UserServiceRegistry.get_instance()
-                for fs_type in _FS_TYPES:
-                    for sdef in ureg.get_compatible(fs_type, user_id):
-                        if sdef.enabled:
-                            services.append({"id": sdef.service_id, "type": fs_type, "scope": "user"})
-            except Exception:
-                pass
         flowfile.set_content(json.dumps({"services": services}).encode())
         return [flowfile]
 

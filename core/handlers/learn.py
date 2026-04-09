@@ -208,24 +208,16 @@ class LearnHandler(ToolHandler):
         return header + "\n" + "\n".join(results)
 
     def _get_summarizer_client(self, user_id: str):
-        """Resolve summarizer service — same pattern as agent utils."""
+        """Resolve summarizer service."""
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            from gui.services.user_service_registry import UserServiceRegistry
+            from gui.services.service_registry import ServiceRegistry
             from core.expression import resolve_value
 
-            # Try global parameter
-            svc_id = resolve_value("${summarizer_service}", owner=user_id) or ""
+            svc_id = resolve_value("claude_code_llm_service", owner=user_id) or ""
             if not svc_id:
                 return None, 0, ""
 
-            greg = GlobalServiceRegistry.get_instance()
-            svc = greg.get_live_instance(svc_id)
-            if svc and hasattr(svc, 'complete'):
-                return svc, 0, svc_id
-
-            ureg = UserServiceRegistry.get_instance()
-            svc = ureg.get_live_instance(user_id, svc_id)
+            svc = ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
             if svc and hasattr(svc, 'complete'):
                 return svc, 0, svc_id
         except Exception:

@@ -217,15 +217,9 @@ class ExecuteScriptHandler(ToolHandler):
             svc = self._fs_resolver(svc_name)
         if not svc:
             try:
-                from gui.services.global_service_registry import GlobalServiceRegistry
-                svc = GlobalServiceRegistry.get_instance().get_live_instance(svc_name)
-            except Exception:
-                pass
-        if not svc:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                svc = UserServiceRegistry.get_instance().get_live_instance(
-                    self._user_id, svc_name)
+                from gui.services.service_registry import ServiceRegistry
+                svc = ServiceRegistry.get_instance().resolve(
+                    svc_name, user_id=self._user_id)
             except Exception:
                 pass
         if not svc:

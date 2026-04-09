@@ -1753,19 +1753,16 @@ class TestImageServiceResolution(unittest.TestCase):
         assert "pixazo_api_key" not in schema
 
     def test_discover_image_services(self):
-        """_discover_media_services finds image services from global registry."""
+        """_discover_media_services finds image services from registry."""
         from tasks.ai.agent_loop import AgentLoopTask
         from services.base_image_generation import BaseImageGenerationService
         task = AgentLoopTask.__new__(AgentLoopTask)
 
-        mock_pixazo_def = MagicMock(enabled=True, service_type="pixazoImageGeneration")
-        mock_llm_def = MagicMock(enabled=True, service_type="llmConnection")
+        mock_pixazo_def = MagicMock(enabled=True, service_type="pixazoImageGeneration",
+                                     service_id="pixazo", scope="global")
 
-        with patch("gui.services.global_service_registry.GlobalServiceRegistry") as mock_glob:
-            mock_glob.get_instance.return_value.get_all_definitions.return_value = {
-                "pixazo": mock_pixazo_def,
-                "llm_svc": mock_llm_def,
-            }
+        with patch("gui.services.service_registry.ServiceRegistry") as mock_reg:
+            mock_reg.get_instance.return_value.resolve_by_type.return_value = [mock_pixazo_def]
             with patch.object(AgentLoopTask, '_get_media_types',
                               return_value={"pixazoImageGeneration"}):
                 result = task._discover_media_services("", BaseImageGenerationService)

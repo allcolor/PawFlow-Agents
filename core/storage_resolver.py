@@ -214,51 +214,24 @@ class StorageResolver:
         return None
 
     def _lookup_service(self, service_name: str):
-        """Look up a service by exact ID in registries."""
+        """Look up a service by exact ID across all scopes (conv > user > global)."""
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            svc = GlobalServiceRegistry.get_instance().get_live_instance(service_name)
-            if svc:
-                return svc
+            from gui.services.service_registry import ServiceRegistry
+            return ServiceRegistry.get_instance().resolve(
+                service_name, user_id=self._user_id)
         except Exception:
-            pass
-        try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            svc = UserServiceRegistry.get_instance().get_live_instance(
-                self._user_id, service_name)
-            if svc:
-                return svc
-        except Exception:
-            pass
-        return None
+            return None
 
     def _find_first_fs(self):
-        """Auto-detect the first available filesystem service."""
-        # Global services
+        """Auto-detect the first available filesystem service (conv > user > global)."""
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
-                if not getattr(sdef, "enabled", True):
-                    continue
-                if getattr(sdef, "service_type", "") in self._FS_TYPES:
-                    svc = greg.get_live_instance(sid)
+            from gui.services.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            for fs_type in self._FS_TYPES:
+                for sdef in reg.resolve_by_type(fs_type, user_id=self._user_id):
+                    svc = reg.resolve(sdef.service_id, user_id=self._user_id)
                     if svc:
                         return svc
         except Exception:
             pass
-        # User services
-        if self._user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                ureg = UserServiceRegistry.get_instance()
-                for fs_type in self._FS_TYPES:
-                    compatible = ureg.get_compatible(fs_type, self._user_id)
-                    for sdef in compatible:
-                        if sdef.enabled:
-                            svc = ureg.get_live_instance(self._user_id, sdef.service_id)
-                            if svc:
-                                return svc
-            except Exception:
-                pass
         return None

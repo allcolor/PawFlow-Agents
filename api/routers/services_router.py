@@ -1,9 +1,10 @@
-"""Services API - unified CRUD for global and user services.
+"""Services API — unified CRUD for global, user, and conv services.
 
 All scopes share the same interface. The scope determines storage
 and visibility:
     global - shared across all users (admin)
     user   - per-user (owner only)
+    conv   - per-conversation (participants only)
 
 Routes:
     GET    /llm-profiles                - list LLM provider presets
@@ -17,16 +18,17 @@ Routes:
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel
 
 from api.auth import get_current_session
+from gui.services.service_registry import (
+    ServiceRegistry, SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV, VALID_SCOPES,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-_VALID_SCOPES = ("global", "user")
 
 
 class ServiceCreateRequest(BaseModel):
@@ -35,6 +37,7 @@ class ServiceCreateRequest(BaseModel):
     config: Dict[str, Any] = {}
     description: str = ""
     enabled: bool = True
+    conversation_id: Optional[str] = None
 
 
 class ServiceUpdateRequest(BaseModel):
@@ -50,29 +53,23 @@ def _sdef_to_dict(sdef) -> dict:
         "config": sdef.config,
         "description": sdef.description,
         "enabled": sdef.enabled,
+        "scope": sdef.scope,
     }
 
 
-def _get_registry(scope: str, user_id: str = ""):
-    """Return (registry, kwargs) for the given scope.
-
-    kwargs contains the extra arguments needed for user-scoped calls
-    (user_id). Global calls need no extra args.
-    """
-    if scope == "global":
-        from gui.services.global_service_registry import GlobalServiceRegistry
-        return GlobalServiceRegistry.get_instance(), {}
-    elif scope == "user":
-        from gui.services.user_service_registry import UserServiceRegistry
-        return UserServiceRegistry.get_instance(), {"user_id": user_id}
-    raise HTTPException(
-        status_code=400,
-        detail=f"Invalid scope '{scope}'. Use: {', '.join(_VALID_SCOPES)}")
-
-
-def _registry_call(reg, method: str, kwargs: dict, **extra):
-    """Call a registry method, merging scope kwargs with extra args."""
-    return getattr(reg, method)(**kwargs, **extra)
+def _resolve_scope_id(scope: str, session, conversation_id: Optional[str] = None) -> str:
+    """Resolve scope_id from scope + session."""
+    if scope == SCOPE_GLOBAL:
+        return ""  # ServiceRegistry normalizes this
+    elif scope == SCOPE_USER:
+        return session.username
+    elif scope == SCOPE_CONV:
+        if not conversation_id:
+            raise HTTPException(status_code=400,
+                                detail="conversation_id required for conv scope")
+        return conversation_id
+    raise HTTPException(status_code=400,
+                        detail=f"Invalid scope '{scope}'. Use: {', '.join(VALID_SCOPES)}")
 
 
 # -- LLM Profiles --
@@ -101,21 +98,24 @@ def list_llm_profiles():
 # -- Scoped CRUD --
 
 @router.get("/{scope}")
-def list_services(scope: str = Path(...), session=Depends(get_current_session)):
+def list_services(scope: str = Path(...),
+                  conversation_id: Optional[str] = Query(None),
+                  session=Depends(get_current_session)):
     """List all services in the given scope."""
-    reg, kw = _get_registry(scope, session.username)
-    if scope == "global":
-        defs = reg.get_all_definitions()
-    else:
-        defs = reg.get_all_for_user(session.username)
+    scope_id = _resolve_scope_id(scope, session, conversation_id)
+    reg = ServiceRegistry.get_instance()
+    defs = reg.get_all(scope, scope_id)
     return {"services": [_sdef_to_dict(s) for s in defs.values()]}
 
 
 @router.get("/{scope}/{service_id}")
-def get_service(scope: str, service_id: str, session=Depends(get_current_session)):
+def get_service(scope: str, service_id: str,
+                conversation_id: Optional[str] = Query(None),
+                session=Depends(get_current_session)):
     """Get a specific service definition."""
-    reg, kw = _get_registry(scope, session.username)
-    sdef = _registry_call(reg, "get_definition", kw, service_id=service_id)
+    scope_id = _resolve_scope_id(scope, session, conversation_id)
+    reg = ServiceRegistry.get_instance()
+    sdef = reg.get_definition(scope, scope_id, service_id)
     if not sdef:
         raise HTTPException(status_code=404, detail=f"Service '{service_id}' not found")
     return _sdef_to_dict(sdef)
@@ -125,14 +125,15 @@ def get_service(scope: str, service_id: str, session=Depends(get_current_session
 def create_service(scope: str, req: ServiceCreateRequest,
                    session=Depends(get_current_session)):
     """Create a new service."""
-    reg, kw = _get_registry(scope, session.username)
+    scope_id = _resolve_scope_id(scope, session, req.conversation_id)
+    reg = ServiceRegistry.get_instance()
     try:
-        sdef = _registry_call(reg, "install", kw,
-                              service_id=req.service_id,
-                              service_type=req.service_type,
-                              config=req.config,
-                              description=req.description,
-                              enabled=req.enabled)
+        sdef = reg.install(scope, scope_id,
+                           service_id=req.service_id,
+                           service_type=req.service_type,
+                           config=req.config,
+                           description=req.description,
+                           enabled=req.enabled)
         return _sdef_to_dict(sdef)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -140,28 +141,33 @@ def create_service(scope: str, req: ServiceCreateRequest,
 
 @router.put("/{scope}/{service_id}")
 def update_service(scope: str, service_id: str, req: ServiceUpdateRequest,
+                   conversation_id: Optional[str] = Query(None),
                    session=Depends(get_current_session)):
     """Update a service configuration."""
-    reg, kw = _get_registry(scope, session.username)
-    sdef = _registry_call(reg, "get_definition", kw, service_id=service_id)
+    scope_id = _resolve_scope_id(scope, session, conversation_id)
+    reg = ServiceRegistry.get_instance()
+    sdef = reg.get_definition(scope, scope_id, service_id)
     if not sdef:
         raise HTTPException(status_code=404, detail=f"Service '{service_id}' not found")
     if req.config is not None:
-        _registry_call(reg, "update_config", kw,
-                       service_id=service_id, config=req.config)
+        reg.update_config(scope, scope_id, service_id, req.config)
     if req.enabled is not None:
-        method = "enable" if req.enabled else "disable"
-        _registry_call(reg, method, kw, service_id=service_id)
+        if req.enabled:
+            reg.enable(scope, scope_id, service_id)
+        else:
+            reg.disable(scope, scope_id, service_id)
     return {"ok": True}
 
 
 @router.delete("/{scope}/{service_id}")
 def delete_service(scope: str, service_id: str,
+                   conversation_id: Optional[str] = Query(None),
                    session=Depends(get_current_session)):
     """Delete a service."""
-    reg, kw = _get_registry(scope, session.username)
-    sdef = _registry_call(reg, "get_definition", kw, service_id=service_id)
+    scope_id = _resolve_scope_id(scope, session, conversation_id)
+    reg = ServiceRegistry.get_instance()
+    sdef = reg.get_definition(scope, scope_id, service_id)
     if not sdef:
         raise HTTPException(status_code=404, detail=f"Service '{service_id}' not found")
-    _registry_call(reg, "uninstall", kw, service_id=service_id)
+    reg.uninstall(scope, scope_id, service_id)
     return {"ok": True, "deleted": service_id}

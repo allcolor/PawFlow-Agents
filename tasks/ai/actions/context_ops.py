@@ -386,8 +386,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             def _svc_resolver(svc_id):
                 if svc_id:
                     try:
-                        from gui.services.global_service_registry import GlobalServiceRegistry
-                        return GlobalServiceRegistry.get_instance().get_live_instance(svc_id)
+                        from gui.services.service_registry import ServiceRegistry
+                        return ServiceRegistry.get_instance().get_live_instance("global", "", svc_id)
                     except Exception:
                         pass
                 # Default: try to find any filesystem service

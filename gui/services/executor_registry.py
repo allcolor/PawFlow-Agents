@@ -150,8 +150,8 @@ class ExecutorRegistry:
 
         # Connect all enabled global services (listeners, filesystem, etc.)
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            GlobalServiceRegistry.get_instance().connect_all_enabled()
+            from gui.services.service_registry import ServiceRegistry
+            ServiceRegistry.get_instance().connect_all_enabled("global", "")
             logger.info("Global services connected at startup")
         except Exception as e:
             logger.warning("Failed to connect global services: %s", e)

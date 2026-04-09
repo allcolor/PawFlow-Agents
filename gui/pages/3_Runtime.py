@@ -301,10 +301,9 @@ def _render_new_executor_form():
     svc_forwards = {}  # flow_svc_id → prefixed ref (or None for local)
     if flow_services:
         from gui.components.schema_form import render_schema_fields as _render_fields
-        from gui.services.global_service_registry import GlobalServiceRegistry
-        from gui.services.user_service_registry import UserServiceRegistry
-        gsvc_reg = GlobalServiceRegistry.get_instance()
-        usvc_reg = UserServiceRegistry.get_instance()
+        from gui.services.service_registry import ServiceRegistry
+        gsvc_reg = ServiceRegistry.get_instance()
+        usvc_reg = ServiceRegistry.get_instance()
 
         with st.expander(f"🔌 {t('settings.services')}", expanded=True):
             svc_overrides = {}
@@ -316,7 +315,7 @@ def _render_new_executor_form():
                 options = [t("runtime.svc_use_local")]
                 option_ids = [None]
                 # Global services
-                for gs in gsvc_reg.get_compatible(svc_type):
+                for gs in gsvc_reg.get_compatible("global", "", svc_type):
                     label = f"🌐 {gs.service_id}"
                     if gs.description:
                         label += f" — {gs.description}"
@@ -326,7 +325,7 @@ def _render_new_executor_form():
                     option_ids.append(f"global:{gs.service_id}")
                 # User services (owner's)
                 if owner:
-                    for us in usvc_reg.get_compatible(svc_type, owner):
+                    for us in usvc_reg.get_compatible("user", owner, svc_type):
                         label = f"👤 {us.service_id}"
                         if us.description:
                             label += f" — {us.description}"
@@ -772,10 +771,9 @@ def _render_instance_services(inst, editable: bool = False):
 
     with st.expander(f"🔌 {t('settings.services')}", expanded=False):
         if editable:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            from gui.services.user_service_registry import UserServiceRegistry
-            gsvc_reg = GlobalServiceRegistry.get_instance()
-            usvc_reg = UserServiceRegistry.get_instance()
+            from gui.services.service_registry import ServiceRegistry
+            gsvc_reg = ServiceRegistry.get_instance()
+            usvc_reg = ServiceRegistry.get_instance()
 
             current_overrides = _migrate_service_overrides(inst.service_overrides)
             new_overrides = {}
@@ -796,7 +794,7 @@ def _render_instance_services(inst, editable: bool = False):
                 # Build options: local + compatible globals + user services
                 options = [t("runtime.svc_use_local")]
                 option_ids = [None]
-                for gs in gsvc_reg.get_compatible(svc_type):
+                for gs in gsvc_reg.get_compatible("global", "", svc_type):
                     label = f"🌐 {gs.service_id}"
                     if gs.description:
                         label += f" — {gs.description}"
@@ -805,7 +803,7 @@ def _render_instance_services(inst, editable: bool = False):
                     options.append(label)
                     option_ids.append(f"global:{gs.service_id}")
                 if inst_owner:
-                    for us in usvc_reg.get_compatible(svc_type, inst_owner):
+                    for us in usvc_reg.get_compatible("user", inst_owner, svc_type):
                         label = f"👤 {us.service_id}"
                         if us.description:
                             label += f" — {us.description}"
@@ -937,10 +935,9 @@ def _apply_service_forwards(flow, service_overrides: Dict[str, str]):
     """
     if not service_overrides:
         return
-    from gui.services.global_service_registry import GlobalServiceRegistry
-    from gui.services.user_service_registry import UserServiceRegistry
-    gsvc_reg = GlobalServiceRegistry.get_instance()
-    usvc_reg = UserServiceRegistry.get_instance()
+    from gui.services.service_registry import ServiceRegistry
+    gsvc_reg = ServiceRegistry.get_instance()
+    usvc_reg = ServiceRegistry.get_instance()
 
     for flow_svc_id, ref in service_overrides.items():
         live = None
@@ -949,18 +946,18 @@ def _apply_service_forwards(flow, service_overrides: Dict[str, str]):
             parts = ref.split(":", 2)
             if len(parts) == 3:
                 _, uid, sid = parts
-                live = usvc_reg.get_live_instance(uid, sid)
+                live = usvc_reg.get_live_instance("user", uid, sid)
                 label = f"user:{uid}:{sid}"
             else:
                 logger.warning("Invalid user service override format: %s", ref)
                 continue
         elif ref.startswith("global:"):
             sid = ref.split(":", 1)[1]
-            live = gsvc_reg.get_live_instance(sid)
+            live = gsvc_reg.get_live_instance("global", "", sid)
             label = f"global:{sid}"
         else:
             # Legacy bare ID — treat as global
-            live = gsvc_reg.get_live_instance(ref)
+            live = gsvc_reg.get_live_instance("global", "", ref)
             label = f"global:{ref}"
 
         if live is not None and flow_svc_id in flow.services:

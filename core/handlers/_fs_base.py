@@ -29,7 +29,7 @@ _FS_TYPES = ("relay", "filesystem", "googleDrive", "oneDrive")
 def find_fs_service(user_id: str, service_name: str = ""):
     """Standalone service lookup (for non-handler code like HTTP actions).
 
-    Searches GlobalServiceRegistry then UserServiceRegistry.
+    Walks conv > user > global scope chain via ServiceRegistry.
     Returns the live service instance or None.
     """
     def _set_uid(svc):
@@ -38,41 +38,20 @@ def find_fs_service(user_id: str, service_name: str = ""):
         return svc
 
     try:
-        from gui.services.global_service_registry import GlobalServiceRegistry
-        greg = GlobalServiceRegistry.get_instance()
+        from gui.services.service_registry import ServiceRegistry
+        reg = ServiceRegistry.get_instance()
         if service_name:
-            svc = greg.get_live_instance(service_name)
+            svc = reg.resolve(service_name, user_id=user_id)
             if svc:
                 return _set_uid(svc)
         else:
-            for sid, sdef in greg.get_all_definitions().items():
-                if not getattr(sdef, "enabled", True):
-                    continue
-                if getattr(sdef, "service_type", "") in _FS_TYPES:
-                    svc = greg.get_live_instance(sid)
+            for fs_type in _FS_TYPES:
+                for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
+                    svc = reg.resolve(sdef.service_id, user_id=user_id)
                     if svc:
                         return _set_uid(svc)
     except Exception:
         pass
-
-    if user_id:
-        try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            ureg = UserServiceRegistry.get_instance()
-            if service_name:
-                svc = ureg.get_live_instance(user_id, service_name)
-                if svc:
-                    return _set_uid(svc)
-            else:
-                for fs_type in _FS_TYPES:
-                    compatible = ureg.get_compatible(fs_type, user_id)
-                    for sdef in compatible:
-                        if sdef.enabled:
-                            svc = ureg.get_live_instance(user_id, sdef.service_id)
-                            if svc:
-                                return _set_uid(svc)
-        except Exception:
-            pass
 
     return None
 
@@ -84,20 +63,21 @@ def get_tool_relay_env() -> Dict[str, str]:
     Empty dict if no tool relay is available.
     """
     try:
-        from gui.services.global_service_registry import GlobalServiceRegistry
-        greg = GlobalServiceRegistry.get_instance()
-        for sid, sdef in greg.get_all_definitions().items():
-            if getattr(sdef, "service_type", "") == "toolRelay":
-                svc = greg.get_live_instance(sid)
-                if svc:
-                    cfg = getattr(sdef, "config", {}) or {}
-                    port = int(cfg.get("port", 0))
-                    token = cfg.get("token", "")
-                    if port and token:
-                        return {
-                            "PAWFLOW_TOOL_RELAY_URL": f"ws://host.docker.internal:{port}/ws/tools",
-                            "PAWFLOW_TOOL_RELAY_TOKEN": token,
-                        }
+        from gui.services.service_registry import ServiceRegistry
+        reg = ServiceRegistry.get_instance()
+        for sid, sdef in reg.get_all("global", "").items():
+            if getattr(sdef, "service_type", "") != "toolRelay":
+                continue
+            svc = reg.get_live_instance("global", "", sid)
+            if svc:
+                cfg = getattr(sdef, "config", {}) or {}
+                port = int(cfg.get("port", 0))
+                token = cfg.get("token", "")
+                if port and token:
+                    return {
+                        "PAWFLOW_TOOL_RELAY_URL": f"ws://host.docker.internal:{port}/ws/tools",
+                        "PAWFLOW_TOOL_RELAY_TOKEN": token,
+                    }
     except Exception:
         pass
     return {}

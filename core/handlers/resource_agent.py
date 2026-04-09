@@ -118,11 +118,11 @@ class ManageResourceHandler(ToolHandler):
                             svc_id = f"_profile_{profile_name}"
                             try:
                                 from core.resource_store import ResourceStore as _RS
-                                from gui.services.user_service_registry import UserServiceRegistry as _USR
-                                _reg = _USR.get_instance()
-                                if not _reg.get_definition(user_id, svc_id):
+                                from gui.services.service_registry import ServiceRegistry, SCOPE_USER
+                                _reg = ServiceRegistry.get_instance()
+                                if not _reg.get_definition(SCOPE_USER, user_id, svc_id):
                                     _reg.install(
-                                        user_id=user_id,
+                                        SCOPE_USER, user_id,
                                         service_id=svc_id,
                                         service_type="llmConnection",
                                         config=profile_config,
@@ -793,24 +793,13 @@ class ShowFileHandler(ToolHandler):
         self._user_id = user_id
 
     def _find_fs_service(self, service_name: str):
-        """Find a filesystem service by name (global or user)."""
+        """Find a filesystem service by name (conv > user > global)."""
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            svc = GlobalServiceRegistry.get_instance().get_live_instance(service_name)
-            if svc:
-                return svc
+            from gui.services.service_registry import ServiceRegistry
+            return ServiceRegistry.get_instance().resolve(
+                service_name, user_id=self._user_id)
         except Exception:
-            pass
-        if self._user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                svc = UserServiceRegistry.get_instance().get_live_instance(
-                    self._user_id, service_name)
-                if svc:
-                    return svc
-            except Exception:
-                pass
-        return None
+            return None
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         from core.file_store import FileStore

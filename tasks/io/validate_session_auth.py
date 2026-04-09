@@ -235,12 +235,12 @@ class ValidateSessionAuthTask(BaseTask):
 
         try:
             from services.auth_gateway_service import AuthGatewayService
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
+            from gui.services.service_registry import ServiceRegistry
+            greg = ServiceRegistry.get_instance()
+            for sid, sdef in greg.get_all("global", "").items():
                 if getattr(sdef, "service_type", "") != "authGateway":
                     continue
-                svc = greg.get_live_instance(sid)
+                svc = greg.get_live_instance("global", "", sid)
                 if not svc:
                     continue
                 provider = svc.get_provider(provider_name) if hasattr(svc, 'get_provider') else None

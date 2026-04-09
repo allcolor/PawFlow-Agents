@@ -86,15 +86,8 @@ class AgentToolConfigMixin:
                 # Inject filesystem service resolver for fs:// URLs in scripts
                 def _fs_resolver(svc_id):
                     try:
-                        from gui.services.user_service_registry import UserServiceRegistry
-                        svc = UserServiceRegistry.get_instance().get_live_instance(user_id, svc_id)
-                        if svc:
-                            return svc
-                    except Exception:
-                        pass
-                    try:
-                        from gui.services.global_service_registry import GlobalServiceRegistry
-                        return GlobalServiceRegistry.get_instance().get_live_instance(svc_id)
+                        from gui.services.service_registry import ServiceRegistry
+                        return ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
                     except Exception:
                         return None
                 h.set_fs_resolver(_fs_resolver)
@@ -163,11 +156,8 @@ class AgentToolConfigMixin:
                         from core.relay_bindings import get_default
                         _default_relay_pg = get_default(conversation_id, agent=_agent_name_pg)
                         if _default_relay_pg:
-                            from gui.services.global_service_registry import GlobalServiceRegistry
-                            _relay_svc_pg = GlobalServiceRegistry.get_instance().get_live_instance(_default_relay_pg)
-                            if not _relay_svc_pg:
-                                from gui.services.user_service_registry import UserServiceRegistry
-                                _relay_svc_pg = UserServiceRegistry.get_instance().get_live_instance(user_id, _default_relay_pg)
+                            from gui.services.service_registry import ServiceRegistry
+                            _relay_svc_pg = ServiceRegistry.get_instance().resolve(_default_relay_pg, user_id=user_id)
                     except Exception:
                         pass
                 fs_svc_pg = _relay_svc_pg or self._find_filesystem_service(user_id)
@@ -273,11 +263,8 @@ class AgentToolConfigMixin:
                         from core.relay_bindings import get_default
                         _default_relay = get_default(conversation_id, agent=_agent_name)
                         if _default_relay:
-                            from gui.services.global_service_registry import GlobalServiceRegistry
-                            _relay_svc = GlobalServiceRegistry.get_instance().get_live_instance(_default_relay)
-                            if not _relay_svc:
-                                from gui.services.user_service_registry import UserServiceRegistry
-                                _relay_svc = UserServiceRegistry.get_instance().get_live_instance(user_id, _default_relay)
+                            from gui.services.service_registry import ServiceRegistry
+                            _relay_svc = ServiceRegistry.get_instance().resolve(_default_relay, user_id=user_id)
                     except Exception:
                         pass
                 fs_svc = _relay_svc or self._find_filesystem_service(user_id)

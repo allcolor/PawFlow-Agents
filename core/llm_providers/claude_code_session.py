@@ -18,12 +18,11 @@ def _find_cc_service_id(service_id: str = "") -> str:
     if service_id:
         return service_id
     try:
-        from gui.services.global_service_registry import GlobalServiceRegistry
-        for sid, sdef in GlobalServiceRegistry.get_instance().get_all_definitions().items():
-            if getattr(sdef, "service_type", "") == "llmConnection":
-                cfg = getattr(sdef, "config", {}) or {}
-                if cfg.get("provider") == "claude-code":
-                    return sid
+        from gui.services.service_registry import ServiceRegistry
+        for sdef in ServiceRegistry.get_instance().resolve_by_type("llmConnection"):
+            cfg = getattr(sdef, "config", {}) or {}
+            if cfg.get("provider") == "claude-code":
+                return sdef.service_id
     except Exception:
         pass
     return ""
@@ -336,26 +335,25 @@ class ClaudeCodeSessionMixin:
         if cls._tool_relay_cache:
             return cls._tool_relay_cache
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
+            from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL
+            reg = ServiceRegistry.get_instance()
 
             # Check if a live tool relay already exists (from this server run)
-            for sid, sdef in greg.get_all_definitions().items():
-                if getattr(sdef, "service_type", "") == "toolRelay":
-                    svc = greg.get_live_instance(sid)
-                    if svc:
-                        cfg = getattr(sdef, "config", {}) or {}
-                        port = int(cfg.get("port", 0))
-                        token = cfg.get("token", "")
-                        if port and token:
-                            cls._tool_relay_cache = (
-                                f"wss://localhost:{port}/ws/tools", token)
-                            return cls._tool_relay_cache
-                    # Stale from previous run — remove it
-                    try:
-                        greg.uninstall(sid)
-                    except Exception:
-                        pass
+            for sdef in reg.resolve_by_type("toolRelay"):
+                svc = reg.get_live_instance(sdef.scope, sdef.scope_id, sdef.service_id)
+                if svc:
+                    cfg = getattr(sdef, "config", {}) or {}
+                    port = int(cfg.get("port", 0))
+                    token = cfg.get("token", "")
+                    if port and token:
+                        cls._tool_relay_cache = (
+                            f"wss://localhost:{port}/ws/tools", token)
+                        return cls._tool_relay_cache
+                # Stale from previous run — remove it
+                try:
+                    reg.uninstall(sdef.scope, sdef.scope_id, sdef.service_id)
+                except Exception:
+                    pass
 
             # Create fresh tool relay with dynamic port
             import uuid
@@ -365,13 +363,14 @@ class ClaudeCodeSessionMixin:
                 free_port = _s.getsockname()[1]
             token = uuid.uuid4().hex
             service_id = "_tool_relay"
-            greg.install(service_id, "toolRelay", {
+            reg.install(SCOPE_GLOBAL, "", service_id=service_id,
+                        service_type="toolRelay", config={
                 "port": free_port,
                 "path": "/ws/tools",
                 "token": token,
                 "_service_id": service_id,
             }, description="Auto-created tool relay for Claude Code MCP bridge")
-            svc = greg.get_live_instance(service_id)
+            svc = reg.get_live_instance(SCOPE_GLOBAL, "", service_id)
             if svc:
                 logger.info("Tool relay created: port=%d", free_port)
                 cls._tool_relay_cache = (

@@ -459,14 +459,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             result["all_tasks"] = all_task_instances
         # Services (global + user)
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            from gui.services.user_service_registry import UserServiceRegistry
+            from gui.services.service_registry import ServiceRegistry
             svcs = []
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
+            greg = ServiceRegistry.get_instance()
+            for sid, sdef in greg.get_all("global", "").items():
                 _enabled = getattr(sdef, "enabled", True)
                 try:
-                    _started = greg.is_connected(sid) if _enabled else False
+                    _started = greg.is_connected("global", "", sid) if _enabled else False
                 except Exception:
                     _started = False
                 svcs.append({
@@ -478,11 +477,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     "scope": "global",
                 })
             if uid and uid != "anonymous":
-                ureg = UserServiceRegistry.get_instance()
-                for sid, sdef in ureg.get_all_for_user(uid).items():
+                ureg = ServiceRegistry.get_instance()
+                for sid, sdef in ureg.get_all("user", uid).items():
                     _enabled = getattr(sdef, "enabled", True)
                     try:
-                        _started = ureg.is_connected(uid, sid) if _enabled else False
+                        _started = ureg.is_connected("user", uid, sid) if _enabled else False
                     except Exception:
                         _started = False
                     _entry = {
@@ -493,7 +492,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                         "description": getattr(sdef, "description", ""),
                         "scope": "user",
                     }
-                    _svc = ureg.get_live_instance(uid, sid) if _enabled else None
+                    _svc = ureg.get_live_instance("user", uid, sid) if _enabled else None
                     if _svc and hasattr(_svc, '_relay_info') and _svc._relay_info:
                         _entry["relay_info"] = _svc._relay_info
                     elif sdef.config and sdef.config.get("docker_image"):
@@ -516,12 +515,12 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     _all_ids.update(scope_list)
                 _relay_details = {}
                 try:
-                    from gui.services.global_service_registry import GlobalServiceRegistry
-                    _greg2 = GlobalServiceRegistry.get_instance()
+                    from gui.services.service_registry import ServiceRegistry
+                    _greg2 = ServiceRegistry.get_instance()
                     _ureg2 = None
                     try:
-                        from gui.services.user_service_registry import UserServiceRegistry
-                        _ureg2 = UserServiceRegistry.get_instance()
+                        from gui.services.service_registry import ServiceRegistry
+                        _ureg2 = ServiceRegistry.get_instance()
                     except Exception:
                         pass
                     for _rid in _all_ids:
@@ -529,14 +528,14 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                         _connected = False
                         # Same logic as service list: use registry.is_connected
                         try:
-                            _connected = _greg2.is_connected(_rid)
-                            _rsvc = _greg2.get_live_instance(_rid)
+                            _connected = _greg2.is_connected("global", "", _rid)
+                            _rsvc = _greg2.get_live_instance("global", "", _rid)
                         except Exception:
                             pass
                         if not _rsvc and _ureg2 and user_id:
                             try:
-                                _connected = _ureg2.is_connected(user_id, _rid)
-                                _rsvc = _ureg2.get_live_instance(user_id, _rid)
+                                _connected = _ureg2.is_connected("user", user_id, _rid)
+                                _rsvc = _ureg2.get_live_instance("user", user_id, _rid)
                             except Exception:
                                 pass
                         _ri2 = getattr(_rsvc, '_relay_info', {}) or {} if _rsvc else {}

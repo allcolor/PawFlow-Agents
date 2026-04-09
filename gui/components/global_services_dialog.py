@@ -32,10 +32,10 @@ def _get_available_service_types() -> list:
 @st.dialog(t("runtime.global_services_title"), width="large")
 def global_services_dialog():
     """Full CRUD dialog for global services."""
-    from gui.services.global_service_registry import GlobalServiceRegistry
+    from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL
 
-    registry = GlobalServiceRegistry.get_instance()
-    definitions = registry.get_all_definitions()
+    reg = ServiceRegistry.get_instance()
+    definitions = reg.get_all(SCOPE_GLOBAL, "")
 
     # Counter to make widget keys unique after each action (prevents lock)
     if "_gsvc_gen" not in st.session_state:
@@ -49,7 +49,7 @@ def global_services_dialog():
     # --- Existing services ---
     if definitions:
         for sid, sdef in sorted(definitions.items()):
-            connected = registry.is_connected(sid)
+            connected = reg.is_connected(SCOPE_GLOBAL, "", sid)
             if connected:
                 icon = "🟢"
             elif not sdef.enabled:
@@ -66,12 +66,12 @@ def global_services_dialog():
                     if sdef.enabled:
                         st.button("⏸️", key=f"gsvc_dis_{sid}_{gen}",
                                   help=t("common.disabled"),
-                                  on_click=lambda _s=sid: (registry.disable(_s),
+                                  on_click=lambda _s=sid: (reg.disable(SCOPE_GLOBAL, "", _s),
                                       st.session_state.update({"_gsvc_gen": gen + 1})))
                     else:
                         st.button("▶️", key=f"gsvc_en_{sid}_{gen}",
                                   help=t("common.enabled"),
-                                  on_click=lambda _s=sid: (registry.enable(_s),
+                                  on_click=lambda _s=sid: (reg.enable(SCOPE_GLOBAL, "", _s),
                                       st.session_state.update({"_gsvc_gen": gen + 1})))
                 with hdr_cols[2]:
                     st.button("⚙️", key=f"gsvc_cfg_{sid}_{gen}",
@@ -81,11 +81,11 @@ def global_services_dialog():
                 with hdr_cols[3]:
                     st.button("🗑️", key=f"gsvc_del_{sid}_{gen}",
                               help=t("common.delete"),
-                              on_click=lambda _s=sid: (registry.uninstall(_s),
+                              on_click=lambda _s=sid: (reg.uninstall(SCOPE_GLOBAL, "", _s),
                                   st.session_state.update({"_gsvc_gen": gen + 1})))
 
                 if editing == sid:
-                    _render_config_editor(registry, sdef, gen)
+                    _render_config_editor(reg, sdef, gen)
     else:
         st.info(t("runtime.global_services_empty"))
 
@@ -146,8 +146,8 @@ def global_services_dialog():
                             if wk in st.session_state:
                                 _cfg[pn] = st.session_state[wk]
                 try:
-                    registry.install(service_id=_id, service_type=_type,
-                                     config=_cfg, description=_desc, enabled=True)
+                    reg.install(SCOPE_GLOBAL, "", service_id=_id, service_type=_type,
+                                config=_cfg, description=_desc, enabled=True)
                     st.session_state["_gsvc_gen"] = gen + 1
                 except Exception as e:
                     st.session_state["_gsvc_error"] = str(e)
@@ -167,7 +167,7 @@ def global_services_dialog():
         st.rerun()
 
 
-def _render_config_editor(registry, sdef, gen):
+def _render_config_editor(reg, sdef, gen):
     """Inline config editor for an existing global service."""
     sid = sdef.service_id
     name_key = f"gsvc_rename_{sid}_{gen}"
@@ -217,16 +217,16 @@ def _render_config_editor(registry, sdef, gen):
                     edited[cfg_key] = st.session_state[k]
         if new_name and new_name != sid:
             try:
-                registry.rename(sid, new_name)
-                registry.update_config(new_name, edited)
+                reg.rename(SCOPE_GLOBAL, "", sid, new_name)
+                reg.update_config(SCOPE_GLOBAL, "", new_name, edited)
                 if new_desc != sdef.description:
-                    registry.update_description(new_name, new_desc)
+                    reg.update_description(SCOPE_GLOBAL, "", new_name, new_desc)
             except (KeyError, ValueError):
                 pass
         else:
-            registry.update_config(sid, edited)
+            reg.update_config(SCOPE_GLOBAL, "", sid, edited)
             if new_desc != sdef.description:
-                registry.update_description(sid, new_desc)
+                reg.update_description(SCOPE_GLOBAL, "", sid, new_desc)
         st.session_state.pop("_gsvc_edit", None)
         st.session_state["_gsvc_saved"] = sid
 

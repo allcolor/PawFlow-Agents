@@ -195,60 +195,29 @@ def set_default_local(cid: str, relay_id: str, local: bool, agent: str = "") -> 
 
 
 def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
-    """List all connected relay services (global + user scope)."""
+    """List all connected relay services across all scopes."""
     relays = []
-    _seen = set()
-
-    def _add_relay(registry, sid, sdef, scope_user_id=""):
-        _seen.add(sid)
-        try:
-            if scope_user_id:
-                connected = registry.is_connected(scope_user_id, sid)
-                svc = registry.get_live_instance(scope_user_id, sid)
-            else:
-                connected = registry.is_connected(sid)
-                svc = registry.get_live_instance(sid)
-        except Exception:
-            connected = False
-            svc = None
-        _ri = getattr(svc, '_relay_info', {}) or {} if svc else {}
-        relays.append({
-            "relay_id": sid,
-            "connected": connected,
-            "user_id": scope_user_id or getattr(sdef, "user_id", ""),
-            "root": _ri.get("root", ""),
-            "host_root": _ri.get("host_root", ""),
-            "allow_local": bool(_ri.get('allow_local', False)),
-            "allow_local_screen": bool(_ri.get('allow_local_screen', False)),
-        })
-
-    # Global services
     try:
-        from gui.services.global_service_registry import GlobalServiceRegistry
-        greg = GlobalServiceRegistry.get_instance()
-        for sid, sdef in greg.get_all_definitions().items():
-            if sid in _seen:
+        from gui.services.service_registry import ServiceRegistry
+        reg = ServiceRegistry.get_instance()
+        all_defs = reg.resolve_all(user_id=user_id)
+        for sid, sdef in all_defs.items():
+            if sdef.service_type not in ("filesystem", "relay"):
                 continue
-            if getattr(sdef, "service_type", "") not in ("filesystem", "relay"):
-                continue
-            _add_relay(greg, sid, sdef)
+            connected = reg.is_connected(sdef.scope, sdef.scope_id, sid)
+            svc = reg.resolve(sid, user_id=user_id)
+            _ri = getattr(svc, '_relay_info', {}) or {} if svc else {}
+            relays.append({
+                "relay_id": sid,
+                "connected": connected,
+                "user_id": sdef.scope_id if sdef.scope == "user" else "",
+                "root": _ri.get("root", ""),
+                "host_root": _ri.get("host_root", ""),
+                "allow_local": bool(_ri.get('allow_local', False)),
+                "allow_local_screen": bool(_ri.get('allow_local_screen', False)),
+            })
     except Exception:
         pass
-
-    # User services
-    if user_id:
-        try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            ureg = UserServiceRegistry.get_instance()
-            for sid, sdef in ureg.get_all_for_user(user_id).items():
-                if sid in _seen:
-                    continue
-                if getattr(sdef, "service_type", "") not in ("filesystem", "relay"):
-                    continue
-                _add_relay(ureg, sid, sdef, scope_user_id=user_id)
-        except Exception:
-            pass
-
     return relays
 
 
@@ -281,21 +250,12 @@ def resolve_relay(cid: str, relay_param: Optional[str] = None,
         raise ValueError(f"Multiple relays linked ({names}) but no default set. "
                          f"Use /relay default <relay_id> or pass relay= explicitly.")
 
-    # Resolve service instance (try user registry first, then global)
-    svc = None
+    # Resolve service instance across all scopes
     try:
-        from gui.services.user_service_registry import UserServiceRegistry
-        ureg = UserServiceRegistry.get_instance()
-        # We don't have user_id here, try all
-        svc = ureg.get_live_instance("", relay_id)
+        from gui.services.service_registry import ServiceRegistry
+        svc = ServiceRegistry.get_instance().resolve(relay_id)
     except Exception:
-        pass
-    if svc is None:
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            svc = GlobalServiceRegistry.get_instance().get_live_instance(relay_id)
-        except Exception:
-            pass
+        svc = None
     if svc is None:
         raise ValueError(f"Relay '{relay_id}' is linked but not connected.")
 

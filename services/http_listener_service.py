@@ -756,7 +756,7 @@ class HTTPListenerService(BaseService):
     requests to the right flow based on method + URL pattern.
 
     Singleton per port via _instances dict. Also registered in
-    GlobalServiceRegistry for discoverability by code outside flows.
+    ServiceRegistry for discoverability by code outside flows.
 
     Features:
     - Auto-detect TLS: peek first byte, if 0x16 → SSL, else plain HTTP
@@ -856,7 +856,7 @@ class HTTPListenerService(BaseService):
     def _create_connection(self):
         """Start the HTTP server (only on first connect).
 
-        Registers self in GlobalServiceRegistry as _http_listener_{port}.
+        Registers self in ServiceRegistry as _http_listener_{port}.
         Uses auto-detect TLS: if SSL is configured, accepts both plain
         and TLS connections on the same port (peek first byte).
         """
@@ -891,21 +891,21 @@ class HTTPListenerService(BaseService):
         )
         self._server_thread.start()
 
-        # Register in GlobalServiceRegistry for discoverability
+        # Register in ServiceRegistry for discoverability
         svc_id = f"_http_listener_{self._port}"
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            if not greg.get_definition(svc_id):
-                # install with enabled=True — _connect_one will be called
-                # but __new__ returns this same singleton, so no duplicate
-                greg.install(svc_id, self.TYPE, self.config,
-                             description=f"HTTP listener on port {self._port}")
-            # Ensure we're the live instance (in case install skipped _connect_one
-            # because we're already in _live_instances from install's own connect)
-            greg._live_instances[svc_id] = self
+            from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL
+            reg = ServiceRegistry.get_instance()
+            if not reg.get_definition(SCOPE_GLOBAL, "", svc_id):
+                reg.install(SCOPE_GLOBAL, "", service_id=svc_id,
+                            service_type=self.TYPE, config=self.config,
+                            description=f"HTTP listener on port {self._port}")
+            # Ensure we're the live instance
+            with reg._data_lock:
+                reg._live_instances.setdefault(
+                    reg._resolve_scope_id(SCOPE_GLOBAL, ""), {})[svc_id] = self
         except Exception as e:
-            logger.debug("Failed to register in GlobalServiceRegistry: %s", e)
+            logger.debug("Failed to register in ServiceRegistry: %s", e)
 
         logger.info(f"HTTPListenerService started on {proto} {self._host}:{self._port}")
         return self._server
@@ -977,12 +977,13 @@ class HTTPListenerService(BaseService):
         with _instances_lock:
             _instances.pop(self._port, None)
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            greg._live_instances.pop(svc_id, None)
-            # Remove persisted definition (auto-registered listeners are ephemeral)
+            from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL
+            reg = ServiceRegistry.get_instance()
+            with reg._data_lock:
+                reg._live_instances.get(
+                    reg._resolve_scope_id(SCOPE_GLOBAL, ""), {}).pop(svc_id, None)
             if svc_id != "_http_listener_9090":
-                greg.uninstall(svc_id)
+                reg.uninstall(SCOPE_GLOBAL, "", svc_id)
         except Exception:
             pass
 

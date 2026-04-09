@@ -31,10 +31,10 @@ def _get_available_service_types() -> list:
 @st.dialog(t("runtime.user_services_title"), width="large")
 def user_services_dialog(user_id: str):
     """Full CRUD dialog for user-scoped services."""
-    from gui.services.user_service_registry import UserServiceRegistry
+    from gui.services.service_registry import ServiceRegistry, SCOPE_USER
 
-    registry = UserServiceRegistry.get_instance()
-    definitions = registry.get_all_for_user(user_id)
+    reg = ServiceRegistry.get_instance()
+    definitions = reg.get_all(SCOPE_USER, user_id)
 
     # Counter to make widget keys unique after each action
     if "_usvc_gen" not in st.session_state:
@@ -48,7 +48,7 @@ def user_services_dialog(user_id: str):
     # --- Existing services ---
     if definitions:
         for sid, sdef in sorted(definitions.items()):
-            connected = registry.is_connected(user_id, sid)
+            connected = reg.is_connected(SCOPE_USER, user_id, sid)
             if connected:
                 icon = "\U0001f7e2"
             elif not sdef.enabled:
@@ -64,14 +64,14 @@ def user_services_dialog(user_id: str):
                 with hdr_cols[1]:
                     if sdef.enabled:
                         def _do_disable(_uid=user_id, _sid=sid):
-                            registry.disable(_uid, _sid)
+                            reg.disable(SCOPE_USER, _uid, _sid)
                             st.session_state["_usvc_gen"] = st.session_state.get("_usvc_gen", 0) + 1
 
                         st.button("\u23f8\ufe0f", key=f"usvc_dis_{user_id}_{sid}_{gen}",
                                   help=t("common.disabled"), on_click=_do_disable)
                     else:
                         def _do_enable(_uid=user_id, _sid=sid):
-                            registry.enable(_uid, _sid)
+                            reg.enable(SCOPE_USER, _uid, _sid)
                             st.session_state["_usvc_gen"] = st.session_state.get("_usvc_gen", 0) + 1
 
                         st.button("\u25b6\ufe0f", key=f"usvc_en_{user_id}_{sid}_{gen}",
@@ -85,7 +85,7 @@ def user_services_dialog(user_id: str):
                               help=t("common.edit"), on_click=_do_edit)
                 with hdr_cols[3]:
                     def _do_delete(_uid=user_id, _sid=sid):
-                        registry.uninstall(_uid, _sid)
+                        reg.uninstall(SCOPE_USER, _uid, _sid)
                         st.session_state["_usvc_gen"] = st.session_state.get("_usvc_gen", 0) + 1
 
                     st.button("\U0001f5d1\ufe0f", key=f"usvc_del_{user_id}_{sid}_{gen}",
@@ -93,7 +93,7 @@ def user_services_dialog(user_id: str):
 
                 # Inline config editor if this service is being edited
                 if editing == sid:
-                    _render_config_editor(registry, user_id, sdef, gen)
+                    _render_config_editor(reg, user_id, sdef, gen)
     else:
         st.info(t("runtime.user_services_empty"))
 
@@ -154,8 +154,8 @@ def user_services_dialog(user_id: str):
                                 new_config[param_name] = st.session_state[wk]
 
                 try:
-                    registry.install(
-                        user_id=user_id,
+                    reg.install(
+                        SCOPE_USER, user_id,
                         service_id=new_id,
                         service_type=ntype,
                         config=new_config if ntype else {},
@@ -186,7 +186,7 @@ def user_services_dialog(user_id: str):
         st.rerun()
 
 
-def _render_config_editor(registry, user_id: str, sdef, gen):
+def _render_config_editor(reg, user_id: str, sdef, gen):
     """Inline config editor for an existing user service."""
     sid = sdef.service_id
     name_key = f"usvc_rename_{user_id}_{sid}_{gen}"
@@ -241,16 +241,16 @@ def _render_config_editor(registry, user_id: str, sdef, gen):
                     edited[cfg_key] = st.session_state[k]
         if new_name and new_name != sid:
             try:
-                registry.rename(user_id, sid, new_name)
-                registry.update_config(user_id, new_name, edited)
+                reg.rename(SCOPE_USER, user_id, sid, new_name)
+                reg.update_config(SCOPE_USER, user_id, new_name, edited)
                 if new_desc != sdef.description:
-                    registry.update_description(user_id, new_name, new_desc)
+                    reg.update_description(SCOPE_USER, user_id, new_name, new_desc)
             except (KeyError, ValueError):
                 pass
         else:
-            registry.update_config(user_id, sid, edited)
+            reg.update_config(SCOPE_USER, user_id, sid, edited)
             if new_desc != sdef.description:
-                registry.update_description(user_id, sid, new_desc)
+                reg.update_description(SCOPE_USER, user_id, sid, new_desc)
         st.session_state.pop("_usvc_edit", None)
         st.session_state["_usvc_saved"] = sid
 

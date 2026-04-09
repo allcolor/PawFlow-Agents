@@ -399,20 +399,21 @@ class ServerRelayManager:
                 logger.debug("Container rm error (%s): %s", container_id[:12], e)
 
     def _install_relay_service(self, user_id: str, relay_id: str, port: int, path: str, token: str) -> None:
-        from gui.services.user_service_registry import UserServiceRegistry
-        registry = UserServiceRegistry.get_instance()
+        from gui.services.service_registry import ServiceRegistry
+        registry = ServiceRegistry.get_instance()
         registry.install(
-            user_id=user_id,
+            scope="user",
+            scope_id=user_id,
             service_id=relay_id,
             service_type="relay",
             config={"port": port, "path": path, "token": token, "mode": "readwrite"},
-            description=f"Server workspace relay (server-spawned)",
+            description="Server workspace relay (server-spawned)",
         )
 
     def _uninstall_relay_service(self, user_id: str, relay_id: str) -> None:
         try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            UserServiceRegistry.get_instance().uninstall(user_id, relay_id)
+            from gui.services.service_registry import ServiceRegistry
+            ServiceRegistry.get_instance().uninstall("user", user_id, relay_id)
         except Exception as e:
             logger.warning("Could not uninstall relay service %s: %s", relay_id, e)
 

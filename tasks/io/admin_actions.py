@@ -2,7 +2,7 @@
 
 Receives POST /admin/api with JSON body {action: "...", ...params}.
 Routes to handler functions that use ExecutorRegistry, DeploymentRegistry,
-GlobalServiceRegistry, and TemplateService.
+ServiceRegistry (global), and TemplateService.
 """
 
 import json
@@ -21,12 +21,12 @@ def _get_registries():
     """Lazy import registries to avoid circular imports."""
     from gui.services.executor_registry import ExecutorRegistry
     from gui.services.deployment_registry import DeploymentRegistry
-    from gui.services.global_service_registry import GlobalServiceRegistry
+    from gui.services.service_registry import ServiceRegistry
     from gui.services.template_service import TemplateService
     return (
         ExecutorRegistry.get_instance(),
         DeploymentRegistry.get_instance(),
-        GlobalServiceRegistry.get_instance(),
+        ServiceRegistry.get_instance(),
         TemplateService(),
     )
 
@@ -35,10 +35,9 @@ def _apply_service_forwards(flow, service_overrides: Dict[str, str]):
     """Replace flow services with global/user service instances."""
     if not service_overrides:
         return
-    from gui.services.global_service_registry import GlobalServiceRegistry
-    from gui.services.user_service_registry import UserServiceRegistry
-    gsvc_reg = GlobalServiceRegistry.get_instance()
-    usvc_reg = UserServiceRegistry.get_instance()
+    from gui.services.service_registry import ServiceRegistry
+    gsvc_reg = ServiceRegistry.get_instance()
+    usvc_reg = ServiceRegistry.get_instance()
 
     for flow_svc_id, ref in service_overrides.items():
         live = None
@@ -46,12 +45,12 @@ def _apply_service_forwards(flow, service_overrides: Dict[str, str]):
             parts = ref.split(":", 2)
             if len(parts) == 3:
                 _, uid, sid = parts
-                live = usvc_reg.get_live_instance(uid, sid)
+                live = usvc_reg.get_live_instance("user", uid, sid)
         elif ref.startswith("global:"):
             sid = ref.split(":", 1)[1]
-            live = gsvc_reg.get_live_instance(sid)
+            live = gsvc_reg.get_live_instance("global", "", sid)
         else:
-            live = gsvc_reg.get_live_instance(ref)
+            live = gsvc_reg.get_live_instance("global", "", ref)
 
         if live is not None and flow_svc_id in flow.services:
             flow.services[flow_svc_id] = live

@@ -20,6 +20,10 @@ from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin, _SESS
 logger = logging.getLogger(__name__)
 
 
+class _CC401Retry(Exception):
+    """Internal signal: OAuth 401 mid-stream, credentials refreshed, retry the call."""
+
+
 class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     """Claude Code CLI provider using bidirectional stream-json.
 
@@ -491,7 +495,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
     def _stream_claude_code(
         self, messages, model, temperature, max_tokens, tools, callback,
-        turn_callback=None,
+        turn_callback=None, _is_auth_retry=False,
     ):
         """Stream from claude CLI using bidirectional stream-json.
 
@@ -582,6 +586,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
         # Track pool container for cleanup
         self._pool_container_name = None
+        _auth_retried = _is_auth_retry
 
         try:
             proc, self._pool_container_name = self._pool_popen(
@@ -1084,6 +1089,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 for e in _errors)
                             logger.error("[claude-code] errors: %s", _errors)
                         if "authentication" in _err_text.lower() or "401" in _err_text:
+                            if not _auth_retried:
+                                _auth_retried = True
+                                logger.warning("[claude-code] 401 mid-stream — refreshing OAuth token and retrying")
+                                try:
+                                    self._setup_credentials(workdir, pool_index=_resume_pool_idx)
+                                except Exception as _ref_err:
+                                    raise LLMClientError(
+                                        f"Claude Code auth failed and token refresh failed: {_ref_err}") from None
+                                raise _CC401Retry()
                             raise LLMClientError(f"Claude Code auth failed: {_err_text[:300]}")
                         if event.get("subtype") == "error_during_execution":
                             # Include the error code/text so LLMClient retry loop can match it
@@ -1147,6 +1161,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         self._preempt_pending = 0
                     break
 
+        except _CC401Retry:
+            # 401 mid-stream: credentials already refreshed, retry once
+            logger.info("[claude-code] retrying after 401 token refresh")
+            return self._stream_claude_code(
+                messages, model, temperature, max_tokens, tools, callback,
+                turn_callback=turn_callback, _is_auth_retry=True)
         finally:
             # Stop compact stall watchdog
             _watchdog_stop.set()

@@ -84,6 +84,9 @@ class ClaudeCodePool:
         self.cpu_limit = os.environ.get("PAWFLOW_CC_CPU", "2")
         self.memory_limit = os.environ.get("PAWFLOW_CC_MEM", "4g")
 
+        # Kill orphan pool containers from previous PawFlow runs
+        self._cleanup_orphans()
+
         # Sessions volume: host path for data/claude_sessions
         _raw_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -341,3 +344,25 @@ class ClaudeCodePool:
         if to_kill:
             logger.info("Pool reaper: killed %d idle container(s): %s",
                         len(to_kill), to_kill)
+
+    def _cleanup_orphans(self):
+        """Kill orphan pf-cc-pool containers from previous PawFlow runs."""
+        try:
+            result = subprocess.run(
+                docker_cmd() + ["ps", "--filter", "name=pf-cc-pool-",
+                                "--format", "{{.Names}}"],
+                capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and result.stdout.strip():
+                orphans = [n.strip() for n in result.stdout.strip().split("\n") if n.strip()]
+                for name in orphans:
+                    try:
+                        subprocess.run(
+                            docker_cmd() + ["rm", "-f", name],
+                            capture_output=True, timeout=10)
+                        logger.info("Pool: killed orphan container %s", name)
+                    except Exception:
+                        pass
+                if orphans:
+                    logger.info("Pool: cleaned up %d orphan container(s)", len(orphans))
+        except Exception as e:
+            logger.warning("Pool: orphan cleanup failed: %s", e)

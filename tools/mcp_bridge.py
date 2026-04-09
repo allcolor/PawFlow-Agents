@@ -252,9 +252,22 @@ def _respond(req_id, result=None, error=None):
     sys.stdout.flush()
 
 
+_log_file = None
+
 def _log(msg):
+    global _log_file
     sys.stderr.write(f"[mcp-bridge] {msg}\n")
     sys.stderr.flush()
+    # Also write to file on workspace (readable from host)
+    try:
+        if _log_file is None:
+            import os
+            _log_dir = os.environ.get("CLAUDE_CONFIG_DIR", "/workspace")
+            _log_file = open(os.path.join(_log_dir, "mcp_bridge.log"), "a", encoding="utf-8")
+        _log_file.write(f"[mcp-bridge] {msg}\n")
+        _log_file.flush()
+    except Exception:
+        pass
 
 
 def main():

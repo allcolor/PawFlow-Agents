@@ -57,6 +57,7 @@ class GlobalServiceRegistry:
         self._live_instances: Dict[str, Service] = {}
         self._data_lock = threading.RLock()
         self._loaded = False
+        self._load_failed = False  # if True, refuse to save (prevents data loss)
 
     @classmethod
     def get_instance(cls) -> "GlobalServiceRegistry":
@@ -326,19 +327,41 @@ class GlobalServiceRegistry:
                 self._definitions[sid] = GlobalServiceDef.from_dict(data)
             logger.info("Loaded %d global service(s) from disk", len(self._definitions))
         except Exception as e:
-            logger.warning("Failed to load global services: %s", e)
+            # CRITICAL: mark load as failed — _save_to_disk MUST NOT overwrite
+            # the file with empty/partial data. The file on disk is the source
+            # of truth until a successful load.
+            self._load_failed = True
+            logger.error(
+                "CRITICAL: Failed to load global services from %s: %s — "
+                "registry is READ-ONLY until restart with valid file",
+                GLOBAL_SERVICES_FILE, e)
 
     def _save_to_disk(self) -> None:
+        # NEVER overwrite the file if the initial load failed — the file on
+        # disk has the real data, we just couldn't parse it.
+        if self._load_failed:
+            logger.warning(
+                "REFUSING to save global services — initial load failed. "
+                "Fix %s and restart.", GLOBAL_SERVICES_FILE)
+            return
         GLOBAL_SERVICES_FILE.parent.mkdir(parents=True, exist_ok=True)
         with self._data_lock:
             data = {
                 sid: sdef.to_dict()
                 for sid, sdef in self._definitions.items()
             }
+        # Atomic write: write to .tmp then rename (prevents corruption on crash)
+        tmp_path = GLOBAL_SERVICES_FILE.with_suffix(".tmp")
         try:
-            GLOBAL_SERVICES_FILE.write_text(
+            tmp_path.write_text(
                 json.dumps(data, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            tmp_path.replace(GLOBAL_SERVICES_FILE)
         except Exception as e:
             logger.error("Failed to save global services: %s", e)
+            # Clean up tmp file on failure
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass

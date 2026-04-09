@@ -65,6 +65,7 @@ class UserServiceRegistry:
         self._live_instances: Dict[str, Dict[str, Service]] = {}
         self._data_lock = threading.Lock()
         self._loaded_users: set = set()
+        self._load_failed_users: set = set()  # users whose load failed — read-only
         # Plan C: heartbeat
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
@@ -434,9 +435,18 @@ class UserServiceRegistry:
             self._definitions[user_id] = user_defs
             logger.info("Loaded %d user service(s) for user '%s'", len(user_defs), user_id)
         except Exception as e:
-            logger.warning("Failed to load user services for '%s': %s", user_id, e)
+            self._load_failed_users.add(user_id)
+            logger.error(
+                "CRITICAL: Failed to load user services for '%s' from %s: %s — "
+                "user registry is READ-ONLY until restart with valid file",
+                user_id, filepath, e)
 
     def _save_user_to_disk(self, user_id: str) -> None:
+        if user_id in self._load_failed_users:
+            logger.warning(
+                "REFUSING to save user services for '%s' — initial load failed. "
+                "Fix the file and restart.", user_id)
+            return
         USER_SERVICES_DIR.mkdir(parents=True, exist_ok=True)
         with self._data_lock:
             user_defs = self._definitions.get(user_id, {})
@@ -445,10 +455,16 @@ class UserServiceRegistry:
                 for sid, sdef in user_defs.items()
             }
         filepath = USER_SERVICES_DIR / f"{user_id}.json"
+        tmp_path = filepath.with_suffix(".tmp")
         try:
-            filepath.write_text(
+            tmp_path.write_text(
                 json.dumps(data, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            tmp_path.replace(filepath)
         except Exception as e:
             logger.error("Failed to save user services for '%s': %s", user_id, e)
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass

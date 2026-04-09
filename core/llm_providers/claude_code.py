@@ -682,6 +682,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _tool_results: dict = {}  # tool_use_id → result text
         _current_msg_id: str = ""  # track message ID to detect incremental updates
         self._preempt_pending = 0  # reset at start of each stream
+        self._had_preempts_this_turn = False
 
         def _inject_catchup():
             """Check for new messages from other agents and inject via stdin."""
@@ -1159,6 +1160,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     if _pending > 0:
                         logger.info("[claude-code] result event, clearing %d preempt(s)", _pending)
                         self._preempt_pending = 0
+                        # Flag for agent_core: preempted messages were already
+                        # processed by CC — don't re-trigger a new loop for them
+                        self._had_preempts_this_turn = True
                     break
 
         except _CC401Retry:

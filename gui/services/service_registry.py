@@ -245,9 +245,12 @@ class ServiceRegistry:
                 raise KeyError(f"Service '{old_id}' not found (scope={scope}, id={sid[:8]})")
             if new_id in scope_defs:
                 raise ValueError(f"Service '{new_id}' already exists (scope={scope}, id={sid[:8]})")
-            if old_id in self._live_instances.get(sid, {}):
-                self._disconnect_one(sid, old_id)
-            scope_defs.pop(old_id)
+            needs_disconnect = old_id in self._live_instances.get(sid, {})
+        if needs_disconnect:
+            self._disconnect_one(sid, old_id)
+        with self._data_lock:
+            scope_defs = self._definitions.get(sid, {})
+            scope_defs.pop(old_id, None)
             svc_def.service_id = new_id
             scope_defs[new_id] = svc_def
         self._save(scope, sid)

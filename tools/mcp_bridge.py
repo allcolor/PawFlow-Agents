@@ -435,8 +435,24 @@ def main():
                         _prev = tool_args
                         tool_args = json.loads(tool_args)
                         _unwrap_passes += 1
-                    except (json.JSONDecodeError, TypeError) as _je:
-                        _log(f"USE_TOOL {tool_name} JSON decode FAILED (pass {_unwrap_passes+1}): {_je} value={str(tool_args)[:200]}")
+                    except json.JSONDecodeError as _je:
+                        # "Extra data" = valid JSON followed by junk (e.g. CC appends </invoke>)
+                        # Use raw_decode to parse only the first JSON object
+                        if "Extra data" in str(_je):
+                            try:
+                                tool_args, _ = json.JSONDecoder().raw_decode(tool_args)
+                                _unwrap_passes += 1
+                                _log(f"USE_TOOL {tool_name} raw_decode OK (stripped trailing junk)")
+                            except (json.JSONDecodeError, TypeError) as _je2:
+                                _log(f"USE_TOOL {tool_name} raw_decode also FAILED: {_je2}")
+                                _decode_failed = True
+                                break
+                        else:
+                            _log(f"USE_TOOL {tool_name} JSON decode FAILED (pass {_unwrap_passes+1}): {_je} value={str(tool_args)[:200]}")
+                            _decode_failed = True
+                            break
+                    except TypeError as _je:
+                        _log(f"USE_TOOL {tool_name} JSON decode TypeError: {_je}")
                         _decode_failed = True
                         break
                 if _unwrap_passes > 0:

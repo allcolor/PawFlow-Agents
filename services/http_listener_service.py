@@ -973,12 +973,16 @@ class HTTPListenerService(BaseService):
             self._server_thread = None
 
         # Deregister
+        svc_id = f"_http_listener_{self._port}"
         with _instances_lock:
             _instances.pop(self._port, None)
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
             greg = GlobalServiceRegistry.get_instance()
-            greg._live_instances.pop(f"_http_listener_{self._port}", None)
+            greg._live_instances.pop(svc_id, None)
+            # Remove persisted definition (auto-registered listeners are ephemeral)
+            if svc_id != "_http_listener_9090":
+                greg.uninstall(svc_id)
         except Exception:
             pass
 

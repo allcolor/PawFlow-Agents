@@ -39,6 +39,54 @@ _GLOBAL_SCOPE_ID = "__global__"
 # Service types that support heartbeat (have a ping() method)
 _HEARTBEAT_TYPES = frozenset({"relay"})
 
+# ── Uniqueness constraints ────────────────────────────────────────────
+#
+# Some services bind exclusive OS/network resources (ports, bot tokens,
+# file locks). Installing a second instance with the same resource key
+# — even in a different scope — would fail at connect time or cause
+# silent corruption.  We enforce uniqueness at install() time.
+#
+# Each entry maps a service_type to a tuple of config keys whose
+# combined value must be unique **across all scopes**.
+
+_UNIQUE_RESOURCE_KEYS: Dict[str, tuple] = {
+    # OS-level port bind — two listeners on the same port = EADDRINUSE
+    "httpListener":  ("port",),
+    # WebSocket listener port+path — same shared-port scheme
+    "relay":         ("port", "path"),
+    "toolRelay":     ("port", "path"),
+    # Bot tokens open a single persistent connection (WS or long-poll)
+    "discordBot":    ("bot_token",),
+    "slackBot":      ("bot_token",),
+    "telegramBot":   ("bot_token",),
+    # One webhook registration per phone number
+    "whatsappCloud": ("phone_number_id",),
+
+    # Two cache clients with the same prefix on the same Redis = data corruption
+    "distributedMapCache": ("redis_url", "key_prefix"),
+    # Two trackers writing the same state file = corruption
+    "fileTracking":  ("storage_path",),
+    # Two SSL contexts for the same cert = pointless duplication
+    "sslContext":    ("certfile",),
+}
+
+# Default config values for uniqueness keys.
+# ONLY for params that have a real default in the service code.
+# Required params with no default are NOT listed — if the user omits
+# them, _resource_key() returns None and the service will fail at connect.
+_UNIQUE_RESOURCE_DEFAULTS: Dict[str, Dict[str, str]] = {
+    "httpListener":        {"port": "9090"},
+    "relay":               {"port": "9091", "path": "/ws/relay"},
+    "toolRelay":           {"port": "9091", "path": "/ws/tools"},
+
+    "distributedMapCache": {"redis_url": "redis://localhost:6379/0", "key_prefix": "pawflow:"},
+    "fileTracking":        {"storage_path": "file_tracking.json"},
+}
+
+
+class ResourceConflictError(ValueError):
+    """Raised when installing a service that would conflict with an existing one."""
+
 
 @dataclass
 class ServiceDef:
@@ -158,6 +206,53 @@ class ServiceRegistry:
                     self._load(scope, sid)
                     self._loaded.add(sid)
 
+    # ---- Uniqueness ----
+
+    @staticmethod
+    def _resource_key(service_type: str, config: Dict[str, Any]) -> Optional[tuple]:
+        """Return the uniqueness key for a service, or None if unconstrained.
+
+        Returns None if any key has no value (not in config and no default)
+        — the service will fail at connect anyway, so no conflict to check.
+        """
+        keys = _UNIQUE_RESOURCE_KEYS.get(service_type)
+        if keys is None:
+            return None
+        defaults = _UNIQUE_RESOURCE_DEFAULTS.get(service_type, {})
+        parts = []
+        for k in keys:
+            val = str(config.get(k, defaults.get(k, "")))
+            if not val:
+                return None  # required param missing — skip conflict check
+            parts.append(val)
+        return (service_type,) + tuple(parts)
+
+    def _check_resource_conflict(
+        self, service_type: str, config: Dict[str, Any],
+        exclude_scope_id: str = "", exclude_service_id: str = "",
+    ) -> None:
+        """Raise ResourceConflictError if another service already owns this resource.
+
+        Scans ALL scopes/scope_ids currently loaded.
+        """
+        rk = self._resource_key(service_type, config)
+        if rk is None:
+            return
+        with self._data_lock:
+            for sid, scope_defs in self._definitions.items():
+                for svc_id, sdef in scope_defs.items():
+                    if sid == exclude_scope_id and svc_id == exclude_service_id:
+                        continue
+                    if self._resource_key(sdef.service_type, sdef.config) == rk:
+                        keys = _UNIQUE_RESOURCE_KEYS[service_type]
+                        defaults = _UNIQUE_RESOURCE_DEFAULTS.get(service_type, {})
+                        vals = {k: config.get(k, defaults.get(k, "")) for k in keys}
+                        raise ResourceConflictError(
+                            f"Resource conflict: {service_type} with {vals} "
+                            f"is already in use by service '{svc_id}' "
+                            f"(scope={sdef.scope})"
+                        )
+
     # ---- CRUD ----
 
     def install(
@@ -194,6 +289,12 @@ class ServiceRegistry:
             created_at=time.time(),
         )
 
+        # Prevent resource conflicts across all scopes
+        self._check_resource_conflict(
+            service_type, config or {},
+            exclude_scope_id=sid, exclude_service_id=service_id,
+        )
+
         with self._data_lock:
             needs_disconnect = service_id in self._live_instances.get(sid, {})
         if needs_disconnect:
@@ -222,6 +323,13 @@ class ServiceRegistry:
             if not svc_def:
                 raise KeyError(f"Service '{service_id}' not found (scope={scope}, id={sid[:8]})")
             needs_disconnect = service_id in self._live_instances.get(sid, {})
+
+        # Check with merged config (existing + new values)
+        merged = {**svc_def.config, **config}
+        self._check_resource_conflict(
+            svc_def.service_type, merged,
+            exclude_scope_id=sid, exclude_service_id=service_id,
+        )
 
         if needs_disconnect:
             self._disconnect_one(sid, service_id)

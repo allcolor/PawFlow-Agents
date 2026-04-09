@@ -619,6 +619,140 @@ class TestConfigParsing:
         assert result == {"host": "localhost", "port": "5432"}
 
 
+# ── Resource uniqueness ──────────────────────────────────────────
+
+
+class TestResourceConflict:
+    """Tests for cross-scope resource uniqueness enforcement."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path):
+        from gui.services.service_registry import SCOPE_GLOBAL, SCOPE_USER
+        self.SCOPE_GLOBAL = SCOPE_GLOBAL
+        self.SCOPE_USER = SCOPE_USER
+        self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
+        yield
+        _registry_teardown(self.mod, self._orig_user, self._orig_global)
+
+    def test_same_port_same_scope_different_id_blocked(self):
+        """Two httpListeners on port 9090 in global scope = conflict."""
+        from gui.services.service_registry import ResourceConflictError
+        self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
+                         config={"port": "9090"})
+        with pytest.raises(ResourceConflictError, match="port"):
+            self.reg.install(self.SCOPE_GLOBAL, "", "http2", "httpListener",
+                             config={"port": "9090"})
+
+    def test_same_port_cross_scope_blocked(self):
+        """httpListener on port 8080 in global, same port in user = conflict."""
+        from gui.services.service_registry import ResourceConflictError
+        self.reg.install(self.SCOPE_GLOBAL, "", "http_global", "httpListener",
+                         config={"port": "8080"})
+        with pytest.raises(ResourceConflictError):
+            self.reg.install(self.SCOPE_USER, "alice", "http_user", "httpListener",
+                             config={"port": "8080"})
+
+    def test_different_ports_allowed(self):
+        """httpListeners on different ports = fine."""
+        self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
+                         config={"port": "8080"})
+        sdef = self.reg.install(self.SCOPE_GLOBAL, "", "http2", "httpListener",
+                                config={"port": "8081"})
+        assert sdef.service_id == "http2"
+
+    def test_reinstall_same_id_allowed(self):
+        """Re-installing the same service_id in the same scope = update, not conflict."""
+        self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
+                         config={"port": "9090"})
+        sdef = self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
+                                config={"port": "9090"})
+        assert sdef.service_id == "http1"
+
+    def test_bot_token_conflict(self):
+        """Same Discord bot_token in two scopes = conflict."""
+        from gui.services.service_registry import ResourceConflictError
+        self.reg.install(self.SCOPE_GLOBAL, "", "bot1", "discordBot",
+                         config={"bot_token": "tok123"})
+        with pytest.raises(ResourceConflictError, match="bot_token"):
+            self.reg.install(self.SCOPE_USER, "alice", "bot2", "discordBot",
+                             config={"bot_token": "tok123"})
+
+    def test_different_bot_tokens_allowed(self):
+        """Different bot_tokens = fine."""
+        self.reg.install(self.SCOPE_GLOBAL, "", "bot1", "discordBot",
+                         config={"bot_token": "tok_a"})
+        sdef = self.reg.install(self.SCOPE_USER, "alice", "bot2", "discordBot",
+                                config={"bot_token": "tok_b"})
+        assert sdef.service_id == "bot2"
+
+    def test_relay_port_path_conflict(self):
+        """Same port+path for relay = conflict."""
+        from gui.services.service_registry import ResourceConflictError
+        self.reg.install(self.SCOPE_GLOBAL, "", "r1", "relay",
+                         config={"port": "9091", "path": "/ws/relay", "token": "a"})
+        with pytest.raises(ResourceConflictError):
+            self.reg.install(self.SCOPE_USER, "alice", "r2", "relay",
+                             config={"port": "9091", "path": "/ws/relay", "token": "b"})
+
+    def test_relay_different_path_allowed(self):
+        """Same port, different path = fine."""
+        self.reg.install(self.SCOPE_GLOBAL, "", "r1", "relay",
+                         config={"port": "9091", "path": "/ws/relay", "token": "a"})
+        sdef = self.reg.install(self.SCOPE_USER, "alice", "r2", "relay",
+                                config={"port": "9091", "path": "/ws/relay2", "token": "b"})
+        assert sdef.service_id == "r2"
+
+    def test_update_config_conflict(self):
+        """Changing port to conflict with existing = blocked."""
+        from gui.services.service_registry import ResourceConflictError
+        self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
+                         config={"port": "8080"})
+        self.reg.install(self.SCOPE_GLOBAL, "", "http2", "httpListener",
+                         config={"port": "8081"})
+        with pytest.raises(ResourceConflictError):
+            self.reg.update_config(self.SCOPE_GLOBAL, "", "http2", {"port": "8080"})
+
+    def test_update_config_same_values_ok(self):
+        """Updating a service with its own existing values = no conflict."""
+        self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
+                         config={"port": "8080"})
+        self.reg.update_config(self.SCOPE_GLOBAL, "", "http1", {"port": "8080"})
+
+    def test_unconstrained_type_allows_duplicates(self):
+        """cacheService has no uniqueness constraint — duplicates fine."""
+        self.reg.install(self.SCOPE_GLOBAL, "", "cache1", SVC_TYPE)
+        self.reg.install(self.SCOPE_USER, "alice", "cache2", SVC_TYPE)
+        self.reg.install(self.SCOPE_GLOBAL, "", "cache3", SVC_TYPE)
+        assert len(self.reg.get_all(self.SCOPE_GLOBAL, "")) >= 2
+
+    def test_uninstall_frees_resource(self):
+        """After uninstall, the resource key is available again."""
+        self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
+                         config={"port": "9090"})
+        self.reg.uninstall(self.SCOPE_GLOBAL, "", "http1")
+        sdef = self.reg.install(self.SCOPE_GLOBAL, "", "http2", "httpListener",
+                                config={"port": "9090"})
+        assert sdef.service_id == "http2"
+
+    def test_default_port_conflict(self):
+        """httpListener with default port (9090) conflicts with explicit 9090."""
+        from gui.services.service_registry import ResourceConflictError
+        self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
+                         config={})  # defaults to port 9090
+        with pytest.raises(ResourceConflictError):
+            self.reg.install(self.SCOPE_USER, "alice", "http2", "httpListener",
+                             config={"port": "9090"})
+
+    def test_file_tracking_conflict(self):
+        """Same storage_path for fileTracking = conflict."""
+        from gui.services.service_registry import ResourceConflictError
+        self.reg.install(self.SCOPE_GLOBAL, "", "ft1", "fileTracking",
+                         config={"storage_path": "/data/tracking.json"})
+        with pytest.raises(ResourceConflictError):
+            self.reg.install(self.SCOPE_USER, "alice", "ft2", "fileTracking",
+                             config={"storage_path": "/data/tracking.json"})
+
+
 # ── i18n ──────────────────────────────────────────────────────────
 
 

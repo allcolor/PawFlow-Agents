@@ -106,8 +106,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             proc.stdin.write(msg + "\n")
             proc.stdin.flush()
             self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
-            logger.info("Sent preempt message to Claude Code (pending=%d): %.100s",
-                        self._preempt_pending, text)
+            self._flush_count_at_last_preempt = getattr(self, '_flush_count', 0)
+            logger.info("Sent preempt message to Claude Code (pending=%d, flush_count=%d): %.100s",
+                        self._preempt_pending, self._flush_count_at_last_preempt, text)
             return True
         except (OSError, BrokenPipeError) as e:
             logger.warning("Failed to send to Claude Code stdin: %s", e)
@@ -683,6 +684,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _current_msg_id: str = ""  # track message ID to detect incremental updates
         self._preempt_pending = 0  # reset at start of each stream
         self._had_preempts_this_turn = False
+        self._flush_count = 0  # incremented on each flush (= CC turn)
+        self._flush_count_at_last_preempt = 0  # value when last preempt was sent
 
         def _inject_catchup():
             """Check for new messages from other agents and inject via stdin."""
@@ -750,6 +753,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             _turn_text_parts = []
             _turn_tool_calls = []
             _turn_thinking = ""
+            self._flush_count += 1
             if (text or tc) and turn_callback:
                 logger.info("[claude-code] flush turn %d: text=%d chars, tc=%d, callback=%s",
                             _turn_count, len(text), len(tc), bool(turn_callback))
@@ -1157,18 +1161,18 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # any preempted messages). Always break — CC processes
                     # all preempts in the same session before emitting result.
                     _pending = getattr(self, '_preempt_pending', 0)
-                    _num_turns = event.get("num_turns", 1)
                     if _pending > 0:
-                        logger.info("[claude-code] result event, clearing %d preempt(s), num_turns=%d",
-                                    _pending, _num_turns)
+                        _flushes_since_preempt = self._flush_count - self._flush_count_at_last_preempt
+                        logger.info("[claude-code] result event, clearing %d preempt(s), "
+                                    "flushes_since_preempt=%d",
+                                    _pending, _flushes_since_preempt)
                         self._preempt_pending = 0
-                        # Only mark as "preempts handled" if CC actually processed
-                        # them (num_turns > 1). If num_turns == 1, CC finished its
-                        # original response before seeing the preempt → needs re-trigger.
-                        if _num_turns > 1:
+                        # CC processed the preempt only if there was at least one
+                        # flush (= turn) AFTER the preempt was sent via stdin.
+                        if _flushes_since_preempt > 0:
                             self._had_preempts_this_turn = True
                         else:
-                            logger.info("[claude-code] preempt arrived too late (num_turns=1) — will re-trigger")
+                            logger.info("[claude-code] preempt not processed (no flush after it) — will re-trigger")
                     break
 
         except _CC401Retry:

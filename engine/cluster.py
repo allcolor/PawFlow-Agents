@@ -39,6 +39,13 @@ class ClusterState:
         os.makedirs(state_dir, exist_ok=True)
         self._lock = threading.Lock()
 
+    def _atomic_write(self, path: str, data: dict):
+        """Write JSON atomically (write to tmp + rename to avoid partial reads)."""
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp_path, path)
+
     def register_instance(self, info: InstanceInfo):
         """Register this instance in shared state."""
         path = os.path.join(self._state_dir, f"instance_{info.instance_id}.json")
@@ -53,8 +60,7 @@ class ClusterState:
             "metadata": info.metadata,
         }
         with self._lock:
-            with open(path, "w") as f:
-                json.dump(data, f)
+            self._atomic_write(path, data)
 
     def update_heartbeat(self, instance_id: str):
         """Update heartbeat timestamp."""
@@ -65,8 +71,7 @@ class ClusterState:
             with open(path) as f:
                 data = json.load(f)
             data["last_heartbeat"] = time.time()
-            with open(path, "w") as f:
-                json.dump(data, f)
+            self._atomic_write(path, data)
 
     def get_instances(self, timeout: float = 30.0) -> List[InstanceInfo]:
         """Get all registered instances, filtering out dead ones."""
@@ -113,8 +118,7 @@ class ClusterState:
                         with open(path) as f:
                             data = json.load(f)
                         data["last_heartbeat"] = 0  # epoch — effectively dead
-                        with open(path, "w") as f:
-                            json.dump(data, f)
+                        self._atomic_write(path, data)
                 except OSError:
                     pass
 
@@ -134,16 +138,14 @@ class ClusterState:
             if current and current.instance_id != instance_id:
                 return False
             # Write/overwrite lock file (stale locks are simply overwritten)
-            with open(lock_path, "w") as f:
-                json.dump({"instance_id": instance_id, "claimed_at": time.time()}, f)
+            self._atomic_write(lock_path, {"instance_id": instance_id, "claimed_at": time.time()})
             # Update role
             path = os.path.join(self._state_dir, f"instance_{instance_id}.json")
             if os.path.exists(path):
                 with open(path) as f:
                     data = json.load(f)
                 data["role"] = InstanceRole.COORDINATOR.value
-                with open(path, "w") as f:
-                    json.dump(data, f)
+                self._atomic_write(path, data)
             return True
 
     def _get_coordinator_unlocked(self, timeout: float = 30.0) -> Optional[InstanceInfo]:

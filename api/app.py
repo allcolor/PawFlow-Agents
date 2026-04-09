@@ -112,7 +112,7 @@ from api.routers import (
     workers_router,
     plugins_router,
     system_router,
-    user_services_router,
+    services_router,
 )
 from api.routers import ws_router
 from api.routers.triggers_router import router as triggers_router
@@ -127,7 +127,7 @@ app.include_router(plugins_router.router, prefix="/api/v1/plugins", tags=["Plugi
 app.include_router(system_router.router, prefix="/api/v1/system", tags=["System"])
 app.include_router(ws_router.router, prefix="/ws", tags=["WebSocket"])
 app.include_router(triggers_router, prefix="/api/v1/triggers", tags=["Triggers"])
-app.include_router(user_services_router.router, prefix="/api/v1/services/user", tags=["User Services"])
+app.include_router(services_router.router, prefix="/api/v1/services", tags=["Services"])
 
 
 @app.get("/", tags=["Root"])

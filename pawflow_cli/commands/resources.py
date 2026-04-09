@@ -167,7 +167,7 @@ def handle_resources_commands(app, cmd, arg, text):
                 app.api.send_action("service_uninstall", service_id=parts[1])
                 app.renderer.print_system(f"Service '{parts[1]}' removed")
             elif subcmd == "profiles":
-                data = app.api.get("/v1/services/user/llm-profiles")
+                data = app.api.get("/v1/services/llm-profiles")
                 profiles = data.get("profiles", [])
                 for p in profiles:
                     req_key = " [api_key required]" if p.get("requires_api_key") else ""

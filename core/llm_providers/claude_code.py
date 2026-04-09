@@ -1157,12 +1157,18 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # any preempted messages). Always break — CC processes
                     # all preempts in the same session before emitting result.
                     _pending = getattr(self, '_preempt_pending', 0)
+                    _num_turns = event.get("num_turns", 1)
                     if _pending > 0:
-                        logger.info("[claude-code] result event, clearing %d preempt(s)", _pending)
+                        logger.info("[claude-code] result event, clearing %d preempt(s), num_turns=%d",
+                                    _pending, _num_turns)
                         self._preempt_pending = 0
-                        # Flag for agent_core: preempted messages were already
-                        # processed by CC — don't re-trigger a new loop for them
-                        self._had_preempts_this_turn = True
+                        # Only mark as "preempts handled" if CC actually processed
+                        # them (num_turns > 1). If num_turns == 1, CC finished its
+                        # original response before seeing the preempt → needs re-trigger.
+                        if _num_turns > 1:
+                            self._had_preempts_this_turn = True
+                        else:
+                            logger.info("[claude-code] preempt arrived too late (num_turns=1) — will re-trigger")
                     break
 
         except _CC401Retry:

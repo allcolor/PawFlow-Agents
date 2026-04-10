@@ -124,12 +124,18 @@ class ResourceStore:
                 self._data.clear()
 
     def _ensure_loaded(self, resource_type: str):
-        """Lazy-load a resource file from disk."""
+        """Lazy-load a resource file from disk, seeding from defaults/ if needed."""
         if resource_type in self._loaded:
             return
         self._loaded.add(resource_type)
         path = _RESOURCE_FILES.get(resource_type)
-        if not path or not path.exists():
+        if not path:
+            self._data[resource_type] = {}
+            return
+        if not path.exists():
+            from core.paths import ensure_seed_file
+            ensure_seed_file(path, path.name)
+        if not path.exists():
             self._data[resource_type] = {}
             return
         try:

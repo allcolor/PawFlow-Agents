@@ -20,15 +20,15 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def reset_security(tmp_path):
     """Use temp files for security config in all tests."""
-    import core.security as sec
-    orig_config = sec.SECURITY_CONFIG_PATH
-    orig_users = sec.USERS_PATH
-    sec.SECURITY_CONFIG_PATH = str(tmp_path / "security.json")
-    sec.USERS_PATH = str(tmp_path / "users.json")
+    import core.paths as _paths
+    orig_config = _paths.SECURITY_FILE
+    orig_users = _paths.USERS_FILE
+    _paths.SECURITY_FILE = tmp_path / "security.json"
+    _paths.USERS_FILE = tmp_path / "users.json"
     SecurityManager._instance = None
     yield
-    sec.SECURITY_CONFIG_PATH = orig_config
-    sec.USERS_PATH = orig_users
+    _paths.SECURITY_FILE = orig_config
+    _paths.USERS_FILE = orig_users
     SecurityManager._instance = None
 
 

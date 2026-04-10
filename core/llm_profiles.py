@@ -6,25 +6,21 @@ provider/base_url/model defaults so users don't have to configure them manually.
 
 import json
 import logging
-import os
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import LLM_PROFILES_FILE
-_PROFILES_PATH = str(LLM_PROFILES_FILE)
+from core.paths import LLM_PROFILES_FILE, ensure_seed_file
 
 
 def load_profiles() -> Dict[str, Dict[str, Any]]:
     """Load profiles from llm_profiles.json. Returns empty dict on error."""
     if not LLM_PROFILES_FILE.exists():
-        from core.paths import ensure_seed_file
         ensure_seed_file(LLM_PROFILES_FILE, "llm_profiles.json")
     try:
-        with open(_PROFILES_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return json.loads(LLM_PROFILES_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        logger.debug("llm_profiles.json not found at %s", _PROFILES_PATH)
+        logger.debug("llm_profiles.json not found at %s", LLM_PROFILES_FILE)
         return {}
     except Exception as e:
         logger.warning("Failed to load llm_profiles.json: %s", e)

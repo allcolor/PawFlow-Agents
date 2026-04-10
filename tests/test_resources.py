@@ -14,7 +14,8 @@ def reset_singleton(tmp_path):
     ResourceStore.reset()
     patched = {k: tmp_path / v.name for k, v in _RESOURCE_FILES.items()}
     with patch.dict("core.resource_store._RESOURCE_FILES", patched):
-        with patch("core.paths.CONFIG_DIR", tmp_path):
+        with patch("core.paths.CONFIG_DIR", tmp_path), \
+             patch("core.paths.DEFAULTS_DIR", tmp_path / "_no_defaults"):
             yield tmp_path
     ResourceStore.reset()
 

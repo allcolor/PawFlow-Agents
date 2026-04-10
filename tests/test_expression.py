@@ -78,9 +78,9 @@ class TestCascadeResolution(unittest.TestCase):
         self._orig_global = None
         self._user_dir = None
         # Save original global params
-        from core.expression import _GLOBAL_PARAMS_FILE, _USER_CONFIG_DIR
-        self._global_file = _GLOBAL_PARAMS_FILE
-        self._user_config_dir = _USER_CONFIG_DIR
+        from core.paths import GLOBAL_PARAMS_FILE, USER_CONFIG_DIR
+        self._global_file = GLOBAL_PARAMS_FILE
+        self._user_config_dir = USER_CONFIG_DIR
         if self._global_file.exists():
             self._orig_global = self._global_file.read_text(encoding="utf-8")
         # Write test global params

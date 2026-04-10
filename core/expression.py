@@ -16,20 +16,21 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 from core.paths import (
-    AGENT_SECRETS_FILE as _SECRETS_FILE,
-    AGENT_VARIABLES_FILE as _VARIABLES_FILE,
-    GLOBAL_PARAMS_FILE as _GLOBAL_PARAMS_FILE,
-    GLOBAL_SECRETS_FILE as _GLOBAL_SECRETS_FILE,
-    USER_CONFIG_DIR as _USER_CONFIG_DIR,
+    AGENT_SECRETS_FILE,
+    AGENT_VARIABLES_FILE,
+    GLOBAL_PARAMS_FILE,
+    GLOBAL_SECRETS_FILE,
+    USER_CONFIG_DIR,
+    ensure_seed_file,
 )
 
 
 def _load_variables() -> Dict[str, str]:
     """Load variables from the agent variables store (plaintext)."""
-    if not _VARIABLES_FILE.exists():
+    if not AGENT_VARIABLES_FILE.exists():
         return {}
     try:
-        raw = json.loads(_VARIABLES_FILE.read_text(encoding="utf-8"))
+        raw = json.loads(AGENT_VARIABLES_FILE.read_text(encoding="utf-8"))
         return {k: v.get("value", "") if isinstance(v, dict) else str(v)
                 for k, v in raw.items()}
     except Exception as e:
@@ -40,31 +41,30 @@ def _load_variables() -> Dict[str, str]:
 def _load_secrets() -> Dict[str, str]:
     """Load and decrypt secrets from the agent secrets store."""
     from core.config_store import ConfigStore
-    values = ConfigStore.load_secrets(_SECRETS_FILE)
+    values = ConfigStore.load_secrets(AGENT_SECRETS_FILE)
     return {k: str(v) for k, v in values.items()}
 
 
 def _load_global_parameters() -> Dict[str, str]:
     """Load global parameters via ConfigStore (supports spilled values)."""
-    if not _GLOBAL_PARAMS_FILE.exists():
-        from core.paths import ensure_seed_file
-        ensure_seed_file(_GLOBAL_PARAMS_FILE, "global_parameters.json")
+    if not GLOBAL_PARAMS_FILE.exists():
+        ensure_seed_file(GLOBAL_PARAMS_FILE, "global_parameters.json")
     from core.config_store import ConfigStore
-    values = ConfigStore.load_params(_GLOBAL_PARAMS_FILE)
+    values = ConfigStore.load_params(GLOBAL_PARAMS_FILE)
     return values  # Dict[str, ConfigValue] — str() works for small values
 
 
 def _load_global_secrets() -> Dict[str, str]:
     """Load and decrypt global secrets via ConfigStore."""
     from core.config_store import ConfigStore
-    values = ConfigStore.load_secrets(_GLOBAL_SECRETS_FILE)
+    values = ConfigStore.load_secrets(GLOBAL_SECRETS_FILE)
     return values  # Dict[str, ConfigValue]
 
 
 def _load_user_parameters(username: str) -> Dict[str, str]:
     """Load user-level parameters via ConfigStore."""
     from core.config_store import ConfigStore
-    path = _USER_CONFIG_DIR / username / "parameters.json"
+    path = USER_CONFIG_DIR / username / "parameters.json"
     values = ConfigStore.load_params(path)
     return values  # Dict[str, ConfigValue]
 
@@ -72,7 +72,7 @@ def _load_user_parameters(username: str) -> Dict[str, str]:
 def _load_user_secrets(username: str) -> Dict[str, str]:
     """Load and decrypt user-level secrets via ConfigStore."""
     from core.config_store import ConfigStore
-    path = _USER_CONFIG_DIR / username / "secrets.json"
+    path = USER_CONFIG_DIR / username / "secrets.json"
     values = ConfigStore.load_secrets(path)
     return values  # Dict[str, ConfigValue]
 

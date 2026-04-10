@@ -30,11 +30,7 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-from core.paths import SECURITY_FILE, USERS_FILE, SESSIONS_FILE
-
-SECURITY_CONFIG_PATH = str(SECURITY_FILE)
-USERS_PATH = str(USERS_FILE)
-SESSIONS_PATH = str(SESSIONS_FILE)
+import core.paths as _paths
 
 
 class Role(Enum):
@@ -371,7 +367,7 @@ class SecurityManager:
     # -- Persistence --
 
     def _load_config(self):
-        path = Path(SECURITY_CONFIG_PATH)
+        path = _paths.SECURITY_FILE
         if path.exists():
             try:
                 with open(path, 'r') as f:
@@ -384,7 +380,7 @@ class SecurityManager:
                 logger.error(f"Failed to load security config: {e}")
 
     def _save_config(self):
-        path = Path(SECURITY_CONFIG_PATH)
+        path = _paths.SECURITY_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "auth_enabled": self._auth_enabled,
@@ -396,7 +392,7 @@ class SecurityManager:
             json.dump(data, f, indent=2)
 
     def _load_users(self):
-        path = Path(USERS_PATH)
+        path = _paths.USERS_FILE
         if path.exists():
             try:
                 with open(path, 'r') as f:
@@ -418,7 +414,7 @@ class SecurityManager:
             self._save_users()
 
     def _save_users(self):
-        path = Path(USERS_PATH)
+        path = _paths.USERS_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {"users": [u.to_dict() for u in self._users.values()]}
         with open(path, 'w') as f:
@@ -432,7 +428,7 @@ class SecurityManager:
         Expired sessions are KEPT (for silent OAuth refresh) unless they
         exceed the hard expiry (2 weeks with no activity).
         """
-        path = Path(SESSIONS_PATH)
+        path = _paths.SESSIONS_FILE
         if not path.exists():
             return
         try:
@@ -468,7 +464,7 @@ class SecurityManager:
         """Persist sessions to disk. Keeps expired sessions for silent refresh.
         Only hard-expired sessions (>2 weeks) are excluded.
         """
-        path = Path(SESSIONS_PATH)
+        path = _paths.SESSIONS_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
         now = time.time()
         sessions = [

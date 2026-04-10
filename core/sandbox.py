@@ -451,7 +451,6 @@ def build_sandbox_globals(
     # Secret and variable accessors (read-only, never expose values in logs)
     def _get_secret(key: str, user_id: str) -> str:
         """Get a decrypted secret by name. Usage: get_secret('my_api_key')"""
-        from pathlib import Path
         import json as _j
         from core.paths import AGENT_SECRETS_FILE
         secrets_path = AGENT_SECRETS_FILE
@@ -468,7 +467,6 @@ def build_sandbox_globals(
 
     def _get_variable(key: str, user_id: str) -> str:
         """Get a stored variable by name. Usage: get_variable('my_var')"""
-        from pathlib import Path
         import json as _j
         from core.paths import AGENT_VARIABLES_FILE
         var_path = AGENT_VARIABLES_FILE

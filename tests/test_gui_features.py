@@ -19,19 +19,19 @@ class TestSecurityManagerAuth:
         """Create a fresh SecurityManager with a temp config dir."""
         self.tmpdir = tempfile.mkdtemp()
         # Override config paths
-        import core.security as sec_mod
-        self._orig_config = sec_mod.SECURITY_CONFIG_PATH
-        self._orig_users = sec_mod.USERS_PATH
-        sec_mod.SECURITY_CONFIG_PATH = os.path.join(self.tmpdir, "security.json")
-        sec_mod.USERS_PATH = os.path.join(self.tmpdir, "users.json")
+        import core.paths as _paths
+        self._orig_config = _paths.SECURITY_FILE
+        self._orig_users = _paths.USERS_FILE
+        _paths.SECURITY_FILE = Path(self.tmpdir) / "security.json"
+        _paths.USERS_FILE = Path(self.tmpdir) / "users.json"
         # Reset singleton
         SecurityManager._instance = None
         self.sm = SecurityManager.get_instance()
 
     def teardown_method(self):
-        import core.security as sec_mod
-        sec_mod.SECURITY_CONFIG_PATH = self._orig_config
-        sec_mod.USERS_PATH = self._orig_users
+        import core.paths as _paths
+        _paths.SECURITY_FILE = self._orig_config
+        _paths.USERS_FILE = self._orig_users
         SecurityManager._instance = None
         import shutil
         shutil.rmtree(self.tmpdir, ignore_errors=True)

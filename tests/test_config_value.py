@@ -299,9 +299,9 @@ class TestExpressionWithConfigValue:
         """Small global param resolves normally via expression."""
         params_file = tmp_path / "global_parameters.json"
         params_file.write_text(json.dumps({"env": "prod"}))
-        monkeypatch.setattr(
-            "core.paths.GLOBAL_PARAMS_FILE", params_file
-        )
+        # Patch both the source AND the local reference in expression module
+        monkeypatch.setattr("core.paths.GLOBAL_PARAMS_FILE", params_file)
+        monkeypatch.setattr("core.expression.GLOBAL_PARAMS_FILE", params_file)
         from core.expression import resolve_expression
         result = resolve_expression("${env}")
         assert result == "prod"
@@ -312,9 +312,8 @@ class TestExpressionWithConfigValue:
         big = "L" * (SPILL_THRESHOLD + 10)
         data = {"big": ConfigValue(value=big)}
         ConfigStore.save_params(params_file, data)
-        monkeypatch.setattr(
-            "core.paths.GLOBAL_PARAMS_FILE", params_file
-        )
+        monkeypatch.setattr("core.paths.GLOBAL_PARAMS_FILE", params_file)
+        monkeypatch.setattr("core.expression.GLOBAL_PARAMS_FILE", params_file)
         from core.expression import resolve_expression
         result = resolve_expression("${big}")
         assert result == "${big}"  # Left unresolved

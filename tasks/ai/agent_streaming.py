@@ -241,11 +241,21 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         _already_active = any(
             t.is_alive() and t.name == _thread_name
             for t in threading.enumerate())
-        # Safety: if thread is "active" but no context entry, it's a zombie
+        # Safety: if thread is "active" but no context entry, it's a zombie.
+        # Kill its CC process + release pool slot before starting a new loop.
         if _already_active:
             with self._active_contexts_lock:
                 if _agent_key not in self._active_contexts:
-                    logger.warning("[agent:%s] zombie thread detected — ignoring", conversation_id[:8])
+                    logger.warning("[agent:%s] zombie thread detected — killing CC process", conversation_id[:8])
+                    # Kill any orphaned CC process for this agent
+                    try:
+                        _zombie_cc = self._active_claude_client.get(_agent_key)
+                        if _zombie_cc and hasattr(_zombie_cc, 'cancel_claude_code'):
+                            _zombie_cc.cancel_claude_code(force=True)
+                            logger.info("[agent:%s] zombie CC process killed", conversation_id[:8])
+                        self._active_claude_client.pop(_agent_key, None)
+                    except Exception as _ze:
+                        logger.debug("[agent:%s] zombie cleanup failed: %s", conversation_id[:8], _ze)
                     _already_active = False
         if _already_active:
             with self._active_contexts_lock:

@@ -39,6 +39,9 @@ RUN mkdir -p /usr/local/share/applications && \
     printf '[Desktop Entry]\nType=Application\nName=Chromium\nExec=/usr/local/bin/open-browser %%U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' \
     > /usr/local/share/applications/chromium.desktop
 
+# Python deps for MCP bridge
+RUN pip3 install --break-system-packages --no-cache-dir json-repair
+
 # MCP bridge + PawFlow SDK (LAST — changes often, don't bust cache)
 COPY mcp_bridge.py /opt/pawflow/mcp_bridge.py
 COPY pawflow.py /opt/pawflow/pawflow.py

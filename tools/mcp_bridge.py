@@ -448,9 +448,19 @@ def main():
                                 _decode_failed = True
                                 break
                         else:
-                            _log(f"USE_TOOL {tool_name} JSON decode FAILED (pass {_unwrap_passes+1}): {_je} value={str(tool_args)[:200]}")
-                            _decode_failed = True
-                            break
+                            # Last resort: json-repair for structurally broken JSON
+                            # (e.g. unescaped quotes in bash commands)
+                            try:
+                                from json_repair import repair_json
+                                _repaired = repair_json(tool_args)
+                                tool_args = json.loads(_repaired)
+                                _unwrap_passes += 1
+                                _log(f"USE_TOOL {tool_name} json-repair OK (fixed malformed JSON)")
+                            except Exception as _je3:
+                                _log(f"USE_TOOL {tool_name} ALL decode attempts FAILED: "
+                                     f"json.loads={_je} json-repair={_je3} value={str(tool_args)[:200]}")
+                                _decode_failed = True
+                                break
                     except TypeError as _je:
                         _log(f"USE_TOOL {tool_name} JSON decode TypeError: {_je}")
                         _decode_failed = True

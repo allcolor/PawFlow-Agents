@@ -422,6 +422,25 @@ def main():
                     result = str(result)
             elif name == "use_tool":
                 tool_name = args.get("tool_name", "")
+                # Map hallucinated/legacy tool names to real PawFlow names
+                _TOOL_ALIASES = {
+                    # CC hallucinations (common LLM mistakes)
+                    "run_command": "bash", "shell": "bash", "execute": "bash",
+                    "run": "bash", "terminal": "bash", "exec": "bash",
+                    "search": "grep", "find_files": "glob", "list_files": "glob",
+                    "cat": "read", "view": "read", "open": "read",
+                    "create_file": "write", "save": "write",
+                    "replace": "edit", "patch": "edit", "modify": "edit",
+                    "web_fetch": "fetch", "http": "fetch",
+                    # CC official legacy aliases
+                    "Task": "Agent", "Brief": "SendUserMessage",
+                    "KillShell": "TaskStop",
+                    "AgentOutputTool": "TaskOutput", "BashOutputTool": "TaskOutput",
+                }
+                if tool_name in _TOOL_ALIASES:
+                    _real = _TOOL_ALIASES[tool_name]
+                    _log(f"USE_TOOL alias: {tool_name} → {_real}")
+                    tool_name = _real
                 tool_args_raw = args.get("arguments", {})
                 _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
                 # Unwrap JSON string arguments (CC sometimes double/triple-encodes)

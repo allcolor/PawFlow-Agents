@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def _admin_list_task_types(body, exec_reg, deploy_reg, gsvc_reg, tmpl_svc):
     """List all registered task types with category info."""
-    from gui.components.color_scheme import TASK_CATEGORIES
+    from core.task_categories import TASK_CATEGORIES
     result = []
     for task_type in TaskFactory.list_types():
         cls = TaskFactory.get(task_type)

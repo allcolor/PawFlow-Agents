@@ -12,7 +12,7 @@ import logging
 from datetime import datetime
 
 from core import StorageManager
-from config import FilesystemStorage, SqliteStorage, GitStorage, PostgresStorage
+from core.storage_backends import FilesystemStorage, SqliteStorage, GitStorage, PostgresStorage
 
 logger = logging.getLogger(__name__)
 

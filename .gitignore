@@ -27,16 +27,8 @@ venv/
 # Node
 node_modules/
 
-# ── Runtime config (secrets, sessions, user state — never commit) ──
-data/config/*
-!data/config/agents.json
-!data/config/skills.json
-!data/config/global_parameters.json
-!data/config/llm_profiles.json
-!data/config/prompts.json
-!data/config/task_defs.json
-!data/config/task_templates.json
-!data/config/mcp_servers.json
+# ── Runtime config (all generated/user-modified, seeded from defaults/) ──
+data/config/
 
 # ── Runtime state ──────────────────────────────────────────────
 continuous_state.json
@@ -76,9 +68,6 @@ Thumbs.db
 
 # ── Streamlit (deprecated) ────────────────────────────────────
 .streamlit/
-
-# ── Temp seed copies ────────────────────────────────────────
-defaults/
 
 # ── Temp test files ───────────────────────────────────────────
 _test_path.py

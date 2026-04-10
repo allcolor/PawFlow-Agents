@@ -55,8 +55,19 @@ GATEWAY_BANS_FILE = DATA_DIR / "gateway_bans.json"
 
 
 # ── Defaults (seed data, tracked in git) ──────────────────────
+DEFAULTS_DIR = Path("defaults")
 
 
+def ensure_seed_file(target: Path, default_name: str) -> None:
+    """Copy a seed file from defaults/ to target if target doesn't exist."""
+    if target.exists():
+        return
+    source = DEFAULTS_DIR / default_name
+    if not source.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.copy2(source, target)
 
 
 def user_secrets_path(user_id: str) -> Path:

@@ -1159,21 +1159,20 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     _pending = getattr(self, '_preempt_pending', 0)
                     _num_turns = event.get("num_turns", 1)
                     if _pending > 0:
-                        logger.info("[claude-code] result event, clearing %d preempt(s), "
-                                    "num_turns=%d",
+                        logger.info("[claude-code] result event with %d pending preempt(s), "
+                                    "num_turns=%d — continuing to read (CC will process preempts)",
                                     _pending, _num_turns)
+                        # DON'T break — CC will continue processing the preempt(s).
+                        # It will emit more assistant/tool/result events for each preempt.
+                        # We keep reading stdout until CC emits a result with 0 pending preempts.
                         self._preempt_pending = 0
-                        # CC processed the preempt only if num_turns > 1.
-                        # num_turns counts user→assistant rounds in THIS execution.
-                        # Original message = turn 1 (even with 100 tool calls).
-                        # A processed preempt = turn 2+.
-                        # num_turns == 1 means CC finished its original response
-                        # without seeing the preempt → needs re-trigger.
-                        if _num_turns > 1:
-                            self._had_preempts_this_turn = True
-                            logger.info("[claude-code] preempt processed (num_turns=%d > 1)", _num_turns)
-                        else:
-                            logger.info("[claude-code] preempt NOT processed (num_turns=1) — will re-trigger")
+                        self._had_preempts_this_turn = True
+                        # Reset turn state for the next CC turn (preempt response)
+                        _turn_text_parts = []
+                        _turn_tool_calls = []
+                        _turn_thinking = ""
+                        _turn_count += 1
+                        continue  # keep reading stdout
                     break
 
         except _CC401Retry:

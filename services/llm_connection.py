@@ -89,16 +89,8 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
-        if self.provider == "claude-code":
-            import shutil
-            binary = self.config.get("claude_binary", "claude")
-            if not shutil.which(binary):
-                logger.warning("Claude CLI binary '%s' not found in PATH", binary)
-        elif self.provider == "gemini-cli":
-            import shutil
-            binary = self.config.get("gemini_binary", "gemini")
-            if not shutil.which(binary):
-                logger.warning("Gemini CLI binary '%s' not found in PATH", binary)
+        if self.provider in ("claude-code", "gemini-cli"):
+            pass  # binary auto-detected at runtime
         else:
             # API-based providers need an api_key
             if not self.api_key:
@@ -361,14 +353,6 @@ class LLMConnectionService(BaseService):
                 "type": "string", "default": "0",
                 "description": "Cost per 1M output tokens ($)",
             },
-            "claude_binary": {
-                "type": "string", "default": "claude",
-                "description": "Path to Claude CLI binary",
-            },
-            "gemini_binary": {
-                "type": "string", "default": "gemini",
-                "description": "Path to Gemini CLI binary",
-            },
             "tool_result_max_chars": {
                 "type": "integer", "default": 50000,
                 "description": "Max chars for tool results in LLM context (0 = default 50000)",
@@ -406,20 +390,16 @@ class LLMConnectionService(BaseService):
                     "base_url":      {"visible": True},
                     "max_retries":   {"visible": True},
                     "fallback_model": {"visible": True},
-                    "claude_binary": {"visible": False},
-                    "gemini_binary": {"visible": False},
                 }
             },
             {
                 "when": {"provider": ["claude-code"]},
                 "set": {
-                    "claude_binary": {"visible": True, "required": True},
                     "api_key":       {"visible": False},
                     "base_url":      {"visible": False},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "max_concurrent": {"visible": False},
-                    "gemini_binary": {"visible": False},
                     "timeout":       {"default": 600},
                     "containerize":  {"visible": True},
                     "docker_image":  {"visible": True},
@@ -431,12 +411,10 @@ class LLMConnectionService(BaseService):
             {
                 "when": {"provider": ["gemini-cli"]},
                 "set": {
-                    "gemini_binary": {"visible": True, "required": True},
                     "api_key":       {"visible": True},
                     "base_url":      {"visible": False},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
-                    "claude_binary": {"visible": False},
                 }
             },
         ]

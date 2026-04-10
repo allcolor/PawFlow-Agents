@@ -9,8 +9,11 @@ Used by:
 
 import json
 import logging
+import os
 import random
 import re
+import shutil
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -25,6 +28,29 @@ from core.llm_providers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _find_cli_binary(name: str) -> str:
+    """Auto-detect a CLI binary (claude/gemini) in known locations."""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        candidates = [
+            os.path.join(home, ".local", "bin", f"{name}.exe"),
+            os.path.join(home, "AppData", "Roaming", "npm", f"{name}.cmd"),
+            os.path.join(home, "AppData", "Roaming", "npm", name),
+            os.path.join(home, ".npm-global", "bin", f"{name}.cmd"),
+        ]
+    else:
+        candidates = [
+            os.path.join(home, ".local", "bin", name),
+            os.path.join(home, ".npm-global", "bin", name),
+            f"/usr/local/bin/{name}",
+            f"/usr/bin/{name}",
+        ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return shutil.which(name) or name
 
 
 @dataclass
@@ -210,11 +236,11 @@ class LLMClient(
 
     @property
     def claude_binary(self):
-        return self._cfg("claude_binary", "claude")
+        return _find_cli_binary("claude")
 
     @property
     def gemini_binary(self):
-        return self._cfg("gemini_binary", "gemini")
+        return _find_cli_binary("gemini")
 
     @property
     def fallback_model(self):

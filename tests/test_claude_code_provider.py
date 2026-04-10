@@ -377,23 +377,23 @@ class TestProviderInProviders(unittest.TestCase):
         client = LLMClient.from_config({
             "provider": "claude-code",
             "api_key": "test",
-            "claude_binary": "/usr/bin/claude",
             "default_model": "opus",
         })
         self.assertEqual(client.provider, "claude-code")
-        self.assertEqual(client.claude_binary, "/usr/bin/claude")
         self.assertEqual(client.default_model, "opus")
+        # claude_binary is auto-detected, not configurable
+        self.assertIsInstance(client.claude_binary, str)
 
     def test_from_config_gemini(self):
         client = LLMClient.from_config({
             "provider": "gemini-cli",
             "api_key": "test-gemini",
-            "gemini_binary": "/usr/bin/gemini",
             "default_model": "gemini-2.5-pro",
         })
         self.assertEqual(client.provider, "gemini-cli")
-        self.assertEqual(client.gemini_binary, "/usr/bin/gemini")
         self.assertEqual(client.default_model, "gemini-2.5-pro")
+        # gemini_binary is auto-detected, not configurable
+        self.assertIsInstance(client.gemini_binary, str)
 
 
 # ── Gemini CLI Provider Tests ────────────────────────────────────

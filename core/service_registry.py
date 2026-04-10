@@ -3,8 +3,8 @@
 A single class that manages service definitions and live instances across
 all three scopes. The scope determines storage and keying:
 
-    global  — shared across all users. Persisted in config/global_services.json
-    user    — per-user. Persisted in config/user_services/{user_id}.json
+    global  — shared across all users. Persisted in data/config/global_services.json
+    user    — per-user. Persisted in data/config/user_services/{user_id}.json
     conv    — per-conversation. Persisted in ConversationStore extras.
 
 All scopes share the same CRUD interface — only the scope_id changes.
@@ -22,9 +22,10 @@ from core import ServiceFactory, Service
 
 logger = logging.getLogger(__name__)
 
-# Storage paths
-GLOBAL_SERVICES_FILE = Path("config/global_services.json")
-USER_SERVICES_DIR = Path("config/user_services")
+from core.paths import (
+    GLOBAL_SERVICES_FILE,
+    USER_SERVICES_DIR,
+)
 CONV_EXTRAS_KEY = "conv_services"
 
 # Scopes

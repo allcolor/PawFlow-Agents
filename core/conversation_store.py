@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DIR = "data/conversations"
+from core.paths import CONVERSATIONS_DIR; _DEFAULT_DIR = str(CONVERSATIONS_DIR)
 
 
 class ConversationStore:

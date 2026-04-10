@@ -862,8 +862,9 @@ def render_secrets_tab():
 
     st.info(t("secrets.info"))
 
-    # Manage secrets stored in config/secrets.json
-    secrets_path = Path("config/secrets.json")
+    # Manage secrets stored in data/config/secrets.json
+    from core.paths import SECRETS_FILE
+    secrets_path = SECRETS_FILE
     secrets_data = {}
     if secrets_path.exists():
         import json as _json
@@ -939,8 +940,9 @@ def render_parameter_contexts_tab():
     """Parameter contexts management."""
     st.markdown(f"### 📎 {t('params.title')}")
 
-    # Parameter contexts are stored in config/parameter_contexts.json
-    ctx_path = Path("config/parameter_contexts.json")
+    # Parameter contexts are stored in data/config/parameter_contexts.json
+    from core.paths import PARAMETER_CONTEXTS_FILE
+    ctx_path = PARAMETER_CONTEXTS_FILE
     contexts = {}
     if ctx_path.exists():
         import json as _json

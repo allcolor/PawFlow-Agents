@@ -156,7 +156,7 @@ class TestPlanHandlers(unittest.TestCase):
         # Ensure clean plan state
         from core.plan_store import PlanStore
         PlanStore._instance = None
-        shutil.rmtree("data/plans", ignore_errors=True)
+        from core.paths import PLANS_DIR; shutil.rmtree(str(PLANS_DIR), ignore_errors=True)
 
     def tearDown(self):
         ConversationStore.reset()
@@ -164,7 +164,7 @@ class TestPlanHandlers(unittest.TestCase):
         # Clean up plans created during test
         from core.plan_store import PlanStore
         PlanStore._instance = None
-        shutil.rmtree("data/plans", ignore_errors=True)
+        from core.paths import PLANS_DIR; shutil.rmtree(str(PLANS_DIR), ignore_errors=True)
 
     def test_create_plan(self):
         h = CreatePlanHandler()
@@ -718,7 +718,7 @@ class TestStoreSecretHandler(unittest.TestCase):
         self.assertIn("stored securely", result)
         self.assertIn("my_api_key", result)
         # Verify file was created in user directory
-        secrets_path = Path(self.tmpdir) / "config" / "users" / "testuser" / "secrets.json"
+        secrets_path = Path(self.tmpdir) / "data" / "config" / "users" / "testuser" / "secrets.json"
         self.assertTrue(secrets_path.exists())
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
         self.assertIn("my_api_key", data)
@@ -736,7 +736,7 @@ class TestStoreSecretHandler(unittest.TestCase):
     def test_store_multiple_secrets(self):
         self.handler.execute({"key": "key1", "value": "val1"})
         self.handler.execute({"key": "key2", "value": "val2"})
-        secrets_path = Path(self.tmpdir) / "config" / "users" / "testuser" / "secrets.json"
+        secrets_path = Path(self.tmpdir) / "data" / "config" / "users" / "testuser" / "secrets.json"
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
         self.assertIn("key1", data)
         self.assertIn("key2", data)
@@ -1130,16 +1130,16 @@ class TestConversationScoping(unittest.TestCase):
         handler.execute({"key": "k1", "value": "v1"})
         # Cleanup should not remove user secrets
         StoreSecretHandler.cleanup_conversation("conv-del")
-        secrets_path = Path("config/users/user1/secrets.json")
+        from core.paths import user_secrets_path; secrets_path = user_secrets_path("user1")
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
         self.assertIn("k1", data)
 
     def test_secret_stored_in_user_dir(self):
-        """Secrets are stored in config/users/{username}/secrets.json."""
+        """Secrets are stored in data/config/users/{username}/secrets.json."""
         handler = StoreSecretHandler()
         handler.set_user_id("user1")
         handler.execute({"key": "mykey", "value": "myval"})
-        secrets_path = Path("config/users/user1/secrets.json")
+        from core.paths import user_secrets_path; secrets_path = user_secrets_path("user1")
         self.assertTrue(secrets_path.exists())
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
         self.assertIn("mykey", data)

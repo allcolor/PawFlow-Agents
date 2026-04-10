@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DIR = "data/memories"
+from core.paths import MEMORIES_DIR; _DEFAULT_DIR = str(MEMORIES_DIR)
 
 
 class MemoryEntry:

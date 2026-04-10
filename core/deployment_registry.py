@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
-DEPLOYMENTS_DIR = Path("data/deployments")
+from core.paths import DEPLOYMENTS_DIR
 GLOBAL_OWNER = "__global__"
 
 
@@ -459,7 +459,7 @@ class DeploymentRegistry:
 
         Returns the number of migrated instances.
         """
-        agent_dir = Path("data/agent_flows")
+        from core.paths import AGENT_FLOWS_DIR; agent_dir = AGENT_FLOWS_DIR
         if not agent_dir.exists():
             return 0
 

@@ -513,7 +513,8 @@ def cmd_triggers(args):
     from engine.triggers import TriggerManager, TriggerType
 
     tm = TriggerManager()
-    config_path = "config/triggers.json"
+    from core.paths import TRIGGERS_FILE
+    config_path = str(TRIGGERS_FILE)
     tm.load_triggers(config_path)
 
     if args.action == "list":

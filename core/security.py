@@ -30,10 +30,11 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-# Default config path
-SECURITY_CONFIG_PATH = "config/security.json"
-USERS_PATH = "config/users.json"
-SESSIONS_PATH = "config/sessions.json"
+from core.paths import SECURITY_FILE, USERS_FILE, SESSIONS_FILE
+
+SECURITY_CONFIG_PATH = str(SECURITY_FILE)
+USERS_PATH = str(USERS_FILE)
+SESSIONS_PATH = str(SESSIONS_FILE)
 
 
 class Role(Enum):

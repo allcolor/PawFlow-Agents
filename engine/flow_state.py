@@ -5,8 +5,8 @@ restart them after a crash or planned restart.
 
 Also manages flow config version history for downgrade support.
 
-State file: config/running_flows.json
-Version backups: config/flow_versions/{flow_id}/v{N}.json
+State file: data/config/running_flows.json
+Version backups: data/config/flow_versions/{flow_id}/v{N}.json
 """
 
 import json
@@ -19,9 +19,10 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_STATE_DIR = "config"
-_STATE_FILE = os.path.join(_STATE_DIR, "running_flows.json")
-_VERSIONS_DIR = os.path.join(_STATE_DIR, "flow_versions")
+from core.paths import CONFIG_DIR, FLOW_VERSIONS_DIR
+_STATE_DIR = str(CONFIG_DIR)
+_STATE_FILE = str(CONFIG_DIR / "running_flows.json")
+_VERSIONS_DIR = str(FLOW_VERSIONS_DIR)
 
 
 class FlowStateEntry:

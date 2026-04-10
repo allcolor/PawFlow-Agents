@@ -16,7 +16,7 @@ class ManageResourceHandler(ToolHandler):
     """CRUD for user resources: agents, skills, MCP servers, prompts.
 
     Both users (via slash commands) and agents (via tool calls) can manage
-    resources. Resources are user-scoped and persist in config/ JSON files.
+    resources. Resources are user-scoped and persist in data/config/ JSON files.
     """
 
     def __init__(self):

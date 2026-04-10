@@ -325,7 +325,7 @@ class FlowManagerHandler(ToolHandler):
 
         # Save the flow definition as a template in a temp location
         from pathlib import Path
-        tmp_dir = Path("data/agent_templates")
+        from core.paths import AGENT_TEMPLATES_DIR; tmp_dir = AGENT_TEMPLATES_DIR
         tmp_dir.mkdir(parents=True, exist_ok=True)
         # Strip internal fields
         clean_def = {k: v for k, v in definition.items() if not k.startswith("_")}

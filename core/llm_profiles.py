@@ -1,6 +1,6 @@
 """LLM profile resolution — maps profile names to LLMConnection config.
 
-Profiles are defined in config/llm_profiles.json and provide ready-made
+Profiles are defined in data/config/llm_profiles.json and provide ready-made
 provider/base_url/model defaults so users don't have to configure them manually.
 """
 
@@ -11,12 +11,15 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-_PROFILES_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                               "config", "llm_profiles.json")
+from core.paths import LLM_PROFILES_FILE
+_PROFILES_PATH = str(LLM_PROFILES_FILE)
 
 
 def load_profiles() -> Dict[str, Dict[str, Any]]:
-    """Load profiles from config/llm_profiles.json. Returns empty dict on error."""
+    """Load profiles from llm_profiles.json. Returns empty dict on error."""
+    if not LLM_PROFILES_FILE.exists():
+        from core.paths import ensure_seed_file
+        ensure_seed_file(LLM_PROFILES_FILE, "llm_profiles.json")
     try:
         with open(_PROFILES_PATH, "r", encoding="utf-8") as f:
             return json.load(f)

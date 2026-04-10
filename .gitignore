@@ -27,41 +27,35 @@ venv/
 # Node
 node_modules/
 
-# ── SECRETS & AUTH (NEVER commit) ──────────────────────────────
-config/global_secrets.json
-config/secrets.json
-config/secret.key
-config/users/*/secrets.json
-config/users/*/oauth_tokens.json
-
-# ── User-specific config (runtime, not source) ────────────────
-config/global_services.json
-config/user_services/
-config/users/*/parameters.json
-config/agent_secrets.json
-config/sessions.json
-config/users.json
-config/agent_variables.json
-config/ssl/
+# ── Runtime config (secrets, sessions, user state — never commit) ──
+data/config/*
+!data/config/agents.json
+!data/config/skills.json
+!data/config/global_parameters.json
+!data/config/llm_profiles.json
+!data/config/prompts.json
+!data/config/task_defs.json
+!data/config/task_templates.json
+!data/config/mcp_servers.json
 
 # ── Runtime state ──────────────────────────────────────────────
 continuous_state.json
-config/storage/*.json
-config/storage/*.db
-config/storage/*.sqlite
-config/flow_versions/
 
 # ── Data (runtime, generated) ─────────────────────────────────
 data/conversations/
 data/claude_sessions/
 data/agent_flows/
+data/agent_templates/
 data/dynamic_tools/
 data/files/
+data/graphs/
+data/knowledge_graphs/
+data/memories/
+data/plans/
 data/poll_schedule/
 data/token_usage.json
 data/identities.json
 data/identity_mappings.json
-data/memories/
 data/gateway_bans.json
 data/server_id
 data/deployments/*/
@@ -75,11 +69,6 @@ static/novnc/
 # ── Plugin builds ─────────────────────────────────────────────
 plugins/*.pfp
 
-# ── Config for user resources (runtime) ───────────────────────
-config/agents.json
-config/skills.json
-config/mcp_servers.json
-
 # ── OS ────────────────────────────────────────────────────────
 Thumbs.db
 .DS_Store
@@ -88,9 +77,11 @@ Thumbs.db
 # ── Streamlit (deprecated) ────────────────────────────────────
 .streamlit/
 
+# ── Temp seed copies ────────────────────────────────────────
+defaults/
+
 # ── Temp test files ───────────────────────────────────────────
 _test_path.py
 test_flow.py
 test_gui.py
 test_input/
-data/graphs/

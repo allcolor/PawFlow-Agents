@@ -761,26 +761,24 @@ def resolve_secrets_env(user_id: str, conversation_id: str) -> dict:
 
     env = {}
 
+    from core.paths import GLOBAL_PARAMS_FILE, GLOBAL_SECRETS_FILE, USER_CONFIG_DIR
+
     # ── Global variables ──
-    _global_params = Path("config/global_params.json")
-    for k, cv in ConfigStore.load_params(_global_params).items():
+    for k, cv in ConfigStore.load_params(GLOBAL_PARAMS_FILE).items():
         env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
 
     # ── Global secrets ──
-    _global_secrets = Path("config/global_secrets.json")
-    for k, cv in ConfigStore.load_secrets(_global_secrets).items():
+    for k, cv in ConfigStore.load_secrets(GLOBAL_SECRETS_FILE).items():
         env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
 
     # ── User variables (override global) ──
     if user_id:
-        _user_params = Path("config/users") / user_id / "params.json"
-        for k, cv in ConfigStore.load_params(_user_params).items():
+        for k, cv in ConfigStore.load_params(USER_CONFIG_DIR / user_id / "params.json").items():
             env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
 
     # ── User secrets (override global) ──
     if user_id:
-        _user_secrets = Path("config/users") / user_id / "secrets.json"
-        for k, cv in ConfigStore.load_secrets(_user_secrets).items():
+        for k, cv in ConfigStore.load_secrets(USER_CONFIG_DIR / user_id / "secrets.json").items():
             env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
 
     # ── Conversation variables + secrets (override user) ──
@@ -820,9 +818,10 @@ def resolve_secret_values(user_id: str, conversation_id: str) -> tuple:
     values = set()
     names = {}
 
+    from core.paths import GLOBAL_SECRETS_FILE, USER_CONFIG_DIR
+
     # Global secrets
-    _global_secrets = Path("config/global_secrets.json")
-    for k, cv in ConfigStore.load_secrets(_global_secrets).items():
+    for k, cv in ConfigStore.load_secrets(GLOBAL_SECRETS_FILE).items():
         v = cv.value if hasattr(cv, 'value') else str(cv)
         if v and len(v) >= 4:
             values.add(v)
@@ -830,8 +829,7 @@ def resolve_secret_values(user_id: str, conversation_id: str) -> tuple:
 
     # User secrets
     if user_id:
-        _user_secrets = Path("config/users") / user_id / "secrets.json"
-        for k, cv in ConfigStore.load_secrets(_user_secrets).items():
+        for k, cv in ConfigStore.load_secrets(USER_CONFIG_DIR / user_id / "secrets.json").items():
             v = cv.value if hasattr(cv, 'value') else str(cv)
             if v and len(v) >= 4:
                 values.add(v)

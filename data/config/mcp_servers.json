@@ -1,0 +1,16 @@
+{
+  "u1:m_test": {
+    "url": "",
+    "transport": "http",
+    "via": "",
+    "relay_service": "",
+    "command": "",
+    "args": [],
+    "env": {},
+    "auth": {},
+    "discovered_tools": [],
+    "name": "m_test",
+    "created_at": 1775601104.18174,
+    "updated_at": 1775601104.1817405
+  }
+}

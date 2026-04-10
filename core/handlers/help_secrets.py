@@ -455,21 +455,21 @@ Variables available in scripts:
 PawFlow expressions use `${...}` syntax and are resolved at parse/runtime.
 
 ## Global Secrets (shared across all flows)
-- `${key_name}` — Encrypted global secret (config/global_secrets.json)
+- `${key_name}` — Encrypted global secret (data/config/global_secrets.json)
 - Managed via Runtime UI (🔑 button next to Global in treeview)
 
 ## User Secrets (per-user, encrypted at rest)
-- `${key_name}` — Encrypted user secret (config/users/{username}/secrets.json)
+- `${key_name}` — Encrypted user secret (data/config/users/{username}/secrets.json)
 - Store via: `/add-secret name value` in chat or `store_secret` tool
 - Managed via Runtime UI (🔑 button next to user group in treeview)
 - Use `list_secrets` tool or `/list-secrets` in chat to see available keys
 
 ## Global Parameters (shared across all flows)
-- `${key_name}` — Global parameter (config/global_parameters.json)
+- `${key_name}` — Global parameter (data/config/global_parameters.json)
 - Managed via Runtime UI (⚙️ button next to Global in treeview)
 
 ## User Parameters (per-user)
-- `${key_name}` — User parameter (config/users/{username}/parameters.json)
+- `${key_name}` — User parameter (data/config/users/{username}/parameters.json)
 - Store via: `/add-variable name value` in chat
 - Managed via Runtime UI (⚙️ button next to user group in treeview)
 - Use `/list-variables` in chat to see available keys
@@ -606,7 +606,7 @@ show_file(filename="report.pdf")
 - `/view <filename>` — Open file viewer
 
 ## Scope Model
-- Resource definitions are global (per user) — stored in config/*.json
+- Resource definitions are global (per user) — stored in data/config/*.json
 - Activation is per conversation — stored in conversation metadata
 - Share = activate a resource in another conversation of the same user"""
 
@@ -615,7 +615,7 @@ class StoreSecretHandler(ToolHandler):
     """Securely store a credential or secret value.
 
     Uses the SecretsManager to encrypt the value at rest.
-    Stores in user-level secrets file: config/users/{username}/secrets.json
+    Stores in user-level secrets file: data/config/users/{username}/secrets.json
     Referenced via ${key_name} in flows.
     """
 
@@ -671,7 +671,7 @@ class StoreSecretHandler(ToolHandler):
             from core.config_store import ConfigStore
             from core.config_value import ConfigValue
 
-            secrets_path = Path("config/users") / user_id / "secrets.json"
+            from core.paths import user_secrets_path; secrets_path = user_secrets_path(user_id)
             secrets = ConfigStore.load_secrets(secrets_path)
             secrets[key] = ConfigValue(value=value)
             ConfigStore.save_secrets(secrets_path, secrets)
@@ -715,7 +715,7 @@ class ListSecretsHandler(ToolHandler):
         from core.config_store import ConfigStore
 
         user_id = self._user_id
-        secrets_path = Path("config/users") / user_id / "secrets.json"
+        from core.paths import user_secrets_path; secrets_path = user_secrets_path(user_id)
         secrets = ConfigStore.load_secrets(secrets_path)
 
         if not secrets:

@@ -1,10 +1,10 @@
 """Dialogs for managing global and user-level parameters and secrets.
 
 Uses @st.dialog for modal CRUD operations, with persistence via ConfigStore:
-  - config/global_parameters.json (plaintext key-value, large values spill to sidecar)
-  - config/global_secrets.json (encrypted values, large values spill to .enc sidecar)
-  - config/users/{username}/parameters.json (user-level params)
-  - config/users/{username}/secrets.json (user-level encrypted secrets)
+  - data/config/global_parameters.json (plaintext key-value, large values spill to sidecar)
+  - data/config/global_secrets.json (encrypted values, large values spill to .enc sidecar)
+  - data/config/users/{username}/parameters.json (user-level params)
+  - data/config/users/{username}/secrets.json (user-level encrypted secrets)
 """
 
 import logging
@@ -19,9 +19,11 @@ from gui.i18n import t
 
 logger = logging.getLogger(__name__)
 
-_GLOBAL_PARAMS_FILE = Path("config/global_parameters.json")
-_GLOBAL_SECRETS_FILE = Path("config/global_secrets.json")
-_USER_CONFIG_DIR = Path("config/users")
+from core.paths import (
+    GLOBAL_PARAMS_FILE as _GLOBAL_PARAMS_FILE,
+    GLOBAL_SECRETS_FILE as _GLOBAL_SECRETS_FILE,
+    USER_CONFIG_DIR as _USER_CONFIG_DIR,
+)
 
 
 # ---- Encryption helpers (for inline secret editing) ----

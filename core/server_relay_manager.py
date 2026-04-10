@@ -25,7 +25,7 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 # ── Default values for server relay settings ────────────────────────────────
-# These are read at runtime from config/global_parameters.json
+# These are read at runtime from data/config/global_parameters.json
 # so they can be changed from the PawFlow UI without restarting.
 #
 # Keys in global_parameters.json:

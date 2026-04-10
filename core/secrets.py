@@ -16,7 +16,7 @@ class SecretsManager:
 
     The master key is derived from:
     1. PAWFLOW_SECRET_KEY environment variable (recommended)
-    2. A generated key stored in config/secret.key (fallback)
+    2. A generated key stored in data/config/secret.key (fallback)
     """
 
     def __init__(self, key: Optional[str] = None):
@@ -32,12 +32,13 @@ class SecretsManager:
             return hashlib.pbkdf2_hmac('sha256', env_key.encode(), b'pawflow-salt', 100000)
 
         # Fallback: generate and store a key
-        key_path = os.path.join("config", "secret.key")
+        from core.paths import SECRET_KEY_FILE
+        key_path = str(SECRET_KEY_FILE)
         if os.path.exists(key_path):
             with open(key_path, "rb") as f:
                 return f.read(32)
 
-        os.makedirs("config", exist_ok=True)
+        SECRET_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
         generated = os.urandom(32)
         with open(key_path, "wb") as f:
             f.write(generated)

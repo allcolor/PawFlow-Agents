@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DIR = "data/memories"
+from core.paths import MEMORIES_DIR; _DEFAULT_DIR = str(MEMORIES_DIR)
 
 
 class AgentDiary:

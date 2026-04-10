@@ -79,7 +79,7 @@ class AgentUtilsMixin:
             raise ValueError(
                 f"LLM service '{service_id}' not found. "
                 f"Define it in global services or set 'llm.default.service' "
-                f"in config/global_parameters.json."
+                f"in data/config/global_parameters.json."
             )
         return client, svc
 

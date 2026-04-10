@@ -144,7 +144,7 @@ def convert(session_path: str, user_id: str = "imported",
             agent_name: str = "claude-code", output_dir: str = None):
     """Convert a Claude Code session to PawFlow conversation format."""
     if output_dir is None:
-        output_dir = "data/conversations"
+        from core.paths import CONVERSATIONS_DIR; output_dir = str(CONVERSATIONS_DIR)
     os.makedirs(output_dir, exist_ok=True)
 
     # Generate conversation ID from session filename

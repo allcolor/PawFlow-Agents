@@ -1,6 +1,6 @@
 """ResourceStore — User-scoped CRUD for agents, skills, MCP servers, prompts, task definitions.
 
-Each resource type is stored in its own JSON file under config/.
+Each resource type is stored in its own JSON file under data/config/.
 Keys are namespaced by user_id: "user_id.resource_name".
 
 Resource types:
@@ -20,15 +20,15 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_CONFIG_DIR = Path("config")
+from core.paths import AGENTS_FILE, SKILLS_FILE, MCP_SERVERS_FILE, PROMPTS_FILE, TASK_DEFS_FILE
 
 # File paths per resource type
 _RESOURCE_FILES = {
-    "agent": _CONFIG_DIR / "agents.json",
-    "skill": _CONFIG_DIR / "skills.json",
-    "mcp": _CONFIG_DIR / "mcp_servers.json",
-    "prompt": _CONFIG_DIR / "prompts.json",
-    "task_def": _CONFIG_DIR / "task_defs.json",
+    "agent": AGENTS_FILE,
+    "skill": SKILLS_FILE,
+    "mcp": MCP_SERVERS_FILE,
+    "prompt": PROMPTS_FILE,
+    "task_def": TASK_DEFS_FILE,
 }
 
 VALID_TYPES = frozenset(_RESOURCE_FILES.keys())
@@ -96,7 +96,8 @@ class ResourceStore:
         self._data: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._store_lock = threading.Lock()
         self._loaded: set = set()
-        _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        from core.paths import CONFIG_DIR
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def instance(cls) -> "ResourceStore":

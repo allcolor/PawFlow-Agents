@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth import require_permission
 from core import TaskFactory, ServiceFactory
-from gui.services.flow_service import FlowService
+from core.flow_service import FlowService
 
 router = APIRouter()
 

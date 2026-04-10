@@ -210,7 +210,7 @@ class LearnHandler(ToolHandler):
     def _get_summarizer_client(self, user_id: str):
         """Resolve summarizer service."""
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             from core.expression import resolve_value
 
             svc_id = resolve_value("claude_code_llm_service", owner=user_id) or ""

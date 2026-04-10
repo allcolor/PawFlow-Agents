@@ -38,7 +38,7 @@ def find_fs_service(user_id: str, service_name: str = ""):
         return svc
 
     try:
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
         if service_name:
             svc = reg.resolve(service_name, user_id=user_id)
@@ -63,7 +63,7 @@ def get_tool_relay_env() -> Dict[str, str]:
     Empty dict if no tool relay is available.
     """
     try:
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
         for sid, sdef in reg.get_all("global", "").items():
             if getattr(sdef, "service_type", "") != "toolRelay":

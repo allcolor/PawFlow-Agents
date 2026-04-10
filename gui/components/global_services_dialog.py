@@ -32,7 +32,7 @@ def _get_available_service_types() -> list:
 @st.dialog(t("runtime.global_services_title"), width="large")
 def global_services_dialog():
     """Full CRUD dialog for global services."""
-    from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL
+    from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
 
     reg = ServiceRegistry.get_instance()
     definitions = reg.get_all(SCOPE_GLOBAL, "")

@@ -167,7 +167,7 @@ class FlowManagerHandler(ToolHandler):
         return f"Error: unknown action '{action}'"
 
     def _get_deployment_registry(self):
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         return DeploymentRegistry.get_instance()
 
     def _owner_tag(self) -> str:
@@ -368,7 +368,7 @@ class FlowManagerHandler(ToolHandler):
 
         # Try to start via executor registry
         try:
-            from gui.services.executor_registry import ExecutorRegistry
+            from core.executor_registry import ExecutorRegistry
             from engine.parser import FlowParser
             from engine.continuous_executor import ContinuousFlowExecutor
 
@@ -422,7 +422,7 @@ class FlowManagerHandler(ToolHandler):
             return f"Error: flow '{flow_id}' belongs to another user"
 
         try:
-            from gui.services.executor_registry import ExecutorRegistry
+            from core.executor_registry import ExecutorRegistry
             reg = ExecutorRegistry.get_instance()
             executor = reg.get(flow_id)
             if executor:
@@ -446,7 +446,7 @@ class FlowManagerHandler(ToolHandler):
         # Check real executor status
         real_status = inst.status
         try:
-            from gui.services.executor_registry import ExecutorRegistry
+            from core.executor_registry import ExecutorRegistry
             reg = ExecutorRegistry.get_instance()
             executor = reg.get(flow_id)
             if executor:
@@ -502,7 +502,7 @@ class FlowManagerHandler(ToolHandler):
     def cleanup_conversation(conversation_id: str):
         """Delete all flows belonging to a conversation. Called on conv delete."""
         try:
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.deployment_registry import DeploymentRegistry
             dep_reg = DeploymentRegistry.get_instance()
             instances = dep_reg.get_by_conversation(conversation_id)
             deleted = 0

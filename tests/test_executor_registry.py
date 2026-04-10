@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 
-from gui.services.executor_registry import ExecutorRegistry
+from core.executor_registry import ExecutorRegistry
 
 
 class TestExecutorRegistry(unittest.TestCase):
@@ -82,7 +82,7 @@ class TestExecutorRegistry(unittest.TestCase):
 
     def test_restore_no_deployments(self):
         # Mock DeploymentRegistry to return empty
-        with patch("gui.services.executor_registry._get_deployment_registry") as mock_dr:
+        with patch("core.executor_registry._get_deployment_registry") as mock_dr:
             mock_dr.return_value = None
             self.registry.restore_from_disk()  # Should not crash
         assert self.registry.count() == 0

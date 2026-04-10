@@ -270,7 +270,7 @@ def cmd_gui(args):
     register_all_tasks()
 
     logger.info("Restoring deployed flows...")
-    from gui.services.executor_registry import ExecutorRegistry
+    from core.executor_registry import ExecutorRegistry
     er = ExecutorRegistry.get_instance()
     er.restore_from_disk()
     n = er.count()

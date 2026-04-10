@@ -32,7 +32,7 @@ st.set_page_config(
 )
 
 # Import des services
-from gui.services.flow_service import FlowService
+from core.flow_service import FlowService
 from gui.services.storage_service import StorageService
 
 # Force l'initialisation des factory
@@ -40,7 +40,7 @@ from tasks import register_all_tasks
 register_all_tasks()
 
 # Auto-restore deployed flows that were running before server stop
-from gui.services.executor_registry import ExecutorRegistry
+from core.executor_registry import ExecutorRegistry
 ExecutorRegistry.get_instance().restore_from_disk()
 
 # Graceful shutdown: stop all executors on process exit
@@ -135,7 +135,7 @@ def render_sidebar():
             st.rerun()
 
         # Connection mode selector
-        from gui.services.api_client import PawFlowApiClient
+        from core.api_client import PawFlowApiClient
 
         st.markdown("---")
         mode = st.radio(

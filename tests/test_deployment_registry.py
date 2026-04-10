@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from gui.services.deployment_registry import (
+from core.deployment_registry import (
     DeployedInstance,
     DeploymentRegistry,
     DEPLOYMENTS_DIR,
@@ -111,7 +111,7 @@ class TestDeploymentRegistry(unittest.TestCase):
         }), encoding="utf-8")
 
         # Monkey-patch the module-level DEPLOYMENTS_DIR
-        import gui.services.deployment_registry as mod
+        import core.deployment_registry as mod
         self._mod = mod
         mod.DEPLOYMENTS_DIR = self._dep_dir
 
@@ -311,7 +311,7 @@ class TestDeploymentRegistry(unittest.TestCase):
         reg.update_status(iid, "running")
 
         # Mock executor registry with no executors
-        with patch("gui.services.executor_registry.ExecutorRegistry") as MockER:
+        with patch("core.executor_registry.ExecutorRegistry") as MockER:
             mock_reg = MagicMock()
             mock_reg.get_all.return_value = {}
             MockER.get_instance.return_value = mock_reg

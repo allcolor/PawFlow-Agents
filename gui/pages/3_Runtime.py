@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 # Import des services
-from gui.services.flow_service import FlowService
+from core.flow_service import FlowService
 from engine.continuous_executor import ContinuousFlowExecutor
 from engine.debugger import FlowDebugger
 from engine.data_preview import DataPreviewManager
@@ -81,7 +81,7 @@ def initialize_state():
 
 def _get_executor_registry():
     """Get the executor registry singleton, restoring from disk on first access."""
-    from gui.services.executor_registry import ExecutorRegistry
+    from core.executor_registry import ExecutorRegistry
     registry = ExecutorRegistry.get_instance()
 
     # Restore from disk on first access (e.g. after server restart)
@@ -154,7 +154,7 @@ def _sync_deployment_statuses():
     """Periodically sync deployment statuses with running executors."""
     reg = _get_executor_registry()
     reg.cleanup_dead()
-    from gui.services.deployment_registry import DeploymentRegistry
+    from core.deployment_registry import DeploymentRegistry
     dep_reg = DeploymentRegistry.get_instance()
     dep_reg.sync_with_executors()
 
@@ -185,7 +185,7 @@ def render_continuous_execution():
             return
 
         # Stopped/error instance — show stopped panel
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         dep_reg = DeploymentRegistry.get_instance()
         inst = dep_reg.get(selected)
         if inst is not None:
@@ -197,7 +197,7 @@ def render_continuous_execution():
 
     # No selection — overview
     if not executors:
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         dep_reg = DeploymentRegistry.get_instance()
         all_instances = dep_reg.get_all()
         if not all_instances:
@@ -301,7 +301,7 @@ def _render_new_executor_form():
     svc_forwards = {}  # flow_svc_id → prefixed ref (or None for local)
     if flow_services:
         from gui.components.schema_form import render_schema_fields as _render_fields
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         gsvc_reg = ServiceRegistry.get_instance()
         usvc_reg = ServiceRegistry.get_instance()
 
@@ -375,7 +375,7 @@ def _render_new_executor_form():
             flow, tmpl_path = flow_map[selected]
 
             # Deploy via DeploymentRegistry
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.deployment_registry import DeploymentRegistry
             dep_reg = DeploymentRegistry.get_instance()
             # Collect local service configs for persistence
             svc_ovr = st.session_state.get("_cont_svc_overrides", {})
@@ -424,7 +424,7 @@ def _render_new_executor_form():
                 parameters=cont_params if cont_params else None,
             )
             ex.start()
-            from gui.services.executor_registry import ExecutorRegistry
+            from core.executor_registry import ExecutorRegistry
             ExecutorRegistry.get_instance().register(instance_id, ex)
             st.session_state["rt_selected_instance"] = instance_id
             st.rerun()
@@ -623,7 +623,7 @@ def _render_stopped_snapshot(inst):
 
 def _render_stopped_instance_panel(inst):
     """Panel for a stopped/errored deployment instance."""
-    from gui.services.deployment_registry import DeploymentRegistry
+    from core.deployment_registry import DeploymentRegistry
     import time as _time
 
     status_icon = "🔴" if inst.status == "stopped" else "🔥"
@@ -670,7 +670,7 @@ def _render_stopped_instance_panel(inst):
                     flow_path = inst.flow_path
                     if not flow_path or not Path(flow_path).exists():
                         # Try to find it
-                        from gui.services.deployment_registry import DeploymentRegistry
+                        from core.deployment_registry import DeploymentRegistry
                         flow_path = DeploymentRegistry._find_flow_path(inst.flow_id)
                     if not flow_path:
                         st.error(t("runtime.flow_file_not_found", flow_id=inst.flow_id))
@@ -696,7 +696,7 @@ def _render_stopped_instance_panel(inst):
                             parameters=inst.parameters if inst.parameters else None,
                         )
                         ex.start()
-                        from gui.services.executor_registry import ExecutorRegistry
+                        from core.executor_registry import ExecutorRegistry
                         ExecutorRegistry.get_instance().register(inst.instance_id, ex)
                         st.rerun()
                 except Exception as e:
@@ -755,7 +755,7 @@ def _render_instance_services(inst, editable: bool = False):
     and editing local service parameters. Saves service_overrides to DeploymentRegistry.
     When read-only (running): show current service config and forwarding status.
     """
-    from gui.services.deployment_registry import DeploymentRegistry
+    from core.deployment_registry import DeploymentRegistry
 
     # Load template to get service definitions
     flow_services = {}
@@ -771,7 +771,7 @@ def _render_instance_services(inst, editable: bool = False):
 
     with st.expander(f"🔌 {t('settings.services')}", expanded=False):
         if editable:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             gsvc_reg = ServiceRegistry.get_instance()
             usvc_reg = ServiceRegistry.get_instance()
 
@@ -935,7 +935,7 @@ def _apply_service_forwards(flow, service_overrides: Dict[str, str]):
     """
     if not service_overrides:
         return
-    from gui.services.service_registry import ServiceRegistry
+    from core.service_registry import ServiceRegistry
     gsvc_reg = ServiceRegistry.get_instance()
     usvc_reg = ServiceRegistry.get_instance()
 
@@ -970,7 +970,7 @@ def _apply_service_forwards(flow, service_overrides: Dict[str, str]):
 
 def _render_instance_parameters(inst, editable: bool = False):
     """Show instance parameters, editable when stopped."""
-    from gui.services.deployment_registry import DeploymentRegistry
+    from core.deployment_registry import DeploymentRegistry
 
     # Load template to discover all available parameter keys
     template_params = {}
@@ -1216,9 +1216,9 @@ def _render_executor_dashboard(executor: ContinuousFlowExecutor, flow_id: str,
         if check_permission(session, "flow.execute"):
             if st.button(f"🗑️ {t('runtime.undeploy')}", width="stretch", key=f"del_{flow_id}"):
                 executor.stop()
-                from gui.services.executor_registry import ExecutorRegistry
+                from core.executor_registry import ExecutorRegistry
                 ExecutorRegistry.get_instance().unregister(flow_id)
-                from gui.services.deployment_registry import DeploymentRegistry
+                from core.deployment_registry import DeploymentRegistry
                 DeploymentRegistry.get_instance().undeploy(flow_id)
                 st.session_state.pop("rt_selected_instance", None)
                 st.rerun()
@@ -1230,7 +1230,7 @@ def _render_executor_dashboard(executor: ContinuousFlowExecutor, flow_id: str,
     _render_live_kpis_and_flow(executor, flow_id)  # flow_id here is actually instance_id from caller
 
     # -- Parameters (read-only for running) --
-    from gui.services.deployment_registry import DeploymentRegistry
+    from core.deployment_registry import DeploymentRegistry
     dep_reg = DeploymentRegistry.get_instance()
     running_inst = dep_reg.get(flow_id)
     if running_inst:

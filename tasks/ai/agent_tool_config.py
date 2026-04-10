@@ -86,7 +86,7 @@ class AgentToolConfigMixin:
                 # Inject filesystem service resolver for fs:// URLs in scripts
                 def _fs_resolver(svc_id):
                     try:
-                        from gui.services.service_registry import ServiceRegistry
+                        from core.service_registry import ServiceRegistry
                         return ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
                     except Exception:
                         return None
@@ -156,7 +156,7 @@ class AgentToolConfigMixin:
                         from core.relay_bindings import get_default
                         _default_relay_pg = get_default(conversation_id, agent=_agent_name_pg)
                         if _default_relay_pg:
-                            from gui.services.service_registry import ServiceRegistry
+                            from core.service_registry import ServiceRegistry
                             _relay_svc_pg = ServiceRegistry.get_instance().resolve(_default_relay_pg, user_id=user_id)
                     except Exception:
                         pass
@@ -263,7 +263,7 @@ class AgentToolConfigMixin:
                         from core.relay_bindings import get_default
                         _default_relay = get_default(conversation_id, agent=_agent_name)
                         if _default_relay:
-                            from gui.services.service_registry import ServiceRegistry
+                            from core.service_registry import ServiceRegistry
                             _relay_svc = ServiceRegistry.get_instance().resolve(_default_relay, user_id=user_id)
                     except Exception:
                         pass

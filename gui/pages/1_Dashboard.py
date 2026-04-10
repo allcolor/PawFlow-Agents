@@ -27,7 +27,7 @@ session = require_auth()
 render_user_info()
 
 # Import des services
-from gui.services.flow_service import FlowService
+from core.flow_service import FlowService
 from gui.services.execution_service import ExecutionService
 
 # Ensure tasks & services are registered
@@ -48,7 +48,7 @@ if "selected_flow_id" not in st.session_state:
 def _get_running_flows():
     """Get set of flow IDs that have a running continuous executor."""
     try:
-        from gui.services.executor_registry import ExecutorRegistry
+        from core.executor_registry import ExecutorRegistry
         registry = ExecutorRegistry.get_instance()
         running = {}
         for fid, ex in registry.get_all().items():
@@ -358,7 +358,7 @@ def render_quick_templates():
     st.markdown(f"### 🧩 {t('editor.templates')}")
 
     try:
-        from gui.services.template_service import TemplateService
+        from core.template_service import TemplateService
         ts = TemplateService()
         templates = ts.list_templates()
 

@@ -15,7 +15,7 @@ from dataclasses import dataclass, asdict
 from engine.continuous_executor import ContinuousFlowExecutor
 from engine.provenance import get_provenance_repository
 from core import Flow, FlowFile
-from gui.services.flow_service import FlowService
+from core.flow_service import FlowService
 
 logger = logging.getLogger(__name__)
 

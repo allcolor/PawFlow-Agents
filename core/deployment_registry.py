@@ -217,7 +217,7 @@ class DeploymentRegistry:
         # Stop executor if running
         if inst.status == "running":
             try:
-                from gui.services.executor_registry import ExecutorRegistry
+                from core.executor_registry import ExecutorRegistry
                 reg = ExecutorRegistry.get_instance()
                 ex = reg.get(instance_id)
                 if ex:
@@ -327,7 +327,7 @@ class DeploymentRegistry:
         self._ensure_loaded()
 
         try:
-            from gui.services.executor_registry import ExecutorRegistry
+            from core.executor_registry import ExecutorRegistry
             reg = ExecutorRegistry.get_instance()
         except Exception:
             return

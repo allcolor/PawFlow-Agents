@@ -34,8 +34,8 @@ from core import TaskFactory
 from gui.components.flow_canvas import FlowCanvas
 from gui.components.task_panel import TaskPanel
 from gui.components.schema_form import render_schema_fields
-from gui.services.flow_service import FlowService
-from gui.services.template_service import TemplateService
+from core.flow_service import FlowService
+from core.template_service import TemplateService
 from engine.flow_diff import FlowDiff
 
 # Force l'initialisation des tasks

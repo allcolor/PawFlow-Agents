@@ -620,7 +620,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                     if not relay_svc:
                                         # Try filesystem service registries
                                         try:
-                                            from gui.services.service_registry import ServiceRegistry
+                                            from core.service_registry import ServiceRegistry
                                             relay_svc = ServiceRegistry.get_instance().resolve(_rsid, user_id=_uid)
                                         except Exception:
                                             pass
@@ -836,12 +836,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 _linked = get_linked(conversation_id, agent=_current_agent)
                 _agent_default = get_default(conversation_id, agent=_current_agent)
                 if _linked:
-                    from gui.services.service_registry import ServiceRegistry
+                    from core.service_registry import ServiceRegistry
                     greg = ServiceRegistry.get_instance()
                     # Also check user registry for service resolution
                     _ureg = None
                     try:
-                        from gui.services.service_registry import ServiceRegistry
+                        from core.service_registry import ServiceRegistry
                         _ureg = ServiceRegistry.get_instance()
                     except Exception:
                         pass
@@ -903,7 +903,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         if not _has_relay_bindings:
             # Fallback: inject project context from all connected FS services
             try:
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 greg = ServiceRegistry.get_instance()
                 for _sid, _sdef in greg.get_all("global", "").items():
                     if getattr(_sdef, "service_type", "") == "filesystem":
@@ -985,7 +985,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if not _fs_services_info:
                     # Fallback: list all relay services for this user
                     _fs_svcs = []
-                    from gui.services.service_registry import ServiceRegistry
+                    from core.service_registry import ServiceRegistry
                     _ureg = ServiceRegistry.get_instance()
                     _uid = user_id
                     if _uid:

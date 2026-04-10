@@ -198,7 +198,7 @@ def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
     """List all connected relay services across all scopes."""
     relays = []
     try:
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         reg = ServiceRegistry.get_instance()
         all_defs = reg.resolve_all(user_id=user_id)
         for sid, sdef in all_defs.items():
@@ -252,7 +252,7 @@ def resolve_relay(cid: str, relay_param: Optional[str] = None,
 
     # Resolve service instance across all scopes
     try:
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         svc = ServiceRegistry.get_instance().resolve(relay_id)
     except Exception:
         svc = None

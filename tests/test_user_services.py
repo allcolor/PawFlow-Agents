@@ -19,8 +19,8 @@ SVC_TYPE = "cacheService"
 
 def _registry_fixture(tmp_path):
     """Shared setup: fresh ServiceRegistry with temp storage."""
-    from gui.services.service_registry import ServiceRegistry
-    import gui.services.service_registry as mod
+    from core.service_registry import ServiceRegistry
+    import core.service_registry as mod
 
     ServiceRegistry.reset()
     orig_user_dir = mod.USER_SERVICES_DIR
@@ -32,7 +32,7 @@ def _registry_fixture(tmp_path):
 
 
 def _registry_teardown(mod, orig_user_dir, orig_global_file):
-    from gui.services.service_registry import ServiceRegistry
+    from core.service_registry import ServiceRegistry
     ServiceRegistry.reset()
     mod.USER_SERVICES_DIR = orig_user_dir
     mod.GLOBAL_SERVICES_FILE = orig_global_file
@@ -46,7 +46,7 @@ class TestServiceRegistryCRUD:
 
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from gui.services.service_registry import SCOPE_USER
+        from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
         self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
         yield
@@ -142,7 +142,7 @@ class TestUserScopeIsolation:
 
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from gui.services.service_registry import SCOPE_USER
+        from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
         self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
         yield
@@ -174,7 +174,7 @@ class TestGetCompatible:
 
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from gui.services.service_registry import SCOPE_USER
+        from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
         self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
         yield
@@ -206,7 +206,7 @@ class TestLiveInstances:
 
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from gui.services.service_registry import SCOPE_USER
+        from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
         self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
         yield
@@ -248,7 +248,7 @@ class TestResolutionChain:
 
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from gui.services.service_registry import SCOPE_GLOBAL, SCOPE_USER
+        from core.service_registry import SCOPE_GLOBAL, SCOPE_USER
         self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
         # Install same service_id in global and user with different configs
         self.reg.install(SCOPE_GLOBAL, "", "shared", SVC_TYPE,
@@ -323,7 +323,7 @@ class TestPersistence:
 
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from gui.services.service_registry import SCOPE_USER
+        from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
         self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
         self.tmp_path = tmp_path
@@ -339,7 +339,7 @@ class TestPersistence:
         assert data["mydb"]["service_type"] == SVC_TYPE
 
     def test_reload_after_reset(self):
-        from gui.services.service_registry import ServiceRegistry, SCOPE_USER
+        from core.service_registry import ServiceRegistry, SCOPE_USER
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE, config={"host": "localhost"})
         ServiceRegistry.reset()
         reg2 = ServiceRegistry.get_instance()
@@ -367,7 +367,7 @@ class TestServiceDef:
     """Tests for the ServiceDef dataclass."""
 
     def test_to_dict(self):
-        from gui.services.service_registry import ServiceDef
+        from core.service_registry import ServiceDef
         sdef = ServiceDef(
             service_id="mydb", service_type=SVC_TYPE, scope="user",
             scope_id="alice", config={"host": "localhost"}, created_at=1000.0,
@@ -378,7 +378,7 @@ class TestServiceDef:
         assert d["config"]["host"] == "localhost"
 
     def test_from_dict(self):
-        from gui.services.service_registry import ServiceDef
+        from core.service_registry import ServiceDef
         d = {
             "service_id": "mydb", "service_type": SVC_TYPE, "user_id": "alice",
             "config": {"host": "localhost"}, "enabled": True,
@@ -390,7 +390,7 @@ class TestServiceDef:
         assert sdef.scope_id == "alice"
 
     def test_from_dict_ignores_unknown_keys(self):
-        from gui.services.service_registry import ServiceDef
+        from core.service_registry import ServiceDef
         d = {
             "service_id": "mydb", "service_type": SVC_TYPE, "user_id": "alice",
             "config": {}, "extra_field": "ignored", "created_at": 1000.0,
@@ -436,17 +436,17 @@ class TestServiceForwarding:
 
     def test_resolve_global_service(self):
         """resolve() finds global service with no user_id."""
-        with patch("gui.services.service_registry.ServiceRegistry") as mock_cls:
+        with patch("core.service_registry.ServiceRegistry") as mock_cls:
             mock_reg = mock_cls.get_instance.return_value
             mock_svc = MagicMock()
             mock_reg.resolve.return_value = mock_svc
 
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             svc = mock_reg.resolve("shared_llm")
             assert svc == mock_svc
 
     def test_resolve_returns_none_when_not_found(self):
-        with patch("gui.services.service_registry.ServiceRegistry") as mock_cls:
+        with patch("core.service_registry.ServiceRegistry") as mock_cls:
             mock_reg = mock_cls.get_instance.return_value
             mock_reg.resolve.return_value = None
 
@@ -462,7 +462,7 @@ class TestAgentServiceActions:
 
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from gui.services.service_registry import SCOPE_USER
+        from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
         self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
         yield
@@ -627,7 +627,7 @@ class TestResourceConflict:
 
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
-        from gui.services.service_registry import SCOPE_GLOBAL, SCOPE_USER
+        from core.service_registry import SCOPE_GLOBAL, SCOPE_USER
         self.SCOPE_GLOBAL = SCOPE_GLOBAL
         self.SCOPE_USER = SCOPE_USER
         self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
@@ -636,7 +636,7 @@ class TestResourceConflict:
 
     def test_same_port_same_scope_different_id_blocked(self):
         """Two httpListeners on port 9090 in global scope = conflict."""
-        from gui.services.service_registry import ResourceConflictError
+        from core.service_registry import ResourceConflictError
         self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
                          config={"port": "9090"})
         with pytest.raises(ResourceConflictError, match="port"):
@@ -645,7 +645,7 @@ class TestResourceConflict:
 
     def test_same_port_cross_scope_blocked(self):
         """httpListener on port 8080 in global, same port in user = conflict."""
-        from gui.services.service_registry import ResourceConflictError
+        from core.service_registry import ResourceConflictError
         self.reg.install(self.SCOPE_GLOBAL, "", "http_global", "httpListener",
                          config={"port": "8080"})
         with pytest.raises(ResourceConflictError):
@@ -670,7 +670,7 @@ class TestResourceConflict:
 
     def test_bot_token_conflict(self):
         """Same Discord bot_token in two scopes = conflict."""
-        from gui.services.service_registry import ResourceConflictError
+        from core.service_registry import ResourceConflictError
         self.reg.install(self.SCOPE_GLOBAL, "", "bot1", "discordBot",
                          config={"bot_token": "tok123"})
         with pytest.raises(ResourceConflictError, match="bot_token"):
@@ -687,7 +687,7 @@ class TestResourceConflict:
 
     def test_relay_port_path_conflict(self):
         """Same port+path for relay = conflict."""
-        from gui.services.service_registry import ResourceConflictError
+        from core.service_registry import ResourceConflictError
         self.reg.install(self.SCOPE_GLOBAL, "", "r1", "relay",
                          config={"port": "9091", "path": "/ws/relay", "token": "a"})
         with pytest.raises(ResourceConflictError):
@@ -704,7 +704,7 @@ class TestResourceConflict:
 
     def test_update_config_conflict(self):
         """Changing port to conflict with existing = blocked."""
-        from gui.services.service_registry import ResourceConflictError
+        from core.service_registry import ResourceConflictError
         self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
                          config={"port": "8080"})
         self.reg.install(self.SCOPE_GLOBAL, "", "http2", "httpListener",
@@ -736,7 +736,7 @@ class TestResourceConflict:
 
     def test_default_port_conflict(self):
         """httpListener with default port (9090) conflicts with explicit 9090."""
-        from gui.services.service_registry import ResourceConflictError
+        from core.service_registry import ResourceConflictError
         self.reg.install(self.SCOPE_GLOBAL, "", "http1", "httpListener",
                          config={})  # defaults to port 9090
         with pytest.raises(ResourceConflictError):
@@ -745,7 +745,7 @@ class TestResourceConflict:
 
     def test_file_tracking_conflict(self):
         """Same storage_path for fileTracking = conflict."""
-        from gui.services.service_registry import ResourceConflictError
+        from core.service_registry import ResourceConflictError
         self.reg.install(self.SCOPE_GLOBAL, "", "ft1", "fileTracking",
                          config={"storage_path": "/data/tracking.json"})
         with pytest.raises(ResourceConflictError):

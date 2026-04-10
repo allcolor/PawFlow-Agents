@@ -188,7 +188,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         checks = []
         # Check LLM services
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             greg = ServiceRegistry.get_instance()
             for sid, sdef in greg.get_all("global", "").items():
                 if getattr(sdef, "service_type", "") in ("llm", "openai_llm"):
@@ -257,7 +257,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             return [flowfile]
         # Create filesystem service
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             import os
             greg = ServiceRegistry.get_instance()
             # Generate name from path
@@ -408,7 +408,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
                 "message": "No relays linked to this conversation.\nUse `/relay link <id>` or `/relay list` to see available relays.",
             }).encode())
         else:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             _greg = ServiceRegistry.get_instance()
             lines = []
             for rid in linked:

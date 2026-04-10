@@ -235,7 +235,7 @@ class ValidateSessionAuthTask(BaseTask):
 
         try:
             from services.auth_gateway_service import AuthGatewayService
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             greg = ServiceRegistry.get_instance()
             for sid, sdef in greg.get_all("global", "").items():
                 if getattr(sdef, "service_type", "") != "authGateway":

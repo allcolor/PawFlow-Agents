@@ -480,8 +480,8 @@ class TestFlowManagerHandler(unittest.TestCase):
         self._orig_cwd = os.getcwd()
         os.chdir(self.tmpdir)
         # Reset DeploymentRegistry singleton
-        from gui.services.deployment_registry import DeploymentRegistry, DEPLOYMENTS_DIR
-        import gui.services.deployment_registry as dep_mod
+        from core.deployment_registry import DeploymentRegistry, DEPLOYMENTS_DIR
+        import core.deployment_registry as dep_mod
         DeploymentRegistry.reset()
         self._orig_dep_dir = DEPLOYMENTS_DIR
         self._dep_dir = Path(self.tmpdir) / "deployments"
@@ -490,9 +490,9 @@ class TestFlowManagerHandler(unittest.TestCase):
 
     def tearDown(self):
         os.chdir(self._orig_cwd)
-        import gui.services.deployment_registry as dep_mod
+        import core.deployment_registry as dep_mod
         dep_mod.DEPLOYMENTS_DIR = self._orig_dep_dir
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         DeploymentRegistry.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
@@ -522,7 +522,7 @@ class TestFlowManagerHandler(unittest.TestCase):
         })
         self.assertIn("created", result)
         # Instance should exist in deployment registry
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         inst = DeploymentRegistry.get_instance().get("flow1")
         self.assertIsNotNone(inst)
 
@@ -540,7 +540,7 @@ class TestFlowManagerHandler(unittest.TestCase):
             "action": "create",
             "definition": self._sample_definition(),
         })
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         inst = DeploymentRegistry.get_instance().get("flow1")
         self.assertEqual(inst.owner, "bob")
 
@@ -549,7 +549,7 @@ class TestFlowManagerHandler(unittest.TestCase):
         h.execute({"action": "create", "definition": self._sample_definition()})
         result = h.execute({"action": "start", "flow_id": "flow1"})
         # Start may fail (no real template parse in test) but instance should exist
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         inst = DeploymentRegistry.get_instance().get("flow1")
         self.assertIsNotNone(inst)
 
@@ -570,7 +570,7 @@ class TestFlowManagerHandler(unittest.TestCase):
         h.execute({"action": "create", "definition": self._sample_definition()})
         result = h.execute({"action": "delete", "flow_id": "flow1"})
         self.assertIn("deleted", result)
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         self.assertIsNone(DeploymentRegistry.get_instance().get("flow1"))
 
     def test_isolation(self):
@@ -610,7 +610,7 @@ class TestFlowManagerHandler(unittest.TestCase):
             "flow_id": "flow1",
             "parameters": {"key1": "val1"},
         })
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         inst = DeploymentRegistry.get_instance().get("flow1")
         self.assertEqual(inst.parameters.get("key1"), "val1")
 
@@ -767,8 +767,8 @@ class TestFlowCatalogDeploy(unittest.TestCase):
     """Tests for catalog and deploy actions in FlowManagerHandler."""
 
     def setUp(self):
-        from gui.services.deployment_registry import DeploymentRegistry
-        import gui.services.deployment_registry as dep_mod
+        from core.deployment_registry import DeploymentRegistry
+        import core.deployment_registry as dep_mod
         DeploymentRegistry.reset()
 
         self.handler = FlowManagerHandler()
@@ -806,9 +806,9 @@ class TestFlowCatalogDeploy(unittest.TestCase):
 
     def tearDown(self):
         os.chdir(self._orig_cwd)
-        import gui.services.deployment_registry as dep_mod
+        import core.deployment_registry as dep_mod
         dep_mod.DEPLOYMENTS_DIR = self._orig_dep_dir
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         DeploymentRegistry.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
@@ -832,7 +832,7 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         self.assertIn("deployed", result)
         self.assertIn("instance", result.lower())
         # Instance should exist in deployment registry
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         dep_reg = DeploymentRegistry.get_instance()
         instances = dep_reg.get_by_owner("user1")
         self.assertEqual(len(instances), 1)
@@ -848,7 +848,7 @@ class TestFlowCatalogDeploy(unittest.TestCase):
             "parameters": {"greeting": "bonjour"},
         })
         self.assertIn("deployed", result)
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         instances = DeploymentRegistry.get_instance().get_by_owner("user1")
         self.assertEqual(instances[0].parameters.get("greeting"), "bonjour")
 
@@ -873,7 +873,7 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         })
         # New deployment model creates new instances each time
         self.assertIn("deployed", result)
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         instances = DeploymentRegistry.get_instance().get_by_owner("user1")
         self.assertEqual(len(instances), 2)
 
@@ -887,7 +887,7 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         self.handler.execute({
             "action": "deploy", "template_id": "hello-world",
         })
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         instances = DeploymentRegistry.get_instance().get_by_owner("user1")
         self.assertEqual(len(instances), 2)
 
@@ -903,7 +903,7 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         self.handler.execute({
             "action": "deploy", "template_id": "hello-world",
         })
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         instances = DeploymentRegistry.get_instance().get_by_owner("user1")
         instance_id = instances[0].instance_id
         result = self.handler.execute({
@@ -1013,8 +1013,8 @@ class TestConversationScoping(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         self._orig_cwd = os.getcwd()
         os.chdir(self.tmpdir)
-        from gui.services.deployment_registry import DeploymentRegistry
-        import gui.services.deployment_registry as dep_mod
+        from core.deployment_registry import DeploymentRegistry
+        import core.deployment_registry as dep_mod
         DeploymentRegistry.reset()
         self._orig_dep_dir = dep_mod.DEPLOYMENTS_DIR
         dep_mod.DEPLOYMENTS_DIR = Path(self.tmpdir) / "deployments"
@@ -1022,9 +1022,9 @@ class TestConversationScoping(unittest.TestCase):
 
     def tearDown(self):
         os.chdir(self._orig_cwd)
-        import gui.services.deployment_registry as dep_mod
+        import core.deployment_registry as dep_mod
         dep_mod.DEPLOYMENTS_DIR = self._orig_dep_dir
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         DeploymentRegistry.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
@@ -1035,7 +1035,7 @@ class TestConversationScoping(unittest.TestCase):
         handler.execute({"action": "create", "definition": {
             "id": "f1", "name": "Flow 1", "tasks": {"t1": {"type": "log"}},
         }})
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         inst = DeploymentRegistry.get_instance().get("f1")
         self.assertIsNotNone(inst)
         self.assertEqual(inst.conversation_id, "conv-123")
@@ -1085,7 +1085,7 @@ class TestConversationScoping(unittest.TestCase):
         result = handler.execute({"action": "update", "flow_id": "f1",
                                    "parameters": {"key2": "val2"}})
         self.assertIn("updated", result)
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         inst = DeploymentRegistry.get_instance().get("f1")
         self.assertEqual(inst.parameters.get("key1"), "val1")
         self.assertEqual(inst.parameters.get("key2"), "val2")
@@ -1117,7 +1117,7 @@ class TestConversationScoping(unittest.TestCase):
         }})
         # Cleanup
         FlowManagerHandler.cleanup_conversation("conv-del")
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         dep_reg = DeploymentRegistry.get_instance()
         self.assertIsNone(dep_reg.get("f1"))
         self.assertIsNone(dep_reg.get("f2"))

@@ -459,7 +459,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             result["all_tasks"] = all_task_instances
         # Services (global + user)
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             svcs = []
             greg = ServiceRegistry.get_instance()
             for sid, sdef in greg.get_all("global", "").items():
@@ -515,11 +515,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     _all_ids.update(scope_list)
                 _relay_details = {}
                 try:
-                    from gui.services.service_registry import ServiceRegistry
+                    from core.service_registry import ServiceRegistry
                     _greg2 = ServiceRegistry.get_instance()
                     _ureg2 = None
                     try:
-                        from gui.services.service_registry import ServiceRegistry
+                        from core.service_registry import ServiceRegistry
                         _ureg2 = ServiceRegistry.get_instance()
                     except Exception:
                         pass
@@ -559,7 +559,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 result["relay_bindings"] = {"linked": {}, "default": {}}
         # Deployed flows (global=readonly, user+conv visible)
         try:
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.deployment_registry import DeploymentRegistry
             flows = []
             dr = DeploymentRegistry.get_instance()
             # sync_with_executors removed from request path — too expensive.

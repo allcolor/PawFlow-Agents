@@ -660,14 +660,14 @@ class TestAgentLoopTask(unittest.TestCase):
 class TestAgentTemplate(unittest.TestCase):
 
     def test_agent_template_exists(self):
-        from gui.services.template_service import TemplateService
+        from core.template_service import TemplateService
         svc = TemplateService()
         templates = svc.list_templates()
         ids = [t["id"] for t in templates]
         assert "builtin_agent_llm" in ids
 
     def test_agent_template_content(self):
-        from gui.services.template_service import TemplateService
+        from core.template_service import TemplateService
         svc = TemplateService()
         tpl = svc.get_template("builtin_agent_llm")
         assert tpl is not None
@@ -678,7 +678,7 @@ class TestAgentTemplate(unittest.TestCase):
         assert tpl["difficulty"] == "advanced"
 
     def test_agent_template_relations(self):
-        from gui.services.template_service import TemplateService
+        from core.template_service import TemplateService
         svc = TemplateService()
         tpl = svc.get_template("builtin_agent_llm")
         froms = [r["from"] for r in tpl["relations"]]
@@ -1761,7 +1761,7 @@ class TestImageServiceResolution(unittest.TestCase):
         mock_pixazo_def = MagicMock(enabled=True, service_type="pixazoImageGeneration",
                                      service_id="pixazo", scope="global")
 
-        with patch("gui.services.service_registry.ServiceRegistry") as mock_reg:
+        with patch("core.service_registry.ServiceRegistry") as mock_reg:
             mock_reg.get_instance.return_value.resolve_by_type.return_value = [mock_pixazo_def]
             with patch.object(AgentLoopTask, '_get_media_types',
                               return_value={"pixazoImageGeneration"}):

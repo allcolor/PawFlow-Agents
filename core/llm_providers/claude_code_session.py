@@ -18,7 +18,7 @@ def _find_cc_service_id(service_id: str = "") -> str:
     if service_id:
         return service_id
     try:
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         for sdef in ServiceRegistry.get_instance().resolve_by_type("llmConnection"):
             cfg = getattr(sdef, "config", {}) or {}
             if cfg.get("provider") == "claude-code":
@@ -335,7 +335,7 @@ class ClaudeCodeSessionMixin:
         if cls._tool_relay_cache:
             return cls._tool_relay_cache
         try:
-            from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL
+            from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
             reg = ServiceRegistry.get_instance()
 
             # Check if a live tool relay already exists (from this server run)

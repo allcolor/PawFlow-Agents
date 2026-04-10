@@ -317,7 +317,7 @@ class ToolRelayService(BaseService):
         if _fs_handlers:
             try:
                 available = []
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 _sreg = ServiceRegistry.get_instance()
                 for fs_type in _FS_TYPES:
                     for sdef in _sreg.resolve_by_type(fs_type, user_id=user_id):
@@ -368,7 +368,7 @@ class ToolRelayService(BaseService):
 
             # Find deployed services
             # Find all matching services across scopes (conv > user > global)
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             _sreg = ServiceRegistry.get_instance()
             matching = []
             for vtype in valid_types:
@@ -419,7 +419,7 @@ class ToolRelayService(BaseService):
                         _rsid = mcp_def.get("relay_service", "")
                         if _rsid:
                             try:
-                                from gui.services.service_registry import ServiceRegistry
+                                from core.service_registry import ServiceRegistry
                                 relay_svc = ServiceRegistry.get_instance().resolve(
                                     _rsid, user_id=user_id)
                             except Exception:
@@ -489,7 +489,7 @@ class ToolRelayService(BaseService):
         """
         fs_types = ("relay", "filesystem", "googleDrive", "oneDrive")
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             for fs_type in fs_types:
                 for sdef in reg.resolve_by_type(fs_type, user_id=user_id):

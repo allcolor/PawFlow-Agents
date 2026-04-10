@@ -35,7 +35,9 @@ def _get_spill_dir() -> Path:
     if _spill_dir is None:
         with _spill_lock:
             if _spill_dir is None:
-                _spill_dir = Path(tempfile.mkdtemp(prefix="pawflow_spill_"))
+                from core.paths import SPILL_DIR
+                _spill_dir = SPILL_DIR
+                _spill_dir.mkdir(parents=True, exist_ok=True)
     return _spill_dir
 
 

@@ -12,8 +12,8 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import CONFIG_DIR
-CONFIG_PATH = CONFIG_DIR / "llm_config.json"
+from core.paths import SYSTEM_DIR
+CONFIG_PATH = SYSTEM_DIR / "llm_config.json"
 
 
 def load_llm_config() -> Dict[str, Any]:

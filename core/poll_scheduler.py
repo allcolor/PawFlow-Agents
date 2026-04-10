@@ -17,8 +17,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("pawflow.poll_scheduler")
 
-_DATA_DIR = os.path.join("data", "poll_schedule")
-_SCHEDULE_FILE = os.path.join(_DATA_DIR, "schedule.json")
+from core.paths import POLL_SCHEDULE_FILE
+_DATA_DIR = str(POLL_SCHEDULE_FILE.parent)
+_SCHEDULE_FILE = str(POLL_SCHEDULE_FILE)
 
 
 class PollScheduler:

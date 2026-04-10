@@ -24,7 +24,8 @@ from core.tool_registry import ToolHandler
 
 logger = logging.getLogger(__name__)
 
-from core.paths import DYNAMIC_TOOLS_DIR; _DEFAULT_DIR = str(DYNAMIC_TOOLS_DIR)
+from core.paths import REPOSITORY_DIR
+_DEFAULT_DIR = str(REPOSITORY_DIR / "tools")
 
 # Modules allowed in dynamic tools (same as ExecuteScriptHandler)
 _SAFE_MODULES = frozenset({

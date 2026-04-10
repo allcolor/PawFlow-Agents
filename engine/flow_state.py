@@ -19,10 +19,10 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import CONFIG_DIR, FLOW_VERSIONS_DIR
-_STATE_DIR = str(CONFIG_DIR)
-_STATE_FILE = str(CONFIG_DIR / "running_flows.json")
-_VERSIONS_DIR = str(FLOW_VERSIONS_DIR)
+from core.paths import RUNTIME_DIR, SYSTEM_DIR
+_STATE_DIR = str(RUNTIME_DIR)
+_STATE_FILE = str(RUNTIME_DIR / "running_flows.json")
+_VERSIONS_DIR = str(RUNTIME_DIR / "flow_versions")
 
 
 class FlowStateEntry:

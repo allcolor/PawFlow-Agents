@@ -22,10 +22,9 @@ from core import ServiceFactory, Service
 
 logger = logging.getLogger(__name__)
 
-from core.paths import (
-    GLOBAL_SERVICES_FILE,
-    USER_SERVICES_DIR,
-)
+from core.paths import repo_dir, SYSTEM_DIR
+_GLOBAL_SERVICES_FILE = SYSTEM_DIR / "global_services.json"  # legacy compat
+_USER_SERVICES_DIR = SYSTEM_DIR / "user_services"  # legacy compat
 CONV_EXTRAS_KEY = "conv_services"
 
 # Scopes
@@ -661,9 +660,9 @@ class ServiceRegistry:
         """Load service definitions from the appropriate backend."""
         try:
             if scope == SCOPE_GLOBAL:
-                self._load_file(scope_id, GLOBAL_SERVICES_FILE, scope)
+                self._load_file(scope_id, _GLOBAL_SERVICES_FILE, scope)
             elif scope == SCOPE_USER:
-                filepath = USER_SERVICES_DIR / f"{scope_id}.json"
+                filepath = _USER_SERVICES_DIR / f"{scope_id}.json"
                 self._load_file(scope_id, filepath, scope)
             elif scope == SCOPE_CONV:
                 self._load_conv(scope_id)
@@ -716,10 +715,10 @@ class ServiceRegistry:
                 scope, scope_id[:8] if len(scope_id) > 8 else scope_id)
             return
         if scope == SCOPE_GLOBAL:
-            self._save_file(scope_id, GLOBAL_SERVICES_FILE)
+            self._save_file(scope_id, _GLOBAL_SERVICES_FILE)
         elif scope == SCOPE_USER:
-            USER_SERVICES_DIR.mkdir(parents=True, exist_ok=True)
-            filepath = USER_SERVICES_DIR / f"{scope_id}.json"
+            _USER_SERVICES_DIR.mkdir(parents=True, exist_ok=True)
+            filepath = _USER_SERVICES_DIR / f"{scope_id}.json"
             self._save_file(scope_id, filepath)
         elif scope == SCOPE_CONV:
             self._save_conv(scope_id)

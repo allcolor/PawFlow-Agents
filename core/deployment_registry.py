@@ -459,7 +459,7 @@ class DeploymentRegistry:
 
         Returns the number of migrated instances.
         """
-        from core.paths import AGENT_FLOWS_DIR; agent_dir = AGENT_FLOWS_DIR
+        agent_dir = DEPLOYMENTS_DIR.parent / "agent_flows"  # legacy migration path
         if not agent_dir.exists():
             return 0
 

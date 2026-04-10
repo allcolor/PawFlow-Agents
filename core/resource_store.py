@@ -20,7 +20,13 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import AGENTS_FILE, SKILLS_FILE, MCP_SERVERS_FILE, PROMPTS_FILE, TASK_DEFS_FILE
+from core.paths import SYSTEM_DIR
+# Legacy monolithic files — will be migrated to repository/
+AGENTS_FILE = SYSTEM_DIR / "agents.json"
+SKILLS_FILE = SYSTEM_DIR / "skills.json"
+MCP_SERVERS_FILE = SYSTEM_DIR / "mcp_servers.json"
+PROMPTS_FILE = SYSTEM_DIR / "prompts.json"
+TASK_DEFS_FILE = SYSTEM_DIR / "task_defs.json"
 
 # File paths per resource type
 _RESOURCE_FILES = {
@@ -96,8 +102,7 @@ class ResourceStore:
         self._data: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._store_lock = threading.Lock()
         self._loaded: set = set()
-        from core.paths import CONFIG_DIR
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        SYSTEM_DIR.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def instance(cls) -> "ResourceStore":

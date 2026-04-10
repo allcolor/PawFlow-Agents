@@ -1,62 +1,186 @@
-"""Centralized path constants for all PawFlow data and config files."""
+"""Centralized path functions for PawFlow storage.
+
+Three top-level areas:
+  - repository/  : definitions (agents, skills, tasks, flows, mcps, prompts, services, tools)
+  - runtime/     : operational state (conversations, deployments, files, memories, ...)
+  - system/      : server config (users, sessions, security, secrets, ssl)
+
+Repository scopes:
+  - global                        : visible to everyone
+  - user   (user_id)              : visible to this user
+  - conv   (user_id, conv_id)     : visible in this conversation only
+"""
 
 from pathlib import Path
 
-# ── Root directories ──────────────────────────────────────────────
+# ── Root ──────────────────────────────────────────────────────────
 DATA_DIR = Path("data")
-CONFIG_DIR = DATA_DIR / "config"
+REPOSITORY_DIR = DATA_DIR / "repository"
+RUNTIME_DIR = DATA_DIR / "runtime"
+SYSTEM_DIR = DATA_DIR / "system"
 
-# ── Config files ──────────────────────────────────────────────────
-AGENTS_FILE = CONFIG_DIR / "agents.json"
-AGENT_SECRETS_FILE = CONFIG_DIR / "agent_secrets.json"
-AGENT_VARIABLES_FILE = CONFIG_DIR / "agent_variables.json"
-GLOBAL_PARAMS_FILE = CONFIG_DIR / "global_parameters.json"
-GLOBAL_SECRETS_FILE = CONFIG_DIR / "global_secrets.json"
-GLOBAL_SERVICES_FILE = CONFIG_DIR / "global_services.json"
-LLM_PROFILES_FILE = CONFIG_DIR / "llm_profiles.json"
-MCP_SERVERS_FILE = CONFIG_DIR / "mcp_servers.json"
-PROMPTS_FILE = CONFIG_DIR / "prompts.json"
-SECRET_KEY_FILE = CONFIG_DIR / "secret.key"
-SESSIONS_FILE = CONFIG_DIR / "sessions.json"
-SKILLS_FILE = CONFIG_DIR / "skills.json"
-TASK_DEFS_FILE = CONFIG_DIR / "task_defs.json"
-TASK_TEMPLATES_FILE = CONFIG_DIR / "task_templates.json"
-TRIGGERS_FILE = CONFIG_DIR / "triggers.json"
-USERS_FILE = CONFIG_DIR / "users.json"
-SECURITY_FILE = CONFIG_DIR / "security.json"
-SECRETS_FILE = CONFIG_DIR / "secrets.json"
-PARAMETER_CONTEXTS_FILE = CONFIG_DIR / "parameter_contexts.json"
-
-# ── Config subdirectories ─────────────────────────────────────────
-USER_CONFIG_DIR = CONFIG_DIR / "users"
-USER_SERVICES_DIR = CONFIG_DIR / "user_services"
-FLOW_VERSIONS_DIR = CONFIG_DIR / "flow_versions"
-SSL_DIR = CONFIG_DIR / "ssl"
-
-# ── Data directories ──────────────────────────────────────────────
-CONVERSATIONS_DIR = DATA_DIR / "conversations"
-DEPLOYMENTS_DIR = DATA_DIR / "deployments"
-AGENT_FLOWS_DIR = DATA_DIR / "agent_flows"
-AGENT_TEMPLATES_DIR = DATA_DIR / "agent_templates"
-DYNAMIC_TOOLS_DIR = DATA_DIR / "dynamic_tools"
-FILES_DIR = DATA_DIR / "files"
-GRAPHS_DIR = DATA_DIR / "graphs"
-KNOWLEDGE_GRAPHS_DIR = DATA_DIR / "knowledge_graphs"
-MEMORIES_DIR = DATA_DIR / "memories"
-PLANS_DIR = DATA_DIR / "plans"
-POLL_SCHEDULE_DIR = DATA_DIR / "poll_schedule"
-CLAUDE_SESSIONS_DIR = DATA_DIR / "claude_sessions"
-
-# ── Data files ────────────────────────────────────────────────────
-IDENTITY_MAPPINGS_FILE = DATA_DIR / "identity_mappings.json"
-TOKEN_USAGE_FILE = DATA_DIR / "token_usage.json"
-SERVER_ID_FILE = DATA_DIR / "server_id"
-GATEWAY_BANS_FILE = DATA_DIR / "gateway_bans.json"
-
-
-# ── Defaults (seed data, tracked in git) ──────────────────────
+# ── Defaults (seed data, tracked in git) ──────────────────────────
 DEFAULTS_DIR = Path("defaults")
 
+# ── Repository resource types ────────────────────────────────────
+REPO_TYPES = frozenset({
+    "agents", "skills", "tasks", "flows",
+    "mcps", "prompts", "services", "tools",
+})
+
+
+# ── Repository paths ─────────────────────────────────────────────
+
+def repo_dir(rtype: str, scope: str = "global",
+             user_id: str = "", conv_id: str = "") -> Path:
+    """Directory for a repository resource type + scope.
+
+    repo_dir("agents", "global")            → data/repository/agents/global/
+    repo_dir("agents", "user", "u1")        → data/repository/agents/users/u1/
+    repo_dir("agents", "conv", "u1", "c1")  → data/repository/agents/users/u1/c1/
+    """
+    base = REPOSITORY_DIR / rtype
+    if scope == "global":
+        return base / "global"
+    if scope == "user":
+        return base / "users" / user_id
+    if scope == "conv":
+        return base / "users" / user_id / conv_id
+    raise ValueError(f"Invalid scope: {scope!r}")
+
+
+def repo_file(rtype: str, name: str, scope: str = "global",
+              user_id: str = "", conv_id: str = "") -> Path:
+    """Path to a single resource definition file.
+
+    repo_file("agents", "pawflow", "global")  → data/repository/agents/global/pawflow.json
+    """
+    return repo_dir(rtype, scope, user_id, conv_id) / f"{name}.json"
+
+
+# ── Flow-specific paths ──────────────────────────────────────────
+
+def flow_package_dir(package: str, scope: str = "global",
+                     user_id: str = "", conv_id: str = "") -> Path:
+    """Directory for a flow package.
+
+    flow_package_dir("pawflow.demo", "global")
+        → data/repository/flows/global/pawflow/demo/
+    """
+    base = repo_dir("flows", scope, user_id, conv_id)
+    return base / package.replace(".", "/")
+
+
+def flow_dir(package: str, flowname: str, scope: str = "global",
+             user_id: str = "", conv_id: str = "") -> Path:
+    """Directory for a specific flow (contains latest.json + versions/)."""
+    return flow_package_dir(package, scope, user_id, conv_id) / flowname
+
+
+def flow_latest_file(package: str, flowname: str, scope: str = "global",
+                     user_id: str = "", conv_id: str = "") -> Path:
+    """Path to latest.json for a flow."""
+    return flow_dir(package, flowname, scope, user_id, conv_id) / "latest.json"
+
+
+def flow_version_file(package: str, flowname: str, version: str,
+                      scope: str = "global",
+                      user_id: str = "", conv_id: str = "") -> Path:
+    """Path to a specific flow version file."""
+    return flow_dir(package, flowname, scope, user_id, conv_id) / "versions" / f"{version}.json"
+
+
+def parse_flow_fqn(fqn: str) -> tuple:
+    """Parse 'package.flowname:version' → (package, flowname, version).
+
+    parse_flow_fqn('pawflow.demo.ingest:2.3.1')
+        → ('pawflow.demo', 'ingest', '2.3.1')
+    parse_flow_fqn('pawflow.demo.ingest')
+        → ('pawflow.demo', 'ingest', '')
+    """
+    version = ""
+    if ":" in fqn:
+        fqn, version = fqn.rsplit(":", 1)
+    package, flowname = fqn.rsplit(".", 1)
+    return package, flowname, version
+
+
+# ── Runtime paths ────────────────────────────────────────────────
+
+# Conversations
+CONVERSATIONS_DIR = RUNTIME_DIR / "conversations"
+
+def conversation_dir(user_id: str, conv_id: str) -> Path:
+    return CONVERSATIONS_DIR / user_id / conv_id
+
+# Deployments
+DEPLOYMENTS_DIR = RUNTIME_DIR / "deployments"
+
+# Files (FileStore)
+FILES_DIR = RUNTIME_DIR / "files"
+
+def files_dir(user_id: str, conv_id: str) -> Path:
+    return FILES_DIR / user_id / conv_id
+
+# Memories
+MEMORIES_DIR = RUNTIME_DIR / "memories"
+
+# Knowledge Graphs
+KNOWLEDGE_GRAPHS_DIR = RUNTIME_DIR / "knowledge_graphs"
+
+# Plans
+PLANS_DIR = RUNTIME_DIR / "plans"
+
+# Claude Code sessions
+CLAUDE_SESSIONS_DIR = RUNTIME_DIR / "sessions" / "claude"
+
+# Project graphs (AST cache)
+GRAPHS_DIR = RUNTIME_DIR / "graphs"
+
+# Spill (FlowFile large content)
+SPILL_DIR = RUNTIME_DIR / "spill"
+
+# Runtime data files
+TOKEN_USAGE_FILE = RUNTIME_DIR / "token_usage.json"
+POLL_SCHEDULE_FILE = RUNTIME_DIR / "poll_schedule.json"
+IDENTITY_MAPPINGS_FILE = RUNTIME_DIR / "identity_mappings.json"
+GATEWAY_BANS_FILE = RUNTIME_DIR / "gateway_bans.json"
+
+
+# ── System paths ─────────────────────────────────────────────────
+
+USERS_FILE = SYSTEM_DIR / "users.json"
+SESSIONS_FILE = SYSTEM_DIR / "sessions.json"
+SECURITY_FILE = SYSTEM_DIR / "security.json"
+SECRET_KEY_FILE = SYSTEM_DIR / "secret.key"
+SERVER_ID_FILE = SYSTEM_DIR / "server_id"
+SSL_DIR = SYSTEM_DIR / "ssl"
+
+# Legacy system config files (expression resolver, secrets, etc.)
+AGENT_SECRETS_FILE = SYSTEM_DIR / "agent_secrets.json"
+AGENT_VARIABLES_FILE = SYSTEM_DIR / "agent_variables.json"
+GLOBAL_PARAMS_FILE = SYSTEM_DIR / "global_parameters.json"
+GLOBAL_SECRETS_FILE = SYSTEM_DIR / "global_secrets.json"
+SECRETS_FILE = SYSTEM_DIR / "secrets.json"
+LLM_PROFILES_FILE = SYSTEM_DIR / "llm_profiles.json"
+PARAMETER_CONTEXTS_FILE = SYSTEM_DIR / "parameter_contexts.json"
+TRIGGERS_FILE = SYSTEM_DIR / "triggers.json"
+TASK_TEMPLATES_FILE = SYSTEM_DIR / "task_templates.json"
+
+# User-specific system config (secrets, params, oauth)
+USER_CONFIG_DIR = SYSTEM_DIR / "users"
+
+def user_secrets_path(user_id: str) -> Path:
+    return USER_CONFIG_DIR / user_id / "secrets.json"
+
+def user_params_path(user_id: str) -> Path:
+    return USER_CONFIG_DIR / user_id / "parameters.json"
+
+def user_oauth_path(user_id: str) -> Path:
+    return USER_CONFIG_DIR / user_id / "oauth_tokens.json"
+
+
+# ── Helpers ──────────────────────────────────────────────────────
 
 def ensure_seed_file(target: Path, default_name: str) -> None:
     """Copy a seed file from defaults/ to target if target doesn't exist."""
@@ -68,13 +192,3 @@ def ensure_seed_file(target: Path, default_name: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     import shutil
     shutil.copy2(source, target)
-
-
-def user_secrets_path(user_id: str) -> Path:
-    """Path to a user's secrets.json."""
-    return USER_CONFIG_DIR / user_id / "secrets.json"
-
-
-def user_params_path(user_id: str) -> Path:
-    """Path to a user's parameters.json."""
-    return USER_CONFIG_DIR / user_id / "parameters.json"

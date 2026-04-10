@@ -36,7 +36,7 @@ _HOT_RELOAD_DEBOUNCE = 2  # seconds to wait after last change before restart
 def _get_deployment_registry():
     """Lazy import to avoid circular imports."""
     try:
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         return DeploymentRegistry.get_instance()
     except Exception:
         return None
@@ -150,7 +150,7 @@ class ExecutorRegistry:
 
         # Connect all enabled global services (listeners, filesystem, etc.)
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             ServiceRegistry.get_instance().connect_all_enabled("global", "")
             logger.info("Global services connected at startup")
         except Exception as e:

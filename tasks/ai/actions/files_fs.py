@@ -106,8 +106,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            from gui.services.executor_registry import ExecutorRegistry
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.executor_registry import ExecutorRegistry
+            from core.deployment_registry import DeploymentRegistry
             dep_reg = DeploymentRegistry.get_instance()
             inst = dep_reg.get(instance_id)
             flow_name = inst.flow_name if inst else instance_id
@@ -170,7 +170,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
     if action == "list_conv_flows":
         # Show all flows belonging to this user (not conversation-scoped)
         try:
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.deployment_registry import DeploymentRegistry
             dep_reg = DeploymentRegistry.get_instance()
             dep_reg.sync_with_executors()
             uid = user_id or None
@@ -205,7 +205,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 {"error": "flow_id and flow_action required"}).encode())
             return [flowfile]
 
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         dep_reg = DeploymentRegistry.get_instance()
         inst = dep_reg.get(flow_id)
         if not inst:
@@ -220,7 +220,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
         if flow_action == "start":
             try:
-                from gui.services.executor_registry import ExecutorRegistry
+                from core.executor_registry import ExecutorRegistry
                 from engine.parser import FlowParser
                 from engine.continuous_executor import ContinuousFlowExecutor
                 from tasks import register_all_tasks
@@ -255,7 +255,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
         elif flow_action == "stop":
             try:
-                from gui.services.executor_registry import ExecutorRegistry
+                from core.executor_registry import ExecutorRegistry
                 reg = ExecutorRegistry.get_instance()
                 ex = reg.get(flow_id)
                 if ex:
@@ -269,7 +269,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
         elif flow_action == "delete":
             try:
-                from gui.services.executor_registry import ExecutorRegistry
+                from core.executor_registry import ExecutorRegistry
                 reg = ExecutorRegistry.get_instance()
                 ex = reg.get(flow_id)
                 if ex:
@@ -355,7 +355,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         from core.handlers._fs_base import find_fs_service as _find_svc, _FS_TYPES
         services = []
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             for fs_type in _FS_TYPES:
                 for sdef in reg.resolve_by_type(fs_type, user_id=user_id):

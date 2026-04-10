@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 
 from api.auth import require_permission
-from gui.services.flow_service import FlowService
+from core.flow_service import FlowService
 from engine.continuous_executor import ContinuousFlowExecutor
 from engine.provenance import get_provenance_repository
 from engine.debugger import FlowDebugger
@@ -542,7 +542,7 @@ def recover_flows_on_startup():
     """Called at server startup: restart flows that were running before crash.
 
     Checks two sources:
-    1. FlowStateManager (config/running_flows.json) — flows started via API
+    1. FlowStateManager (data/config/running_flows.json) — flows started via API
     2. DeploymentRegistry (data/deployments/) — flows started via GUI
 
     For each flow that was 'running', attempts to recreate executor and start it.
@@ -595,7 +595,7 @@ def recover_flows_on_startup():
 
     # --- Source 2: DeploymentRegistry (GUI-started flows) ---
     try:
-        from gui.services.executor_registry import ExecutorRegistry
+        from core.executor_registry import ExecutorRegistry
         reg = ExecutorRegistry.get_instance()
         reg.restore_from_disk()
         dr_count = reg.count()

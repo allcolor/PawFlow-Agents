@@ -360,7 +360,9 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
 
     if action == "list_templates":
         import os
-        _tpl_path = os.path.join("config", "task_templates.json")
+        from core.paths import TASK_TEMPLATES_FILE, ensure_seed_file
+        ensure_seed_file(TASK_TEMPLATES_FILE, "task_templates.json")
+        _tpl_path = str(TASK_TEMPLATES_FILE)
         templates_out = []
         try:
             with open(_tpl_path, "r") as f:
@@ -390,8 +392,9 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing template_name"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        import os
-        _tpl_path = os.path.join("config", "task_templates.json")
+        from core.paths import TASK_TEMPLATES_FILE, ensure_seed_file
+        ensure_seed_file(TASK_TEMPLATES_FILE, "task_templates.json")
+        _tpl_path = str(TASK_TEMPLATES_FILE)
         try:
             with open(_tpl_path, "r") as f:
                 _tpls = json.load(f)

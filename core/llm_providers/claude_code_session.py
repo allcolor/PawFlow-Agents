@@ -18,7 +18,7 @@ def _find_cc_service_id(service_id: str = "") -> str:
     if service_id:
         return service_id
     try:
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         for sdef in ServiceRegistry.get_instance().resolve_by_type("llmConnection"):
             cfg = getattr(sdef, "config", {}) or {}
             if cfg.get("provider") == "claude-code":
@@ -43,7 +43,8 @@ def _load_credentials_pool(service_id: str = "") -> list:
     sm = get_secrets_manager()
     prefix = sid.replace("-", "_")
 
-    secrets_path = Path("config/global_secrets.json")
+    from core.paths import GLOBAL_SECRETS_FILE
+    secrets_path = GLOBAL_SECRETS_FILE
     if not secrets_path.exists():
         return []
     existing = json.loads(secrets_path.read_text(encoding="utf-8"))
@@ -93,7 +94,8 @@ def _save_credentials_pool(pool: list, service_id: str = ""):
     sm = get_secrets_manager()
     prefix = sid.replace("-", "_")
 
-    secrets_path = Path("config/global_secrets.json")
+    from core.paths import GLOBAL_SECRETS_FILE
+    secrets_path = GLOBAL_SECRETS_FILE
     secrets_path.parent.mkdir(parents=True, exist_ok=True)
     existing = {}
     if secrets_path.exists():
@@ -335,7 +337,7 @@ class ClaudeCodeSessionMixin:
         if cls._tool_relay_cache:
             return cls._tool_relay_cache
         try:
-            from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL
+            from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
             reg = ServiceRegistry.get_instance()
 
             # Check if a live tool relay already exists (from this server run)

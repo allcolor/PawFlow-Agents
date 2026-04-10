@@ -894,7 +894,7 @@ class HTTPListenerService(BaseService):
         # Register in ServiceRegistry for discoverability
         svc_id = f"_http_listener_{self._port}"
         try:
-            from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL
+            from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
             reg = ServiceRegistry.get_instance()
             if not reg.get_definition(SCOPE_GLOBAL, "", svc_id):
                 reg.install(SCOPE_GLOBAL, "", service_id=svc_id,
@@ -977,7 +977,7 @@ class HTTPListenerService(BaseService):
         with _instances_lock:
             _instances.pop(self._port, None)
         try:
-            from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL
+            from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
             reg = ServiceRegistry.get_instance()
             with reg._data_lock:
                 reg._live_instances.get(

@@ -17,7 +17,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
     if action == "cost":
         # Read persistent stats from TokenTracker (survives restarts)
         from core.token_tracker import TokenTracker
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         tracker = TokenTracker.instance()
         usage = tracker.get_usage(user_id)
         agents_data = usage.get("agents", {})

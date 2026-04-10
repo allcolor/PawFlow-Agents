@@ -45,7 +45,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "service_list":
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             greg = ServiceRegistry.get_instance()
             registry = ServiceRegistry.get_instance()
             services = []
@@ -180,7 +180,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 merged.update(config)
                 config = merged
             description = body.get("description", "")
-            from gui.services.service_registry import ServiceRegistry, SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV
+            from core.service_registry import ServiceRegistry, SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV
             reg = ServiceRegistry.get_instance()
             if scope == "global":
                 scope_id = ""
@@ -257,7 +257,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # Find the service
         svc = None
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             svc = ServiceRegistry.get_instance().resolve(svc_id, user_id=user_id)
         except Exception:
             pass
@@ -308,7 +308,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
                 return [flowfile]
             # Try global first if scope says so, or auto-detect
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             gsvc = ServiceRegistry.get_instance()
             if scope == "global" or (not scope and gsvc.get_definition("global", "", svc_id)):
                 if "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
@@ -317,7 +317,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     return [flowfile]
                 gsvc.uninstall("global", "", svc_id)
             else:
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 registry = ServiceRegistry.get_instance()
                 if not registry.get_definition("user", user_id, svc_id):
                     flowfile.set_content(json.dumps({"error": f"Service '{svc_id}' not found."}).encode())
@@ -332,7 +332,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "service_enable":
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             registry = ServiceRegistry.get_instance()
             svc_id = body.get("service_id", "")
             if not registry.get_definition("user", user_id, svc_id):
@@ -350,7 +350,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "service_disable":
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             registry = ServiceRegistry.get_instance()
             svc_id = body.get("service_id", "")
             if not registry.get_definition("user", user_id, svc_id):
@@ -374,11 +374,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             if scope == "user" and user_id:
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 ureg = ServiceRegistry.get_instance()
                 sdef = ureg.get_all("user", user_id).get(sid)
             else:
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 sdef = ServiceRegistry.get_instance().get_all("global", "").get(sid)
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{sid}' not found"}).encode())
@@ -410,11 +410,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 return [flowfile]
         try:
             if scope == "user" and user_id:
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 ureg = ServiceRegistry.get_instance()
                 ureg.update_config("user", user_id, sid, config)
             else:
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 ServiceRegistry.get_instance().update_config("global", "", sid, config)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
@@ -425,7 +425,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         sid = body.get("service_id", "")
         enabled = body.get("enabled", True)
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             gsvc = ServiceRegistry.get_instance()
             if gsvc.get_definition("global", "", sid):
                 # Global service
@@ -439,7 +439,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     gsvc.disable("global", "", sid)
             else:
                 # User service
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 ureg = ServiceRegistry.get_instance()
                 uid = user_id
                 if enabled:
@@ -458,7 +458,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             return [flowfile]
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             uid = user_id
             ServiceRegistry.get_instance().uninstall(scope, uid if scope == "user" else "", sid)
             flowfile.set_content(json.dumps({"ok": True}).encode())
@@ -484,7 +484,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # User services
         if user_id:
             try:
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 registry = ServiceRegistry.get_instance()
                 for sid, sdef in registry.get_all("user", user_id).items():
                     if not sdef.enabled or sdef.service_type != "relay":
@@ -520,7 +520,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             relay_svc = self._services.get(relay_id)
         if not relay_svc and user_id:
             try:
-                from gui.services.service_registry import ServiceRegistry
+                from core.service_registry import ServiceRegistry
                 relay_svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id)
             except Exception:
                 pass
@@ -585,7 +585,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
         # Validate service exists and is a claude-code provider
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             sdef = ServiceRegistry.get_instance().resolve_definition(service_id)
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
@@ -664,7 +664,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             try:
                 svc = None
                 try:
-                    from gui.services.service_registry import ServiceRegistry
+                    from core.service_registry import ServiceRegistry
                     greg = ServiceRegistry.get_instance()
                     for _sid, _sdef in greg.get_all("global", "").items():
                         if getattr(_sdef, "service_type", "") == "httpListener":
@@ -886,7 +886,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
             # Find the service in global or user registry and verify provider
             _stored = False
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             greg = ServiceRegistry.get_instance()
             sdef = greg.get_definition("global", "", service_id)
             if sdef:
@@ -910,7 +910,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not _stored:
                 # Try user services
                 try:
-                    from gui.services.service_registry import ServiceRegistry
+                    from core.service_registry import ServiceRegistry
                     ureg = ServiceRegistry.get_instance()
                     usdef = ureg.get_definition("user", user_id, service_id)
                     if usdef:
@@ -950,7 +950,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         # Find the source relay service
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         ureg = ServiceRegistry.get_instance()
         greg = ServiceRegistry.get_instance()
 
@@ -1040,7 +1040,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         # Find which relay this service is connected through
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         ureg = ServiceRegistry.get_instance()
         svc = ureg.get_live_instance("user", user_id, service_id)
         if svc:
@@ -1093,8 +1093,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
             return [flowfile]
         try:
-            from gui.services.executor_registry import ExecutorRegistry
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.executor_registry import ExecutorRegistry
+            from core.deployment_registry import DeploymentRegistry
             reg = ExecutorRegistry.get_instance()
             dr = DeploymentRegistry.get_instance()
             inst = dr.get(iid)
@@ -1168,7 +1168,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             from pathlib import Path as _Path
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.deployment_registry import DeploymentRegistry
             flows_dir = _Path("flows")
             tpath = None
             for fp in flows_dir.glob("*.json"):
@@ -1236,7 +1236,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 {"error": "Requires admin role for global scope"}).encode())
             return [flowfile]
         try:
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.deployment_registry import DeploymentRegistry
             dr = DeploymentRegistry.get_instance()
             inst = dr.get(iid)
             if not inst:
@@ -1261,7 +1261,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
             return [flowfile]
         try:
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.deployment_registry import DeploymentRegistry
             dr = DeploymentRegistry.get_instance()
             inst = dr.get(iid)
             if not inst:
@@ -1370,7 +1370,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
             return [flowfile]
         try:
-            from gui.services.deployment_registry import DeploymentRegistry
+            from core.deployment_registry import DeploymentRegistry
             dr = DeploymentRegistry.get_instance()
             inst = dr.get(iid)
             if not inst:
@@ -1390,12 +1390,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     def _find_relay_svc(relay_id):
         """Find relay service in global then user registry."""
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         greg = ServiceRegistry.get_instance()
         svc = greg.get_live_instance("global", "", relay_id)
         if svc:
             return svc
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         ureg = ServiceRegistry.get_instance()
         return ureg.get_live_instance("user", user_id, relay_id) if user_id else None
 
@@ -1407,7 +1407,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         try:
             from services.vnc_proxy import vnc_ws_proxy, vnc_http_proxy
             from services.audio_proxy import audio_ws_proxy
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             _greg = ServiceRegistry.get_instance()
             for _sid2, _sdef in _greg.get_all("global", "").items():
                 if getattr(_sdef, "service_type", "") == "httpListener":
@@ -1534,7 +1534,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             # Register WS route (once)
             _owner = "_terminal_proxy"
             http_svc = None
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             greg = ServiceRegistry.get_instance()
             for _sid, _sdef in greg.get_all("global", "").items():
                 if getattr(_sdef, "service_type", "") == "httpListener":
@@ -1617,7 +1617,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
             _owner = "_code_server_proxy"
             http_svc = None
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             greg = ServiceRegistry.get_instance()
             for _sid, _sdef in greg.get_all("global", "").items():
                 if getattr(_sdef, "service_type", "") == "httpListener":
@@ -1997,7 +1997,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
 def _find_http_listener():
     """Find the live HTTPListenerService instance."""
-    from gui.services.service_registry import ServiceRegistry
+    from core.service_registry import ServiceRegistry
     greg = ServiceRegistry.get_instance()
     for _sid, _sdef in greg.get_all("global", "").items():
         if getattr(_sdef, "service_type", "") == "httpListener":

@@ -216,7 +216,7 @@ class StorageResolver:
     def _lookup_service(self, service_name: str):
         """Look up a service by exact ID across all scopes (conv > user > global)."""
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             return ServiceRegistry.get_instance().resolve(
                 service_name, user_id=self._user_id)
         except Exception:
@@ -225,7 +225,7 @@ class StorageResolver:
     def _find_first_fs(self):
         """Auto-detect the first available filesystem service (conv > user > global)."""
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             for fs_type in self._FS_TYPES:
                 for sdef in reg.resolve_by_type(fs_type, user_id=self._user_id):

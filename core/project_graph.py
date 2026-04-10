@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DIR = "data/graphs"
+from core.paths import GRAPHS_DIR; _DEFAULT_DIR = str(GRAPHS_DIR)
 
 # Extensions supported by graphify AST extraction
 _CODE_EXTENSIONS = (

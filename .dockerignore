@@ -3,9 +3,9 @@
 __pycache__
 *.pyc
 .env
-config/secret.key
-config/users.json
-config/security.json
+data/config/secret.key
+data/config/users.json
+data/config/security.json
 cluster_state/
 *.egg-info
 .mypy_cache

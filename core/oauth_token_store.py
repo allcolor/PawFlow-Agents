@@ -3,7 +3,7 @@
 Stores access_token, refresh_token, and expiry per (user_id, provider).
 Tokens are encrypted at rest using SecretsManager.
 
-Persistence: config/users/{user_id}/oauth_tokens.json
+Persistence: data/config/users/{user_id}/oauth_tokens.json
 """
 
 import json
@@ -40,7 +40,8 @@ class OAuthTokenStore:
         return f"{user_id}:{provider}"
 
     def _tokens_path(self, user_id: str) -> str:
-        return os.path.join("config", "users", user_id, "oauth_tokens.json")
+        from core.paths import USER_CONFIG_DIR
+        return str(USER_CONFIG_DIR / user_id / "oauth_tokens.json")
 
     def _load(self, user_id: str) -> Dict[str, Any]:
         """Load tokens for a user from disk."""

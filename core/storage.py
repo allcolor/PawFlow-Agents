@@ -69,7 +69,7 @@ class StorageManager:
         Args:
             storage: Implémentation de stockage (par défaut: FileSystemStorage)
         """
-        from config.storage.filesystem_storage import FilesystemStorage
+        from core.storage_backends.filesystem_storage import FilesystemStorage
 
         self._storage = storage or FilesystemStorage({"flows_path": "./flows"})
         self._initialized = False

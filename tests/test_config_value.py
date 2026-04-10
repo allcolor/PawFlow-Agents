@@ -300,7 +300,7 @@ class TestExpressionWithConfigValue:
         params_file = tmp_path / "global_parameters.json"
         params_file.write_text(json.dumps({"env": "prod"}))
         monkeypatch.setattr(
-            "core.expression._GLOBAL_PARAMS_FILE", params_file
+            "core.paths.GLOBAL_PARAMS_FILE", params_file
         )
         from core.expression import resolve_expression
         result = resolve_expression("${env}")
@@ -313,7 +313,7 @@ class TestExpressionWithConfigValue:
         data = {"big": ConfigValue(value=big)}
         ConfigStore.save_params(params_file, data)
         monkeypatch.setattr(
-            "core.expression._GLOBAL_PARAMS_FILE", params_file
+            "core.paths.GLOBAL_PARAMS_FILE", params_file
         )
         from core.expression import resolve_expression
         result = resolve_expression("${big}")

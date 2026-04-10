@@ -16,7 +16,7 @@ class ManageResourceHandler(ToolHandler):
     """CRUD for user resources: agents, skills, MCP servers, prompts.
 
     Both users (via slash commands) and agents (via tool calls) can manage
-    resources. Resources are user-scoped and persist in config/ JSON files.
+    resources. Resources are user-scoped and persist in data/config/ JSON files.
     """
 
     def __init__(self):
@@ -118,7 +118,7 @@ class ManageResourceHandler(ToolHandler):
                             svc_id = f"_profile_{profile_name}"
                             try:
                                 from core.resource_store import ResourceStore as _RS
-                                from gui.services.service_registry import ServiceRegistry, SCOPE_USER
+                                from core.service_registry import ServiceRegistry, SCOPE_USER
                                 _reg = ServiceRegistry.get_instance()
                                 if not _reg.get_definition(SCOPE_USER, user_id, svc_id):
                                     _reg.install(
@@ -795,7 +795,7 @@ class ShowFileHandler(ToolHandler):
     def _find_fs_service(self, service_name: str):
         """Find a filesystem service by name (conv > user > global)."""
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             return ServiceRegistry.get_instance().resolve(
                 service_name, user_id=self._user_id)
         except Exception:

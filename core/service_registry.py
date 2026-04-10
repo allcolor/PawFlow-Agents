@@ -3,8 +3,8 @@
 A single class that manages service definitions and live instances across
 all three scopes. The scope determines storage and keying:
 
-    global  — shared across all users. Persisted in config/global_services.json
-    user    — per-user. Persisted in config/user_services/{user_id}.json
+    global  — shared across all users. Persisted in data/config/global_services.json
+    user    — per-user. Persisted in data/config/user_services/{user_id}.json
     conv    — per-conversation. Persisted in ConversationStore extras.
 
 All scopes share the same CRUD interface — only the scope_id changes.
@@ -22,9 +22,10 @@ from core import ServiceFactory, Service
 
 logger = logging.getLogger(__name__)
 
-# Storage paths
-GLOBAL_SERVICES_FILE = Path("config/global_services.json")
-USER_SERVICES_DIR = Path("config/user_services")
+from core.paths import (
+    GLOBAL_SERVICES_FILE,
+    USER_SERVICES_DIR,
+)
 CONV_EXTRAS_KEY = "conv_services"
 
 # Scopes
@@ -611,6 +612,49 @@ class ServiceRegistry:
         except Exception:
             pass
 
+    # ---- Sensitive field encryption ----
+
+    @staticmethod
+    def _sensitive_keys(service_type: str) -> set:
+        """Return the set of config keys marked sensitive in the service schema."""
+        try:
+            svc_cls = ServiceFactory.get(service_type)
+            schema = svc_cls.get_parameter_schema(svc_cls)
+            return {k for k, v in schema.items() if v.get("sensitive")}
+        except Exception:
+            return set()
+
+    @staticmethod
+    def _encrypt_config(config: dict, sensitive_keys: set) -> dict:
+        """Return a copy of config with sensitive values encrypted."""
+        if not sensitive_keys:
+            return config
+        from core.secrets import get_secrets_manager
+        sm = get_secrets_manager()
+        out = dict(config)
+        for k in sensitive_keys:
+            v = out.get(k)
+            if isinstance(v, str) and v and not v.startswith("enc:") and not v.startswith("${"):
+                out[k] = sm.encrypt(v)
+        return out
+
+    @staticmethod
+    def _decrypt_config(config: dict, sensitive_keys: set) -> dict:
+        """Return a copy of config with sensitive values decrypted."""
+        if not sensitive_keys:
+            return config
+        from core.secrets import get_secrets_manager
+        sm = get_secrets_manager()
+        out = dict(config)
+        for k in sensitive_keys:
+            v = out.get(k)
+            if isinstance(v, str) and v.startswith("enc:"):
+                try:
+                    out[k] = sm.decrypt(v)
+                except Exception:
+                    pass  # leave encrypted if key changed
+        return out
+
     # ---- Persistence ----
 
     def _load(self, scope: str, scope_id: str) -> None:
@@ -640,6 +684,10 @@ class ServiceRegistry:
             data["service_id"] = sid
             data["scope"] = scope
             data["scope_id"] = scope_id
+            stype = data.get("service_type", "")
+            sk = self._sensitive_keys(stype)
+            if sk and "config" in data:
+                data["config"] = self._decrypt_config(data["config"], sk)
             defs[sid] = ServiceDef.from_dict(data)
         self._definitions[scope_id] = defs
         logger.info("Loaded %d %s service(s) (id=%s)", len(defs), scope,
@@ -680,10 +728,13 @@ class ServiceRegistry:
         """Atomic write to JSON file (global or user)."""
         filepath.parent.mkdir(parents=True, exist_ok=True)
         with self._data_lock:
-            data = {
-                sid: sdef.to_dict()
-                for sid, sdef in self._definitions.get(scope_id, {}).items()
-            }
+            data = {}
+            for sid, sdef in self._definitions.get(scope_id, {}).items():
+                d = sdef.to_dict()
+                sk = self._sensitive_keys(sdef.service_type)
+                if sk:
+                    d["config"] = self._encrypt_config(d.get("config", {}), sk)
+                data[sid] = d
         tmp_path = filepath.with_suffix(".tmp")
         try:
             tmp_path.write_text(

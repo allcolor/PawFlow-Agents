@@ -79,7 +79,7 @@ def _autosave_key(instance_id: str) -> str:
 def _load_disk_positions(instance_id: str) -> dict:
     """Load saved layout positions from deployment registry."""
     try:
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         reg = DeploymentRegistry.get_instance()
         raw = reg.get_layout(instance_id)
         if not raw:
@@ -93,7 +93,7 @@ def _load_disk_positions(instance_id: str) -> dict:
 def save_layout_to_disk(instance_id: str, positions: dict):
     """Save layout positions to deployment registry."""
     try:
-        from gui.services.deployment_registry import DeploymentRegistry
+        from core.deployment_registry import DeploymentRegistry
         reg = DeploymentRegistry.get_instance()
         layout = {tid: {"x": pos[0], "y": pos[1]} for tid, pos in positions.items()}
         reg.save_layout(instance_id, layout)

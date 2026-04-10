@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import unittest
 
-from gui.services.template_service import TemplateService, TEMPLATE_CATEGORIES
+from core.template_service import TemplateService, TEMPLATE_CATEGORIES
 
 
 class TestTemplateService(unittest.TestCase):

@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel
 
 from api.auth import get_current_session
-from gui.services.service_registry import (
+from core.service_registry import (
     ServiceRegistry, SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV, VALID_SCOPES,
 )
 

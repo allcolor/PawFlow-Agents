@@ -79,7 +79,7 @@ class AgentUtilsMixin:
             raise ValueError(
                 f"LLM service '{service_id}' not found. "
                 f"Define it in global services or set 'llm.default.service' "
-                f"in config/global_parameters.json."
+                f"in data/config/global_parameters.json."
             )
         return client, svc
 
@@ -135,7 +135,7 @@ class AgentUtilsMixin:
                 return _get_client_with_pool(svc), svc
         # 2. Resolve across scopes (conv > user > global)
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             svc = ServiceRegistry.get_instance().resolve(service_id, user_id=user_id)
             if svc and hasattr(svc, 'get_client'):
                 return _get_client_with_pool(svc), svc
@@ -280,7 +280,7 @@ class AgentUtilsMixin:
 
         results = []
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             for vtype in valid_types:
                 for sdef in reg.resolve_by_type(vtype, user_id=user_id):
@@ -296,7 +296,7 @@ class AgentUtilsMixin:
         if not service_id:
             return None
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             svc = ServiceRegistry.get_instance().resolve(service_id, user_id=user_id)
             if svc and hasattr(svc, 'generate'):
                 return svc
@@ -737,8 +737,8 @@ class AgentUtilsMixin:
             logger.warning(f"[cleanup] dynamic tool cleanup failed: {e}")
         # Stop and undeploy conversation-scoped flow instances
         try:
-            from gui.services.deployment_registry import DeploymentRegistry
-            from gui.services.executor_registry import ExecutorRegistry
+            from core.deployment_registry import DeploymentRegistry
+            from core.executor_registry import ExecutorRegistry
             dr = DeploymentRegistry.get_instance()
             er = ExecutorRegistry.get_instance()
             for iid, inst in list(dr.list_all().items()):
@@ -809,7 +809,7 @@ class AgentUtilsMixin:
                 result.append({"id": sid, "type": getattr(svc, 'TYPE', ''), "root": "?"})
         # Registry services (conv > user > global)
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             for mtype in match_types:
                 for sdef in reg.resolve_by_type(mtype, user_id=user_id):
@@ -835,7 +835,7 @@ class AgentUtilsMixin:
             if svc_type in fs_types:
                 return svc
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             for fs_type in fs_types:
                 for sdef in reg.resolve_by_type(fs_type, user_id=user_id):
@@ -858,7 +858,7 @@ class AgentUtilsMixin:
             if svc_type == "relay" and getattr(svc, 'is_connected', lambda: False)():
                 return svc
         try:
-            from gui.services.service_registry import ServiceRegistry
+            from core.service_registry import ServiceRegistry
             for sdef in ServiceRegistry.get_instance().resolve_by_type(
                     "relay", user_id=user_id):
                 svc = ServiceRegistry.get_instance().resolve(

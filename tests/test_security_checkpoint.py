@@ -25,16 +25,16 @@ class TestSecurity:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
         """Use temp files for security config."""
-        import core.security as sec
-        self._orig_config = sec.SECURITY_CONFIG_PATH
-        self._orig_users = sec.USERS_PATH
-        sec.SECURITY_CONFIG_PATH = str(tmp_path / "security.json")
-        sec.USERS_PATH = str(tmp_path / "users.json")
+        import core.paths as _paths
+        self._orig_config = _paths.SECURITY_FILE
+        self._orig_users = _paths.USERS_FILE
+        _paths.SECURITY_FILE = tmp_path / "security.json"
+        _paths.USERS_FILE = tmp_path / "users.json"
         # Reset singleton
         SecurityManager._instance = None
         yield
-        sec.SECURITY_CONFIG_PATH = self._orig_config
-        sec.USERS_PATH = self._orig_users
+        _paths.SECURITY_FILE = self._orig_config
+        _paths.USERS_FILE = self._orig_users
         SecurityManager._instance = None
 
     def test_default_admin_created(self):

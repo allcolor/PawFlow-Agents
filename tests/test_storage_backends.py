@@ -13,7 +13,7 @@ class TestGitStorage:
 
     @pytest.fixture
     def git_storage(self, tmp_path):
-        from config.storage.git_storage import GitStorage
+        from core.storage_backends.git_storage import GitStorage
         return GitStorage({
             'repository': str(tmp_path),
             'flows_dir': 'flows',
@@ -86,7 +86,7 @@ class TestGitStorage:
         assert old_version["name"] == "Original"
 
     def test_no_auto_commit(self, tmp_path):
-        from config.storage.git_storage import GitStorage
+        from core.storage_backends.git_storage import GitStorage
         storage = GitStorage({
             'repository': str(tmp_path),
             'auto_commit': False,
@@ -106,7 +106,7 @@ class TestSqliteStorage:
 
     @pytest.fixture
     def sqlite_storage(self, tmp_path):
-        from config.storage.sqlite_storage import SqliteStorage
+        from core.storage_backends.sqlite_storage import SqliteStorage
         return SqliteStorage({'database': str(tmp_path / 'test.db')})
 
     def test_save_and_load_flow(self, sqlite_storage):
@@ -153,7 +153,7 @@ class TestFilesystemStorage:
 
     @pytest.fixture
     def fs_storage(self, tmp_path):
-        from config.storage.filesystem_storage import FilesystemStorage
+        from core.storage_backends.filesystem_storage import FilesystemStorage
         return FilesystemStorage({
             'flows_path': str(tmp_path / 'flows'),
             'tasks_path': str(tmp_path / 'tasks'),
@@ -199,7 +199,7 @@ class TestStorageManager:
     @pytest.fixture
     def storage_manager(self, tmp_path):
         from core.storage import StorageManager
-        from config.storage.filesystem_storage import FilesystemStorage
+        from core.storage_backends.filesystem_storage import FilesystemStorage
         fs = FilesystemStorage({'flows_path': str(tmp_path / 'flows')})
         return StorageManager(storage=fs)
 
@@ -249,7 +249,7 @@ class TestStorageManager:
         assert stats["relations_count"] == 1
 
     def test_switch_backend(self, tmp_path, storage_manager):
-        from config.storage.sqlite_storage import SqliteStorage
+        from core.storage_backends.sqlite_storage import SqliteStorage
         sqlite = SqliteStorage({'database': str(tmp_path / 'switch.db')})
         storage_manager.set_storage(sqlite)
         assert storage_manager.get_storage_type() == "SqliteStorage"

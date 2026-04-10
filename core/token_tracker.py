@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = "data/token_usage.json"
+from core.paths import TOKEN_USAGE_FILE; _DEFAULT_PATH = str(TOKEN_USAGE_FILE)
 
 
 class TokenTracker:

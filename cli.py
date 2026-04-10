@@ -270,7 +270,7 @@ def cmd_gui(args):
     register_all_tasks()
 
     logger.info("Restoring deployed flows...")
-    from gui.services.executor_registry import ExecutorRegistry
+    from core.executor_registry import ExecutorRegistry
     er = ExecutorRegistry.get_instance()
     er.restore_from_disk()
     n = er.count()
@@ -513,7 +513,8 @@ def cmd_triggers(args):
     from engine.triggers import TriggerManager, TriggerType
 
     tm = TriggerManager()
-    config_path = "config/triggers.json"
+    from core.paths import TRIGGERS_FILE
+    config_path = str(TRIGGERS_FILE)
     tm.load_triggers(config_path)
 
     if args.action == "list":

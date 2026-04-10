@@ -117,7 +117,7 @@ def _track_narrator(resp, ctx):
 def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
     """Call a narrator LLM to describe what the agent is doing."""
     try:
-        from gui.services.service_registry import ServiceRegistry
+        from core.service_registry import ServiceRegistry
         svc = ServiceRegistry.get_instance().get_live_instance("global", "", svc_name)
         if not svc:
             logging.getLogger(__name__).info(f"[narrator] service '{svc_name}' NOT FOUND")

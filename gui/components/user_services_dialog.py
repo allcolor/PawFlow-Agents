@@ -31,7 +31,7 @@ def _get_available_service_types() -> list:
 @st.dialog(t("runtime.user_services_title"), width="large")
 def user_services_dialog(user_id: str):
     """Full CRUD dialog for user-scoped services."""
-    from gui.services.service_registry import ServiceRegistry, SCOPE_USER
+    from core.service_registry import ServiceRegistry, SCOPE_USER
 
     reg = ServiceRegistry.get_instance()
     definitions = reg.get_all(SCOPE_USER, user_id)

@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
-DEPLOYMENTS_DIR = Path("data/deployments")
+from core.paths import DEPLOYMENTS_DIR
 GLOBAL_OWNER = "__global__"
 
 
@@ -217,7 +217,7 @@ class DeploymentRegistry:
         # Stop executor if running
         if inst.status == "running":
             try:
-                from gui.services.executor_registry import ExecutorRegistry
+                from core.executor_registry import ExecutorRegistry
                 reg = ExecutorRegistry.get_instance()
                 ex = reg.get(instance_id)
                 if ex:
@@ -327,7 +327,7 @@ class DeploymentRegistry:
         self._ensure_loaded()
 
         try:
-            from gui.services.executor_registry import ExecutorRegistry
+            from core.executor_registry import ExecutorRegistry
             reg = ExecutorRegistry.get_instance()
         except Exception:
             return
@@ -459,7 +459,7 @@ class DeploymentRegistry:
 
         Returns the number of migrated instances.
         """
-        agent_dir = Path("data/agent_flows")
+        from core.paths import AGENT_FLOWS_DIR; agent_dir = AGENT_FLOWS_DIR
         if not agent_dir.exists():
             return 0
 

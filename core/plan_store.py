@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
-_PLANS_DIR = Path("data/plans")
+from core.paths import PLANS_DIR as _PLANS_DIR
 
 
 class PlanStore:

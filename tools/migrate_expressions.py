@@ -8,8 +8,8 @@ All prefixes are legacy — the expression engine uses unified cascade.
 Use ${key:!important(scope)} to force a specific scope.
 
 Scans:
-- config/*.json (agents, skills, mcp_servers, etc.)
-- config/users/**/*.json
+- data/config/*.json (agents, skills, mcp_servers, etc.)
+- data/config/users/**/*.json
 - data/conversations/**/*.json (conv extras)
 
 Dry-run by default. Use --apply to write changes.
@@ -112,7 +112,7 @@ def main():
     files = 0
 
     # All JSON files that may contain expressions
-    for pattern in ['config/*.json', 'config/users/**/*.json',
+    for pattern in ['data/config/*.json', 'data/config/users/**/*.json',
                     'flows/*.json', 'flows/**/*.json',
                     'data/**/*.json']:
         for path in Path('.').glob(pattern):

@@ -29,7 +29,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         from core.secrets import get_secrets_manager
         sm = get_secrets_manager()
         encrypted = sm.encrypt(value)
-        secrets_path = Path("config/users") / uid / "secrets.json"
+        from core.paths import user_secrets_path; secrets_path = user_secrets_path(uid)
         secrets_path.parent.mkdir(parents=True, exist_ok=True)
         secrets = {}
         if secrets_path.exists():
@@ -54,7 +54,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             return [flowfile]
         uid = user_id
         from pathlib import Path
-        params_path = Path("config/users") / uid / "parameters.json"
+        from core.paths import user_params_path; params_path = user_params_path(uid)
         params_path.parent.mkdir(parents=True, exist_ok=True)
         params = {}
         if params_path.exists():
@@ -73,7 +73,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
     if action == "list_secrets":
         uid = user_id
         from pathlib import Path
-        secrets_path = Path("config/users") / uid / "secrets.json"
+        from core.paths import user_secrets_path; secrets_path = user_secrets_path(uid)
         if not secrets_path.exists():
             flowfile.set_content(json.dumps({"result": "No secrets stored."}).encode())
             return [flowfile]
@@ -94,7 +94,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
     if action == "list_variables":
         uid = user_id
         from pathlib import Path
-        params_path = Path("config/users") / uid / "parameters.json"
+        from core.paths import user_params_path; params_path = user_params_path(uid)
         if not params_path.exists():
             flowfile.set_content(json.dumps({"result": "No parameters stored."}).encode())
             return [flowfile]
@@ -159,8 +159,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             return [flowfile]
         if scope == "global":
             from core.config_store import ConfigStore
-            from pathlib import Path as _CfgPath
-            path = _CfgPath("config/global_parameters.json")
+            
+            from core.paths import GLOBAL_PARAMS_FILE; path = GLOBAL_PARAMS_FILE
             path.parent.mkdir(parents=True, exist_ok=True)
             from core.config_value import ConfigValue
             data = ConfigStore.load_params(path)
@@ -173,8 +173,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         else:  # user
             uid = user_id
             from core.config_store import ConfigStore
-            from pathlib import Path as _CfgPath
-            path = _CfgPath(f"config/users/{uid}/parameters.json")
+            
+            from core.paths import user_params_path; path = user_params_path(uid)
             path.parent.mkdir(parents=True, exist_ok=True)
             from core.config_value import ConfigValue
             data = ConfigStore.load_params(path)
@@ -196,8 +196,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             return [flowfile]
         if scope == "global":
             from core.config_store import ConfigStore
-            from pathlib import Path as _CfgPath
-            path = _CfgPath("config/global_parameters.json")
+            
+            from core.paths import GLOBAL_PARAMS_FILE; path = GLOBAL_PARAMS_FILE
             data = ConfigStore.load_params(path)
             data.pop(key, None)
             ConfigStore.save_params(path, data)
@@ -208,8 +208,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         else:  # user
             uid = user_id
             from core.config_store import ConfigStore
-            from pathlib import Path as _CfgPath
-            path = _CfgPath(f"config/users/{uid}/parameters.json")
+            
+            from core.paths import user_params_path; path = user_params_path(uid)
             data = ConfigStore.load_params(path)
             data.pop(key, None)
             ConfigStore.save_params(path, data)
@@ -233,8 +233,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         if scope == "global":
             from core.config_store import ConfigStore
             from core.config_value import ConfigValue
-            from pathlib import Path as _CfgPath
-            path = _CfgPath("config/global_secrets.json")
+            
+            from core.paths import GLOBAL_SECRETS_FILE; path = GLOBAL_SECRETS_FILE
             path.parent.mkdir(parents=True, exist_ok=True)
             data = ConfigStore.load_secrets(path)
             data[key] = ConfigValue(value=value)
@@ -246,9 +246,9 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         else:  # user
             from core.config_store import ConfigStore
             from core.config_value import ConfigValue
-            from pathlib import Path as _CfgPath
+            
             uid = user_id
-            path = _CfgPath(f"config/users/{uid}/secrets.json")
+            from core.paths import user_secrets_path; path = user_secrets_path(uid)
             path.parent.mkdir(parents=True, exist_ok=True)
             data = ConfigStore.load_secrets(path)
             data[key] = ConfigValue(value=value)
@@ -269,8 +269,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             return [flowfile]
         if scope == "global":
             from core.config_store import ConfigStore
-            from pathlib import Path as _CfgPath
-            path = _CfgPath("config/global_secrets.json")
+            
+            from core.paths import GLOBAL_SECRETS_FILE; path = GLOBAL_SECRETS_FILE
             data = ConfigStore.load_secrets(path)
             data.pop(key, None)
             ConfigStore.save_secrets(path, data)
@@ -281,8 +281,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         else:  # user
             uid = user_id
             from core.config_store import ConfigStore
-            from pathlib import Path as _CfgPath
-            path = _CfgPath(f"config/users/{uid}/secrets.json")
+            
+            from core.paths import user_secrets_path; path = user_secrets_path(uid)
             data = ConfigStore.load_secrets(path)
             data.pop(key, None)
             ConfigStore.save_secrets(path, data)

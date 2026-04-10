@@ -33,7 +33,7 @@ _CFG_BTN_CSS = """
 
 def render_deployment_tree(on_select_key: str = "rt_selected_instance") -> Optional[str]:
     """Render the deployment treeview in the sidebar."""
-    from gui.services.deployment_registry import DeploymentRegistry, GLOBAL_OWNER
+    from core.deployment_registry import DeploymentRegistry, GLOBAL_OWNER
 
     # CSS must be injected on every rerun — Streamlit rebuilds HTML each time
     st.markdown(_CFG_BTN_CSS, unsafe_allow_html=True)

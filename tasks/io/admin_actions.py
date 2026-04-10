@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 
 def _get_registries():
     """Lazy import registries to avoid circular imports."""
-    from gui.services.executor_registry import ExecutorRegistry
-    from gui.services.deployment_registry import DeploymentRegistry
-    from gui.services.service_registry import ServiceRegistry
-    from gui.services.template_service import TemplateService
+    from core.executor_registry import ExecutorRegistry
+    from core.deployment_registry import DeploymentRegistry
+    from core.service_registry import ServiceRegistry
+    from core.template_service import TemplateService
     return (
         ExecutorRegistry.get_instance(),
         DeploymentRegistry.get_instance(),
@@ -35,7 +35,7 @@ def _apply_service_forwards(flow, service_overrides: Dict[str, str]):
     """Replace flow services with global/user service instances."""
     if not service_overrides:
         return
-    from gui.services.service_registry import ServiceRegistry
+    from core.service_registry import ServiceRegistry
     gsvc_reg = ServiceRegistry.get_instance()
     usvc_reg = ServiceRegistry.get_instance()
 

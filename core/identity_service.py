@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = "data/identity_mappings.json"
+from core.paths import IDENTITY_MAPPINGS_FILE; _DEFAULT_PATH = str(IDENTITY_MAPPINGS_FILE)
 
 
 class IdentityService:

@@ -386,7 +386,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             def _svc_resolver(svc_id):
                 if svc_id:
                     try:
-                        from gui.services.service_registry import ServiceRegistry
+                        from core.service_registry import ServiceRegistry
                         return ServiceRegistry.get_instance().get_live_instance("global", "", svc_id)
                     except Exception:
                         pass

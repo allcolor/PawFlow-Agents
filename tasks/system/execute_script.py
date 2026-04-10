@@ -168,7 +168,7 @@ with open("/data/output.json", "w") as f:
             if not fs_svc:
                 # Auto-detect: prefer connected relay, then any filesystem
                 try:
-                    from gui.services.service_registry import ServiceRegistry
+                    from core.service_registry import ServiceRegistry
                     for _sid, _sdef in ServiceRegistry.get_instance().get_all("global", "").items():
                         if getattr(_sdef, "service_type", "") in ("relay", "filesystem"):
                             _s = ServiceRegistry.get_instance().get_live_instance("global", "", _sid)

@@ -112,7 +112,7 @@ class SpawnAgentTask(BaseTask):
             client = None
             if llm_svc:
                 try:
-                    from gui.services.service_registry import ServiceRegistry
+                    from core.service_registry import ServiceRegistry
                     svc = ServiceRegistry.get_instance().resolve(
                         llm_svc, user_id=user_id)
                     if svc:
@@ -122,7 +122,7 @@ class SpawnAgentTask(BaseTask):
             if not client:
                 # Fallback to default service
                 try:
-                    from gui.services.service_registry import ServiceRegistry
+                    from core.service_registry import ServiceRegistry
                     svc = ServiceRegistry.get_instance().resolve("default")
                     if svc:
                         client = svc.get_client()

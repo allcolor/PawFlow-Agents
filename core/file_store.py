@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DIR = "data/files"
+from core.paths import FILES_DIR; _DEFAULT_DIR = str(FILES_DIR)
 
 
 class FileStore:

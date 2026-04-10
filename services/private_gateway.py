@@ -61,7 +61,7 @@ _lock = threading.Lock()
 _COOLDOWNS = [0, 1, 3, 10, 30]
 _MAX_FAILURES = 5
 _BAN_DURATION = 24 * 3600
-_BAN_FILE = Path("data/gateway_bans.json")
+from core.paths import GATEWAY_BANS_FILE as _BAN_FILE
 
 
 def _save_bans():
@@ -165,7 +165,8 @@ def unban_ip(ip: str) -> bool:
 
 def _load_gateway_secrets() -> Dict[str, str]:
     from core.config_store import ConfigStore
-    secrets_file = Path("config/global_secrets.json")
+    from core.paths import GLOBAL_SECRETS_FILE
+    secrets_file = GLOBAL_SECRETS_FILE
     all_secrets = ConfigStore.load_secrets(secrets_file)
     return {k: str(v) for k, v in all_secrets.items() if k.startswith("privategateway.")}
 

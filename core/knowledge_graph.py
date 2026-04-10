@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DIR = "data/knowledge_graphs"
+from core.paths import KNOWLEDGE_GRAPHS_DIR; _DEFAULT_DIR = str(KNOWLEDGE_GRAPHS_DIR)
 
 
 def _safe_filename(user_id: str) -> str:

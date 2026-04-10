@@ -262,7 +262,7 @@ def get_server_id() -> str:
         return _server_id_cache
     import hashlib, uuid
     from pathlib import Path
-    path = Path("data/server_id")
+    from core.paths import SERVER_ID_FILE; path = SERVER_ID_FILE
     if path.exists():
         _server_id_cache = path.read_text().strip()
     else:

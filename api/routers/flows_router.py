@@ -6,8 +6,8 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 
 from api.auth import require_permission
-from gui.services.flow_service import FlowService
-from gui.services.template_service import TemplateService
+from core.flow_service import FlowService
+from core.template_service import TemplateService
 
 router = APIRouter()
 

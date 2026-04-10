@@ -1243,23 +1243,29 @@ class AgentCoreMixin:
                     cost_usd=_turn_cost)
 
             # Final drain: pick up any messages that arrived during the last turn
-            # For CC provider: preempted messages were already processed by CC in
-            # the same session — don't re-trigger a new loop for them.
             _had_preempts = getattr(client, '_had_preempts_this_turn', False)
+            _existing_ids = {m.msg_id for m in messages if m.msg_id}
             _pre_drain = len(messages)
             emitter.drain_pending(messages, _append, iteration)
-            _new_user_msgs = [m for m in messages[_pre_drain:] if m.role == "user"]
+            # Only count messages that are TRULY new (not already in this loop's context)
+            _new_user_msgs = [m for m in messages[_pre_drain:]
+                              if m.role == "user" and m.msg_id not in _existing_ids]
             if _new_user_msgs and not _had_preempts:
-                logger.info("[agent:%s] %d message(s) arrived during last turn — persisting + re-triggering",
+                logger.info("[agent:%s] %d truly new message(s) arrived during last turn — re-triggering",
                             conversation_id[:8], len(_new_user_msgs))
                 _flush()
-                # Signal that a new turn should start after done
                 ctx["_retrigger_after_done"] = True
             elif _new_user_msgs and _had_preempts:
-                logger.info("[agent:%s] %d message(s) arrived but %s preempts were processed — NOT re-triggering",
-                            conversation_id[:8], len(_new_user_msgs),
-                            "CC" if hasattr(client, '_preempt_pending') else "?")
-                _flush()  # still persist, just don't re-trigger
+                logger.info("[agent:%s] %d message(s) arrived but preempts were processed — NOT re-triggering",
+                            conversation_id[:8], len(_new_user_msgs))
+                _flush()
+            elif messages[_pre_drain:]:
+                # Drained messages but all were duplicates of existing — just persist
+                _dupes = len(messages[_pre_drain:]) - len(_new_user_msgs)
+                if _dupes > 0:
+                    logger.info("[agent:%s] drained %d message(s), %d were duplicates — NOT re-triggering",
+                                conversation_id[:8], len(messages[_pre_drain:]), _dupes)
+                    _flush()
 
             # Unregister claude-code client BEFORE done (prevents stale preempt)
             _unreg_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id

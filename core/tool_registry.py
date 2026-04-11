@@ -213,6 +213,7 @@ class ToolRegistry:
                         category="tool_result",
                         user_id=_uid,
                         conversation_id=_cid,
+                        ttl=4 * 3600,  # 4h safety net, cleaned at compaction
                     )
                     _first = result.split("\n", 1)[0][:200]
                     result = (

@@ -336,13 +336,28 @@ class FileStore:
 
     # ── List ─────────────────────────────────────────────────────
 
-    def list_files(self, user_id: str = "") -> List[Dict[str, Any]]:
-        """List files accessible to user."""
+    # Internal categories hidden from user file listing
+    _INTERNAL_CATEGORIES = frozenset({
+        "tool_result", "checkpoint", "checkpoint_bin", "checkpoint_diff",
+    })
+
+    def list_files(self, user_id: str = "",
+                   conversation_id: str = "",
+                   include_internal: bool = False) -> List[Dict[str, Any]]:
+        """List files accessible to user.
+
+        By default, internal files (tool_result, checkpoint) are hidden.
+        Use include_internal=True to see them.
+        """
         result = []
         with self._store_lock:
             self._ensure_loaded()
             for fid, entry in self._entries.items():
                 if not self._accessible(entry, user_id):
+                    continue
+                if conversation_id and entry.get("conversation_id") != conversation_id:
+                    continue
+                if not include_internal and entry.get("category") in self._INTERNAL_CATEGORIES:
                     continue
                 result.append({
                     "file_id": fid,
@@ -352,6 +367,8 @@ class FileStore:
                     "created_at": entry["created_at"],
                     "user_id": entry.get("user_id", ""),
                     "conversation_id": entry.get("conversation_id", ""),
+                    "access": entry.get("access", ACCESS_PRIVATE),
+                    "category": entry.get("category", ""),
                 })
         return result
 

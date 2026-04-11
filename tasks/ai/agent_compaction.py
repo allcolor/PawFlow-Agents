@@ -705,8 +705,12 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
         logger.info(f"[compact] Final: {new_estimate} tokens (was {_original_tokens}), "
                     f"{len(compacted)} messages (was {_original_count})")
 
-        # ── Phase 4: Persist + notify ──
+        # ── Phase 4: Persist + cleanup + notify ──
         self._persist_context(compacted, conversation_id, agent_name)
+
+        # Clean up tool_result spillover files no longer in context
+        if conversation_id:
+            self._cleanup_orphan_files(compacted, conversation_id)
 
         if conversation_id:
             try:
@@ -724,6 +728,43 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                 pass
 
         return compacted
+
+    @staticmethod
+    def _cleanup_orphan_files(compacted: List[LLMMessage],
+                              conversation_id: str):
+        """Delete tool_result spillover files no longer referenced in context.
+
+        After compaction, old tool_result file_ids are lost from the context.
+        Delete them from FileStore to avoid orphan files.
+        """
+        try:
+            import re
+            from core.file_store import FileStore
+            store = FileStore.instance()
+
+            # Collect all file_ids still referenced in compacted context
+            _fid_pattern = re.compile(r'/files/([a-f0-9]{12})')
+            referenced = set()
+            for m in compacted:
+                text = m.content if isinstance(m.content, str) else str(m.content)
+                referenced.update(_fid_pattern.findall(text))
+
+            # Find tool_result files for this conv that are no longer referenced
+            orphans = []
+            for fid, entry in store._entries.items():
+                if (entry.get("category") == "tool_result"
+                        and entry.get("conversation_id") == conversation_id
+                        and fid not in referenced):
+                    orphans.append(fid)
+
+            for fid in orphans:
+                store._delete_entry(fid)
+
+            if orphans:
+                logger.info("[compact] Cleaned %d orphan tool_result file(s)",
+                            len(orphans))
+        except Exception as e:
+            logger.debug("[compact] Orphan file cleanup failed: %s", e)
 
     def _truncate_tool_results(self, messages: List[LLMMessage]):
         """Truncate oversized tool results in-place."""

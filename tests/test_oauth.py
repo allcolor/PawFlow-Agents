@@ -687,24 +687,3 @@ class TestAgentFlowOAuth(unittest.TestCase):
 
 # ── i18n ────────────────────────────────────────────────────────────
 
-
-class TestOAuthI18n(unittest.TestCase):
-
-    def test_keys_in_all_locales(self):
-        keys = [
-            "oauth.title", "oauth.provider", "oauth.client_id",
-            "oauth.client_secret", "oauth.redirect_uri",
-            "oauth.default_role", "oauth.redirect.title",
-            "oauth.callback.title", "oauth.logout.title",
-            "oauth.session_auth.title", "oauth.allowed_roles",
-            "chat_ui.login_url",
-        ]
-        for locale in ("en", "fr", "es"):
-            path = Path(f"gui/i18n/{locale}.json")
-            data = json.loads(path.read_text(encoding="utf-8"))
-            for key in keys:
-                assert key in data, f"Missing key '{key}' in {locale}.json"
-
-
-if __name__ == "__main__":
-    unittest.main()

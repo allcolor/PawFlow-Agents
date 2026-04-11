@@ -340,34 +340,3 @@ class TestBaseReceiverTask:
 # ---------------------------------------------------------------------------
 # 6. TestI18nChannelKeys
 # ---------------------------------------------------------------------------
-
-class TestI18nChannelKeys:
-    """Verify i18n keys exist for multi-channel messaging."""
-
-    @pytest.fixture(autouse=True)
-    def load_locales(self):
-        self.locales = {}
-        for lang in ("en", "fr", "es"):
-            path = os.path.join(
-                os.path.dirname(__file__), "..", "gui", "i18n", f"{lang}.json"
-            )
-            path = os.path.normpath(path)
-            if os.path.exists(path):
-                with open(path, encoding="utf-8") as f:
-                    self.locales[lang] = json.load(f)
-            else:
-                self.locales[lang] = {}
-
-    def test_en_has_identity_channel_discord(self):
-        assert "identity.channel_discord" in self.locales["en"]
-
-    def test_en_has_identity_channel_whatsapp(self):
-        assert "identity.channel_whatsapp" in self.locales["en"]
-
-    def test_en_has_identity_channel_slack(self):
-        assert "identity.channel_slack" in self.locales["en"]
-
-    def test_link_identity_keys_in_all_locales(self):
-        for lang in ("en", "fr", "es"):
-            assert "messaging.link_identity" in self.locales[lang], \
-                f"messaging.link_identity missing in {lang}"

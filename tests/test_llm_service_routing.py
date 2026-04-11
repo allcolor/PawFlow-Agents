@@ -400,31 +400,3 @@ class TestFlowMigration(unittest.TestCase):
             self.assertNotIn("api_key", params, f"{name} still has api_key")
             self.assertIn("llm_service", params, f"{name} missing llm_service")
 
-
-class TestI18nPromptKeys(unittest.TestCase):
-    """Test i18n files have prompt keys."""
-
-    def test_en_prompt_keys(self):
-        with open("gui/i18n/en.json", encoding="utf-8") as f:
-            data = json.load(f)
-        self.assertIn("prompt.title", data)
-        self.assertIn("prompt.select", data)
-        self.assertIn("prompt.empty", data)
-        self.assertIn("prompt.library", data)
-        self.assertIn("agent.llm_service", data)
-
-    def test_fr_prompt_keys(self):
-        with open("gui/i18n/fr.json", encoding="utf-8") as f:
-            data = json.load(f)
-        self.assertIn("prompt.title", data)
-        self.assertIn("prompt.library", data)
-
-    def test_es_prompt_keys(self):
-        with open("gui/i18n/es.json", encoding="utf-8") as f:
-            data = json.load(f)
-        self.assertIn("prompt.title", data)
-        self.assertIn("prompt.library", data)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -427,24 +427,3 @@ class TestSlackFlow:
 # ---------------------------------------------------------------------------
 # TestSlackI18n
 # ---------------------------------------------------------------------------
-
-class TestSlackI18n:
-    """Tests for Slack-related i18n keys."""
-
-    def _load_locale(self, lang):
-        import os
-        locale_path = os.path.join(os.path.dirname(__file__), "..", "gui", "i18n", f"{lang}.json")
-        if not os.path.exists(locale_path):
-            pytest.skip(f"Locale file {lang}.json not found")
-        with open(locale_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    def test_en_has_slack_keys(self):
-        data = self._load_locale("en")
-        flat = json.dumps(data).lower()
-        assert "slack" in flat
-
-    def test_fr_has_slack_keys(self):
-        data = self._load_locale("fr")
-        flat = json.dumps(data).lower()
-        assert "slack" in flat

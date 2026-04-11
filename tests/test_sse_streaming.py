@@ -569,16 +569,3 @@ class TestStreamingFlowStructure(unittest.TestCase):
 
 # ── i18n streaming keys ────────────────────────────────────────────
 
-
-class TestStreamingI18n(unittest.TestCase):
-
-    def test_streaming_keys_exist(self):
-        for lang in ("en", "fr", "es"):
-            path = Path(f"gui/i18n/{lang}.json")
-            data = json.loads(path.read_text(encoding="utf-8"))
-            assert "streaming.title" in data, f"Missing 'streaming.title' in {lang}"
-            assert "streaming.enabled" in data, f"Missing 'streaming.enabled' in {lang}"
-
-
-if __name__ == "__main__":
-    unittest.main()

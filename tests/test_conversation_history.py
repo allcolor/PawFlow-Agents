@@ -457,32 +457,6 @@ class TestChatUISidebar(unittest.TestCase):
 # ── i18n keys ───────────────────────────────────────────────────────
 
 
-class TestConversationI18n(unittest.TestCase):
-
-    def test_conversation_keys_exist(self):
-        for lang in ("en", "fr", "es"):
-            path = Path(f"gui/i18n/{lang}.json")
-            data = json.loads(path.read_text(encoding="utf-8"))
-            assert "conversations.title" in data, f"Missing conversations.title in {lang}"
-            assert "conversations.new" in data, f"Missing conversations.new in {lang}"
-            assert "conversations.delete" in data, f"Missing conversations.delete in {lang}"
-            assert "conversations.resume" in data, f"Missing conversations.resume in {lang}"
-            assert "conversations.history" in data, f"Missing conversations.history in {lang}"
-            assert "conversations.empty" in data, f"Missing conversations.empty in {lang}"
-
-    def test_keys_consistent_across_languages(self):
-        en = json.loads(Path("gui/i18n/en.json").read_text(encoding="utf-8"))
-        fr = json.loads(Path("gui/i18n/fr.json").read_text(encoding="utf-8"))
-        es = json.loads(Path("gui/i18n/es.json").read_text(encoding="utf-8"))
-        conv_keys = [k for k in en if k.startswith("conversations.")]
-        for key in conv_keys:
-            assert key in fr, f"Missing {key} in fr.json"
-            assert key in es, f"Missing {key} in es.json"
-
-
-# ── Persistent context tests ──────────────────────────────────────
-
-
 class TestConversationStoreContext(unittest.TestCase):
     """Tests for the persistent context field (context != messages)."""
 

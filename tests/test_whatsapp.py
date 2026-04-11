@@ -361,39 +361,3 @@ class TestWhatsAppFlow:
 # ===========================================================================
 # 6. TestWhatsAppI18n
 # ===========================================================================
-
-class TestWhatsAppI18n:
-    """Verify WhatsApp-related i18n keys exist in all locales."""
-
-    LOCALES = ["en", "fr", "es"]
-    EXPECTED_KEYS = [
-        "task.whatsapp_receiver.name",
-        "task.whatsapp_send.name",
-        "service.whatsapp.name",
-    ]
-
-    @pytest.fixture
-    def translations(self):
-        import os
-        result = {}
-        i18n_dir = os.path.join(os.path.dirname(__file__), "..", "gui", "i18n")
-        for locale in self.LOCALES:
-            path = os.path.join(i18n_dir, f"{locale}.json")
-            with open(path, "r", encoding="utf-8") as f:
-                result[locale] = json.load(f)
-        return result
-
-    def test_en_has_whatsapp_keys(self, translations):
-        data = translations["en"]
-        for key in self.EXPECTED_KEYS:
-            assert key in data, f"Missing i18n key '{key}' in en.json"
-
-    def test_fr_has_whatsapp_keys(self, translations):
-        data = translations["fr"]
-        for key in self.EXPECTED_KEYS:
-            assert key in data, f"Missing i18n key '{key}' in fr.json"
-
-    def test_es_has_whatsapp_keys(self, translations):
-        data = translations["es"]
-        for key in self.EXPECTED_KEYS:
-            assert key in data, f"Missing i18n key '{key}' in es.json"

@@ -245,7 +245,7 @@ def cmd_gui(args):
 
     The PawFlow server (HTTP :9090, chat, agents) runs in the main process.
     Admin GUI is served natively at /admin via the pawflow-admin flow.
-    Streamlit is no longer launched (gui/ code kept for future migration).
+    Streamlit GUI is deprecated (gui_deprecated/).
     """
     import signal
 

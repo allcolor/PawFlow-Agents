@@ -691,24 +691,6 @@ class TestAgentTemplate(unittest.TestCase):
 # ── i18n ─────────────────────────────────────────────────────────────
 
 
-class TestAgentI18n(unittest.TestCase):
-
-    def test_agent_keys_in_all_locales(self):
-        agent_keys = [
-            "agent.title", "agent.iterations", "agent.tools_called",
-            "agent.max_iterations", "agent.system_prompt",
-            "agent.tool_registry", "agent.conversation", "agent.no_tools",
-        ]
-        for locale in ("en", "fr", "es"):
-            path = Path(f"gui/i18n/{locale}.json")
-            data = json.loads(path.read_text(encoding="utf-8"))
-            for key in agent_keys:
-                assert key in data, f"Missing key '{key}' in {locale}.json"
-
-
-# ── LLMConnectionService forwards tools ─────────────────────────────
-
-
 class TestLLMConnectionServiceTools(unittest.TestCase):
 
     def test_complete_accepts_tools_parameter(self):

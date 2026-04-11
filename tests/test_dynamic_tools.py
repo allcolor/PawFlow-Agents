@@ -513,27 +513,3 @@ class TestRegistryIntegration(unittest.TestCase):
                 registry.register(handler)
         assert registry.get("greet") is not None
 
-
-class TestI18n(unittest.TestCase):
-    """Test i18n keys for dynamic tools."""
-
-    def test_keys_in_all_locales(self):
-        keys = [
-            "dynamic_tools.title",
-            "dynamic_tools.install",
-            "dynamic_tools.uninstall",
-            "dynamic_tools.list",
-            "dynamic_tools.no_tools",
-            "dynamic_tools.installed",
-            "dynamic_tools.uninstalled",
-            "dynamic_tools.install_hint",
-        ]
-        for locale in ("en", "fr", "es"):
-            path = Path(f"gui/i18n/{locale}.json")
-            data = json.loads(path.read_text(encoding="utf-8"))
-            for key in keys:
-                assert key in data, f"Missing key '{key}' in {locale}.json"
-
-
-if __name__ == "__main__":
-    unittest.main()

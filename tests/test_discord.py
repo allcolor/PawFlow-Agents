@@ -294,35 +294,3 @@ class TestDiscordFlow:
 # ---------------------------------------------------------------------------
 # 6. TestDiscordI18n
 # ---------------------------------------------------------------------------
-
-class TestDiscordI18n:
-    """Tests for Discord i18n translation keys."""
-
-    @pytest.fixture
-    def translations(self):
-        i18n_dir = os.path.join(os.path.dirname(__file__), "..", "gui", "i18n")
-        result = {}
-        for lang in ("en", "fr", "es"):
-            path = os.path.join(i18n_dir, f"{lang}.json")
-            with open(path, "r", encoding="utf-8") as f:
-                result[lang] = json.load(f)
-        return result
-
-    def test_en_has_receiver_name(self, translations):
-        assert "task.discord_receiver.name" in translations["en"]
-
-    def test_en_has_send_name(self, translations):
-        assert "task.discord_send.name" in translations["en"]
-
-    def test_en_has_service_name(self, translations):
-        assert "service.discord_bot.name" in translations["en"]
-
-    def test_fr_has_matching_keys(self, translations):
-        for key in ("task.discord_receiver.name", "task.discord_send.name",
-                     "service.discord_bot.name"):
-            assert key in translations["fr"], f"Missing FR key: {key}"
-
-    def test_es_has_matching_keys(self, translations):
-        for key in ("task.discord_receiver.name", "task.discord_send.name",
-                     "service.discord_bot.name"):
-            assert key in translations["es"], f"Missing ES key: {key}"

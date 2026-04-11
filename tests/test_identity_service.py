@@ -490,18 +490,3 @@ class TestTelegramBotPool(unittest.TestCase):
             self.pool.get_bot_token_for_user("bob@test.com"), "BOT:bob"
         )
 
-
-class TestIdentityI18n(unittest.TestCase):
-    """Verify identity i18n keys exist."""
-
-    def test_identity_keys_all_locales(self):
-        from pathlib import Path
-        for lang in ("en", "fr", "es"):
-            path = Path(__file__).parent.parent / "gui" / "i18n" / f"{lang}.json"
-            data = json.loads(path.read_text(encoding="utf-8"))
-            keys = [k for k in data if k.startswith("identity.")]
-            self.assertTrue(len(keys) >= 5, f"Missing identity keys in {lang}.json")
-
-
-if __name__ == "__main__":
-    unittest.main()

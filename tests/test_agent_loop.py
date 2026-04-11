@@ -317,7 +317,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 75
+        assert len(defs) == 76
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
     def test_execute_unknown_tool(self):

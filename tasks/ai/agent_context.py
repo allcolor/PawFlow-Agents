@@ -129,8 +129,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if _desc:
                     _info["description"] = _desc
                 # Runtime config from conversation
-                if conversation_id:
-                    _acfg = _gac2(conversation_id, _a["name"])
+                _cid_for_agents = flowfile.get_attribute("conversation_id") or ""
+                if _cid_for_agents:
+                    _acfg = _gac2(_cid_for_agents, _a["name"])
                     _info["llm_service"] = resolve_value(
                         _acfg.get("llm_service", ""),
                         owner=_uid_for_agents) or ""

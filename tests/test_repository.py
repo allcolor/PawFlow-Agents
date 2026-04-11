@@ -15,19 +15,23 @@ class TestPaths(unittest.TestCase):
 
     def test_repo_dir_global(self):
         p = repo_dir("agents", "global")
-        self.assertTrue(str(p).endswith("repository/agents/global"))
+        self.assertEqual(p, DATA_DIR / "repository" / "agents" / "global")
 
     def test_repo_dir_user(self):
         p = repo_dir("agents", "user", "u1")
-        self.assertTrue(str(p).endswith("agents/users/u1"))
+        self.assertEqual(p, DATA_DIR / "repository" / "agents" / "users" / "u1")
 
     def test_repo_dir_conv(self):
         p = repo_dir("agents", "conv", "u1", "c1")
-        self.assertTrue(str(p).endswith("agents/users/u1/c1"))
+        self.assertEqual(p, DATA_DIR / "repository" / "agents" / "users" / "u1" / "c1")
 
-    def test_repo_file(self):
+    def test_repo_file_md(self):
         p = repo_file("skills", "summarize", "global")
-        self.assertTrue(str(p).endswith("skills/global/summarize.json"))
+        self.assertEqual(p, DATA_DIR / "repository" / "skills" / "global" / "summarize.md")
+
+    def test_repo_file_json(self):
+        p = repo_file("mcps", "myserver", "global")
+        self.assertEqual(p, DATA_DIR / "repository" / "mcps" / "global" / "myserver.json")
 
     def test_parse_flow_fqn_with_version(self):
         pkg, name, ver = parse_flow_fqn("pawflow.demo.ingest:2.3.1")

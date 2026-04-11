@@ -253,11 +253,11 @@ class LinkIdentityHandler(ToolHandler):
         return f"Unknown action: {action}"
 
 
-# ── Configurable handlers (for agent_tools) ──────────────────────────
+# ── Configurable handlers ──────────────────────────
 
 
 class ConfigurableToolHandler(ToolHandler):
-    """Base for tools configured via agent_tools dict (not hardcoded)."""
+    """Base for configurable tool handlers (HTTP, Task, MCP)."""
 
     def __init__(self, tool_name: str, tool_description: str,
                  tool_parameters: Dict[str, Any]):

@@ -140,14 +140,6 @@ class TestScraplingFetchHandler(unittest.TestCase):
         assert "Real content" in result
         mock_sub.assert_called_once()
 
-    def test_handler_as_agent_tool(self):
-        """fetch works as a builtin agent_tool reference."""
-        config = {"web": {"type": "builtin", "handler": "fetch"}}
-        registry = load_agent_tools(config)
-        handler = registry.get("fetch")
-        assert handler is not None
-        assert isinstance(handler, ScraplingFetchHandler)
-
     def test_fetch_error_returns_error_string(self):
         mock_mod = MagicMock()
         mock_mod.Fetcher.get.side_effect = ConnectionError("Connection refused")

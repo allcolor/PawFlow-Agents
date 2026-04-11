@@ -454,8 +454,6 @@ class TestAgentFlowStructure(unittest.TestCase):
         data = json.loads(path.read_text(encoding="utf-8"))
 
         assert data["id"] == "pawflow-agent"
-        assert "agent_tools" in data
-        assert "share_file" in data["agent_tools"]
 
         # Check routes
         routes = data["tasks"]["http_in"]["parameters"]["routes"]

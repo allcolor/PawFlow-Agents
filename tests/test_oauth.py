@@ -7,7 +7,6 @@ Tests cover:
 - OAuthLogoutTask (cookie clear, session invalidation)
 - ValidateSessionAuthTask (cookie auth, bearer auth, expiry, missing token)
 - AgentLoop tool filtering by role
-- load_agent_tools allowed_roles
 - Flow JSON structure (v1.2.0)
 - Task registration
 - i18n keys
@@ -625,37 +624,6 @@ class TestToolFilteringByRole(unittest.TestCase):
         count_before = len(registry.list_tools())
         assert count_before > 0  # has default tools
 
-
-
-class TestLoadAgentToolsAllowedRoles(unittest.TestCase):
-
-    def test_allowed_roles_attached(self):
-        config = {
-            "calc": {
-                "type": "builtin",
-                "handler": "execute_script",
-                "allowed_roles": ["admin", "editor"],
-            },
-            "scraper": {
-                "type": "builtin",
-                "handler": "fetch",
-            },
-        }
-        registry = load_agent_tools(config)
-        # Builtins are registered under their handler name
-        calc = registry.get("execute_script")
-        scraper = registry.get("fetch")
-
-        assert calc is not None
-        assert getattr(calc, "allowed_roles", None) == ["admin", "editor"]
-        # No allowed_roles → attribute not set (None)
-        assert getattr(scraper, "allowed_roles", None) is None
-
-    def test_all_roles_from_flow(self):
-        path = Path("flows/pawflow_agent.json")
-        data = json.loads(path.read_text(encoding="utf-8"))
-        for tool_name, tool_def in data["agent_tools"].items():
-            assert "allowed_roles" in tool_def, f"Missing allowed_roles on {tool_name}"
 
 
 # ── Flow JSON structure ─────────────────────────────────────────────

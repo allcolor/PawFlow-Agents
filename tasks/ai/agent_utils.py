@@ -764,7 +764,7 @@ class AgentUtilsMixin:
         """Return a filtered registry containing only tools the user can access.
 
         Each tool handler may have an ``allowed_roles`` attribute (set by
-        load_agent_tools from the flow config).  If not set, the tool is
+        create_default_registry).  If not set, the tool is
         accessible to everyone.
         """
         filtered = ToolRegistry()

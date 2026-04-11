@@ -254,7 +254,7 @@ class Flow:
         self.groups: Dict[str, ProcessGroup] = {}
         self.relations = config.get('relations', [])
         self.variables = config.get('variables', {})
-        self.agent_tools: Dict[str, Dict] = config.get('agent_tools', {})
+
         # Runtime scope: "independent" (default), "user", or "conversation"
         # Declares what runtime data the flow needs (not permissions).
         self.scope: str = config.get('scope', 'independent')

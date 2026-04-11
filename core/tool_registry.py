@@ -8,7 +8,7 @@ Builtin handlers:
 - read_file: Read a local file's content
 - fetch: Fetch a web page (text extraction or raw HTTP)
 
-Agent tool types (flow-level agent_tools section):
+Agent tool types:
 - builtin: Reference to a builtin handler
 - http: Call an external HTTP endpoint
 - task: Execute a PawFlow task inline

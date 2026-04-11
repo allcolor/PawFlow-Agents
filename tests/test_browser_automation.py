@@ -262,13 +262,6 @@ class TestBrowserGracefulImport:
             from core.tool_registry import ToolRegistry
             registry = ToolRegistry()
             handler_names = [h.name for h in registry.handlers] if hasattr(registry, "handlers") else []
-            # If load_agent_tools exists, call it to populate
-            if hasattr(registry, "load_agent_tools"):
-                try:
-                    registry.load_agent_tools()
-                except Exception:
-                    pass
-                handler_names = [h.name for h in registry.handlers] if hasattr(registry, "handlers") else []
             assert "browser" not in handler_names
 
 

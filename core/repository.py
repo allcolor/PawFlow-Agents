@@ -37,6 +37,17 @@ VALID_SCOPES = (SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV)
 _SCOPE_ORDER = {SCOPE_CONV: 0, SCOPE_USER: 1, SCOPE_GLOBAL: 2}
 
 
+def _copytree_content(src: Path, dst: Path):
+    """Copy directory tree (content only, no permission copy)."""
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            _copytree_content(item, target)
+        else:
+            shutil.copyfile(item, target)
+
+
 class ScopedRepository:
     """Thread-safe CRUD for scoped repository definitions."""
 
@@ -193,7 +204,7 @@ class ScopedRepository:
         if move:
             src.rename(dst)
         else:
-            shutil.copy2(src, dst)
+            shutil.copyfile(src, dst)
 
         logger.info("%s %s/%s: %s → %s",
                      "Moved" if move else "Copied",
@@ -220,7 +231,7 @@ class ScopedRepository:
         if move:
             shutil.move(str(src_dir), str(dst_dir))
         else:
-            shutil.copytree(src_dir, dst_dir)
+            _copytree_content(src_dir, dst_dir)
 
         # Ensure package.json exists at destination
         pkg_dir = flow_package_dir(package, to_scope, user_id, conv_id)

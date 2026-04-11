@@ -734,6 +734,15 @@ class AgentCoreMixin:
                         _agent_name = ctx.get("active_agent_name", "")
                         logger.warning("[agent:%s] CCCompactDetected — compacting PawFlow context for %s",
                                        conversation_id[:8], _agent_name)
+                        # Recover tokens BEFORE restarting — CC may have refreshed
+                        # OAuth tokens during the session that was just killed
+                        if hasattr(client, '_recover_tokens') and hasattr(client, '_get_session_workdir'):
+                            try:
+                                _wd = client._get_session_workdir(conversation_id, _agent_name, user_id)
+                                client._recover_tokens(_wd)
+                            except Exception as _rt_err:
+                                logger.debug("[agent:%s] token recovery after compact: %s",
+                                             conversation_id[:8], _rt_err)
                         try:
                             # 1. Load FULL agent context from disk (not the in-memory messages)
                             from core.conversation_store import ConversationStore

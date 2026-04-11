@@ -394,7 +394,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 75
+        assert len(registry.list_tools()) == 76
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})

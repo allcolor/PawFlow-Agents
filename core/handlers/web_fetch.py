@@ -181,7 +181,7 @@ class ExecuteScriptHandler(ToolHandler):
             output += "\n\nFiles created:\n"
             for url in created_files:
                 import re as _re_fid
-                _m = _re_fid.search(r'/files/([a-f0-9]+)/', url)
+                _m = _re_fid.search(r'/files/([a-f0-9]+)', url)
                 _fid = _m.group(1) if _m else ""
                 output += f"- {url}" + (f" (file_id: {_fid})" if _fid else "") + "\n"
         return output

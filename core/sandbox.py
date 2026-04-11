@@ -131,10 +131,9 @@ class SandboxFile:
             raw = self._buf.read()
             content = raw if isinstance(raw, bytes) else raw.encode("utf-8")
             if content:
-                from core.file_store import FileStore as _FS
-                ct = _FS._guess_content_type(self._name)
+                ct = _guess_content_type(self._name)
                 file_id = self._store.store(self._name, content, ct)
-                url = f"{self._base_url}/files/{file_id}/{self._name}"
+                url = f"{self._base_url}/files/{file_id}"
                 self._created_files.append(url)
         self._buf.close()
 
@@ -227,7 +226,7 @@ class _FileStoreFile:
                 from core.file_store import FileStore
                 ct = _guess_content_type(self._path)
                 file_id = FileStore.instance().store(self._path, content, ct)
-                url = f"{self._base_url}/files/{file_id}/{self._path}"
+                url = f"{self._base_url}/files/{file_id}"
                 self._created_files.append(url)
         self._buf.close()
 

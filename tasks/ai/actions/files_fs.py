@@ -44,7 +44,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         import re as _re
         from core.file_store import FileStore
         fstore = FileStore.instance()
-        pattern = _re.compile(r'/files/([a-f0-9]{12})/([^\s"<>]+)')
+        pattern = _re.compile(r'/files/([a-f0-9]{12})')
         seen = set()
         files = []
         for msg in messages_data:

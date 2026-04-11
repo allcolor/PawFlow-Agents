@@ -799,7 +799,7 @@ class ShowFileHandler(ToolHandler):
         if file_id:
             # Extract file_id from URL if needed
             import re as _re_sf
-            url_match = _re_sf.search(r'/files/([^/]+)/', file_id)
+            url_match = _re_sf.search(r'/files/([a-f0-9]{12})', file_id)
             if url_match:
                 file_id = url_match.group(1)
             result = store.get(file_id, user_id=self._user_id)
@@ -850,7 +850,7 @@ class ShowFileHandler(ToolHandler):
         else:
             return "Error: Provide file_id, filename, or path+service."
 
-        url = f"{self._base_url}/files/{file_id}/{fname}"
+        url = f"{self._base_url}/files/{file_id}"
         size_kb = len(data) / 1024
 
         # Return a special marker that the chat UI will intercept

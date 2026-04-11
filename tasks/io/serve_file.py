@@ -4,7 +4,7 @@ Reads file_id from the FlowFile path parameters, looks up the file
 in the FileStore, and sets the FlowFile content + headers for HTTP response.
 
 Flow pattern:
-    httpReceiver (GET /files/{file_id}/{filename}) → serveFile → handleHTTPResponse
+    httpReceiver (GET /files/{file_id}) → serveFile → handleHTTPResponse
 """
 
 import logging

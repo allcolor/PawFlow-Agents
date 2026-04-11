@@ -66,7 +66,7 @@ function loadConvFiles() {
       }
       list.innerHTML = '';
       for (const f of available) {
-        const href = window.location.origin + '/files/' + f.file_id + '/' + f.filename;
+        const href = window.location.origin + '/files/' + f.file_id;
         const chip = document.createElement('span');
         chip.className = 'file-chip';
         chip.innerHTML = `<span class="file-status available" title="Available"></span><a href="${href}" target="_blank" title="Download">${escapeHtml(f.filename)}</a>`;

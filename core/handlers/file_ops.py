@@ -81,7 +81,7 @@ class CreateFileHandler(ToolHandler):
                                 content.encode("utf-8"), content_type)
 
         if result.get("file_id"):
-            url = f"{self._base_url}/files/{result['file_id']}/{filename}"
+            url = f"{self._base_url}/files/{result['file_id']}"
             return f"File created: {url}\nfile_id: {result['file_id']}"
         else:
             return f"File written to {result.get('destination', destination)}: {result.get('path', filename)}"

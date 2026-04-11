@@ -621,7 +621,7 @@ function _flushPendingImages() {
   const token = getToken();
   const headers = {};
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  // Extract file_ids from URLs: /files/{file_id}/filename
+  // Extract file_ids from URLs: /files/{file_id}
   const fileIds = [];
   const byId = {};
   for (const item of batch) {

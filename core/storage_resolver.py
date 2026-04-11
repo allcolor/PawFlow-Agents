@@ -87,7 +87,7 @@ class StorageResolver:
                               content_type=content_type,
                               user_id=self._user_id)
         base_url = store.get_base_url() if hasattr(store, 'get_base_url') else ""
-        url = f"{base_url}/files/{file_id}/{filename}" if base_url else f"/files/{file_id}/{filename}"
+        url = f"{base_url}/files/{file_id}" if base_url else f"/files/{file_id}"
         return {
             "file_id": file_id,
             "url": url,
@@ -101,8 +101,8 @@ class StorageResolver:
         from core.file_store import FileStore
         store = FileStore.instance()
 
-        # Extract file_id from /files/{file_id}/filename paths
-        _fid_match = re.search(r'/files/([a-f0-9]{12})/', path)
+        # Extract file_id from /files/{file_id} URLs
+        _fid_match = re.search(r'/files/([a-f0-9]{12})(?:/|$)', path)
         if _fid_match:
             fid = _fid_match.group(1)
             result = store.get(fid, user_id=self._user_id)

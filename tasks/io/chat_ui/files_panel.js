@@ -6,7 +6,7 @@ function showFileMenu(e, fileId, filename) {
   menu.className = 'ctx-menu';
   menu.id = 'fileCtxMenu';
   _positionMenu(menu, e);
-  const href = window.location.origin + '/files/' + fileId + '/' + filename;
+  const href = window.location.origin + '/files/' + fileId;
   menu.innerHTML =
     '<div class="ctx-menu-item" onclick="event.stopPropagation();openFileViewer(\'' + href + '\');closeFileMenu();">&#x1F441; View</div>' +
     '<div class="ctx-menu-item" onclick="event.stopPropagation();window.open(\'' + href + '\',\'_blank\');closeFileMenu();">&#x2B07; Download</div>' +

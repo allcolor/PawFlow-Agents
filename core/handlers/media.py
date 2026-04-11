@@ -137,7 +137,7 @@ class ImageGenerationHandler(ToolHandler):
                                            result["image_bytes"], ct)
 
             if write_result.get("file_id"):
-                url = f"{self._base_url}/files/{write_result['file_id']}/{filename}"
+                url = f"{self._base_url}/files/{write_result['file_id']}"
                 return f"Image generated: {url}\nfile_id: {write_result['file_id']}"
             else:
                 return f"Image generated and saved to {write_result.get('destination', destination)}: {write_result.get('path', filename)}"
@@ -260,7 +260,7 @@ class VideoGenerationHandler(ToolHandler):
                                            result["video_bytes"], ct)
 
             if write_result.get("file_id"):
-                url = f"{self._base_url}/files/{write_result['file_id']}/{filename}"
+                url = f"{self._base_url}/files/{write_result['file_id']}"
                 return f"Video generated: {url}\nfile_id: {write_result['file_id']}"
             else:
                 return f"Video generated and saved to {write_result.get('destination', destination)}: {write_result.get('path', filename)}"
@@ -387,7 +387,7 @@ class AudioGenerationHandler(ToolHandler):
                     _vname = filename
                 _vresult = resolver.write(destination, _vname, _vbytes, _vct)
                 if _vresult.get("file_id"):
-                    _vurl = f"{self._base_url}/files/{_vresult['file_id']}/{_vname}"
+                    _vurl = f"{self._base_url}/files/{_vresult['file_id']}"
                     _label = f"{_vtitle} ({_vdur:.0f}s)" if _vtitle else f"variation {i+1}"
                     output_lines.append(f"{_label}: {_vurl}\nfile_id: {_vresult['file_id']}")
                 else:

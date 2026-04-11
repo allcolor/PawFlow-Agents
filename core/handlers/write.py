@@ -115,7 +115,7 @@ class WriteHandler(BaseFsHandler):
         from core.file_store import FileStore
         store = FileStore.instance()
         # Extract file_id from URL
-        url_match = re.search(r'/files/([^/]+)/', file_id)
+        url_match = re.search(r'/files/([a-f0-9]{12})', file_id)
         if url_match:
             file_id = url_match.group(1)
         entry = store.get(file_id)

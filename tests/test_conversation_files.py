@@ -201,7 +201,7 @@ class TestCreateFileHandler(unittest.TestCase):
         h.set_base_url("http://localhost:9090")
         result = h.execute({"filename": "test.py", "content": "print('hello')"})
         assert "http://localhost:9090/files/" in result
-        assert "test.py" in result
+        assert "file_id:" in result
 
     def test_guess_content_type(self):
         assert CreateFileHandler._guess_content_type("test.py") == "text/x-python"
@@ -460,7 +460,7 @@ class TestAgentFlowStructure(unittest.TestCase):
         patterns = [r["pattern"] for r in routes]
         assert "/api/agent" in patterns
         assert "/chat" in patterns
-        assert "/files/{file_id}/{filename}" in patterns
+        assert "/files/{file_id}" in patterns
 
         # Check relations
         froms = [r["from"] for r in data["relations"]]

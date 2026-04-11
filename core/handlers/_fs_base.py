@@ -285,7 +285,7 @@ class BaseFsHandler(ToolHandler):
         if ct and ct.startswith("image/"):
             import base64 as _b64
             b64 = _b64.b64encode(data).decode("ascii")
-            url = f"/files/{file_id}/{fname}"
+            url = f"/files/{file_id}"
             return f"Image: {url}\n__image_data__:{ct}:{b64}"
         try:
             text = data.decode("utf-8")

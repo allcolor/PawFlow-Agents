@@ -83,7 +83,7 @@
           },
           {
             "method": "GET",
-            "pattern": "/files/{file_id}/{filename}",
+            "pattern": "/files/{file_id}",
             "relationship": "GET:/files"
           },
           {

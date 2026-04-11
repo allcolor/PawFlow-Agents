@@ -550,7 +550,7 @@ class AgentUtilsMixin:
         The LLM can use read(path=url, source='filestore') to retrieve them if needed.
         """
         import re as _re_fs
-        _FS_REF = _re_fs.compile(r'/files/[a-f0-9]{12}/')
+        _FS_REF = _re_fs.compile(r'/files/[a-f0-9]{12}(?:/|$)')
         cleared = 0
 
         # Clear old tool results > threshold, skipping the last `keep_recent` messages.
@@ -747,7 +747,7 @@ class AgentUtilsMixin:
         store = FileStore.instance()
         file_ids = set()
         # Scan for /files/{file_id}/ patterns in message content
-        pattern = re.compile(r'/files/([a-f0-9]{12})/')
+        pattern = re.compile(r'/files/([a-f0-9]{12})(?:/|$)')
         for msg in messages:
             content = msg.get("content", "")
             if isinstance(content, str):

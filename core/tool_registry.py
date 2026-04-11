@@ -205,10 +205,14 @@ class ToolRegistry:
             if isinstance(result, str) and len(result) > _max and not _has_image:
                 try:
                     from core.file_store import FileStore
+                    _uid = getattr(handler, '_user_id', '') or ''
+                    _cid = getattr(handler, '_conversation_id', '') or ''
                     _fid = FileStore.instance().store(
                         f"tool_result_{name}.txt",
                         result.encode("utf-8"), "text/plain",
                         category="tool_result",
+                        user_id=_uid,
+                        conversation_id=_cid,
                     )
                     _first = result.split("\n", 1)[0][:200]
                     result = (

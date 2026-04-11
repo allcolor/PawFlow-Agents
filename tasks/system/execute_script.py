@@ -145,7 +145,11 @@ with open("/data/output.json", "w") as f:
 
         try:
             created_files: list = []
-            sandbox_open = make_sandbox_open(created_files=created_files)
+            _uid = flowfile.get_attribute("http.auth.principal") or ""
+            _cid = flowfile.get_attribute("conversation_id") or ""
+            sandbox_open = make_sandbox_open(
+                created_files=created_files,
+                user_id=_uid, conversation_id=_cid)
             globals_dict, print_buf = build_sandbox_globals(
                 sandbox_open=sandbox_open,
             )

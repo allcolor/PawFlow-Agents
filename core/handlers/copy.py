@@ -117,7 +117,10 @@ class CopyHandler(BaseFsHandler):
             import mimetypes
             fname = path.rsplit("/", 1)[-1] if "/" in path else path
             mime = mimetypes.guess_type(fname)[0] or "application/octet-stream"
-            fid = FileStore.instance().store(fname, data, mime, user_id=self._user_id)
+            fid = FileStore.instance().store(
+                fname, data, mime,
+                user_id=self._user_id,
+                conversation_id=getattr(self, '_conversation_id', '') or '')
             return fid
 
         if workdir:

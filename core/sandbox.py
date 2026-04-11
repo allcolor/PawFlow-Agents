@@ -89,12 +89,15 @@ class SandboxFile:
 
     def __init__(self, name: str, mode: str, initial: bytes,
                  store: Any, base_url: str,
-                 created_files: List[str]):
+                 created_files: List[str],
+                 user_id: str = "", conversation_id: str = ""):
         self._name = name
         self._mode = mode
         self._store = store
         self._base_url = base_url
         self._created_files = created_files
+        self._user_id = user_id
+        self._conversation_id = conversation_id
         self._closed = False
 
         is_binary = "b" in mode
@@ -132,7 +135,10 @@ class SandboxFile:
             content = raw if isinstance(raw, bytes) else raw.encode("utf-8")
             if content:
                 ct = _guess_content_type(self._name)
-                file_id = self._store.store(self._name, content, ct)
+                file_id = self._store.store(
+                    self._name, content, ct,
+                    user_id=self._user_id,
+                    conversation_id=self._conversation_id)
                 url = f"{self._base_url}/files/{file_id}"
                 self._created_files.append(url)
         self._buf.close()
@@ -167,11 +173,14 @@ def _guess_content_type(filename: str) -> str:
 class _FileStoreFile:
     """File-like wrapper for FileStore read/write via filestore:// URLs."""
 
-    def __init__(self, path: str, mode: str, base_url: str, created_files: list):
+    def __init__(self, path: str, mode: str, base_url: str, created_files: list,
+                 user_id: str = "", conversation_id: str = ""):
         self._path = path
         self._mode = mode
         self._base_url = base_url
         self._created_files = created_files
+        self._user_id = user_id
+        self._conversation_id = conversation_id
         self._closed = False
         is_binary = "b" in mode
 
@@ -225,7 +234,10 @@ class _FileStoreFile:
             if content:
                 from core.file_store import FileStore
                 ct = _guess_content_type(self._path)
-                file_id = FileStore.instance().store(self._path, content, ct)
+                file_id = FileStore.instance().store(
+                    self._path, content, ct,
+                    user_id=self._user_id,
+                    conversation_id=self._conversation_id)
                 url = f"{self._base_url}/files/{file_id}"
                 self._created_files.append(url)
         self._buf.close()
@@ -296,6 +308,8 @@ def make_sandbox_open(
     created_files: Optional[List[str]] = None,
     vfs: Optional[Dict[str, bytes]] = None,
     fs_resolver: Optional[Callable] = None,
+    user_id: str = "",
+    conversation_id: str = "",
 ) -> Callable:
     """Create a sandboxed open() with URL scheme routing.
 
@@ -315,7 +329,8 @@ def make_sandbox_open(
     def sandbox_open(name, mode="r", **kwargs):
         # Route by URL scheme
         if name.startswith("filestore://"):
-            return _FileStoreFile(name[12:], mode, base_url, created_files)
+            return _FileStoreFile(name[12:], mode, base_url, created_files,
+                                    user_id=user_id, conversation_id=conversation_id)
         if name.startswith("fs://"):
             rest = name[5:]
             sep = rest.find("/")
@@ -325,7 +340,8 @@ def make_sandbox_open(
             path = rest[sep + 1:]
             # fs://filestore/ → route to FileStore
             if svc_id.lower() in ("filestore", "store", "server"):
-                return _FileStoreFile(path, mode, base_url, created_files)
+                return _FileStoreFile(path, mode, base_url, created_files,
+                                        user_id=user_id, conversation_id=conversation_id)
             return _FilesystemServiceFile(svc_id, path, mode, fs_resolver)
 
         # Default: VFS sandbox (existing behavior)
@@ -351,6 +367,7 @@ def make_sandbox_open(
         sf = SandboxFile(
             safe_name, mode, initial,
             store, base_url, created_files,
+            user_id=user_id, conversation_id=conversation_id,
         )
 
         _orig_close = sf.close
@@ -496,6 +513,8 @@ def execute_sandboxed(
     base_url: str = "http://localhost:9090",
     vfs: Optional[Dict[str, bytes]] = None,
     fs_resolver: Optional[Callable] = None,
+    user_id: str = "",
+    conversation_id: str = "",
 ) -> tuple:
     """Execute code in the sandbox.
 
@@ -519,6 +538,7 @@ def execute_sandboxed(
         base_url=base_url,
         created_files=created_files, vfs=vfs,
         fs_resolver=fs_resolver,
+        user_id=user_id, conversation_id=conversation_id,
     )
 
     globals_dict, print_buf = build_sandbox_globals(

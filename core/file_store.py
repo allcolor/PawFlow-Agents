@@ -63,7 +63,14 @@ class FileStore:
               ttl: int = 0,
               agent_name: str = "",
               category: str = "") -> str:
-        """Store a file. Returns file_id (UUID for URL)."""
+        """Store a file. Returns file_id (UUID for URL).
+
+        user_id and conversation_id are required — every file belongs to
+        a user in a conversation context.
+        """
+        if not user_id or not conversation_id:
+            logger.warning("FileStore.store called without user_id=%r conv_id=%r for %s",
+                           user_id, conversation_id, filename)
         file_id = uuid.uuid4().hex[:12]
         safe_name = Path(filename).name or "file"
         disk_name = f"{file_id}_{safe_name}"
@@ -316,9 +323,10 @@ class FileStore:
         """Scope directory for a file."""
         if user_id and conversation_id:
             return self._base_dir / user_id / conversation_id
+        # Fallback for system-generated files (no user context)
         if user_id:
-            return self._base_dir / user_id / "_unscoped"
-        return self._base_dir / "_shared"
+            return self._base_dir / user_id / "_system"
+        return self._base_dir / "_system"
 
     def _pick_bucket(self, scope_dir: Path) -> str:
         """Find or create a bucket with room (< BUCKET_MAX files)."""

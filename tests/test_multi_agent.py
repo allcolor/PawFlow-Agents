@@ -358,24 +358,21 @@ class TestParallelSpawn:
 
 class TestResolveAgentTask:
     def test_resolve_from_store(self):
-        """resolve_agent_task loads agent definition from ResourceStore."""
+        """resolve_agent_task loads prompt from ResourceStore, runtime from conv_agent_config."""
         with patch("core.resource_store.ResourceStore.instance") as mock_store:
             mock_store.return_value.get_any.return_value = {
                 "prompt": "You are an analyst",
-                "model": "gpt-4",
-                "tools": ["execute_script", "web_search"],
-                "max_depth": 2,
-                "timeout": 60,
             }
+            # Without conversation_id, defaults apply
             task = resolve_agent_task("analyst", "Analyze this", "user1")
 
             assert task.agent_name == "analyst"
             assert task.message == "Analyze this"
             assert "You are an analyst" in task.system_prompt
-            assert task.model == "gpt-4"
-            assert task.tools == ["execute_script", "web_search"]
-            assert task.max_depth == 2
-            assert task.timeout == 60
+            # Runtime defaults (no conv_agent_config without conversation_id)
+            assert task.model == ""
+            assert task.max_depth == 5
+            assert task.timeout == 180
 
     def test_resolve_not_found(self):
         """resolve_agent_task raises KeyError if agent not in store."""

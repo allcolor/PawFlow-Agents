@@ -23,19 +23,19 @@ def _registry_fixture(tmp_path):
     import core.service_registry as mod
 
     ServiceRegistry.reset()
-    orig_user_dir = mod.USER_SERVICES_DIR
-    orig_global_file = mod.GLOBAL_SERVICES_FILE
-    mod.USER_SERVICES_DIR = tmp_path / "user_services"
-    mod.GLOBAL_SERVICES_FILE = tmp_path / "global_services.json"
+    orig_user_dir = mod._USER_SERVICES_DIR
+    orig_global_dir = mod._GLOBAL_SERVICES_DIR
+    mod._USER_SERVICES_DIR = tmp_path / "user_services"
+    mod._GLOBAL_SERVICES_DIR = tmp_path / "global_services"
     reg = ServiceRegistry.get_instance()
-    return reg, mod, orig_user_dir, orig_global_file
+    return reg, mod, orig_user_dir, orig_global_dir
 
 
-def _registry_teardown(mod, orig_user_dir, orig_global_file):
+def _registry_teardown(mod, orig_user_dir, orig_global_dir):
     from core.service_registry import ServiceRegistry
     ServiceRegistry.reset()
-    mod.USER_SERVICES_DIR = orig_user_dir
-    mod.GLOBAL_SERVICES_FILE = orig_global_file
+    mod._USER_SERVICES_DIR = orig_user_dir
+    mod._GLOBAL_SERVICES_DIR = orig_global_dir
 
 
 # ── Registry CRUD (user scope) ────────────────────────────────────
@@ -48,9 +48,9 @@ class TestServiceRegistryCRUD:
     def setup(self, tmp_path):
         from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
-        self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
+        self.reg, self.mod, self._orig_user, self._orig_global_dir = _registry_fixture(tmp_path)
         yield
-        _registry_teardown(self.mod, self._orig_user, self._orig_global)
+        _registry_teardown(self.mod, self._orig_user, self._orig_global_dir)
 
     def test_install(self):
         sdef = self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE,
@@ -144,9 +144,9 @@ class TestUserScopeIsolation:
     def setup(self, tmp_path):
         from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
-        self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
+        self.reg, self.mod, self._orig_user, self._orig_global_dir = _registry_fixture(tmp_path)
         yield
-        _registry_teardown(self.mod, self._orig_user, self._orig_global)
+        _registry_teardown(self.mod, self._orig_user, self._orig_global_dir)
 
     def test_user_a_cannot_see_user_b(self):
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE)
@@ -176,9 +176,9 @@ class TestGetCompatible:
     def setup(self, tmp_path):
         from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
-        self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
+        self.reg, self.mod, self._orig_user, self._orig_global_dir = _registry_fixture(tmp_path)
         yield
-        _registry_teardown(self.mod, self._orig_user, self._orig_global)
+        _registry_teardown(self.mod, self._orig_user, self._orig_global_dir)
 
     def test_filters_by_type(self):
         self.reg.install(self.SCOPE, "alice", "db1", SVC_TYPE)
@@ -208,9 +208,9 @@ class TestLiveInstances:
     def setup(self, tmp_path):
         from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
-        self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
+        self.reg, self.mod, self._orig_user, self._orig_global_dir = _registry_fixture(tmp_path)
         yield
-        _registry_teardown(self.mod, self._orig_user, self._orig_global)
+        _registry_teardown(self.mod, self._orig_user, self._orig_global_dir)
 
     def test_get_live_instance_none_when_disabled(self):
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE, enabled=False)
@@ -249,7 +249,7 @@ class TestResolutionChain:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
         from core.service_registry import SCOPE_GLOBAL, SCOPE_USER
-        self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
+        self.reg, self.mod, self._orig_user, self._orig_global_dir = _registry_fixture(tmp_path)
         # Install same service_id in global and user with different configs
         self.reg.install(SCOPE_GLOBAL, "", "shared", SVC_TYPE,
                          config={"source": "global"}, description="global one")
@@ -260,7 +260,7 @@ class TestResolutionChain:
         self.reg.install(SCOPE_USER, "alice", "user_only", SVC_TYPE,
                          config={"source": "user"})
         yield
-        _registry_teardown(self.mod, self._orig_user, self._orig_global)
+        _registry_teardown(self.mod, self._orig_user, self._orig_global_dir)
 
     def test_resolve_definition_user_wins(self):
         sdef = self.reg.resolve_definition("shared", user_id="alice")
@@ -325,18 +325,17 @@ class TestPersistence:
     def setup(self, tmp_path):
         from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
-        self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
+        self.reg, self.mod, self._orig_user, self._orig_global_dir = _registry_fixture(tmp_path)
         self.tmp_path = tmp_path
         yield
-        _registry_teardown(self.mod, self._orig_user, self._orig_global)
+        _registry_teardown(self.mod, self._orig_user, self._orig_global_dir)
 
     def test_save_creates_file(self):
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE, config={"host": "localhost"})
-        filepath = self.mod.USER_SERVICES_DIR / "alice.json"
+        filepath = self.mod._USER_SERVICES_DIR / "alice" / "mydb.json"
         assert filepath.exists()
         data = json.loads(filepath.read_text(encoding="utf-8"))
-        assert "mydb" in data
-        assert data["mydb"]["service_type"] == SVC_TYPE
+        assert data["service_type"] == SVC_TYPE
 
     def test_reload_after_reset(self):
         from core.service_registry import ServiceRegistry, SCOPE_USER
@@ -350,8 +349,8 @@ class TestPersistence:
     def test_per_user_files(self):
         self.reg.install(self.SCOPE, "alice", "db1", SVC_TYPE)
         self.reg.install(self.SCOPE, "bob", "db2", SVC_TYPE)
-        assert (self.mod.USER_SERVICES_DIR / "alice.json").exists()
-        assert (self.mod.USER_SERVICES_DIR / "bob.json").exists()
+        assert (self.mod._USER_SERVICES_DIR / "alice" / "db1.json").exists()
+        assert (self.mod._USER_SERVICES_DIR / "bob" / "db2.json").exists()
 
     def test_expressions_preserved_in_config(self):
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE,
@@ -464,9 +463,9 @@ class TestAgentServiceActions:
     def setup(self, tmp_path):
         from core.service_registry import SCOPE_USER
         self.SCOPE = SCOPE_USER
-        self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
+        self.reg, self.mod, self._orig_user, self._orig_global_dir = _registry_fixture(tmp_path)
         yield
-        _registry_teardown(self.mod, self._orig_user, self._orig_global)
+        _registry_teardown(self.mod, self._orig_user, self._orig_global_dir)
 
     def _make_flowfile(self, body: dict):
         from core import FlowFile
@@ -630,9 +629,9 @@ class TestResourceConflict:
         from core.service_registry import SCOPE_GLOBAL, SCOPE_USER
         self.SCOPE_GLOBAL = SCOPE_GLOBAL
         self.SCOPE_USER = SCOPE_USER
-        self.reg, self.mod, self._orig_user, self._orig_global = _registry_fixture(tmp_path)
+        self.reg, self.mod, self._orig_user, self._orig_global_dir = _registry_fixture(tmp_path)
         yield
-        _registry_teardown(self.mod, self._orig_user, self._orig_global)
+        _registry_teardown(self.mod, self._orig_user, self._orig_global_dir)
 
     def test_same_port_same_scope_different_id_blocked(self):
         """Two httpListeners on port 9090 in global scope = conflict."""

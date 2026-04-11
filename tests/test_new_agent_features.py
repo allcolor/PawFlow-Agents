@@ -718,7 +718,7 @@ class TestStoreSecretHandler(unittest.TestCase):
         self.assertIn("stored securely", result)
         self.assertIn("my_api_key", result)
         # Verify file was created in user directory
-        secrets_path = Path(self.tmpdir) / "data" / "config" / "users" / "testuser" / "secrets.json"
+        secrets_path = Path(self.tmpdir) / "data" / "system" / "users" / "testuser" / "secrets.json"
         self.assertTrue(secrets_path.exists())
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
         self.assertIn("my_api_key", data)
@@ -736,7 +736,7 @@ class TestStoreSecretHandler(unittest.TestCase):
     def test_store_multiple_secrets(self):
         self.handler.execute({"key": "key1", "value": "val1"})
         self.handler.execute({"key": "key2", "value": "val2"})
-        secrets_path = Path(self.tmpdir) / "data" / "config" / "users" / "testuser" / "secrets.json"
+        secrets_path = Path(self.tmpdir) / "data" / "system" / "users" / "testuser" / "secrets.json"
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
         self.assertIn("key1", data)
         self.assertIn("key2", data)

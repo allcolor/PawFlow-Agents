@@ -3,6 +3,13 @@
 Reads file_id from the FlowFile path parameters, looks up the file
 in the FileStore, and sets the FlowFile content + headers for HTTP response.
 
+Access levels are enforced here:
+    private       — owner only (requires auth)
+    shared        — owner + named users (requires auth)
+    authenticated — any logged-in user (requires auth)
+    gateway_key   — anyone with ?k= param (no auth needed)
+    public        — anyone (no auth needed)
+
 Flow pattern:
     httpReceiver (GET /files/{file_id}) → serveFile → handleHTTPResponse
 """
@@ -18,12 +25,12 @@ logger = logging.getLogger(__name__)
 
 
 class ServeFileTask(BaseTask):
-    """Serve a file from the FileStore."""
+    """Serve a file from the FileStore with access control."""
 
     TYPE = "serveFile"
-    VERSION = "1.0.0"
+    VERSION = "2.0.0"
     NAME = "Serve File"
-    DESCRIPTION = "Serve a file from the temporary file store"
+    DESCRIPTION = "Serve a file from the file store with access control"
     ICON = "download"
 
     def get_parameter_schema(self) -> Dict[str, Any]:
@@ -41,42 +48,52 @@ class ServeFileTask(BaseTask):
         file_id = flowfile.get_attribute(attr)
 
         if not file_id:
-            logger.warning("serveFile: no file_id found")
-            flowfile.set_content(b'{"error": "Not Found", "message": "No file ID provided"}')
+            flowfile.set_content(b'{"error": "No file ID provided"}')
             flowfile.set_attribute("http.response.status", "400")
-            flowfile.set_attribute("http.response.header.Content-Type", "application/json")
+            flowfile.set_attribute("http.response.header.Content-Type",
+                                   "application/json")
             return [flowfile]
 
         store = FileStore.instance()
         user_id = flowfile.get_attribute("http.auth.principal") or ""
-        result = store.get(file_id, user_id=user_id)
+        gateway_key = flowfile.get_attribute("http.query.k") or ""
 
+        if not store.exists(file_id):
+            flowfile.set_content(b'{"error": "File not found or expired"}')
+            flowfile.set_attribute("http.response.status", "404")
+            flowfile.set_attribute("http.response.header.Content-Type",
+                                   "application/json")
+            return [flowfile]
+
+        if not store.check_access(file_id, user_id=user_id,
+                                   gateway_key=gateway_key):
+            flowfile.set_content(b'{"error": "Access denied"}')
+            flowfile.set_attribute("http.response.status", "403")
+            flowfile.set_attribute("http.response.header.Content-Type",
+                                   "application/json")
+            return [flowfile]
+
+        result = store.get(file_id, user_id=user_id,
+                           gateway_key=gateway_key)
         if result is None:
-            # Distinguish 403 from 404
-            raw_entry = store.get(file_id)  # check if exists without user filter
-            if raw_entry:
-                logger.info(f"serveFile: file {file_id} access denied for user '{user_id}'")
-                flowfile.set_attribute("http.response.status", "403")
-                flowfile.set_content(b"Access denied")
-            else:
-                logger.info(f"serveFile: file {file_id} not found or expired")
-                flowfile.set_content(b'{"error": "Not Found", "message": "File not found or expired"}')
-                flowfile.set_attribute("http.response.status", "404")
-            flowfile.set_attribute("http.response.header.Content-Type", "application/json")
+            flowfile.set_content(b'{"error": "File not found or expired"}')
+            flowfile.set_attribute("http.response.status", "404")
+            flowfile.set_attribute("http.response.header.Content-Type",
+                                   "application/json")
             return [flowfile]
 
         filename, content, content_type = result
 
         flowfile.set_content(content)
         flowfile.set_attribute("http.response.status", "200")
-        flowfile.set_attribute("http.response.header.Content-Type", content_type)
+        flowfile.set_attribute("http.response.header.Content-Type",
+                               content_type)
         flowfile.set_attribute(
             "http.response.header.Content-Disposition",
-            f'attachment; filename="{filename}"'
-        )
-        flowfile.set_attribute("http.response.header.Content-Length", str(len(content)))
+            f'inline; filename="{filename}"')
+        flowfile.set_attribute("http.response.header.Content-Length",
+                               str(len(content)))
 
-        logger.info(f"serveFile: serving '{filename}' ({len(content)} bytes)")
         return [flowfile]
 
 

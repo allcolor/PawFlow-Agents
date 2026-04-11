@@ -2,14 +2,22 @@
 
 Files are stored under:
     data/runtime/files/{user_id}/{conv_id}/{bucket}/{file_id}_{filename}
-    data/runtime/files/_shared/{bucket}/{file_id}_{filename}
 
 Buckets hold up to 50 files, then a new one is created.
 Empty buckets are deleted on cleanup.
 
 URLs: /files/{file_id} — the server resolves file_id to disk path via the index.
+
+Access levels:
+    private       — owner + agents of the conversation (default)
+    shared        — owner + named users in shared_with list
+    authenticated — any authenticated user on the server
+    gateway_key   — anyone with the per-file HMAC key (no login needed)
+    public        — anyone (no auth, no gateway)
 """
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -25,6 +33,15 @@ logger = logging.getLogger(__name__)
 from core.paths import FILES_DIR
 
 BUCKET_MAX = 50
+ACCESS_PRIVATE = "private"
+ACCESS_SHARED = "shared"
+ACCESS_AUTHENTICATED = "authenticated"
+ACCESS_GATEWAY_KEY = "gateway_key"
+ACCESS_PUBLIC = "public"
+VALID_ACCESS_LEVELS = (
+    ACCESS_PRIVATE, ACCESS_SHARED, ACCESS_AUTHENTICATED,
+    ACCESS_GATEWAY_KEY, ACCESS_PUBLIC,
+)
 
 
 class FileStore:
@@ -93,6 +110,7 @@ class FileStore:
                 "created_at": time.time(),
                 "conversation_id": conversation_id,
                 "user_id": user_id,
+                "access": ACCESS_PRIVATE,
                 "shared_with": [],
                 "ttl": ttl,
                 "agent_name": agent_name,
@@ -104,8 +122,12 @@ class FileStore:
 
     # ── Retrieve ─────────────────────────────────────────────────
 
-    def get(self, file_id: str, user_id: str = "") -> Optional[Tuple[str, bytes, str]]:
-        """Retrieve a file by ID. Returns (filename, bytes, content_type) or None."""
+    def get(self, file_id: str, user_id: str = "",
+            gateway_key: str = "") -> Optional[Tuple[str, bytes, str]]:
+        """Retrieve a file by ID with access control.
+
+        Returns (filename, bytes, content_type) or None if not found/denied.
+        """
         with self._store_lock:
             self._ensure_loaded()
             entry = self._entries.get(file_id)
@@ -118,11 +140,10 @@ class FileStore:
                 self._delete_entry(file_id)
                 return None
 
-        # Access control
-        owner = entry.get("user_id", "")
-        if user_id and owner and owner != user_id:
-            if user_id not in entry.get("shared_with", []):
-                return None
+        # Access control based on level
+        if not self.check_access(file_id, user_id=user_id,
+                                  gateway_key=gateway_key):
+            return None
 
         try:
             content = Path(entry["path"]).read_bytes()
@@ -130,6 +151,98 @@ class FileStore:
         except FileNotFoundError:
             self._delete_entry(file_id)
             return None
+
+    def check_access(self, file_id: str, user_id: str = "",
+                     gateway_key: str = "") -> bool:
+        """Check if access is allowed for the given credentials.
+
+        Returns True if access granted, False otherwise.
+        """
+        with self._store_lock:
+            entry = self._entries.get(file_id)
+        if entry is None:
+            return False
+
+        access = entry.get("access", ACCESS_PRIVATE)
+
+        if access == ACCESS_PUBLIC:
+            return True
+
+        if access == ACCESS_GATEWAY_KEY:
+            expected = self._derive_gateway_key(file_id)
+            return gateway_key and hmac.compare_digest(gateway_key, expected)
+
+        if access == ACCESS_AUTHENTICATED:
+            return bool(user_id)
+
+        if access == ACCESS_SHARED:
+            if not user_id:
+                return False
+            owner = entry.get("user_id", "")
+            if owner == user_id:
+                return True
+            return user_id in entry.get("shared_with", [])
+
+        # ACCESS_PRIVATE — owner only (empty owner = no restriction)
+        owner = entry.get("user_id", "")
+        if not owner:
+            return True
+        return user_id == owner
+
+    def get_access_level(self, file_id: str) -> str:
+        """Get the access level of a file."""
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._entries.get(file_id)
+        if entry is None:
+            return ""
+        return entry.get("access", ACCESS_PRIVATE)
+
+    def set_access(self, file_id: str, level: str,
+                   shared_with: Optional[List[str]] = None,
+                   owner_user_id: str = "") -> bool:
+        """Change file access level. Only the owner can change access.
+
+        Returns True if changed, False if not found or not owner.
+        """
+        if level not in VALID_ACCESS_LEVELS:
+            raise ValueError(f"Invalid access level: {level}")
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._entries.get(file_id)
+            if not entry:
+                return False
+            owner = entry.get("user_id", "")
+            if owner_user_id and owner and owner != owner_user_id:
+                return False
+            entry["access"] = level
+            if shared_with is not None:
+                entry["shared_with"] = list(shared_with)
+        self._save_index()
+        return True
+
+    def get_share_url(self, file_id: str, base_url: str = "") -> str:
+        """Get the shareable URL for a file.
+
+        For gateway_key files, includes ?k= parameter.
+        For others, returns the plain URL.
+        """
+        with self._store_lock:
+            entry = self._entries.get(file_id)
+        if not entry:
+            return ""
+        url = f"{base_url}/files/{file_id}"
+        if entry.get("access") == ACCESS_GATEWAY_KEY:
+            key = self._derive_gateway_key(file_id)
+            url += f"?k={key}"
+        return url
+
+    def _derive_gateway_key(self, file_id: str) -> str:
+        """Derive a per-file gateway key using HMAC."""
+        from core.secrets import get_secrets_manager
+        secret = get_secrets_manager()._key
+        return hmac.new(secret, f"file:{file_id}".encode(),
+                        hashlib.sha256).hexdigest()[:32]
 
     def get_metadata(self, file_id: str) -> Optional[Dict[str, Any]]:
         """Get file metadata without reading content."""
@@ -258,37 +371,6 @@ class FileStore:
 
     # ── Share ────────────────────────────────────────────────────
 
-    def share(self, file_id: str, target_user_id: str,
-              owner_user_id: str = "") -> bool:
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._entries.get(file_id)
-            if not entry:
-                return False
-            owner = entry.get("user_id", "")
-            if owner_user_id and owner and owner != owner_user_id:
-                return False
-            shared = entry.setdefault("shared_with", [])
-            if target_user_id not in shared:
-                shared.append(target_user_id)
-        self._save_index()
-        return True
-
-    def unshare(self, file_id: str, target_user_id: str,
-                owner_user_id: str = "") -> bool:
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._entries.get(file_id)
-            if not entry:
-                return False
-            owner = entry.get("user_id", "")
-            if owner_user_id and owner and owner != owner_user_id:
-                return False
-            shared = entry.get("shared_with", [])
-            if target_user_id in shared:
-                shared.remove(target_user_id)
-        self._save_index()
-        return True
 
     def count(self) -> int:
         with self._store_lock:
@@ -379,6 +461,7 @@ class FileStore:
                         "created_at": e["created_at"],
                         "conversation_id": e.get("conversation_id", ""),
                         "user_id": e.get("user_id", ""),
+                        "access": e.get("access", ACCESS_PRIVATE),
                         "shared_with": e.get("shared_with", []),
                         "ttl": e.get("ttl", 0),
                         "agent_name": e.get("agent_name", ""),

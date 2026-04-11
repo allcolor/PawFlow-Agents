@@ -67,11 +67,33 @@ class ValidateSessionAuthTask(BaseTask):
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         cookie_name = self.config.get("cookie_name", "pawflow_token")
 
+        # Bypass auth for /files/ with public or gateway_key access
+        path = flowfile.get_attribute("http.path") or ""
+        if path.startswith("/files/"):
+            _file_id = path.split("/")[2] if len(path.split("/")) >= 3 else ""
+            if _file_id:
+                try:
+                    from core.file_store import (
+                        FileStore, ACCESS_PUBLIC, ACCESS_GATEWAY_KEY)
+                    _level = FileStore.instance().get_access_level(_file_id)
+                    if _level == ACCESS_PUBLIC:
+                        flowfile.set_attribute("http.auth.principal", "")
+                        flowfile.set_attribute("http.auth.roles", "viewer")
+                        return [flowfile]
+                    if _level == ACCESS_GATEWAY_KEY:
+                        _key = flowfile.get_attribute("http.query.k") or ""
+                        if _key and FileStore.instance().check_access(
+                                _file_id, gateway_key=_key):
+                            flowfile.set_attribute("http.auth.principal", "")
+                            flowfile.set_attribute("http.auth.roles", "viewer")
+                            return [flowfile]
+                except Exception:
+                    pass
+
         # Try to extract session token from multiple sources
         token = self._extract_token(flowfile, cookie_name)
 
         if not token:
-            path = flowfile.get_attribute("http.path") or "?"
             method = flowfile.get_attribute("http.method") or "?"
             logger.warning(f"No auth token for {method} {path}")
             return [self._auth_failed(flowfile, "No authentication token found")]

@@ -1242,6 +1242,12 @@ class ConversationStore:
             self._cache.pop(cid, None)
         self._conv_locks.pop(cid, None)
         self._cid_user.pop(cid, None)
+        # Clean up all conv-scoped resources
+        try:
+            from core.file_store import FileStore
+            FileStore.instance().delete_by(conversation_id=cid)
+        except Exception:
+            pass
         self._invalidate_ctx_cache(cid)
         return True
 

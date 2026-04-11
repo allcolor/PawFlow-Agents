@@ -658,6 +658,26 @@ def _check_request_inner(handler) -> bool:
     if path in _EXEMPT_PATHS:
         return False
 
+    # /files/{file_id} — check if public or gateway_key access
+    if path.startswith("/files/"):
+        file_id = path.split("/")[2] if len(path.split("/")) >= 3 else ""
+        if file_id:
+            try:
+                from core.file_store import FileStore, ACCESS_PUBLIC, ACCESS_GATEWAY_KEY
+                level = FileStore.instance().get_access_level(file_id)
+                if level == ACCESS_PUBLIC:
+                    return False  # bypass gateway
+                if level == ACCESS_GATEWAY_KEY:
+                    # Check ?k= param
+                    from urllib.parse import parse_qs, urlparse
+                    qs = parse_qs(urlparse(handler.path).query)
+                    key = qs.get("k", [""])[0]
+                    if key and FileStore.instance().check_access(
+                            file_id, gateway_key=key):
+                        return False  # bypass gateway
+            except Exception:
+                pass
+
     if is_banned(ip):
         _send_page(handler, 403, b"Forbidden", "text/plain")
         return True

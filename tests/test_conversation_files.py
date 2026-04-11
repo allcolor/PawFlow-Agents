@@ -66,8 +66,7 @@ class TestConversationStore(unittest.TestCase):
         store = ConversationStore.instance()
         store.save("conv1", [{"role": "user", "content": "hi"}], user_id="test")
         store.delete("conv1")
-        result = store.load("conv1")
-        assert result is None or result == []
+        assert store.load("conv1") is None
 
     def test_generate_id(self):
         store = ConversationStore.instance()

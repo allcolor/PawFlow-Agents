@@ -1223,17 +1223,25 @@ class ConversationStore:
     # ── Delete ────────────────────────────────────────────────────────
 
     def delete(self, cid: str, user_id: str = "") -> bool:
-        import shutil
+        import os, shutil, stat
         conv_dir = self._conv_dir(cid)
         if not conv_dir.is_dir():
             with self._cache_lock:
                 self._cache.pop(cid, None)
             return False
+
+        def _force_remove(func, path, _exc_info):
+            """Force-remove read-only files (git pack objects on Windows)."""
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            func(path)
+
         lock = self._get_conv_lock(cid)
         with lock:
-            shutil.rmtree(conv_dir, ignore_errors=True)
+            shutil.rmtree(conv_dir, onerror=_force_remove)
         with self._cache_lock:
             self._cache.pop(cid, None)
+        self._conv_locks.pop(cid, None)
+        self._cid_user.pop(cid, None)
         self._invalidate_ctx_cache(cid)
         return True
 

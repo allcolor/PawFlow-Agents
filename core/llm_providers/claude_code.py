@@ -150,7 +150,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 msg = json.dumps({
                     "type": "user",
                     "message": {"role": "user",
-                                "content": "[Request interrupted by user]"},
+                                "content": "Stop what you're doing right now. I need your attention on something else. Finish your current response briefly and wait for the next message."},
                 })
                 proc.stdin.write(msg + "\n")
                 proc.stdin.flush()

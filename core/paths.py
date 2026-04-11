@@ -1,7 +1,7 @@
 """Centralized path functions for PawFlow storage.
 
 Three top-level areas:
-  - repository/  : definitions (agents, skills, tasks, flows, mcps, prompts, services, tools)
+  - repository/  : definitions (agents, skills, tasks, flows, mcps, services, tools)
   - runtime/     : operational state (conversations, deployments, files, memories, ...)
   - system/      : server config (users, sessions, security, secrets, ssl)
 
@@ -25,7 +25,7 @@ DEFAULTS_DIR = Path("defaults")
 # ── Repository resource types ────────────────────────────────────
 REPO_TYPES = frozenset({
     "agents", "skills", "tasks", "flows",
-    "mcps", "prompts", "services", "tools",
+    "mcps", "services", "tools",
 })
 
 
@@ -49,13 +49,19 @@ def repo_dir(rtype: str, scope: str = "global",
     raise ValueError(f"Invalid scope: {scope!r}")
 
 
+# Resource types stored as markdown (frontmatter + body)
+_MARKDOWN_TYPES = frozenset({"agents", "skills"})
+
+
 def repo_file(rtype: str, name: str, scope: str = "global",
               user_id: str = "", conv_id: str = "") -> Path:
     """Path to a single resource definition file.
 
-    repo_file("agents", "pawflow", "global")  → data/repository/agents/global/pawflow.json
+    repo_file("agents", "claude", "global")  → data/repository/agents/global/claude.md
+    repo_file("mcps", "db", "global")        → data/repository/mcps/global/db.json
     """
-    return repo_dir(rtype, scope, user_id, conv_id) / f"{name}.json"
+    ext = ".md" if rtype in _MARKDOWN_TYPES else ".json"
+    return repo_dir(rtype, scope, user_id, conv_id) / f"{name}{ext}"
 
 
 # ── Flow-specific paths ──────────────────────────────────────────

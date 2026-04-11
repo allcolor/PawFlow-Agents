@@ -208,40 +208,43 @@ def phase3_migrate_repository(dry_run: bool):
 def phase4_migrate_runtime(dry_run: bool):
     log.info("Phase 4: Migrate runtime")
 
-    moves = [
+    dir_copies = [
         (DATA / "conversations",    NEW_RUNTIME / "conversations"),
-        (DATA / "deployments",      NEW_RUNTIME / "deployments"),
         (DATA / "files",            NEW_RUNTIME / "files"),
         (DATA / "memories",         NEW_RUNTIME / "memories"),
         (DATA / "knowledge_graphs", NEW_RUNTIME / "knowledge_graphs"),
-        (DATA / "plans",            NEW_RUNTIME),  # keep subdir
+        (DATA / "plans",            NEW_RUNTIME / "plans"),
         (DATA / "claude_sessions",  NEW_RUNTIME / "sessions" / "claude"),
         (DATA / "graphs",           NEW_RUNTIME / "graphs"),
     ]
 
-    for src, dst in moves:
-        if not src.exists():
-            continue
-        # If dst should contain the source as a subdir
-        if dst.name != src.name and not str(dst).endswith(src.name):
-            final_dst = dst
-        else:
-            final_dst = dst
+    for src, dst in dir_copies:
+        if src.exists() and src.is_dir():
+            _copy(src, dst, dry_run)
+            log.info("  Copied %s -> %s", src, dst)
 
-        if src.is_dir():
-            _copy(src, final_dst, dry_run)
-            log.info("  Copied %s -> %s", src, final_dst)
-        else:
-            _move(src, final_dst, dry_run)
-
-    # plans: special case — move contents, not dir itself
-    old_plans = DATA / "plans"
-    if old_plans.exists() and old_plans.is_dir():
-        _copy(old_plans, NEW_RUNTIME / "plans", dry_run)
-        log.info("  Copied plans")
+    # Deployments: split into 1 file per deploy
+    old_deploys = DATA / "deployments"
+    if old_deploys.exists():
+        deploy_dst = NEW_RUNTIME / "deployments"
+        for scope_dir in old_deploys.iterdir():
+            if scope_dir.is_dir():
+                for f in scope_dir.glob("*.json"):
+                    deploy_data = _read_json(f)
+                    if deploy_data:
+                        deploy_id = f.stem
+                        out = NEW_RUNTIME / "deployments" / f"{deploy_id}.json"
+                        # Add owner scope info
+                        deploy_data.setdefault("id", deploy_id)
+                        deploy_data.setdefault("owner_scope", scope_dir.name)
+                        _write_json(out, deploy_data, dry_run)
+                log.info("  Deployments: split %s", scope_dir.name)
+            elif scope_dir.suffix == ".json":
+                # Direct file in deployments/
+                _copy(scope_dir, deploy_dst / scope_dir.name, dry_run)
 
     # Single files
-    file_moves = [
+    file_copies = [
         (DATA / "token_usage.json",      NEW_RUNTIME / "token_usage.json"),
         (DATA / "identity_mappings.json", NEW_RUNTIME / "identity_mappings.json"),
         (DATA / "gateway_bans.json",     NEW_RUNTIME / "gateway_bans.json"),
@@ -249,9 +252,9 @@ def phase4_migrate_runtime(dry_run: bool):
     # Poll schedule
     old_poll = DATA / "poll_schedule" / "schedule.json"
     if old_poll.exists():
-        file_moves.append((old_poll, NEW_RUNTIME / "poll_schedule.json"))
+        file_copies.append((old_poll, NEW_RUNTIME / "poll_schedule.json"))
 
-    for src, dst in file_moves:
+    for src, dst in file_copies:
         if src.exists():
             _copy(src, dst, dry_run)
             log.info("  Copied %s -> %s", src.name, dst)
@@ -362,34 +365,44 @@ def phase6_migrate_flows(dry_run: bool):
         log.info("  Migrated %d templates",
                  len(list(templates_dir.glob("*.json"))))
 
-    # agent_flows/*.json -> same treatment
-    agent_flows = DATA / "agent_flows"
-    if agent_flows.exists():
-        for f in agent_flows.glob("*.json"):
-            flow_id = f.stem
-            flow_data = _read_json(f)
-            if not flow_data:
-                continue
-            flow_data["fqn"] = f"agent-flows.{flow_id}:1.0.0"
-            flow_data["package"] = "agent-flows"
-            flow_data["name"] = flow_id
-            flow_data["version"] = "1.0.0"
+    # agent_flows/*.json and agent_templates/*.json -> user scope
+    # These were created by agents in conversations — always conv scope,
+    # but we don't have the original conv_id. Put in user scope (promotable later).
+    _owner = "quentin.anciaux"
 
-            ver_path = (NEW_REPO / "flows" / "global" / "agent-flows" /
-                        flow_id / "versions" / "1.0.0.json")
-            _write_json(ver_path, flow_data, dry_run)
-            latest_path = (NEW_REPO / "flows" / "global" / "agent-flows" /
-                           flow_id / "latest.json")
-            _write_json(latest_path, {"version": "1.0.0"}, dry_run)
+    for extra_dir, label in [(DATA / "agent_flows", "agent flows"),
+                              (DATA / "agent_templates", "agent templates")]:
+        if extra_dir.exists():
+            count = 0
+            for f in extra_dir.glob("*.json"):
+                flow_id = f.stem
+                flow_data = _read_json(f)
+                if not flow_data:
+                    continue
+                flow_data["fqn"] = f"default.{flow_id}:1.0.0"
+                flow_data["package"] = "default"
+                flow_data["name"] = flow_id
+                flow_data["version"] = "1.0.0"
 
-        pkg_path = NEW_REPO / "flows" / "global" / "agent-flows" / "package.json"
-        _write_json(pkg_path, {
-            "name": "agent-flows",
-            "description": "Migrated agent-created flows",
-            "author": "",
-        }, dry_run)
-        log.info("  Migrated %d agent flows",
-                 len(list(agent_flows.glob("*.json"))))
+                ver_path = (NEW_REPO / "flows" / "users" / _owner / "default" /
+                            flow_id / "versions" / "1.0.0.json")
+                if not ver_path.exists() or dry_run:
+                    _write_json(ver_path, flow_data, dry_run)
+                    latest_path = (NEW_REPO / "flows" / "users" / _owner / "default" /
+                                   flow_id / "latest.json")
+                    _write_json(latest_path, {"version": "1.0.0"}, dry_run)
+                    count += 1
+            if count:
+                # package.json for user's default package
+                pkg_path = NEW_REPO / "flows" / "users" / _owner / "default" / "package.json"
+                if not pkg_path.exists() or dry_run:
+                    _write_json(pkg_path, {
+                        "name": "default",
+                        "description": f"Migrated flows for {_owner}",
+                        "author": _owner,
+                    }, dry_run)
+                log.info("  Migrated %d %s into user:%s/default package",
+                         count, label, _owner)
 
 
 # ── Phase 7: Summary ───────────────────────────────────────────────

@@ -49,11 +49,11 @@ function showResMenu(e, rtype, name, scope) {
 
   // View — always available
   addItem('View...', 'edit_resource');
-  if (canEdit && (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp' || rtype === 'prompts' || rtype === 'task_defs')) {
+  if (canEdit && (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp' || rtype === 'task_defs')) {
     addItem('Edit...', 'edit_resource');
     addSep();
   }
-  if (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp' || rtype === 'prompts') {
+  if (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp') {
     addItem('Activate', 'activate');
     addItem('Deactivate', 'deactivate');
   }
@@ -261,8 +261,8 @@ function renderPanelResult(action, data) {
     window._userRole = data.user_role || '';
     var html = '<div class="panel-header"><h4>Resources</h4><button class="panel-close" onclick="closePanel()">\u2715</button></div>';
 
-    var sectionOrder = ['agents','skills','mcp','prompts','task_defs','flows','services','parameters','secrets'];
-    var sectionLabels = {agents:'Agents',skills:'Skills',mcp:'MCP Servers',prompts:'Prompts',task_defs:'Tasks',flows:'Flows',services:'Services',parameters:'Variables',secrets:'Secrets'};
+    var sectionOrder = ['agents','skills','mcp','task_defs','flows','services','parameters','secrets'];
+    var sectionLabels = {agents:'Agents',skills:'Skills',mcp:'MCP Servers',task_defs:'Tasks',flows:'Flows',services:'Services',parameters:'Variables',secrets:'Secrets'};
 
     for (var si = 0; si < sectionOrder.length; si++) {
       var rtype = sectionOrder[si];
@@ -281,7 +281,7 @@ function renderPanelResult(action, data) {
       if (!items.length) continue;
 
       var label = sectionLabels[rtype] || rtype;
-      var canCreate = ['agents','skills','task_defs','prompts','services','parameters','secrets','flows'].indexOf(rtype) >= 0;
+      var canCreate = ['agents','skills','task_defs','services','parameters','secrets','flows'].indexOf(rtype) >= 0;
       var createType = rtype === 'parameters' ? 'variables' : rtype;
       var addBtn = canCreate ? ' <button style="background:none;border:none;color:var(--vscode-textLink-foreground);cursor:pointer;font-size:11px" onclick="event.stopPropagation();showCreateForm(\'' + createType + '\')">[+]</button>' : '';
       html += '<div class="res-section" onclick="this.classList.toggle(\'collapsed\')">'

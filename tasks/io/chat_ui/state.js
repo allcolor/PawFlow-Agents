@@ -197,14 +197,13 @@ function _doNewChat() {
 async function newChat() {
   var result = await _pickAgentsForNewConv();
   if (!result || !result.agents || result.agents.length === 0) return;
-  // Don't close SSE yet — we need it to receive the create_conversation result
   var params = { agents: result.agents };
+  if (result.agent_configs) params.agent_configs = result.agent_configs;
   if (result.title) params.title = result.title;
   if (result.relays && result.relays.length) params.relays = result.relays;
   if (result.default_relay) params.default_relay = result.default_relay;
   action$('create_conversation', params).subscribe(data => {
     if (data.conversation_id) {
-      // Now switch to the new conversation
       _doNewChat();
       conversationId = data.conversation_id;
       _setInputEnabled(true);
@@ -220,20 +219,18 @@ async function newChat() {
   });
 }
 
-// Fetch agents + relays, then show the new conversation dialog.
-// Returns {agents: [...], relays: [...], default_relay: "...", title: "..."} or null.
 async function _pickAgentsForNewConv() {
   return new Promise((resolve) => {
-    // Fetch agents and relays in parallel
-    var agents = [], relays = [];
+    var agents = [], llmServices = [], relays = [];
     var done = 0;
     function check() {
       if (++done < 2) return;
       if (agents.length === 0) { resolve(null); return; }
-      _showNewConvDialog(agents, relays, resolve);
+      _showNewConvDialog(agents, llmServices, relays, resolve);
     }
     action$('list_repo_agents', { conversation_id: '' }).subscribe(d => {
       agents = d.agents || [];
+      llmServices = d.llm_services || [];
       check();
     });
     action$('relay_list_available').subscribe(d => {
@@ -243,41 +240,40 @@ async function _pickAgentsForNewConv() {
   });
 }
 
-function _showNewConvDialog(repoAgents, availableRelays, resolve) {
+function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
   var overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
-
   var box = document.createElement('div');
-  box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:580px;max-width:700px;max-height:85vh;display:flex;flex-direction:column;gap:14px;overflow-y:auto';
+  box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:640px;max-width:780px;max-height:85vh;display:flex;flex-direction:column;gap:12px;overflow-y:auto';
 
-  var _css = 'style="width:100%;min-height:80px;max-height:192px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);"';
-  var _itemCss = 'style="padding:3px 6px;cursor:pointer;border-radius:3px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"';
-  var _btnCss = 'style="padding:4px 10px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg2,#1e1e2e);color:inherit;cursor:pointer;font-size:16px;font-weight:600;"';
+  // Build LLM service options HTML
+  var svcOpts = llmServices.map(function(s) {
+    return '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + (s.description ? ' \u2014 ' + escapeHtml(s.description) : '') + '</option>';
+  }).join('');
+
+  var _listCss = 'width:100%;min-height:100px;max-height:240px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);';
+  var _relCss = 'width:100%;min-height:60px;max-height:120px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);';
+  var _btnCss = 'padding:4px 10px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg2,#1e1e2e);color:inherit;cursor:pointer;font-size:16px;font-weight:600;';
 
   box.innerHTML =
     '<div style="font-weight:600;font-size:1.1em;">New Conversation</div>'
-    // Title
     + '<div><label style="font-size:11px;color:#888;">Title (optional)</label>'
     + '<input id="_ncTitle" type="text" placeholder="Auto-generated if empty" style="width:100%;padding:6px 10px;border-radius:5px;border:1px solid var(--border,#444);background:var(--bg,#141420);color:inherit;font-size:0.95em;box-sizing:border-box;"></div>'
-    // Agents
+    // Agent selection: left = treeview checkboxes, right = detail panel
     + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">Agents</div>'
-    + '<div style="display:flex;gap:8px;align-items:stretch;">'
-    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Available</div><div id="_ncAgentsAvail" ' + _css + '></div></div>'
-    +   '<div style="display:flex;flex-direction:column;justify-content:center;gap:4px;">'
-    +     '<button id="_ncAgentAdd" ' + _btnCss + ' title="Add">\u25B6</button>'
-    +     '<button id="_ncAgentRem" ' + _btnCss + ' title="Remove">\u25C0</button>'
-    +   '</div>'
-    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Selected</div><div id="_ncAgentsSel" ' + _css + '></div></div>'
+    + '<div style="display:flex;gap:12px;align-items:stretch;">'
+    +   '<div id="_ncAgentTree" style="' + _listCss + 'flex:1;"></div>'
+    +   '<div id="_ncAgentDetail" style="flex:1;border:1px solid var(--border,#444);border-radius:4px;padding:10px;background:var(--bg,#141420);min-height:100px;max-height:240px;overflow-y:auto;font-size:12px;color:#aaa;display:flex;align-items:center;justify-content:center;">Select an agent to see details</div>'
     + '</div>'
     // Relays
     + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">Relays</div>'
     + '<div style="display:flex;gap:8px;align-items:stretch;">'
-    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Available</div><div id="_ncRelaysAvail" ' + _css + '></div></div>'
+    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Available</div><div id="_ncRelaysAvail" style="' + _relCss + '"></div></div>'
     +   '<div style="display:flex;flex-direction:column;justify-content:center;gap:4px;">'
-    +     '<button id="_ncRelayAdd" ' + _btnCss + ' title="Link">\u25B6</button>'
-    +     '<button id="_ncRelayRem" ' + _btnCss + ' title="Unlink">\u25C0</button>'
+    +     '<button id="_ncRelayAdd" style="' + _btnCss + '" title="Link">\u25B6</button>'
+    +     '<button id="_ncRelayRem" style="' + _btnCss + '" title="Unlink">\u25C0</button>'
     +   '</div>'
-    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Linked <span style="font-size:9px;color:#4ecdc4;">\u2605 = default</span></div><div id="_ncRelaysSel" ' + _css + '></div></div>'
+    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Linked <span style="font-size:9px;color:#4ecdc4;">\u2605 = default</span></div><div id="_ncRelaysSel" style="' + _relCss + '"></div></div>'
     + '</div>'
     // Buttons
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">'
@@ -288,14 +284,131 @@ function _showNewConvDialog(repoAgents, availableRelays, resolve) {
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 
-  // State
-  var selAgents = [], selRelays = [], defaultRelay = '';
+  // State: agent configs keyed by name
+  var agentConfigs = {};  // {name: {llm_service: "..."}}
+  var checkedAgents = new Set();
+  var focusedAgent = '';
+  var selRelays = [], defaultRelay = '';
 
-  function _makeItem(text, id, extra) {
+  // Guess LLM service for an agent: try {name}_llm_service, else first service
+  function _guessLlm(agentName) {
+    var candidate = agentName + '_llm_service';
+    for (var i = 0; i < llmServices.length; i++) {
+      if (llmServices[i].service_id === candidate) return candidate;
+    }
+    // Try {name}_llm
+    candidate = agentName + '_llm';
+    for (var i = 0; i < llmServices.length; i++) {
+      if (llmServices[i].service_id === candidate) return candidate;
+    }
+    return llmServices.length ? llmServices[0].service_id : '';
+  }
+
+  function _renderTree() {
+    var tree = document.getElementById('_ncAgentTree');
+    tree.innerHTML = '';
+    // Group by scope
+    var scopes = {};
+    repoAgents.forEach(function(a) {
+      var s = a.scope || 'global';
+      if (!scopes[s]) scopes[s] = [];
+      scopes[s].push(a);
+    });
+    var scopeOrder = ['global', 'user'];
+    var scopeLabels = { global: '\uD83C\uDF10 Global', user: '\uD83D\uDC64 User' };
+    scopeOrder.forEach(function(scope) {
+      var items = scopes[scope];
+      if (!items || !items.length) return;
+      // Scope header
+      var hdr = document.createElement('div');
+      hdr.style.cssText = 'font-size:10px;color:#666;padding:2px 4px;margin-top:4px;';
+      hdr.textContent = scopeLabels[scope] || scope;
+      tree.appendChild(hdr);
+      // Agent rows
+      items.forEach(function(a) {
+        var row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12px;';
+        row.dataset.agent = a.name;
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = checkedAgents.has(a.name);
+        cb.style.cssText = 'accent-color:#7c6af7;margin:0;';
+        cb.onchange = function() {
+          if (cb.checked) {
+            checkedAgents.add(a.name);
+            if (!agentConfigs[a.name]) agentConfigs[a.name] = { llm_service: _guessLlm(a.name) };
+          } else {
+            checkedAgents.delete(a.name);
+          }
+          _updateCreateBtn();
+          if (focusedAgent === a.name) _renderDetail();
+        };
+        var label = document.createElement('span');
+        label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        label.textContent = a.name;
+        if (a.description) label.title = a.description;
+        row.appendChild(cb);
+        row.appendChild(label);
+        // Click row (not checkbox) to focus
+        row.onclick = function(e) {
+          if (e.target === cb) return;
+          focusedAgent = a.name;
+          _highlightFocused();
+          _renderDetail();
+        };
+        tree.appendChild(row);
+      });
+    });
+  }
+
+  function _highlightFocused() {
+    var tree = document.getElementById('_ncAgentTree');
+    tree.querySelectorAll('label').forEach(function(row) {
+      row.style.background = row.dataset.agent === focusedAgent ? 'rgba(124,106,247,0.15)' : '';
+    });
+  }
+
+  function _renderDetail() {
+    var panel = document.getElementById('_ncAgentDetail');
+    if (!focusedAgent) {
+      panel.innerHTML = '<span style="color:#666;">Select an agent to see details</span>';
+      panel.style.display = 'flex'; panel.style.alignItems = 'center'; panel.style.justifyContent = 'center';
+      return;
+    }
+    panel.style.display = 'block'; panel.style.alignItems = ''; panel.style.justifyContent = '';
+    var agent = repoAgents.find(function(a) { return a.name === focusedAgent; });
+    if (!agent) return;
+    var isChecked = checkedAgents.has(focusedAgent);
+    var cfg = agentConfigs[focusedAgent] || { llm_service: _guessLlm(focusedAgent) };
+    var html = '<div style="font-weight:600;font-size:13px;color:#fff;margin-bottom:6px;">' + escapeHtml(agent.name) + '</div>';
+    if (agent.description) {
+      html += '<div style="color:#aaa;margin-bottom:8px;font-size:11px;">' + escapeHtml(agent.description) + '</div>';
+    }
+    html += '<div style="margin-bottom:4px;"><label style="font-size:10px;color:#888;">LLM Service</label>';
+    html += '<select id="_ncLlmSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;"' + (isChecked ? '' : ' disabled') + '>';
+    html += svcOpts;
+    html += '</select></div>';
+    panel.innerHTML = html;
+    // Set selected value
+    var sel = document.getElementById('_ncLlmSelect');
+    if (sel) {
+      sel.value = cfg.llm_service || '';
+      sel.onchange = function() {
+        if (!agentConfigs[focusedAgent]) agentConfigs[focusedAgent] = {};
+        agentConfigs[focusedAgent].llm_service = sel.value;
+      };
+    }
+  }
+
+  function _updateCreateBtn() {
+    var btn = document.getElementById('_ncCreateBtn');
+    btn.disabled = checkedAgents.size === 0;
+    btn.style.opacity = checkedAgents.size === 0 ? '0.4' : '1';
+  }
+
+  function _makeRelayItem(text, id) {
     var d = document.createElement('div');
-    d.textContent = text;
-    d.dataset.id = id;
-    if (extra) d.title = extra;
+    d.textContent = text; d.dataset.id = id;
     d.style.cssText = 'padding:3px 6px;cursor:pointer;border-radius:3px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
     d.onmouseenter = function() { d.style.background = 'rgba(124,106,247,0.15)'; };
     d.onmouseleave = function() { if (!d.classList.contains('_sel')) d.style.background = ''; };
@@ -306,23 +419,6 @@ function _showNewConvDialog(repoAgents, availableRelays, resolve) {
     return d;
   }
 
-  function _renderAgents() {
-    var avail = document.getElementById('_ncAgentsAvail');
-    var sel = document.getElementById('_ncAgentsSel');
-    avail.innerHTML = ''; sel.innerHTML = '';
-    repoAgents.forEach(function(a) {
-      if (selAgents.indexOf(a.name) >= 0) return;
-      var label = a.name + (a.description ? ' \u2014 ' + a.description : '');
-      avail.appendChild(_makeItem(label, a.name));
-    });
-    selAgents.forEach(function(name) {
-      sel.appendChild(_makeItem(name, name));
-    });
-    // Enable/disable create button
-    document.getElementById('_ncCreateBtn').disabled = selAgents.length === 0;
-    document.getElementById('_ncCreateBtn').style.opacity = selAgents.length === 0 ? '0.4' : '1';
-  }
-
   function _renderRelays() {
     var avail = document.getElementById('_ncRelaysAvail');
     var sel = document.getElementById('_ncRelaysSel');
@@ -330,10 +426,10 @@ function _showNewConvDialog(repoAgents, availableRelays, resolve) {
     availableRelays.forEach(function(r) {
       if (selRelays.indexOf(r.relay_id) >= 0) return;
       var label = r.relay_id + (r.host_root ? ' (' + r.host_root + ')' : r.root ? ' (' + r.root + ')' : '');
-      avail.appendChild(_makeItem(label, r.relay_id));
+      avail.appendChild(_makeRelayItem(label, r.relay_id));
     });
     selRelays.forEach(function(rid) {
-      var d = _makeItem(rid, rid);
+      var d = _makeRelayItem(rid, rid);
       var isDefault = rid === defaultRelay;
       var radio = document.createElement('span');
       radio.innerHTML = isDefault ? '\u2605' : '\u2606';
@@ -345,60 +441,38 @@ function _showNewConvDialog(repoAgents, availableRelays, resolve) {
     });
   }
 
-  _renderAgents();
+  _renderTree();
   _renderRelays();
 
-  // Arrow buttons
-  document.getElementById('_ncAgentAdd').onclick = function() {
-    var s = document.querySelector('#_ncAgentsAvail ._sel');
-    if (s) { selAgents.push(s.dataset.id); _renderAgents(); }
-  };
-  document.getElementById('_ncAgentRem').onclick = function() {
-    var s = document.querySelector('#_ncAgentsSel ._sel');
-    if (s) { selAgents = selAgents.filter(function(x) { return x !== s.dataset.id; }); _renderAgents(); }
-  };
+  // Relay arrow buttons
   document.getElementById('_ncRelayAdd').onclick = function() {
     var s = document.querySelector('#_ncRelaysAvail ._sel');
-    if (s) {
-      selRelays.push(s.dataset.id);
-      if (selRelays.length === 1) defaultRelay = s.dataset.id;
-      _renderRelays();
-    }
+    if (s) { selRelays.push(s.dataset.id); if (selRelays.length === 1) defaultRelay = s.dataset.id; _renderRelays(); }
   };
   document.getElementById('_ncRelayRem').onclick = function() {
     var s = document.querySelector('#_ncRelaysSel ._sel');
-    if (s) {
-      selRelays = selRelays.filter(function(x) { return x !== s.dataset.id; });
-      if (defaultRelay === s.dataset.id) defaultRelay = selRelays[0] || '';
-      _renderRelays();
-    }
-  };
-
-  // Double-click to transfer
-  document.getElementById('_ncAgentsAvail').ondblclick = function(e) {
-    var t = e.target.closest('[data-id]');
-    if (t) { selAgents.push(t.dataset.id); _renderAgents(); }
-  };
-  document.getElementById('_ncAgentsSel').ondblclick = function(e) {
-    var t = e.target.closest('[data-id]');
-    if (t) { selAgents = selAgents.filter(function(x) { return x !== t.dataset.id; }); _renderAgents(); }
+    if (s) { selRelays = selRelays.filter(function(x) { return x !== s.dataset.id; }); if (defaultRelay === s.dataset.id) defaultRelay = selRelays[0] || ''; _renderRelays(); }
   };
   document.getElementById('_ncRelaysAvail').ondblclick = function(e) {
-    var t = e.target.closest('[data-id]');
-    if (t) { selRelays.push(t.dataset.id); if (selRelays.length === 1) defaultRelay = t.dataset.id; _renderRelays(); }
+    var t = e.target.closest('[data-id]'); if (t) { selRelays.push(t.dataset.id); if (selRelays.length === 1) defaultRelay = t.dataset.id; _renderRelays(); }
   };
   document.getElementById('_ncRelaysSel').ondblclick = function(e) {
-    var t = e.target.closest('[data-id]');
-    if (t) { selRelays = selRelays.filter(function(x) { return x !== t.dataset.id; }); if (defaultRelay === t.dataset.id) defaultRelay = selRelays[0] || ''; _renderRelays(); }
+    var t = e.target.closest('[data-id]'); if (t) { selRelays = selRelays.filter(function(x) { return x !== t.dataset.id; }); if (defaultRelay === t.dataset.id) defaultRelay = selRelays[0] || ''; _renderRelays(); }
   };
 
   var cleanup = function(val) { overlay.remove(); resolve(val); };
   document.getElementById('_ncCancelBtn').onclick = function() { cleanup(null); };
   overlay.addEventListener('click', function(e) { if (e.target === overlay) cleanup(null); });
   document.getElementById('_ncCreateBtn').onclick = function() {
-    if (selAgents.length === 0) return;
+    if (checkedAgents.size === 0) return;
+    var agents = Array.from(checkedAgents);
+    var configs = {};
+    agents.forEach(function(name) {
+      configs[name] = agentConfigs[name] || { llm_service: _guessLlm(name) };
+    });
     cleanup({
-      agents: selAgents,
+      agents: agents,
+      agent_configs: configs,
       relays: selRelays,
       default_relay: defaultRelay,
       title: (document.getElementById('_ncTitle').value || '').trim(),

@@ -17,21 +17,35 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-from core.paths import FILES_DIR; _DEFAULT_DIR = str(FILES_DIR)
+from core.paths import FILES_DIR
 
 
 class FileStore:
-    """Singleton file store with TTL and disk persistence."""
+    """Singleton file store with TTL and disk persistence.
+
+    Files are stored under user_id/conv_id/file_id/ when both are provided,
+    user_id/_unscoped/file_id/ when only user_id is given, or
+    _shared/file_id/ when neither is specified.
+    """
 
     _instance: Optional["FileStore"] = None
     _lock = threading.Lock()
 
     def __init__(self, base_dir: Optional[str] = None):
-        self._base_dir = os.path.abspath(base_dir or _DEFAULT_DIR)
+        self._base_dir = os.path.abspath(base_dir or str(FILES_DIR))
         os.makedirs(self._base_dir, exist_ok=True)
         self._entries: Dict[str, Dict[str, Any]] = {}
         self._store_lock = threading.RLock()
         self._loaded = False
+
+    def _scoped_dir(self, file_id: str, user_id: str = "",
+                    conversation_id: str = "") -> str:
+        """Return the directory for a file based on user/conv scope."""
+        if user_id and conversation_id:
+            return os.path.join(self._base_dir, user_id, conversation_id, file_id)
+        if user_id:
+            return os.path.join(self._base_dir, user_id, "_unscoped", file_id)
+        return os.path.join(self._base_dir, "_shared", file_id)
 
     @classmethod
     def instance(cls) -> "FileStore":
@@ -107,7 +121,7 @@ class FileStore:
             file_id: Unique identifier for retrieval
         """
         file_id = uuid.uuid4().hex[:12]
-        file_dir = os.path.join(self._base_dir, file_id)
+        file_dir = self._scoped_dir(file_id, user_id, conversation_id)
         os.makedirs(file_dir, exist_ok=True)
 
         # Sanitize filename
@@ -411,15 +425,12 @@ class FileStore:
                 # Safety: never overwrite a populated index with empty data
                 # if file directories still exist on disk
                 if not data:
-                    existing_dirs = [
-                        d for d in Path(self._base_dir).iterdir()
-                        if d.is_dir() and not d.name.startswith("_")
-                    ]
-                    if existing_dirs:
+                    # Check if any actual files exist on disk
+                    has_files = any(Path(self._base_dir).rglob("*.*"))
+                    if has_files:
                         logger.warning(
                             "FileStore: refusing to save empty index — "
-                            "%d file dirs still on disk. Call _rebuild_index() first.",
-                            len(existing_dirs))
+                            "files still on disk. Call _rebuild_index() first.")
                         return
                 path = self._index_path()
                 tmp = path + ".tmp"
@@ -471,26 +482,36 @@ class FileStore:
         self._rebuild_index()
 
     def _rebuild_index(self):
-        """Rebuild index by scanning the file store directory."""
+        """Rebuild index by scanning the file store directory tree.
+
+        Walks the scoped directory structure (user/conv/file_id/) looking
+        for leaf directories that contain actual files.
+        """
         loaded = 0
         base = Path(self._base_dir)
-        for file_dir in base.iterdir():
-            if not file_dir.is_dir() or file_dir.name.startswith("_"):
+        # Walk the entire tree to find file_id dirs (leaf dirs with files)
+        for dirpath, dirnames, filenames in os.walk(str(base)):
+            dp = Path(dirpath)
+            # Skip the index file directory and .git etc.
+            if dp == base:
                 continue
-            fid = file_dir.name
-            # Find the actual file inside the directory
-            files = [f for f in file_dir.iterdir() if f.is_file()]
-            if not files:
-                shutil.rmtree(file_dir, ignore_errors=True)
+            # A file_id directory is a leaf that contains at least one non-index file
+            real_files = [f for f in filenames if not f.startswith("_")]
+            if not real_files:
                 continue
-            actual_file = files[0]
+            # Check if this is a leaf (no subdirs or only empty ones)
+            if dirnames:
+                continue
+            fid = dp.name
+            actual_file = dp / real_files[0]
+            st = actual_file.stat()
             self._entries[fid] = {
                 "filename": actual_file.name,
                 "path": str(actual_file),
                 "content_type": self._guess_content_type(actual_file.name),
-                "size": actual_file.stat().st_size,
-                "created_at": actual_file.stat().st_ctime,
-                "expires_at": 0,  # no expiry for rebuilt entries
+                "size": st.st_size,
+                "created_at": st.st_ctime,
+                "expires_at": 0,
             }
             loaded += 1
         if loaded:

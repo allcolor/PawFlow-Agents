@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 
 
 class ManageResourceHandler(ToolHandler):
-    """CRUD for user resources: agents, skills, MCP servers, prompts.
+    """CRUD for user resources: agents, skills, MCP servers, task definitions.
 
     Both users (via slash commands) and agents (via tool calls) can manage
-    resources. Resources are user-scoped and persist in data/config/ JSON files.
+    resources stored in data/repository/ (1 file per resource, scoped).
     """
 
     def __init__(self):
@@ -32,7 +32,7 @@ class ManageResourceHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Manage user resources (agents, skills, MCP servers, prompts). Actions:\n"
+            "Manage user resources (agents, skills, MCP servers, task definitions). Actions:\n"
             "- create: Create a new resource\n"
             "- update: Modify an existing resource\n"
             "- delete: Delete a resource\n"
@@ -40,12 +40,12 @@ class ManageResourceHandler(ToolHandler):
             "- get: Get details of a specific resource\n"
             "- activate: Activate a resource in the current conversation\n"
             "- deactivate: Deactivate a resource from the current conversation\n\n"
-            "Resource types: agent, skill, mcp, prompt\n\n"
+            "Resource types: agent, skill, mcp, task_def\n\n"
             "Agent fields: prompt (required), model, tools (list), "
             "max_depth, timeout, description, llm_service\n"
-            "Skill fields: prompt (required), description\n"
+            "Skill fields: prompt (required), description, parameters, extends\n"
             "MCP fields: url (required), auth (dict)\n"
-            "Prompt fields: content (required), title, category, description"
+            "Task def fields: prompt (required), criteria, default_interval, description"
         )
 
     @property
@@ -61,7 +61,7 @@ class ManageResourceHandler(ToolHandler):
                 },
                 "resource_type": {
                     "type": "string",
-                    "enum": ["agent", "skill", "mcp", "prompt", "task_def"],
+                    "enum": ["agent", "skill", "mcp", "task_def"],
                     "description": "Type of resource",
                 },
                 "name": {
@@ -104,54 +104,39 @@ class ManageResourceHandler(ToolHandler):
                 if not name:
                     return "Error: 'name' is required for create"
                 scope = data.pop("scope", "user") if isinstance(data, dict) else "user"
-                # Profile shortcut for agents: resolve llm_service from profile
-                if rtype == "agent" and isinstance(data, dict):
-                    profile_name = data.pop("profile", "")
-                    if profile_name:
-                        from core.llm_profiles import apply_profile, get_profile_info
-                        try:
-                            profile_config = apply_profile(
-                                profile_name,
-                                overrides={"default_model": data.pop("model", "") or ""},
-                            )
-                            # Install a service named after the profile if not yet installed
-                            svc_id = f"_profile_{profile_name}"
-                            try:
-                                from core.resource_store import ResourceStore as _RS
-                                from core.service_registry import ServiceRegistry, SCOPE_USER
-                                _reg = ServiceRegistry.get_instance()
-                                if not _reg.get_definition(SCOPE_USER, user_id, svc_id):
-                                    _reg.install(
-                                        SCOPE_USER, user_id,
-                                        service_id=svc_id,
-                                        service_type="llmConnection",
-                                        config=profile_config,
-                                        description=get_profile_info(profile_name).get("description", ""),
-                                    )
-                            except Exception as _se:
-                                pass
-                            if not data.get("llm_service"):
-                                data["llm_service"] = svc_id
-                        except ValueError as _pe:
-                            return f"Error: {_pe}"
+
+                # Agent creating another agent → always conv scope,
+                # inherit creator's llm_service
+                if rtype == "agent" and self._agent_name and self._conversation_id:
+                    scope = "conversation"
+
                 if rtype in ("agent", "skill") and self._agent_name:
                     data["_created_by"] = self._agent_name
-                if rtype == "agent" and not data.get("llm_service") and self._llm_service:
-                    data["llm_service"] = self._llm_service
+
                 if scope == "conversation" and self._conversation_id:
-                    # Store in conversation extras
-                    from core.conversation_store import ConversationStore
-                    cs = ConversationStore.instance()
                     if rtype == "task_def":
+                        from core.conversation_store import ConversationStore
+                        cs = ConversationStore.instance()
                         conv_defs = cs.get_extra(self._conversation_id, "conversation_task_defs") or {}
                         conv_defs[name] = data
                         cs.set_extra(self._conversation_id, "conversation_task_defs", conv_defs)
                     else:
-                        conv_agents = cs.get_extra(self._conversation_id, "conversation_agents") or {}
-                        conv_agents[name] = data
-                        cs.set_extra(self._conversation_id, "conversation_agents", conv_agents)
+                        store.create(rtype, name, user_id, data,
+                                     conversation_id=self._conversation_id)
+                        if rtype == "agent":
+                            from core.conv_agent_config import add_agent_to_conv
+                            add_agent_to_conv(
+                                self._conversation_id, name,
+                                llm_service=self._llm_service or "",
+                            )
                 else:
                     store.create(rtype, name, user_id, data)
+                    if rtype == "agent" and self._conversation_id:
+                        from core.conv_agent_config import add_agent_to_conv
+                        add_agent_to_conv(
+                            self._conversation_id, name,
+                            llm_service=self._llm_service or "",
+                        )
                 self._activate_resource(rtype, name)
                 creator = f" (by {self._agent_name})" if self._agent_name else ""
                 return f"Created {rtype} '{name}' (scope: {scope}).{creator}"

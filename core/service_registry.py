@@ -3,8 +3,8 @@
 A single class that manages service definitions and live instances across
 all three scopes. The scope determines storage and keying:
 
-    global  — shared across all users. Persisted in data/config/global_services.json
-    user    — per-user. Persisted in data/config/user_services/{user_id}.json
+    global  — shared across all users. Persisted in data/runtime/services/global/{id}.json
+    user    — per-user. Persisted in data/runtime/services/users/{user_id}/{id}.json
     conv    — per-conversation. Persisted in ConversationStore extras.
 
 All scopes share the same CRUD interface — only the scope_id changes.
@@ -22,9 +22,10 @@ from core import ServiceFactory, Service
 
 logger = logging.getLogger(__name__)
 
-from core.paths import repo_dir, SYSTEM_DIR
-_GLOBAL_SERVICES_FILE = SYSTEM_DIR / "global_services.json"  # legacy compat
-_USER_SERVICES_DIR = SYSTEM_DIR / "user_services"  # legacy compat
+from core.paths import RUNTIME_DIR
+_SERVICES_DIR = RUNTIME_DIR / "services"
+_GLOBAL_SERVICES_DIR = _SERVICES_DIR / "global"
+_USER_SERVICES_DIR = _SERVICES_DIR / "users"
 CONV_EXTRAS_KEY = "conv_services"
 
 # Scopes
@@ -205,6 +206,28 @@ class ServiceRegistry:
                 if sid not in self._loaded:
                     self._load(scope, sid)
                     self._loaded.add(sid)
+
+    def reload_scope(self, scope: str, scope_id: str = "") -> None:
+        """Force reload definitions from disk for a scope.
+
+        New services found on disk are loaded. Deleted files are removed.
+        Already-connected services are NOT disconnected (only definitions update).
+        """
+        sid = self._resolve_scope_id(scope, scope_id)
+        if sid in self._load_failed:
+            return
+        with self._data_lock:
+            old_defs = set(self._definitions.get(sid, {}).keys())
+        self._load(scope, sid)
+        self._loaded.add(sid)
+        with self._data_lock:
+            new_defs = set(self._definitions.get(sid, {}).keys())
+        added = new_defs - old_defs
+        removed = old_defs - new_defs
+        for sid_new in added:
+            logger.info("Hot-reload: new service '%s' found on disk (scope=%s)", sid_new, scope)
+        for sid_rm in removed:
+            logger.info("Hot-reload: service '%s' removed from disk (scope=%s)", sid_rm, scope)
 
     # ---- Uniqueness ----
 
@@ -660,10 +683,10 @@ class ServiceRegistry:
         """Load service definitions from the appropriate backend."""
         try:
             if scope == SCOPE_GLOBAL:
-                self._load_file(scope_id, _GLOBAL_SERVICES_FILE, scope)
+                self._load_dir(scope_id, _GLOBAL_SERVICES_DIR, scope)
             elif scope == SCOPE_USER:
-                filepath = _USER_SERVICES_DIR / f"{scope_id}.json"
-                self._load_file(scope_id, filepath, scope)
+                svc_dir = _USER_SERVICES_DIR / scope_id
+                self._load_dir(scope_id, svc_dir, scope)
             elif scope == SCOPE_CONV:
                 self._load_conv(scope_id)
         except Exception as e:
@@ -673,21 +696,25 @@ class ServiceRegistry:
                 "registry is READ-ONLY for this scope until restart",
                 scope, scope_id[:8] if len(scope_id) > 8 else scope_id, e)
 
-    def _load_file(self, scope_id: str, filepath: Path, scope: str) -> None:
-        """Load definitions from a JSON file (global or user)."""
-        if not filepath.exists():
+    def _load_dir(self, scope_id: str, svc_dir: Path, scope: str) -> None:
+        """Load definitions from a directory (1 JSON file per service)."""
+        if not svc_dir.exists():
             return
-        raw = json.loads(filepath.read_text(encoding="utf-8"))
         defs = {}
-        for sid, data in raw.items():
-            data["service_id"] = sid
-            data["scope"] = scope
-            data["scope_id"] = scope_id
-            stype = data.get("service_type", "")
-            sk = self._sensitive_keys(stype)
-            if sk and "config" in data:
-                data["config"] = self._decrypt_config(data["config"], sk)
-            defs[sid] = ServiceDef.from_dict(data)
+        for f in svc_dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                sid = data.get("service_id", f.stem)
+                data["service_id"] = sid
+                data["scope"] = scope
+                data["scope_id"] = scope_id
+                stype = data.get("service_type", "")
+                sk = self._sensitive_keys(stype)
+                if sk and "config" in data:
+                    data["config"] = self._decrypt_config(data["config"], sk)
+                defs[sid] = ServiceDef.from_dict(data)
+            except Exception as e:
+                logger.warning("Failed to load service from %s: %s", f, e)
         self._definitions[scope_id] = defs
         logger.info("Loaded %d %s service(s) (id=%s)", len(defs), scope,
                      scope_id[:8] if len(scope_id) > 8 else scope_id)
@@ -715,38 +742,49 @@ class ServiceRegistry:
                 scope, scope_id[:8] if len(scope_id) > 8 else scope_id)
             return
         if scope == SCOPE_GLOBAL:
-            self._save_file(scope_id, _GLOBAL_SERVICES_FILE)
+            self._save_dir(scope_id, _GLOBAL_SERVICES_DIR)
         elif scope == SCOPE_USER:
-            _USER_SERVICES_DIR.mkdir(parents=True, exist_ok=True)
-            filepath = _USER_SERVICES_DIR / f"{scope_id}.json"
-            self._save_file(scope_id, filepath)
+            svc_dir = _USER_SERVICES_DIR / scope_id
+            self._save_dir(scope_id, svc_dir)
         elif scope == SCOPE_CONV:
             self._save_conv(scope_id)
 
-    def _save_file(self, scope_id: str, filepath: Path) -> None:
-        """Atomic write to JSON file (global or user)."""
-        filepath.parent.mkdir(parents=True, exist_ok=True)
+    def _save_dir(self, scope_id: str, svc_dir: Path) -> None:
+        """Save each service as an individual JSON file (atomic writes)."""
+        svc_dir.mkdir(parents=True, exist_ok=True)
         with self._data_lock:
-            data = {}
-            for sid, sdef in self._definitions.get(scope_id, {}).items():
-                d = sdef.to_dict()
-                sk = self._sensitive_keys(sdef.service_type)
-                if sk:
-                    d["config"] = self._encrypt_config(d.get("config", {}), sk)
-                data[sid] = d
-        tmp_path = filepath.with_suffix(".tmp")
-        try:
-            tmp_path.write_text(
-                json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            tmp_path.replace(filepath)
-        except Exception as e:
-            logger.error("Failed to save services to %s: %s", filepath, e)
+            current_defs = dict(self._definitions.get(scope_id, {}))
+
+        # Write/update each service file
+        for sid, sdef in current_defs.items():
+            d = sdef.to_dict()
+            sk = self._sensitive_keys(sdef.service_type)
+            if sk:
+                d["config"] = self._encrypt_config(d.get("config", {}), sk)
+            safe_name = sid.replace("/", "_").replace("\\", "_")
+            filepath = svc_dir / f"{safe_name}.json"
+            tmp_path = filepath.with_suffix(".tmp")
             try:
-                tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+                tmp_path.write_text(
+                    json.dumps(d, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                tmp_path.replace(filepath)
+            except Exception as e:
+                logger.error("Failed to save service %s to %s: %s", sid, filepath, e)
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        # Remove files for services that no longer exist
+        for f in svc_dir.glob("*.json"):
+            if f.stem not in current_defs and f.stem.replace("_", "/") not in current_defs:
+                try:
+                    f.unlink()
+                    logger.info("Removed stale service file: %s", f)
+                except Exception:
+                    pass
 
     def _save_conv(self, scope_id: str) -> None:
         """Save to ConversationStore extras."""

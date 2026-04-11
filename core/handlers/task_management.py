@@ -103,6 +103,104 @@ def _append_task_log(conversation_id: str, task_id: str, entry: dict):
 
 
 
+class LinkResourceHandler(ToolHandler):
+    """Link or unlink repository resources to the current conversation.
+
+    Resources must be linked before they can be used:
+      - tasks: must be linked before assignment to an agent
+      - skills: must be linked before assignment to an agent
+      - mcps: must be linked before use in this conversation
+      - relays: must be linked before use in this conversation
+    """
+
+    def __init__(self):
+        self._conversation_id = ""
+        self._user_id = ""
+
+    @property
+    def name(self) -> str:
+        return "link_resource"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Link or unlink a repository resource to this conversation.\n"
+            "Resources must be linked before they can be used:\n"
+            "- tasks: link before assigning to an agent\n"
+            "- skills: link before assigning to an agent\n"
+            "- mcps: link before use\n"
+            "- relays: link before use (relay-specific: set_default, per-agent binding via /relay)\n\n"
+            "Actions: link, unlink, list"
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["link", "unlink", "list"],
+                },
+                "resource_type": {
+                    "type": "string",
+                    "enum": ["tasks", "skills", "mcps", "relays"],
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Resource name (for link/unlink)",
+                },
+            },
+            "required": ["action", "resource_type"],
+        }
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
+    def set_user_id(self, uid: str):
+        self._user_id = uid
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        from core.conv_links import get_linked, link, unlink
+        action = arguments.get("action", "")
+        rtype = arguments.get("resource_type", "")
+        name = arguments.get("name", "")
+
+        if not self._conversation_id:
+            return "Error: no conversation context"
+
+        if action == "list":
+            linked = get_linked(self._conversation_id, rtype)
+            if not linked:
+                return f"No {rtype} linked to this conversation."
+            return f"Linked {rtype}: " + ", ".join(linked)
+
+        if not name:
+            return "Error: name is required for link/unlink"
+
+        if action == "link":
+            # Relays are runtime services, not repo resources
+            if rtype != "relays":
+                from core.resource_store import ResourceStore
+                _singular = {"tasks": "task_def", "skills": "skill", "mcps": "mcp"}
+                rs_type = _singular.get(rtype, rtype)
+                if not ResourceStore.instance().get_any(
+                        rs_type, name, self._user_id):
+                    return f"Error: {rtype[:-1]} '{name}' not found in repository"
+            link(self._conversation_id, rtype, name)
+            return f"{rtype[:-1].title()} '{name}' linked to this conversation."
+
+        if action == "unlink":
+            unlink(self._conversation_id, rtype, name)
+            return f"{rtype[:-1].title()} '{name}' unlinked from this conversation."
+
+        return f"Unknown action: {action}"
+
+
+# Keep old name as alias for imports
+LinkTaskHandler = LinkResourceHandler
+
+
 class AssignTaskHandler(ToolHandler):
     """Assign a task to an agent (self or another agent)."""
 
@@ -335,6 +433,11 @@ class AssignTaskHandler(ToolHandler):
                                  conversation_id=self._conversation_id)
         if not definition:
             return f"Error: task definition '{task_def_name}' not found"
+        # Task must be linked to this conversation before assignment
+        from core.conv_links import is_linked
+        if not is_linked(self._conversation_id, "tasks", task_def_name):
+            return (f"Error: task '{task_def_name}' is not linked to this conversation. "
+                    f"Use link_task first.")
         task_desc = definition.get("prompt", "")
         if not task_desc:
             return f"Error: task definition '{task_def_name}' has no prompt"
@@ -421,7 +524,10 @@ class AssignTaskHandler(ToolHandler):
             "total_cost": 0.0,
             "reschedule_count": 0,
             "auto_allow": auto_allow,
-            "skills": definition.get("skills") or [],
+            "skills": self._merge_task_skills(
+                definition.get("skills") or [],
+                arguments.get("skills") or [],
+                target, self._conversation_id),
             "depends_on": depends_on,
         }
         all_tasks[task_id] = task_data
@@ -468,6 +574,41 @@ class AssignTaskHandler(ToolHandler):
         dep_info = f" Waiting on: {', '.join(depends_on)}." if _initial_status == "waiting" else ""
         sched_info = f" First in {first_delay}s." if _initial_status == "active" else ""
         return f"Task {task_id} assigned to '{target}'{v_info}. Status: {_initial_status}. Interval: {iv_label}.{sched_info}{dep_info}"
+
+
+    @staticmethod
+    def _merge_task_skills(def_skills, explicit_skills, agent_name, conv_id):
+        """Merge skills: agent's conv skills (inherited) + task_def skills + explicit.
+
+        Deduplicates by name, preserving order.
+        """
+        seen = set()
+        merged = []
+        # 1. Agent's conv-level skills (inherited baseline)
+        if conv_id and agent_name:
+            try:
+                from core.conv_agent_config import get_agent_config
+                agent_skills = get_agent_config(conv_id, agent_name).get("skills") or []
+                for s in agent_skills:
+                    n = s if isinstance(s, str) else s.get("name", "")
+                    if n and n not in seen:
+                        seen.add(n)
+                        merged.append(s)
+            except Exception:
+                pass
+        # 2. Task definition skills
+        for s in (def_skills or []):
+            n = s if isinstance(s, str) else s.get("name", "")
+            if n and n not in seen:
+                seen.add(n)
+                merged.append(s)
+        # 3. Explicitly passed skills (override/additions)
+        for s in (explicit_skills or []):
+            n = s if isinstance(s, str) else s.get("name", "")
+            if n and n not in seen:
+                seen.add(n)
+                merged.append(s)
+        return merged
 
 
 class CompleteTaskHandler(ToolHandler):

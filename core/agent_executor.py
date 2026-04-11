@@ -947,17 +947,19 @@ def resolve_agent_task(
     if agent_def is None:
         raise KeyError(f"Agent '{agent_name}' not found for user '{user_id}'")
 
-    # Resolve expressions in llm_service
+    # Resolve runtime config from conv_agents (or defaults)
     from core.expression import resolve_value
-    llm_svc = resolve_value(agent_def.get("llm_service", ""), owner=user_id) or ""
+    from core.conv_agent_config import get_agent_config, AGENT_CONFIG_DEFAULTS
+    acfg = get_agent_config(conversation_id, agent_name) if conversation_id else dict(AGENT_CONFIG_DEFAULTS)
+    llm_svc = resolve_value(acfg.get("llm_service", ""), owner=user_id) or ""
 
-    # Inject skills into system prompt
-    # Sub-contexts (delegate) only get skills explicitly passed via extra_skills.
-    # No fallback to agent's own assigned_skills — those are for the main conv only.
+    # Inject skills: conv_agent_config skills (inherited) + extra_skills from delegate call
     _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")
-    if extra_skills:
+    _conv_skills = acfg.get("skills") or []
+    _all_skills = list(_conv_skills) + list(extra_skills or [])
+    if _all_skills:
         from core.skill_resolver import inject_skills_into_prompt
-        _sys_prompt = inject_skills_into_prompt(_sys_prompt, list(extra_skills), user_id)
+        _sys_prompt = inject_skills_into_prompt(_sys_prompt, _all_skills, user_id)
     _nick = None
     if conversation_id:
         try:
@@ -985,11 +987,11 @@ def resolve_agent_task(
         agent_name=agent_name,
         message=message,
         system_prompt=_sys_prompt,
-        model=agent_def.get("model", ""),
-        tools=agent_def.get("tools") or None,
-        max_iterations=agent_def.get("max_iterations", 50),
-        max_depth=agent_def.get("max_depth", 1),
-        timeout=agent_def.get("timeout", 300),
+        model=acfg.get("model", ""),
+        tools=acfg.get("tools") or None,
+        max_iterations=50,
+        max_depth=acfg.get("max_depth", 5),
+        timeout=acfg.get("timeout", 180),
         llm_service=llm_svc,
         user_id=user_id,
     )

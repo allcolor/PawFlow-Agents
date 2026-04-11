@@ -117,20 +117,25 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         try:
             from core.resource_store import ResourceStore
             from core.expression import resolve_value
+            from core.conv_agent_config import get_agent_config as _gac2
             _all_agents = ResourceStore.instance().list_all("agent", _uid_for_agents)
             _agent_infos = []
             for _a in _all_agents:
                 _info = {"name": _a["name"]}
-                # Prefer explicit description, fall back to first line of prompt
                 _desc = (_a.get("description", "") or "").strip()[:120]
                 if not _desc:
                     _prompt = _a.get("prompt", "") or ""
                     _desc = _prompt.split("\n")[0].strip()[:120]
                 if _desc:
                     _info["description"] = _desc
-                _info["llm_service"] = resolve_value(_a.get("llm_service", ""), owner=_uid_for_agents) or ""
-                if _a.get("tools"):
-                    _info["tools"] = _a["tools"]
+                # Runtime config from conversation
+                if conversation_id:
+                    _acfg = _gac2(conversation_id, _a["name"])
+                    _info["llm_service"] = resolve_value(
+                        _acfg.get("llm_service", ""),
+                        owner=_uid_for_agents) or ""
+                    if _acfg.get("tools"):
+                        _info["tools"] = _acfg["tools"]
                 _agent_infos.append(_info)
         except Exception:
             _agent_infos = []
@@ -576,8 +581,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             )
 
                 # Inject skills into system prompt.
-                # Main conv: agent's own assigned_skills.
-                # Task sub-conv: task_def skills only (not agent's own).
+                # Main conv: from conv_agents runtime config.
+                # Task sub-conv: task_def skills only.
                 if "::task::" in conversation_id:
                     _task_id = conversation_id.split("::task::")[1].split("::")[0]
                     _parent_cid = conversation_id.split("::task::")[0]
@@ -585,7 +590,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     _task_data = _all_tasks.get(_task_id, {})
                     _agent_skills = _task_data.get("skills") or []
                 else:
-                    _agent_skills = agent_def.get("assigned_skills") or []
+                    from core.conv_agent_config import get_agent_config
+                    _acfg = get_agent_config(conversation_id, selected)
+                    _agent_skills = _acfg.get("skills") or []
                 if _agent_skills:
                     from core.skill_resolver import inject_skills_into_prompt
                     system_prompt = inject_skills_into_prompt(
@@ -695,8 +702,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 )
                 for h in registry.list_tools()
             ]
-        if _selected_agent_def:
-            _agent_tools_cfg = _selected_agent_def.get("tools") or []
+        if _selected_agent_def and conversation_id:
+            from core.conv_agent_config import get_agent_config as _gac
+            _agent_tools_cfg = _gac(conversation_id,
+                                     _selected_agent_def.get("name", "")
+                                     ).get("tools") or []
             if _agent_tools_cfg and isinstance(_agent_tools_cfg, list):
                 _allow = {t for t in _agent_tools_cfg if not str(t).startswith("!")}
                 _deny  = {t[1:] for t in _agent_tools_cfg if str(t).startswith("!")}

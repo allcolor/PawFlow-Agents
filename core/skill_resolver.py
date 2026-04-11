@@ -97,10 +97,12 @@ def resolve_skill_prompts(
     from core.resource_store import ResourceStore
     rs = ResourceStore.instance()
     blocks = []
+    seen = set()
     for entry in skill_entries:
         name, params, condition = normalize_skill_entry(entry)
-        if not name:
+        if not name or name in seen:
             continue
+        seen.add(name)
         if condition and not _evaluate_condition(condition, user_id):
             continue
         skill_def = rs.get_any("skill", name, user_id)

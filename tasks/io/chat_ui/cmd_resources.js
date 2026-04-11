@@ -500,23 +500,23 @@ function cmdFlow(text, parts) {
 function cmdPrompt(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    action$('list_prompts', {}).subscribe(data => {
-      const prompts = data.prompts || [];
-      if (!prompts.length) { addMsg('system', 'No prompts.'); }
+    action$('list_skills', {}).subscribe(data => {
+      const skills = data.skills || [];
+      if (!skills.length) { addMsg('system', 'No skills.'); }
       else {
-        const lines = prompts.map(function(p) { return '\u2022 ' + p.name + ': ' + (p.description || p.content || '').slice(0, 60); });
-        addMsg('system', 'Prompts:\n' + lines.join('\n'));
+        const lines = skills.map(function(s) { return '\u2022 ' + s.name + ': ' + (s.description || s.preview || '').slice(0, 60); });
+        addMsg('system', 'Skills:\n' + lines.join('\n'));
       }
     });
   } else if (sub === 'use') {
     const name = parts[2] || '';
-    if (!name) { addMsg('system', 'Usage: /prompt use <name>'); return true; }
-    action$('get_prompt', { name }).subscribe(data => {
-      if (data.content) { addMsg('system', 'Prompt \'' + name + '\':\n' + data.content); }
-      else { addMsg('error', 'Prompt \'' + name + '\' not found'); }
+    if (!name) { addMsg('system', 'Usage: /skill use <name>'); return true; }
+    action$('get_skill', { name }).subscribe(data => {
+      if (data.prompt) { addMsg('system', 'Skill \'' + name + '\':\n' + data.prompt); }
+      else { addMsg('error', 'Skill \'' + name + '\' not found'); }
     });
   } else {
-    addMsg('system', 'Usage: /prompt list | use <name>');
+    addMsg('system', 'Usage: /skill list | use <name>');
   }
   return true;
 }

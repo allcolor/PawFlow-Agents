@@ -19,8 +19,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import re
+
 from core.paths import (
     REPO_TYPES, REPOSITORY_DIR, DEFAULTS_DIR,
+    _MARKDOWN_TYPES,
     repo_dir, repo_file,
     flow_package_dir, flow_dir, flow_latest_file, flow_version_file,
     parse_flow_fqn,
@@ -87,26 +90,26 @@ class ScopedRepository:
         entry.setdefault("created_at", time.time())
         entry["updated_at"] = time.time()
 
-        self._write_json(path, entry)
+        self._write(rtype, path, entry)
         return entry
 
     def get(self, rtype: str, name: str, scope: str,
             user_id: str = "", conv_id: str = "") -> Optional[Dict[str, Any]]:
         """Read a definition from a specific scope."""
         path = repo_file(rtype, name, scope, user_id, conv_id)
-        return self._read_json(path)
+        return self._read(rtype, path)
 
     def update(self, rtype: str, name: str, scope: str,
                data: Dict[str, Any],
                user_id: str = "", conv_id: str = "") -> Dict[str, Any]:
         """Update a definition. Raises KeyError if not found."""
         path = repo_file(rtype, name, scope, user_id, conv_id)
-        existing = self._read_json(path)
+        existing = self._read(rtype, path)
         if existing is None:
             raise KeyError(f"{rtype}/{name} not found in scope {scope}")
         existing.update(data)
         existing["updated_at"] = time.time()
-        self._write_json(path, existing)
+        self._write(rtype, path, existing)
         return existing
 
     def delete(self, rtype: str, name: str, scope: str,
@@ -124,9 +127,10 @@ class ScopedRepository:
         directory = repo_dir(rtype, scope, user_id, conv_id)
         if not directory.exists():
             return []
+        ext = "*.md" if rtype in _MARKDOWN_TYPES else "*.json"
         results = []
-        for p in sorted(directory.glob("*.json")):
-            entry = self._read_json(p)
+        for p in sorted(directory.glob(ext)):
+            entry = self._read(rtype, p)
             if entry is not None:
                 entry["_scope"] = self._scope_label(scope, user_id, conv_id)
                 results.append(entry)
@@ -406,6 +410,19 @@ class ScopedRepository:
             return f"user:{user_id}"
         return f"conv:{user_id}/{conv_id}"
 
+    def _read(self, rtype: str, path: Path) -> Optional[Dict[str, Any]]:
+        """Read a resource definition. Dispatches to JSON or Markdown."""
+        if rtype in _MARKDOWN_TYPES:
+            return self._read_md(path)
+        return self._read_json(path)
+
+    def _write(self, rtype: str, path: Path, data: Dict[str, Any]):
+        """Write a resource definition. Dispatches to JSON or Markdown."""
+        if rtype in _MARKDOWN_TYPES:
+            self._write_md(path, data)
+        else:
+            self._write_json(path, data)
+
     def _read_json(self, path: Path) -> Optional[Dict[str, Any]]:
         if not path.exists():
             return None
@@ -423,6 +440,75 @@ class ScopedRepository:
                 tmp.write_text(
                     json.dumps(data, ensure_ascii=False, indent=2),
                     encoding="utf-8")
+                tmp.replace(path)
+            except Exception as e:
+                logger.error("Failed to write %s: %s", path, e)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                raise
+
+    _FRONTMATTER_RE = re.compile(
+        r'\A---\s*\n(.*?)\n---\s*\n(.*)',
+        re.DOTALL,
+    )
+
+    def _read_md(self, path: Path) -> Optional[Dict[str, Any]]:
+        """Read a markdown definition with YAML frontmatter.
+
+        Format:
+            ---
+            description: Short description
+            ---
+
+            Body text (= prompt for agents, prompt for skills)
+        """
+        if not path.exists():
+            return None
+        try:
+            text = path.read_text(encoding="utf-8")
+            m = self._FRONTMATTER_RE.match(text)
+            if m:
+                import yaml
+                meta = yaml.safe_load(m.group(1)) or {}
+                body = m.group(2).strip()
+            else:
+                # No frontmatter — entire file is the prompt
+                meta = {}
+                body = text.strip()
+            entry = dict(meta)
+            entry["name"] = path.stem
+            entry["prompt"] = body
+            return entry
+        except Exception as e:
+            logger.warning("Failed to read %s: %s", path, e)
+            return None
+
+    def _write_md(self, path: Path, data: Dict[str, Any]):
+        """Write a markdown definition with YAML frontmatter."""
+        with self._write_lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            import yaml
+            # Separate prompt (body) from metadata (frontmatter)
+            body = data.get("prompt", "")
+            meta = {k: v for k, v in data.items()
+                    if k not in ("prompt", "name", "_scope")}
+            # Only write frontmatter if there's metadata
+            parts = []
+            if meta:
+                parts.append("---")
+                parts.append(yaml.dump(
+                    meta, default_flow_style=False,
+                    allow_unicode=True).rstrip())
+                parts.append("---")
+                parts.append("")
+            parts.append(body)
+            content = "\n".join(parts)
+
+            tmp = path.with_suffix(".tmp")
+            try:
+                tmp.write_text(content, encoding="utf-8")
                 tmp.replace(path)
             except Exception as e:
                 logger.error("Failed to write %s: %s", path, e)

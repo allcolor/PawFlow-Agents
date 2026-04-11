@@ -158,7 +158,7 @@ class ConversationStore:
         with lock:
             try:
                 # Selective add: transcript + shared + extras + all agent contexts
-                files = ["transcript.jsonl", "shared.jsonl", "extras.json"]
+                files = ["transcript.jsonl", "shared.jsonl", "extras.json", "bindings.json"]
                 for entry in conv_dir.iterdir():
                     if entry.is_dir() and entry.name != ".git":
                         ctx = entry / "context.jsonl"
@@ -1163,6 +1163,62 @@ class ConversationStore:
             if key.startswith("claude_session:"):
                 self.set_extra(cid, key, "")
                 logger.info("Invalidated claude session '%s' for conv %s", key, cid[:8])
+
+    # ── Bindings (repository associations) ────────────────────────────
+
+    def _bindings_path(self, cid: str) -> Path:
+        return self._conv_dir(cid) / "bindings.json"
+
+    def get_bindings(self, cid: str) -> Dict[str, list]:
+        """Read all bindings for a conversation.
+
+        Returns dict like {"agents": [{"name": "x", "scope": "global"}, ...], ...}
+        """
+        path = self._bindings_path(cid)
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+
+    def set_bindings(self, cid: str, bindings: Dict[str, list]) -> None:
+        """Replace all bindings for a conversation."""
+        path = self._bindings_path(cid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(bindings, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        tmp.replace(path)
+
+    def add_binding(self, cid: str, rtype: str, name: str,
+                    scope: str = "global") -> None:
+        """Add a single binding (idempotent)."""
+        lock = self._get_conv_lock(cid)
+        with lock:
+            data = self.get_bindings(cid)
+            entries = data.setdefault(rtype, [])
+            if not any(e["name"] == name for e in entries):
+                entries.append({"name": name, "scope": scope})
+                self.set_bindings(cid, data)
+
+    def remove_binding(self, cid: str, rtype: str, name: str) -> bool:
+        """Remove a binding by name. Returns True if found and removed."""
+        lock = self._get_conv_lock(cid)
+        with lock:
+            data = self.get_bindings(cid)
+            entries = data.get(rtype, [])
+            before = len(entries)
+            entries = [e for e in entries if e["name"] != name]
+            if len(entries) == before:
+                return False
+            data[rtype] = entries
+            self.set_bindings(cid, data)
+            return True
+
+    def list_bound(self, cid: str, rtype: str) -> List[Dict]:
+        """List all bound items of a given type for a conversation."""
+        return self.get_bindings(cid).get(rtype, [])
 
     # ── Delete ────────────────────────────────────────────────────────
 

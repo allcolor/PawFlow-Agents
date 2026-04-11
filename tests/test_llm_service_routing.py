@@ -114,60 +114,49 @@ class TestConnectionRemove(unittest.TestCase):
 # ── Feature 3: Prompt Library ────────────────────────────────────────
 
 
-class TestPromptResourceType(unittest.TestCase):
-    """Test ResourceStore supports 'prompt' type."""
+class TestSkillResourceType(unittest.TestCase):
+    """Test ResourceStore supports 'skill' type."""
 
     def setUp(self):
         from core.resource_store import ResourceStore
         ResourceStore.reset()
         self.store = ResourceStore.instance()
-        # Clean up test data
-        for p in self.store.list("prompt", user_id="user1"):
-            self.store.delete("prompt", p["name"], "user1")
-        for p in self.store.list("prompt", user_id="listuser"):
-            self.store.delete("prompt", p["name"], "listuser")
+        for p in self.store.list("skill", user_id="user1"):
+            self.store.delete("skill", p["name"], "user1")
+        for p in self.store.list("skill", user_id="listuser"):
+            self.store.delete("skill", p["name"], "listuser")
 
     def tearDown(self):
         from core.resource_store import ResourceStore
         ResourceStore.reset()
 
-    def test_prompt_in_valid_types(self):
+    def test_skill_in_valid_types(self):
         from core.resource_store import VALID_TYPES
-        self.assertIn("prompt", VALID_TYPES)
+        self.assertIn("skill", VALID_TYPES)
 
-    def test_create_prompt(self):
-        entry = self.store.create("prompt", "test_prompt", "user1", {
-            "content": "Summarize the following text...",
-            "title": "Summarizer",
-            "category": "productivity",
+    def test_create_skill(self):
+        entry = self.store.create("skill", "test_skill", "user1", {
+            "prompt": "Summarize the following text...",
+            "description": "Summarizer skill",
         })
-        self.assertEqual(entry["name"], "test_prompt")
-        self.assertEqual(entry["content"], "Summarize the following text...")
-        self.assertEqual(entry["title"], "Summarizer")
-        self.assertEqual(entry["category"], "productivity")
+        self.assertEqual(entry["name"], "test_skill")
+        self.assertEqual(entry["prompt"], "Summarize the following text...")
+        self.assertEqual(entry["description"], "Summarizer skill")
 
-    def test_create_prompt_requires_content(self):
+    def test_create_skill_requires_prompt(self):
         with self.assertRaises(ValueError):
-            self.store.create("prompt", "bad", "user1", {"title": "No content"})
+            self.store.create("skill", "bad", "user1", {"description": "No prompt"})
 
-    def test_list_prompts(self):
-        self.store.create("prompt", "p1", "listuser", {"content": "prompt 1"})
-        self.store.create("prompt", "p2", "listuser", {"content": "prompt 2"})
-        prompts = self.store.list("prompt", user_id="listuser")
-        self.assertEqual(len(prompts), 2)
+    def test_list_skills(self):
+        self.store.create("skill", "s1", "listuser", {"prompt": "skill 1"})
+        self.store.create("skill", "s2", "listuser", {"prompt": "skill 2"})
+        skills = self.store.list("skill", user_id="listuser")
+        self.assertEqual(len(skills), 2)
 
-    def test_prompt_defaults(self):
-        entry = self.store.create("prompt", "minimal", "user1", {
-            "content": "Hello",
-        })
-        self.assertEqual(entry["title"], "")
-        self.assertEqual(entry["category"], "")
-        self.assertEqual(entry["description"], "")
-
-    def test_delete_prompt(self):
-        self.store.create("prompt", "to_delete", "user1", {"content": "bye"})
-        self.assertTrue(self.store.delete("prompt", "to_delete", "user1"))
-        self.assertIsNone(self.store.get("prompt", "to_delete", "user1"))
+    def test_delete_skill(self):
+        self.store.create("skill", "to_delete", "user1", {"prompt": "bye"})
+        self.assertTrue(self.store.delete("skill", "to_delete", "user1"))
+        self.assertIsNone(self.store.get("skill", "to_delete", "user1"))
 
 
 # ── Feature 4: Agent Identity / Source ───────────────────────────────
@@ -237,15 +226,21 @@ class TestResolveAgentTask(unittest.TestCase):
         from core.resource_store import ResourceStore
         ResourceStore.reset()
 
-    def test_resolve_with_llm_service(self):
+    def test_resolve_with_conv_llm_service(self):
+        """llm_service comes from conv_agents config, not agent definition."""
         self.store.create("agent", "researcher", "alice", {
             "prompt": "Research assistant",
-            "llm_service": "grok",
         })
-        from core.agent_executor import resolve_agent_task
-        task = resolve_agent_task("researcher", "find info", "alice")
-        self.assertEqual(task.llm_service, "grok")
-        self.assertEqual(task.user_id, "alice")
+        from unittest.mock import patch
+        from core.conv_agent_config import CONV_AGENTS_KEY
+        _fake_extras = {CONV_AGENTS_KEY: {"researcher": {"llm_service": "grok"}}}
+        with patch("core.conversation_store.ConversationStore.instance") as mock_cs:
+            mock_cs.return_value.get_extra.side_effect = lambda cid, key: _fake_extras.get(key, {})
+            from core.agent_executor import resolve_agent_task
+            task = resolve_agent_task("researcher", "find info", "alice",
+                                      conversation_id="test_conv")
+            self.assertEqual(task.llm_service, "grok")
+            self.assertEqual(task.user_id, "alice")
 
     def test_resolve_without_llm_service(self):
         self.store.create("agent", "basic", "bob", {
@@ -257,23 +252,25 @@ class TestResolveAgentTask(unittest.TestCase):
 
 
 class TestAgentDefaultInDefaults(unittest.TestCase):
-    """Test that agent defaults include llm_service."""
+    """Test that agent defaults are minimal (only description)."""
 
-    def test_llm_service_in_agent_defaults(self):
+    def test_agent_defaults_minimal(self):
         from core.resource_store import _DEFAULTS
-        self.assertIn("llm_service", _DEFAULTS["agent"])
-        self.assertEqual(_DEFAULTS["agent"]["llm_service"], "")
+        self.assertIn("description", _DEFAULTS["agent"])
+        # llm_service is now runtime (conv_agents), not in definition
+        self.assertNotIn("llm_service", _DEFAULTS["agent"])
 
 
-class TestManageResourceHandlerPrompt(unittest.TestCase):
-    """Test ManageResourceHandler includes prompt type."""
+class TestManageResourceHandlerTypes(unittest.TestCase):
+    """Test ManageResourceHandler resource type enum."""
 
-    def test_prompt_in_enum(self):
+    def test_skill_in_enum(self):
         from core.tool_registry import ManageResourceHandler
         h = ManageResourceHandler()
         schema = h.parameters_schema
         enum_values = schema["properties"]["resource_type"]["enum"]
-        self.assertIn("prompt", enum_values)
+        self.assertIn("skill", enum_values)
+        self.assertNotIn("prompt", enum_values)
 
 
 class TestMessageSerializationSource(unittest.TestCase):

@@ -62,6 +62,7 @@ from core.handlers.resource_agent import (  # noqa: F401
     ShowFileHandler,
 )
 from core.handlers.task_management import (  # noqa: F401
+    LinkTaskHandler,
     AssignTaskHandler,
     CompleteTaskHandler,
     VerifyTaskHandler,

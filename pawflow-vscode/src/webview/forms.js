@@ -15,10 +15,9 @@ function _scopeSelect() {
 // ── Resource Edit Form ──
 var _resFieldDefs = {
   agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['tools','text'],['max_depth','number'],['timeout','number']],
-  skill:    [['prompt','textarea'],['description','text']],
+  skill:    [['prompt','textarea'],['description','text'],['parameters','text'],['extends','text']],
   mcp:      [['url','text'],['auth','text'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['description','text']],
-  prompt:   [['content','textarea'],['title','text'],['category','text'],['description','text']],
 };
 
 var _pendingEdit = null;
@@ -231,7 +230,7 @@ function submitFlowStart() {
 function showCreateForm(rtype) {
   var overlay = document.getElementById('panelOverlay');
   overlay.className = 'panel-overlay visible';
-  var titleMap = {agents:'Create Agent',skills:'Create Skill',task_defs:'Create Task',prompts:'Create Prompt',variables:'Create Variable',secrets:'Create Secret',services:'Install Service'};
+  var titleMap = {agents:'Create Agent',skills:'Create Skill',task_defs:'Create Task',variables:'Create Variable',secrets:'Create Secret',services:'Install Service'};
   var title = titleMap[rtype] || 'Create';
 
   var fields = '';
@@ -264,13 +263,6 @@ function showCreateForm(rtype) {
       + '<input id="cf-interval" style="' + _cfInputStyle + '" placeholder="6/1m">'
       + '<label style="' + _cfLabelStyle + '">Verifier agent (optional)</label>'
       + '<input id="cf-verifier" style="' + _cfInputStyle + '">';
-  } else if (rtype === 'prompts') {
-    fields = '<label style="' + _cfLabelStyle + '">Name</label>'
-      + '<input id="cf-name" style="' + _cfInputStyle + '" placeholder="my_prompt">'
-      + '<label style="' + _cfLabelStyle + '">Content</label>'
-      + '<textarea id="cf-prompt" style="' + _cfTextareaStyle + '" placeholder="Prompt content..."></textarea>'
-      + '<label style="' + _cfLabelStyle + '">Description (optional)</label>'
-      + '<input id="cf-desc" style="' + _cfInputStyle + '">';
   } else if (rtype === 'variables') {
     fields = '<label style="' + _cfLabelStyle + '">Key</label>'
       + '<input id="cf-key" style="' + _cfInputStyle + '" placeholder="my_variable">'
@@ -360,12 +352,6 @@ function submitCreateForm(rtype) {
     if (criteria) params.criteria = criteria;
     if (interval) params.interval = interval;
     if (verifier) params.verifier = verifier;
-  } else if (rtype === 'prompts') {
-    cmd = 'create_resource';
-    params = { resource_type: 'prompt', name: name, content: prompt };
-    var descEl3 = document.getElementById('cf-desc');
-    var desc3 = descEl3 ? descEl3.value.trim() : '';
-    if (desc3) params.description = desc3;
   } else if (rtype === 'variables') {
     var vkeyEl = document.getElementById('cf-key');
     var vvalEl = document.getElementById('cf-value');

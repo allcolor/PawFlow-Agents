@@ -40,17 +40,25 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         agent = body.get("name", "")
         prompt = body.get("prompt", "")
         scope = body.get("scope", "user")
+        llm_service = body.get("llm_service", "")
         if not agent or not prompt:
             flowfile.set_content(json.dumps({"error": "Missing name or prompt"}).encode())
             return [flowfile]
         agent_data = {"prompt": prompt}
+        if body.get("description"):
+            agent_data["description"] = body["description"]
+        from core.resource_store import ResourceStore
+        rs = ResourceStore.instance()
         if scope == "conversation" and conv_id:
-            conv_agents = store.get_extra(conv_id, "conversation_agents") or {}
-            conv_agents[agent] = agent_data
-            store.set_extra(conv_id, "conversation_agents", conv_agents)
+            rs.create("agent", agent, user_id, agent_data,
+                      conversation_id=conv_id)
+            from core.conv_agent_config import add_agent_to_conv
+            add_agent_to_conv(conv_id, agent, llm_service=llm_service)
         else:
-            from core.resource_store import ResourceStore
-            ResourceStore.instance().create("agent", agent, user_id, agent_data)
+            rs.create("agent", agent, user_id, agent_data)
+            if conv_id:
+                from core.conv_agent_config import add_agent_to_conv
+                add_agent_to_conv(conv_id, agent, llm_service=llm_service)
         flowfile.set_content(json.dumps({
             "result": f"Agent '{agent}' created (scope: {scope})."
         }).encode())
@@ -362,6 +370,28 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"available": available}).encode())
         return [flowfile]
 
+    if action == "reload_disk":
+        # Force reload services and deployments from disk (after manual file edits)
+        reloaded = []
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            reg.reload_scope("global")
+            if user_id and user_id != "anonymous":
+                reg.reload_scope("user", user_id)
+            reloaded.append("services")
+        except Exception:
+            pass
+        try:
+            from core.deployment_registry import DeploymentRegistry
+            DeploymentRegistry.get_instance().reload()
+            reloaded.append("deployments")
+        except Exception:
+            pass
+        flowfile.set_content(json.dumps(
+            {"ok": True, "reloaded": reloaded}).encode())
+        return [flowfile]
+
     if action == "list_resources":
         # List all resource types for the user
         conv_id = body.get("conversation_id", "")
@@ -379,18 +409,23 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if not conv_agent_names and active.get("agent"):
             conv_agent_names = [active["agent"]]
 
+        # Conv agents config (runtime: llm_service, skills, etc.)
+        from core.conv_agent_config import get_all_agent_configs, get_agent_config
+        conv_agent_cfgs = get_all_agent_configs(conv_id) if conv_id else {}
+
         agents_out = []
         for aname in conv_agent_names:
             a = rs.get_any("agent", aname, uid)
             if not a:
-                # Agent deleted from repo but still referenced in conv
                 a = {"name": aname, "description": "", "_scope": ""}
+            acfg = conv_agent_cfgs.get(aname, {})
             entry = {
                 "name": aname,
                 "description": a.get("description", ""),
                 "scope": a.get("_scope", ""),
                 "active": active.get("agent") == aname,
-                "assigned_skills": a.get("assigned_skills") or [],
+                "llm_service": acfg.get("llm_service", ""),
+                "assigned_skills": acfg.get("skills") or [],
             }
             if conv_id:
                 ac_cfg = store.get_extra(conv_id, f"random_thought::{aname.lower()}") or {}
@@ -406,31 +441,55 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "description": a.get("description", ""),
             "scope": a.get("_scope", ""),
             "in_conversation": a["name"] in set(conv_agent_names),
-            "assigned_skills": a.get("assigned_skills") or [],
         } for a in all_repo_agents]
+
+        # Linked resources
+        from core.conv_links import get_linked
+        _linked_skills = set(get_linked(conv_id, "skills")) if conv_id else set()
+        _linked_tasks = set(get_linked(conv_id, "tasks")) if conv_id else set()
+        _linked_mcps = set(get_linked(conv_id, "mcps")) if conv_id else set()
+
+        # Skills: show all from repo, mark linked and assigned_to
+        all_skills = rs.list_all("skill", uid, conversation_id=conv_id)
+        skills_out = []
+        for s in all_skills:
+            sname = s["name"]
+            assigned_to = [aname for aname, acfg in conv_agent_cfgs.items()
+                           if sname in (acfg.get("skills") or [])]
+            skills_out.append({
+                "name": sname,
+                "description": s.get("description", ""),
+                "scope": s.get("_scope", ""),
+                "linked": sname in _linked_skills,
+                "assigned_to": assigned_to,
+            })
+
+        # MCPs: show all from repo, mark linked
+        all_mcps = rs.list_all("mcp", uid, conversation_id=conv_id)
+        mcps_out = [{
+            "name": m["name"],
+            "url": m.get("url", ""),
+            "scope": m.get("_scope", ""),
+            "linked": m["name"] in _linked_mcps,
+        } for m in all_mcps]
+
+        # Tasks: show all from repo, mark linked
+        all_task_defs = rs.list_all("task_def", uid, conversation_id=conv_id)
+        tasks_out = [{
+            "name": t["name"],
+            "description": t.get("description", "") or t.get("prompt", "")[:60],
+            "scope": t.get("_scope", ""),
+            "default_interval": t.get("default_interval", "6/1m"),
+            "linked": t["name"] in _linked_tasks,
+        } for t in all_task_defs]
+
         result = {
             "agents": agents_out,
             "repo_agent_count": repo_agent_count,
             "repo_agents": repo_agents_out,
-            "skills": [{
-                "name": s["name"],
-                "description": s.get("description", ""),
-                "scope": s.get("_scope", ""),
-                "assigned_to": [a["name"] for a in all_repo_agents
-                                if s["name"] in (a.get("assigned_skills") or [])],
-            } for s in rs.list_all("skill", uid, conversation_id=conv_id)],
-            "mcp_servers": [{
-                "name": m["name"],
-                "url": m.get("url", ""),
-                "scope": m.get("_scope", ""),
-                "active": m["name"] in active.get("mcps", []),
-            } for m in rs.list_all("mcp", uid, conversation_id=conv_id)],
-            "task_defs": [{
-                "name": t["name"],
-                "description": t.get("description", "") or t.get("prompt", "")[:60],
-                "scope": t.get("_scope", ""),
-                "default_interval": t.get("default_interval", "6/1m"),
-            } for t in rs.list_all("task_def", uid, conversation_id=conv_id)],
+            "skills": skills_out,
+            "mcp_servers": mcps_out,
+            "task_defs": tasks_out,
         }
         # Task instances for this conversation
         if conv_id:
@@ -915,11 +974,27 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "scope": a.get("_scope", ""),
                 "in_conversation": a["name"] in conv_agents,
             })
-        flowfile.set_content(json.dumps({"agents": out}, ensure_ascii=False).encode())
+        # Also return available LLM services for the new conv dialog
+        llm_services = []
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            for sdef in reg.resolve_by_type("llmConnection", user_id=uid):
+                llm_services.append({
+                    "service_id": sdef.service_id,
+                    "description": sdef.description,
+                    "type": sdef.config.get("provider", ""),
+                })
+        except Exception:
+            pass
+        flowfile.set_content(json.dumps({
+            "agents": out, "llm_services": llm_services,
+        }, ensure_ascii=False).encode())
         return [flowfile]
 
     if action == "create_conversation":
         agents = body.get("agents", [])
+        agent_configs = body.get("agent_configs", {})
         if not agents or not isinstance(agents, list):
             flowfile.set_content(json.dumps({"error": "'agents' list is required"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -940,6 +1015,19 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         store.save(new_id, [], user_id=uid)
         active_res = {"agents": valid_agents, "agent": valid_agents[0]}
         store.set_extra(new_id, "active_resources", active_res)
+        # Set conv_agents runtime config for each agent
+        from core.conv_agent_config import add_agent_to_conv
+        for aname in valid_agents:
+            acfg = agent_configs.get(aname, {})
+            add_agent_to_conv(
+                new_id, aname,
+                llm_service=acfg.get("llm_service", ""),
+                model=acfg.get("model", ""),
+                tools=acfg.get("tools"),
+                max_depth=int(acfg.get("max_depth", 5)),
+                timeout=int(acfg.get("timeout", 180)),
+                skills=acfg.get("skills"),
+            )
         # Title
         title = body.get("title", "")
         if title:

@@ -100,42 +100,41 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
         }, ensure_ascii=False).encode())
         return [flowfile]
 
-    if action == "list_prompts":
+    if action in ("list_prompts", "list_skills"):
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        prompts = rs.list_all("prompt", user_id)
+        skills = rs.list_all("skill", user_id)
         items = [
             {
-                "name": p["name"],
-                "title": p.get("title", p["name"]),
-                "category": p.get("category", ""),
-                "description": p.get("description", ""),
-                "preview": p.get("content", "")[:100],
+                "name": s["name"],
+                "description": s.get("description", ""),
+                "preview": s.get("prompt", "")[:100],
+                "extends": s.get("extends", ""),
             }
-            for p in prompts
+            for s in skills
         ]
-        flowfile.set_content(json.dumps({"prompts": items}, ensure_ascii=False).encode())
+        flowfile.set_content(json.dumps({"skills": items}, ensure_ascii=False).encode())
         return [flowfile]
 
-    if action == "get_prompt":
-        prompt_name = body.get("name", "")
-        if not prompt_name:
+    if action in ("get_prompt", "get_skill"):
+        skill_name = body.get("name", "")
+        if not skill_name:
             flowfile.set_content(json.dumps({"error": "Missing name"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        prompt_def = rs.get_any("prompt", prompt_name, user_id)
-        if not prompt_def:
-            flowfile.set_content(json.dumps({"error": "Prompt not found"}).encode())
+        skill_def = rs.get_any("skill", skill_name, user_id)
+        if not skill_def:
+            flowfile.set_content(json.dumps({"error": "Skill not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         flowfile.set_content(json.dumps({
-            "name": prompt_name,
-            "title": prompt_def.get("title", prompt_name),
-            "content": prompt_def.get("content", ""),
-            "category": prompt_def.get("category", ""),
-            "description": prompt_def.get("description", ""),
+            "name": skill_name,
+            "prompt": skill_def.get("prompt", ""),
+            "description": skill_def.get("description", ""),
+            "extends": skill_def.get("extends", ""),
+            "parameters": skill_def.get("parameters", {}),
         }, ensure_ascii=False).encode())
         return [flowfile]
 

@@ -27,13 +27,21 @@ venv/
 # Node
 node_modules/
 
-# ── Runtime config (all generated/user-modified, seeded from defaults/) ──
+# ── Data layout: repository/ runtime/ system/ ────────────────
+
+# Repository: global definitions are tracked (seed data)
+# User/conv scoped definitions are runtime → ignored
+data/repository/*/users/
+data/repository/flows/global/*/
+
+# Runtime: all generated state → ignored
+data/runtime/
+
+# System: all server config → ignored (seeded from defaults/)
+data/system/
+
+# ── Legacy data dirs (pre-migration) ─────────────────────────
 data/config/
-
-# ── Runtime state ──────────────────────────────────────────────
-continuous_state.json
-
-# ── Data (runtime, generated) ─────────────────────────────────
 data/conversations/
 data/claude_sessions/
 data/agent_flows/
@@ -45,23 +53,20 @@ data/knowledge_graphs/
 data/memories/
 data/plans/
 data/poll_schedule/
-data/token_usage.json
-data/identities.json
-data/identity_mappings.json
-data/gateway_bans.json
-data/server_id
-data/deployments/*/
-!data/deployments/global/
+data/deployments/
+
+# ── Other runtime state ──────────��───────────────────────────
+continuous_state.json
 checkpoints/
 memory/
 
-# ── Bundled/vendored (downloaded, not source) ─────────────────
+# ── Bundled/vendored (downloaded, not source) ─��───────────────
 static/novnc/
 
-# ── Plugin builds ─────────────────────────────────────────────
+# ── Plugin builds ─────────────────────��───────────────────────
 plugins/*.pfp
 
-# ── OS ────────────────────────────────────────────────────────
+# ── OS ────���─────────────────��─────────────────────────────────
 Thumbs.db
 .DS_Store
 *.log
@@ -69,7 +74,7 @@ Thumbs.db
 # ── Streamlit (deprecated) ────────────────────────────────────
 .streamlit/
 
-# ── Temp test files ───────────────────────────────────────────
+# ── Temp test files ────────────────���──────────────────────────
 _test_path.py
 test_flow.py
 test_gui.py

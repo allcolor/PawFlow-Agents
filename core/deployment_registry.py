@@ -98,6 +98,12 @@ class DeploymentRegistry:
                     self._scan_disk()
                     self._loaded = True
 
+    def reload(self) -> None:
+        """Force re-scan disk for new/removed deployments."""
+        with self._data_lock:
+            self._scan_disk()
+            self._loaded = True
+
     # ---- CRUD ----
 
     def deploy(

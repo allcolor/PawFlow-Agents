@@ -1,64 +1,47 @@
-"""ResourceStore — User-scoped CRUD for agents, skills, MCP servers, prompts, task definitions.
+"""ResourceStore — Facade over ScopedRepository for user-scoped resources.
 
-Each resource type is stored in its own JSON file under data/config/.
-Keys are namespaced by user_id: "user_id.resource_name".
+Provides the same API as the original monolithic ResourceStore but delegates
+all I/O to ScopedRepository (1 JSON file per resource under data/repository/).
 
 Resource types:
 - agent:    { name, prompt, model?, tools?, max_depth?, timeout?, description? }
-- skill:    { name, prompt, description? }
+- skill:    { name, prompt, description?, parameters?, extends? }
 - mcp:      { name, url, auth?, discovered_tools? }
-- prompt:   { name, content, title?, category?, description? }
 - task_def: { name, prompt, criteria?, default_interval?, description?, created_by? }
 """
 
-import json
 import logging
 import threading
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import SYSTEM_DIR
-# Legacy monolithic files — will be migrated to repository/
-AGENTS_FILE = SYSTEM_DIR / "agents.json"
-SKILLS_FILE = SYSTEM_DIR / "skills.json"
-MCP_SERVERS_FILE = SYSTEM_DIR / "mcp_servers.json"
-PROMPTS_FILE = SYSTEM_DIR / "prompts.json"
-TASK_DEFS_FILE = SYSTEM_DIR / "task_defs.json"
+GLOBAL_USER_ID = "__global__"
 
-# File paths per resource type
-_RESOURCE_FILES = {
-    "agent": AGENTS_FILE,
-    "skill": SKILLS_FILE,
-    "mcp": MCP_SERVERS_FILE,
-    "prompt": PROMPTS_FILE,
-    "task_def": TASK_DEFS_FILE,
+# Mapping: ResourceStore type name → ScopedRepository rtype (plural)
+_TYPE_MAP = {
+    "agent": "agents",
+    "skill": "skills",
+    "mcp": "mcps",
+    "task_def": "tasks",
 }
 
-VALID_TYPES = frozenset(_RESOURCE_FILES.keys())
-GLOBAL_USER_ID = "__global__"
+
+VALID_TYPES = frozenset(_TYPE_MAP.keys())
 
 # Required fields per type
 _REQUIRED_FIELDS = {
     "agent": ("prompt",),
     "skill": ("prompt",),
     "mcp": (),  # url or command required (validated in create)
-    "prompt": ("content",),
     "task_def": ("prompt",),
 }
 
 # Default values per type
 _DEFAULTS = {
     "agent": {
-        "model": "",
-        "tools": [],
-        "max_depth": 1,
-        "timeout": 120,
         "description": "",
-        "llm_service": "",
-        "assigned_skills": [],
     },
     "skill": {
         "description": "",
@@ -68,19 +51,13 @@ _DEFAULTS = {
     "mcp": {
         "url": "",              # HTTP transport: server URL
         "transport": "http",    # "http" or "stdio"
-        "via": "",              # "relay" or "direct" (default: stdio→relay, http→direct)
-        "relay_service": "",    # Which relay/filesystem service to use (expression-resolved)
-                                # e.g. "fs_myproject", "${default_relay}", empty=auto-detect
+        "via": "",              # "relay" or "direct"
+        "relay_service": "",
         "command": "",          # stdio transport: command to run
         "args": [],             # stdio transport: command arguments
         "env": {},              # stdio/http: extra environment variables
         "auth": {},             # HTTP transport: auth headers
         "discovered_tools": [],
-    },
-    "prompt": {
-        "title": "",
-        "category": "",
-        "description": "",
     },
     "task_def": {
         "criteria": "",
@@ -92,17 +69,26 @@ _DEFAULTS = {
 }
 
 
+def _repo_type(resource_type: str) -> str:
+    """Map singular resource type to plural repository type."""
+    rtype = _TYPE_MAP.get(resource_type)
+    if not rtype:
+        raise ValueError(f"Invalid resource type: {resource_type}")
+    return rtype
+
+
 class ResourceStore:
-    """Thread-safe singleton store for user-scoped resources."""
+    """Thread-safe singleton — facade over ScopedRepository."""
 
     _instance: Optional["ResourceStore"] = None
     _lock = threading.Lock()
 
     def __init__(self):
-        self._data: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        self._store_lock = threading.Lock()
-        self._loaded: set = set()
-        SYSTEM_DIR.mkdir(parents=True, exist_ok=True)
+        # Seed global scope from defaults/ on first access
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+        for rtype in _TYPE_MAP.values():
+            repo.seed_from_defaults(rtype)
 
     @classmethod
     def instance(cls) -> "ResourceStore":
@@ -119,78 +105,21 @@ class ResourceStore:
             cls._instance = None
 
     def reload(self, resource_type: str = ""):
-        """Force re-read from disk. If resource_type is empty, reload all."""
-        with self._store_lock:
-            if resource_type:
-                self._loaded.discard(resource_type)
-                self._ensure_loaded(resource_type)
-            else:
-                self._loaded.clear()
-                self._data.clear()
+        """No-op — ScopedRepository reads from disk on every call."""
+        pass
 
-    def _ensure_loaded(self, resource_type: str):
-        """Lazy-load a resource file from disk, seeding from defaults/ if needed."""
-        if resource_type in self._loaded:
-            return
-        self._loaded.add(resource_type)
-        path = _RESOURCE_FILES.get(resource_type)
-        if not path:
-            self._data[resource_type] = {}
-            return
-        if not path.exists():
-            from core.paths import ensure_seed_file
-            ensure_seed_file(path, path.name)
-        if not path.exists():
-            self._data[resource_type] = {}
-            return
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            self._data[resource_type] = raw if isinstance(raw, dict) else {}
-        except Exception as e:
-            logger.warning("Failed to load %s: %s", path, e)
-            self._data[resource_type] = {}
-
-    def _save(self, resource_type: str):
-        """Persist a resource type to disk."""
-        path = _RESOURCE_FILES.get(resource_type)
-        if not path:
-            return
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(
-                json.dumps(self._data.get(resource_type, {}),
-                           ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            tmp.replace(path)
-        except Exception as e:
-            logger.error("Failed to save %s: %s", path, e)
-
-    @staticmethod
-    def _key(user_id: str, name: str) -> str:
-        return f"{user_id}:{name}"
-
-    @staticmethod
-    def _parse_key(key: str) -> tuple:
-        """Split 'user_id:name' → (user_id, name)."""
-        parts = key.split(":", 1)
-        if len(parts) == 2:
-            return parts[0], parts[1]
-        return "", parts[0]
+    # ── CRUD ──────────────────────────────────────────────────────
 
     def create(self, resource_type: str, name: str, user_id: str,
-               data: Dict[str, Any]) -> Dict[str, Any]:
+               data: Dict[str, Any],
+               conversation_id: str = "") -> Dict[str, Any]:
         """Create a resource. Raises ValueError if it already exists."""
-        if resource_type not in VALID_TYPES:
-            raise ValueError(f"Invalid resource type: {resource_type}")
+        rtype = _repo_type(resource_type)
         for field in _REQUIRED_FIELDS.get(resource_type, ()):
             if field not in data:
                 raise ValueError(f"Missing required field: {field}")
 
-        key = self._key(user_id, name)
         entry = dict(_DEFAULTS.get(resource_type, {}))
-        # Extract system field before merging user data
         created_by = data.pop("_created_by", "")
         entry.update(data)
         entry["name"] = name
@@ -199,82 +128,77 @@ class ResourceStore:
         if created_by:
             entry["created_by"] = created_by
 
-        with self._store_lock:
-            self._ensure_loaded(resource_type)
-            if key in self._data[resource_type]:
-                raise ValueError(f"{resource_type} '{name}' already exists")
-            self._data[resource_type][key] = entry
-            self._save(resource_type)
-
-        return entry
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+        scope, uid, cid = self._map_scope(user_id, conversation_id)
+        return repo.create(rtype, name, scope, entry,
+                           user_id=uid, conv_id=cid)
 
     def get(self, resource_type: str, name: str,
-            user_id: str) -> Optional[Dict[str, Any]]:
+            user_id: str,
+            conversation_id: str = "") -> Optional[Dict[str, Any]]:
         """Get a single resource by name (case-insensitive fallback)."""
         if resource_type not in VALID_TYPES:
             return None
-        key = self._key(user_id, name)
-        with self._store_lock:
-            self._ensure_loaded(resource_type)
-            result = self._data[resource_type].get(key)
-            if result is not None:
-                return result
-            # Case-insensitive fallback
-            name_lower = name.lower()
-            for k, v in self._data[resource_type].items():
-                if k.startswith(user_id + ".") and k[len(user_id) + 1:].lower() == name_lower:
-                    return v
-            return None
+        rtype = _repo_type(resource_type)
+        scope, uid, cid = self._map_scope(user_id, conversation_id)
+
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+
+        result = repo.get(rtype, name, scope, user_id=uid, conv_id=cid)
+        if result is not None:
+            return result
+
+        # Case-insensitive fallback
+        items = repo.list(rtype, scope, user_id=uid, conv_id=cid)
+        name_lower = name.lower()
+        for item in items:
+            if item.get("name", "").lower() == name_lower:
+                return item
+        return None
 
     def update(self, resource_type: str, name: str, user_id: str,
-               data: Dict[str, Any]) -> Dict[str, Any]:
+               data: Dict[str, Any],
+               conversation_id: str = "") -> Dict[str, Any]:
         """Update a resource. Raises KeyError if not found."""
-        if resource_type not in VALID_TYPES:
-            raise ValueError(f"Invalid resource type: {resource_type}")
-        key = self._key(user_id, name)
+        rtype = _repo_type(resource_type)
+        scope, uid, cid = self._map_scope(user_id, conversation_id)
 
-        with self._store_lock:
-            self._ensure_loaded(resource_type)
-            existing = self._data[resource_type].get(key)
-            if existing is None:
-                raise KeyError(f"{resource_type} '{name}' not found")
-            existing.update(data)
-            existing["updated_at"] = time.time()
-            self._save(resource_type)
-            return dict(existing)
+        from core.repository import ScopedRepository
+        return ScopedRepository.instance().update(
+            rtype, name, scope, data, user_id=uid, conv_id=cid)
 
     def delete(self, resource_type: str, name: str,
-               user_id: str) -> bool:
+               user_id: str,
+               conversation_id: str = "") -> bool:
         """Delete a resource. Returns True if deleted."""
         if resource_type not in VALID_TYPES:
             return False
-        key = self._key(user_id, name)
+        rtype = _repo_type(resource_type)
+        scope, uid, cid = self._map_scope(user_id, conversation_id)
 
-        with self._store_lock:
-            self._ensure_loaded(resource_type)
-            if key not in self._data[resource_type]:
-                return False
-            del self._data[resource_type][key]
-            self._save(resource_type)
-        return True
+        from core.repository import ScopedRepository
+        return ScopedRepository.instance().delete(
+            rtype, name, scope, user_id=uid, conv_id=cid)
 
     def list(self, resource_type: str,
-             user_id: str = "") -> List[Dict[str, Any]]:
-        """List resources, optionally filtered by user_id."""
+             user_id: str = "",
+             conversation_id: str = "") -> List[Dict[str, Any]]:
+        """List resources for a specific scope."""
         if resource_type not in VALID_TYPES:
             return []
+        rtype = _repo_type(resource_type)
 
-        with self._store_lock:
-            self._ensure_loaded(resource_type)
-            results = []
-            for key, entry in self._data[resource_type].items():
-                uid, rname = self._parse_key(key)
-                if user_id and uid != user_id:
-                    continue
-                item = dict(entry)
-                item["name"] = rname
-                item["user_id"] = uid
-                results.append(item)
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+
+        if user_id:
+            scope, uid, cid = self._map_scope(user_id, conversation_id)
+            results = repo.list(rtype, scope, user_id=uid, conv_id=cid)
+        else:
+            results = repo.list(rtype, "global")
+
         results.sort(key=lambda x: x.get("created_at", 0), reverse=True)
         return results
 
@@ -286,42 +210,71 @@ class ResourceStore:
         Conversation agents are stored in ConversationStore extras.
         Disabled agents (per-conversation) are filtered out.
         """
-        user_items = self.list(resource_type, user_id=user_id)
+        if resource_type not in VALID_TYPES:
+            return []
+        rtype = _repo_type(resource_type)
+
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+
+        # User-scoped items
         if user_id == GLOBAL_USER_ID:
+            user_items = repo.list(rtype, "global")
+            for item in user_items:
+                item["_scope"] = "global"
             result = user_items
         else:
-            global_items = self.list(resource_type, user_id=GLOBAL_USER_ID)
-            seen = {item["name"] for item in user_items}
+            user_items = repo.list(rtype, "user", user_id=user_id)
+            for item in user_items:
+                item["_scope"] = "user"
+
+            global_items = repo.list(rtype, "global")
+            seen = {item.get("name") for item in user_items}
             for gi in global_items:
-                if gi["name"] not in seen:
+                if gi.get("name") not in seen:
                     gi["_scope"] = "global"
                     user_items.append(gi)
-            # Tag user items
-            for ui in user_items:
-                if "_scope" not in ui:
-                    ui["_scope"] = "user"
             result = user_items
 
-        # Add conversation-scoped resources
-        if conversation_id and resource_type in ("agent", "task_def"):
+        # Add conversation-scoped resources (from repository conv scope)
+        if conversation_id and user_id != GLOBAL_USER_ID:
             try:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                extras_key = "conversation_agents" if resource_type == "agent" else "conversation_task_defs"
-                conv_items = store.get_extra(conversation_id, extras_key) or {}
-                seen_names = {item["name"] for item in result}
-                for name, data in conv_items.items():
-                    if name not in seen_names:
-                        entry = dict(data)
-                        entry["name"] = name
-                        entry["_scope"] = "conversation"
-                        result.append(entry)
-                # Filter disabled agents only
-                if resource_type == "agent":
-                    disabled = set(store.get_extra(conversation_id, "disabled_agents") or [])
-                    result = [r for r in result if r["name"] not in disabled]
+                conv_items = repo.list(rtype, "conv",
+                                       user_id=user_id, conv_id=conversation_id)
+                seen_names = {item.get("name") for item in result}
+                for item in conv_items:
+                    if item.get("name") not in seen_names:
+                        item["_scope"] = "conversation"
+                        result.append(item)
             except Exception:
                 pass
+            # Also check conversation_task_defs extras (task_defs still in extras)
+            if resource_type == "task_def":
+                try:
+                    from core.conversation_store import ConversationStore
+                    store = ConversationStore.instance()
+                    conv_defs = store.get_extra(conversation_id,
+                                                "conversation_task_defs") or {}
+                    seen_names = {item.get("name") for item in result}
+                    for td_name, td_data in conv_defs.items():
+                        if td_name not in seen_names:
+                            entry = dict(td_data)
+                            entry["name"] = td_name
+                            entry["_scope"] = "conversation"
+                            result.append(entry)
+                except Exception:
+                    pass
+            # Filter disabled agents
+            if resource_type == "agent":
+                try:
+                    from core.conversation_store import ConversationStore
+                    disabled = set(
+                        ConversationStore.instance().get_extra(
+                            conversation_id, "disabled_agents") or [])
+                    result = [r for r in result
+                              if r.get("name") not in disabled]
+                except Exception:
+                    pass
 
         return result
 
@@ -329,38 +282,65 @@ class ResourceStore:
                 user_id: str,
                 conversation_id: str = "") -> Optional[Dict[str, Any]]:
         """Get a resource by name: conversation → user → global."""
-        # 1. Conversation-scoped
-        if conversation_id and resource_type in ("agent", "task_def"):
-            try:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                if resource_type == "agent":
-                    disabled = set(store.get_extra(conversation_id, "disabled_agents") or [])
+        # 1. Conversation-scoped (repository conv scope)
+        if conversation_id and user_id != GLOBAL_USER_ID:
+            # Check disabled agents
+            if resource_type == "agent":
+                try:
+                    from core.conversation_store import ConversationStore
+                    disabled = set(
+                        ConversationStore.instance().get_extra(
+                            conversation_id, "disabled_agents") or [])
                     if name in disabled:
                         return None
-                extras_key = "conversation_agents" if resource_type == "agent" else "conversation_task_defs"
-                conv_items = store.get_extra(conversation_id, extras_key) or {}
-                if name in conv_items:
-                    entry = dict(conv_items[name])
-                    entry["name"] = name
-                    entry["_scope"] = "conversation"
-                    return entry
-            except Exception:
-                pass
-        # 2. User-scoped
-        result = self.get(resource_type, name, user_id)
-        if result is not None:
-            result["_scope"] = "user"
-            return result
-        # 3. Global
-        if user_id != GLOBAL_USER_ID:
-            result = self.get(resource_type, name, GLOBAL_USER_ID)
+                except Exception:
+                    pass
+            rtype = _repo_type(resource_type)
+            from core.repository import ScopedRepository
+            result = ScopedRepository.instance().get(
+                rtype, name, "conv",
+                user_id=user_id, conv_id=conversation_id)
             if result is not None:
-                result["_scope"] = "global"
+                result["_scope"] = "conversation"
                 return result
+            # Task defs: also check extras
+            if resource_type == "task_def":
+                try:
+                    from core.conversation_store import ConversationStore
+                    conv_defs = ConversationStore.instance().get_extra(
+                        conversation_id, "conversation_task_defs") or {}
+                    if name in conv_defs:
+                        entry = dict(conv_defs[name])
+                        entry["name"] = name
+                        entry["_scope"] = "conversation"
+                        return entry
+                except Exception:
+                    pass
+        # 2. User-scoped
+        if user_id != GLOBAL_USER_ID:
+            result = self.get(resource_type, name, user_id)
+            if result is not None:
+                result["_scope"] = "user"
+                return result
+        # 3. Global
+        result = self.get(resource_type, name, GLOBAL_USER_ID)
+        if result is not None:
+            result["_scope"] = "global"
+            return result
         return None
 
     def exists(self, resource_type: str, name: str,
                user_id: str) -> bool:
         """Check if a resource exists."""
         return self.get(resource_type, name, user_id) is not None
+
+    # ── Internal ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _map_scope(user_id: str, conversation_id: str = ""):
+        """Map ResourceStore params to (scope, user_id, conv_id)."""
+        if conversation_id and user_id != GLOBAL_USER_ID:
+            return "conv", user_id, conversation_id
+        if user_id == GLOBAL_USER_ID:
+            return "global", "", ""
+        return "user", user_id, ""

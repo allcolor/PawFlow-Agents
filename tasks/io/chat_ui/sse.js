@@ -1382,22 +1382,21 @@ function stopPollTimer() {
 
 async function showPrompts() {
   try {
-    const data = await rxjs.firstValueFrom(action$('list_prompts'));
-    const prompts = data.prompts || [];
-    if (!prompts.length) { addMsg('system', 'No prompts available. Create prompts via /prompt or manage_resource.'); return; }
+    const data = await rxjs.firstValueFrom(action$('list_skills'));
+    const skills = data.skills || [];
+    if (!skills.length) { addMsg('system', 'No skills available. Create skills via /skill or manage_resource.'); return; }
     let overlay = document.getElementById('promptOverlay');
     if (overlay) overlay.remove();
     overlay = document.createElement('div');
     overlay.id = 'promptOverlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
     let html = '<div style="background:#1a1a2e;border:1px solid #0f3460;border-radius:12px;max-width:500px;width:90%;max-height:70vh;overflow-y:auto;padding:20px">';
-    html += '<h3 style="margin:0 0 12px;color:#e94560">Prompt Library</h3>';
-    for (const p of prompts) {
-      html += '<div class="prompt-item" data-name="' + escapeHtml(p.name) + '" style="padding:10px;margin:4px 0;background:#16213e;border-radius:8px;cursor:pointer;border:1px solid transparent" onmouseenter="this.style.borderColor=\'#e94560\'" onmouseleave="this.style.borderColor=\'transparent\'">';
-      html += '<div style="font-weight:600;color:#fff">' + escapeHtml(p.title || p.name) + '</div>';
-      if (p.category) html += '<span style="font-size:11px;color:#888;margin-right:8px">' + escapeHtml(p.category) + '</span>';
-      if (p.description) html += '<span style="font-size:11px;color:#aaa">' + escapeHtml(p.description) + '</span>';
-      if (p.preview) html += '<div style="font-size:11px;color:#666;margin-top:4px">' + escapeHtml(p.preview) + '...</div>';
+    html += '<h3 style="margin:0 0 12px;color:#e94560">Skills</h3>';
+    for (const s of skills) {
+      html += '<div class="prompt-item" data-name="' + escapeHtml(s.name) + '" style="padding:10px;margin:4px 0;background:#16213e;border-radius:8px;cursor:pointer;border:1px solid transparent" onmouseenter="this.style.borderColor=\'#e94560\'" onmouseleave="this.style.borderColor=\'transparent\'">';
+      html += '<div style="font-weight:600;color:#fff">' + escapeHtml(s.name) + '</div>';
+      if (s.description) html += '<span style="font-size:11px;color:#aaa">' + escapeHtml(s.description) + '</span>';
+      if (s.preview) html += '<div style="font-size:11px;color:#666;margin-top:4px">' + escapeHtml(s.preview) + '...</div>';
       html += '</div>';
     }
     html += '<button onclick="document.getElementById(\'promptOverlay\').remove()" style="margin-top:12px;padding:6px 16px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer">Close</button>';
@@ -1407,12 +1406,12 @@ async function showPrompts() {
       item.addEventListener('click', async () => {
         const name = item.dataset.name;
         try {
-          const d2 = await rxjs.firstValueFrom(action$('get_prompt', { name: name }));
-          if (d2.content) {
-            document.getElementById('input').value = d2.content;
+          const d2 = await rxjs.firstValueFrom(action$('get_skill', { name: name }));
+          if (d2.prompt) {
+            document.getElementById('input').value = d2.prompt;
             document.getElementById('input').focus();
           }
-        } catch(e) { addMsg('error', 'Failed to load prompt: ' + e.message); }
+        } catch(e) { addMsg('error', 'Failed to load skill: ' + e.message); }
         overlay.remove();
       });
     });

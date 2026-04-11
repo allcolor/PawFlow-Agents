@@ -149,42 +149,28 @@ class AgentUtilsMixin:
         """Resolve an agent's LLM client by following the override chain.
 
         Resolution order:
-        1. Per-conversation LLM override (agent_llm_overrides extra)
-        2. Agent definition's llm_service (with expression resolution)
-        3. Task-level llm_service default
+        1. conv_agents runtime config (llm_service for this agent in this conv)
+        2. Task-level llm_service default
 
         Returns (client, service_id, resolved_svc) or (None, "", None).
         """
         svc_id = ""
-        # 1. Per-conversation override (values may be expressions)
-        if conversation_id:
+        # 1. Conv-level agent config
+        if conversation_id and agent_name:
             try:
-                from core.conversation_store import ConversationStore
-                overrides = _resolve_extra_dict(
-                    ConversationStore.instance(), conversation_id,
-                    "agent_llm_overrides", user_id)
-                svc_id = overrides.get(agent_name, "")
-            except Exception:
-                pass
-        # 2. Agent definition
-        if not svc_id and agent_name:
-            try:
-                from core.resource_store import ResourceStore
+                from core.conv_agent_config import get_agent_config
                 from core.expression import resolve_value
-                adef = ResourceStore.instance().get_any(
-                    "agent", agent_name, user_id,
-                    conversation_id=conversation_id)
-                if adef:
-                    svc_id = resolve_value(adef.get("llm_service", ""),
-                                           owner=user_id) or ""
+                acfg = get_agent_config(conversation_id, agent_name)
+                svc_id = resolve_value(acfg.get("llm_service", ""),
+                                       owner=user_id) or ""
             except Exception:
                 pass
-        # 3. Task default
+        # 2. Task default
         if not svc_id:
             svc_id = self._resolve_service_param("llm_service", user_id)
             if not svc_id:
                 raise RuntimeError(
-                    "No llm_service resolved. Check agent config, flow params, or global parameters.")
+                    "No llm_service resolved. Check conv_agents config, flow params, or global parameters.")
         client, svc = self._resolve_llm_service(svc_id, user_id, conversation_id)
         return client, svc_id, svc
 

@@ -1,22 +1,36 @@
-"""Tests for ResourceStore — CRUD for agents, skills, MCP servers."""
+"""Tests for ResourceStore — CRUD for agents, skills, MCP servers.
+
+ResourceStore is now a facade over ScopedRepository, which stores
+1 JSON file per resource under data/repository/{type}/{scope}/{name}.json.
+"""
 
 import json
 import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.resource_store import ResourceStore, _RESOURCE_FILES, VALID_TYPES
+from core.resource_store import ResourceStore, VALID_TYPES
 
 
 @pytest.fixture(autouse=True)
 def reset_singleton(tmp_path):
-    """Reset singleton and redirect files to tmp_path."""
+    """Reset singleton and redirect repository to tmp_path."""
     ResourceStore.reset()
-    patched = {k: tmp_path / v.name for k, v in _RESOURCE_FILES.items()}
-    with patch.dict("core.resource_store._RESOURCE_FILES", patched):
-        with patch("core.paths.CONFIG_DIR", tmp_path), \
-             patch("core.paths.DEFAULTS_DIR", tmp_path / "_no_defaults"):
-            yield tmp_path
+    # Redirect REPOSITORY_DIR and DEFAULTS_DIR to tmp_path
+    from core import repository as repo_mod
+    from core import paths as paths_mod
+    repo_dir = tmp_path / "repository"
+    repo_dir.mkdir()
+    defaults_dir = tmp_path / "_no_defaults"
+    defaults_dir.mkdir()
+    with patch.object(paths_mod, "REPOSITORY_DIR", repo_dir), \
+         patch.object(paths_mod, "DEFAULTS_DIR", defaults_dir), \
+         patch.object(repo_mod, "REPOSITORY_DIR", repo_dir), \
+         patch.object(repo_mod, "DEFAULTS_DIR", defaults_dir):
+        # Also reset ScopedRepository singleton
+        repo_mod.ScopedRepository.reset()
+        yield tmp_path
+    repo_mod.ScopedRepository.reset()
     ResourceStore.reset()
 
 
@@ -38,13 +52,11 @@ class TestAgentCRUD:
         store = ResourceStore.instance()
         result = store.create("agent", "analyst", "user1", {
             "prompt": "You are a financial analyst",
-            "model": "gpt-4",
+            "description": "Financial analyst agent",
         })
         assert result["name"] == "analyst"
         assert result["prompt"] == "You are a financial analyst"
-        assert result["model"] == "gpt-4"
-        assert result["max_depth"] == 1  # default
-        assert result["timeout"] == 120  # default
+        assert result["description"] == "Financial analyst agent"
         assert "created_at" in result
 
     def test_create_duplicate_raises(self):
@@ -106,9 +118,6 @@ class TestAgentCRUD:
         assert len(agents) == 2
         names = {a["name"] for a in agents}
         assert names == {"a1", "a2"}
-        # All users
-        all_agents = store.list("agent")
-        assert len(all_agents) == 3
 
     def test_exists(self):
         store = ResourceStore.instance()
@@ -182,13 +191,16 @@ class TestPersistence:
         store.create("agent", "a1", "u1", {"prompt": "hello"})
         store.create("skill", "s1", "u1", {"prompt": "summarize"})
 
-        # Verify files exist on disk
-        agent_file = reset_singleton / "agents.json"
+        # Verify individual files exist on disk (.md for agents)
+        from core.paths import REPOSITORY_DIR
+        agent_file = REPOSITORY_DIR / "agents" / "users" / "u1" / "a1.md"
         assert agent_file.exists()
-        data = json.loads(agent_file.read_text(encoding="utf-8"))
-        assert "u1:a1" in data
+        content = agent_file.read_text(encoding="utf-8")
+        assert "hello" in content  # prompt is in the body
 
         # Reset and reload
+        from core.repository import ScopedRepository
+        ScopedRepository.reset()
         ResourceStore.reset()
         store2 = ResourceStore.instance()
         agent = store2.get("agent", "a1", "u1")
@@ -204,9 +216,21 @@ class TestPersistence:
         store.create("agent", "a1", "u1", {"prompt": "p"})
         store.delete("agent", "a1", "u1")
 
+        from core.repository import ScopedRepository
+        ScopedRepository.reset()
         ResourceStore.reset()
         store2 = ResourceStore.instance()
         assert store2.get("agent", "a1", "u1") is None
+
+    def test_delete_removes_file(self, reset_singleton):
+        """Deleting a resource should remove its individual file."""
+        store = ResourceStore.instance()
+        store.create("agent", "a1", "u1", {"prompt": "p"})
+        from core.paths import REPOSITORY_DIR
+        agent_file = REPOSITORY_DIR / "agents" / "users" / "u1" / "a1.md"
+        assert agent_file.exists()
+        store.delete("agent", "a1", "u1")
+        assert not agent_file.exists()
 
 
 class TestUserIsolation:

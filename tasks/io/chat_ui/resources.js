@@ -90,6 +90,8 @@ function _toggleSection(id) {
   if (el) el.style.display = _collapsedSections[id] ? 'none' : 'block';
   const arrow = document.getElementById('res-arrow-' + id);
   if (arrow) arrow.textContent = _collapsedSections[id] ? '\u25B6' : '\u25BC';
+  // Opening a repository or runtime section → refresh from disk
+  if (!_collapsedSections[id] && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_flow')) loadResources();
 }
 // Default collapsed: variables, secrets
 if (!('_param' in _collapsedSections)) _collapsedSections['_param'] = true;
@@ -105,6 +107,15 @@ function _sectionHeader(title, rtype) {
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
     <span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
     <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${onclick}" title="Create new">+</span>
+  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
+}
+function _repoSectionHeader(title, rtype) {
+  if (!(rtype in _collapsedSections)) _collapsedSections[rtype] = true;
+  const collapsed = _collapsedSections[rtype] || false;
+  const arrow = collapsed ? '\u25B6' : '\u25BC';
+  return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+    <span style="cursor:pointer;color:#888;font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
+    <span style="cursor:pointer;font-size:11px;color:#888;padding:0 4px;" onclick="loadResources()" title="Refresh from disk">\u21BB</span>
   </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
 }
 function _sectionFooter() { return '</div>'; }
@@ -277,10 +288,14 @@ async function _renderResourcesData(data) {
           + '<span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Remove from conversation"'
           + ' onclick="_removeAgentFromConv(this.dataset.n)" data-n="' + aName + '">&times;</span>'
           + '</div>';
-        // Show assigned skills as small tags
+        // Show LLM service + assigned skills as small tags
+        var aLlm = a.llm_service || '';
         var aSkills = a.assigned_skills || [];
-        if (aSkills.length) {
+        if (aLlm || aSkills.length) {
           html += '<div style="margin-left:24px;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:3px;">';
+          if (aLlm) {
+            html += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#1a2a3e;color:#64b5f6;">' + escapeHtml(aLlm) + '</span>';
+          }
           aSkills.forEach(function(sk) {
             html += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#2a1a4e;color:#b39ddb;">' + escapeHtml(sk) + '</span>';
           });
@@ -293,8 +308,7 @@ async function _renderResourcesData(data) {
     html += _sectionFooter();
 
     // Agent Repository (repo agents not yet in conv, collapsed by default)
-    if (!("_agent_repo" in _collapsedSections)) _collapsedSections["_agent_repo"] = true;
-    html += _sectionHeader("Agent Repository", "_agent_repo");
+    html += _repoSectionHeader("Agent Repository", "_agent_repo");
     if (!_collapsedSections["_agent_repo"]) {
       var repoAgents = (data.repo_agents || []).filter(function(a) { return !a.in_conversation; });
       if (repoAgents.length) {
@@ -312,28 +326,77 @@ async function _renderResourcesData(data) {
       }
     }
     html += _sectionFooter();
-    // Skills
-    // Skills (always show header + [+] even when empty)
+    // ── Skills (linked to conv) ──
     html += _sectionHeader('Skills', 'skill');
-    (data.skills || []).forEach(s => {
-      const assignedTo = s.assigned_to || [];
-      const assignedTag = assignedTo.length ? ' <span style="color:#555;font-size:9px;">→ ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
-      html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'skill','${s.name}','${s.scope||''}');return false;">
-        ${_scopeBadge(s.scope)}<span style="color:#e0e0e0;font-size:12px;">${s.name}${assignedTag}</span>
-      </div>`;
-    });
+    { const linked = (data.skills || []).filter(s => s.linked);
+      if (linked.length) {
+        linked.forEach(s => {
+          const assignedTo = s.assigned_to || [];
+          const assignedTag = assignedTo.length ? ' <span style="color:#555;font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'skill','${s.name}','${s.scope||''}');return false;">
+            ${_scopeBadge(s.scope)}<span style="color:#e0e0e0;font-size:12px;">${escapeHtml(s.name)}${assignedTag}</span>
+            <span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"
+              onclick="fireAction('unlink_skill',{name:'${escapeHtml(s.name)}'});setTimeout(loadResources,400)">&times;</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No skills linked</div>';
+      }
+    }
     html += _sectionFooter();
-    // MCP (always show header)
+    // Skill Repository (collapsed)
+    html += _repoSectionHeader('Skill Repository', '_skill_repo');
+    if (!_collapsedSections['_skill_repo']) {
+      const repoSkills = (data.skills || []).filter(s => !s.linked);
+      if (repoSkills.length) {
+        repoSkills.forEach(s => {
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+            ${_scopeBadge(s.scope)}<span style="color:#888;font-size:12px;flex:1;">${escapeHtml(s.name)}</span>
+            <span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Link to conversation"
+              onclick="fireAction('link_skill',{name:'${escapeHtml(s.name)}'});setTimeout(loadResources,400)">+</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">All skills are linked</div>';
+      }
+    }
+    html += _sectionFooter();
+
+    // ── MCP Servers (linked to conv) ──
     html += _sectionHeader('MCP', 'mcp');
-    (data.mcp_servers || []).forEach(m => {
-      const active = m.active;
-      html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'mcp','${m.name}','${m.scope||''}');return false;">
-        <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'mcp',name:'${m.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-        ${_scopeBadge(m.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
-      </div>`;
-    });
+    { const linked = (data.mcp_servers || []).filter(m => m.linked);
+      if (linked.length) {
+        linked.forEach(m => {
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'mcp','${m.name}','${m.scope||''}');return false;">
+            ${_scopeBadge(m.scope)}<span style="color:#e0e0e0;font-size:12px;">${escapeHtml(m.name)}</span>
+            <span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"
+              onclick="fireAction('unlink_mcp',{name:'${escapeHtml(m.name)}'});setTimeout(loadResources,400)">&times;</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No MCP servers linked</div>';
+      }
+    }
     html += _sectionFooter();
-    // Tools (builtin + dynamic — clickable to open call dialog)
+    // MCP Repository (collapsed)
+    html += _repoSectionHeader('MCP Repository', '_mcp_repo');
+    if (!_collapsedSections['_mcp_repo']) {
+      const repoMcps = (data.mcp_servers || []).filter(m => !m.linked);
+      if (repoMcps.length) {
+        repoMcps.forEach(m => {
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+            ${_scopeBadge(m.scope)}<span style="color:#888;font-size:12px;flex:1;">${escapeHtml(m.name)}</span>
+            <span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Link to conversation"
+              onclick="fireAction('link_mcp',{name:'${escapeHtml(m.name)}'});setTimeout(loadResources,400)">+</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">All MCP servers are linked</div>';
+      }
+    }
+    html += _sectionFooter();
+
+    // ── Tools (always available, no linking) ──
     html += _sectionHeader('Tools', '_tool');
     if (!_collapsedSections['_tool']) {
       const tools = window._cachedTools || [];
@@ -346,17 +409,40 @@ async function _renderResourcesData(data) {
       if (!tools.length) html += '<div style="margin-left:8px;font-size:11px;color:#666">Loading...</div>';
     }
     html += _sectionFooter();
-    // Task definitions (always show header)
+
+    // ── Tasks (linked to conv) ──
     html += _sectionHeader('Tasks', 'task_def');
-    (data.task_defs || []).forEach(t => {
-      html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'task_def','${t.name}','${t.scope||''}');return false;">
-        ${_scopeBadge(t.scope)}<span style="color:#8888aa;font-size:12px;cursor:default;" title="${escapeHtml(t.description)}">${t.name}</span>
-        <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
-      </div>`;
-    });
-    // Task instances are NOT shown here — only definitions.
-    // Active/paused instances appear in "Running Tasks" below.
-    // Completed/cancelled/failed instances are accessible via View Log on the definition.
+    { const linked = (data.task_defs || []).filter(t => t.linked);
+      if (linked.length) {
+        linked.forEach(t => {
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'task_def','${t.name}','${t.scope||''}');return false;">
+            ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
+            <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
+            <span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"
+              onclick="fireAction('unlink_task',{name:'${escapeHtml(t.name)}'});setTimeout(loadResources,400)">&times;</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No tasks linked</div>';
+      }
+    }
+    html += _sectionFooter();
+    // Task Repository (collapsed)
+    html += _repoSectionHeader('Task Repository', '_task_repo');
+    if (!_collapsedSections['_task_repo']) {
+      const repoTasks = (data.task_defs || []).filter(t => !t.linked);
+      if (repoTasks.length) {
+        repoTasks.forEach(t => {
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+            ${_scopeBadge(t.scope)}<span style="color:#888;font-size:12px;flex:1;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
+            <span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Link to conversation"
+              onclick="fireAction('link_task',{name:'${escapeHtml(t.name)}'});setTimeout(loadResources,400)">+</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">All tasks are linked</div>';
+      }
+    }
     html += _sectionFooter();
     // Running task instances (active/paused)
     if (data.running_tasks && data.running_tasks.length) {
@@ -373,8 +459,9 @@ async function _renderResourcesData(data) {
       });
       html += _sectionFooter();
     }
-    // Services (always show for [+] install button)
-    html += _sectionHeader('Services', '_svc');
+    // Services (always show for [+] install button + reload from disk)
+    html += _sectionHeader('Services', '_svc').replace('</div><div',
+      '<span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="event.stopPropagation();fireAction(\'reload_disk\',{});setTimeout(loadResources,300)" title="Reload from disk">\u21BB</span></div><div');
     if (data.services && data.services.length) {
       data.services.forEach(s => {
         const statusDot = !s.enabled ? '\u{1F534}'
@@ -459,8 +546,9 @@ async function _renderResourcesData(data) {
       }
       html += _sectionFooter();
     }
-    // Deployed flows (always show section for [+] deploy button)
-    html += _sectionHeader('Flows', '_flow');
+    // Deployed flows (always show section for [+] deploy button + reload from disk)
+    html += _sectionHeader('Flows', '_flow').replace('</div><div',
+      '<span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="event.stopPropagation();fireAction(\'reload_disk\',{});setTimeout(loadResources,300)" title="Reload from disk">\u21BB</span></div><div');
     if (data.flows && data.flows.length) {
       data.flows.forEach(f => {
         const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';

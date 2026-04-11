@@ -33,6 +33,7 @@ from core.handlers import (  # noqa: F401
     AskUserHandler,
     AssignPlanHandler,
     AssignTaskHandler,
+    LinkTaskHandler,
     BrowserActionHandler,
     CancelPlanHandler,
     CompleteTaskHandler,
@@ -245,6 +246,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(RememberHandler())
     registry.register(RecallHandler())
     registry.register(SemanticRecallHandler())
+    registry.register(LinkTaskHandler())
     registry.register(AssignTaskHandler())
     registry.register(CompleteTaskHandler())
     registry.register(VerifyTaskHandler())

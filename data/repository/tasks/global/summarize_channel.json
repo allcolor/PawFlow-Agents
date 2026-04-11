@@ -1,0 +1,7 @@
+{
+  "name": "summarize_channel",
+  "prompt": "Summarize the recent activity and key discussions. Focus on:\n- Important decisions made\n- Action items assigned\n- Questions that need answers\n- Notable announcements\n\nProvide a concise, structured summary that someone who missed the conversation can quickly scan.",
+  "description": "Summarize recent activity in a communication channel",
+  "criteria": "Summary produced with at least the key topics and any action items identified.",
+  "default_interval": "1/1d"
+}

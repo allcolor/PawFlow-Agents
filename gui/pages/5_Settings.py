@@ -863,7 +863,7 @@ def render_secrets_tab():
     st.info(t("secrets.info"))
 
     # Manage secrets stored in data/config/secrets.json
-    from core.paths import SECRETS_FILE
+    from core.paths import GLOBAL_SECRETS_FILE as SECRETS_FILE
     secrets_path = SECRETS_FILE
     secrets_data = {}
     if secrets_path.exists():

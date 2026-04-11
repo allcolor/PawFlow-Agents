@@ -162,16 +162,12 @@ SECRET_KEY_FILE = SYSTEM_DIR / "secret.key"
 SERVER_ID_FILE = SYSTEM_DIR / "server_id"
 SSL_DIR = SYSTEM_DIR / "ssl"
 
-# Legacy system config files (expression resolver, secrets, etc.)
-AGENT_SECRETS_FILE = SYSTEM_DIR / "agent_secrets.json"
-AGENT_VARIABLES_FILE = SYSTEM_DIR / "agent_variables.json"
+# System config files (expression resolver, etc.)
 GLOBAL_PARAMS_FILE = SYSTEM_DIR / "global_parameters.json"
 GLOBAL_SECRETS_FILE = SYSTEM_DIR / "global_secrets.json"
-SECRETS_FILE = SYSTEM_DIR / "secrets.json"
 LLM_PROFILES_FILE = SYSTEM_DIR / "llm_profiles.json"
 PARAMETER_CONTEXTS_FILE = SYSTEM_DIR / "parameter_contexts.json"
 TRIGGERS_FILE = SYSTEM_DIR / "triggers.json"
-TASK_TEMPLATES_FILE = SYSTEM_DIR / "task_templates.json"
 
 # User-specific system config (secrets, params, oauth)
 USER_CONFIG_DIR = SYSTEM_DIR / "users"

@@ -1,0 +1,7 @@
+{
+  "name": "data_pipeline_check",
+  "prompt": "Check the data pipeline status:\n1. Verify the latest data is fresh (less than ${max_age} old)\n2. Check for anomalies in data volume or patterns\n3. Verify data quality metrics\n4. Report any pipeline failures or warnings\n\nData source: ${data_source}",
+  "description": "Verify data pipeline health and freshness",
+  "criteria": "",
+  "default_interval": "2/1h"
+}

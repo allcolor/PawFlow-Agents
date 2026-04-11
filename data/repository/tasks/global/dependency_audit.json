@@ -1,0 +1,7 @@
+{
+  "name": "dependency_audit",
+  "prompt": "Audit the project's dependencies:\n1. Check for outdated packages\n2. Look for known security vulnerabilities\n3. Identify deprecated dependencies\n4. Suggest updates with their changelogs\n\nPrioritize security-critical updates. For each recommendation, note the risk level and any breaking changes.",
+  "description": "Check project dependencies for updates and security issues",
+  "criteria": "Audit completed with a list of findings (or explicit confirmation that all deps are up to date and secure).",
+  "default_interval": "1/1d"
+}

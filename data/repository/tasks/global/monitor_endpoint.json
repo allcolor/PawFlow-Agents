@@ -1,0 +1,7 @@
+{
+  "name": "monitor_endpoint",
+  "prompt": "Check the endpoint ${endpoint_url} and verify it responds correctly.\n\n1. Fetch the URL and check the HTTP status code\n2. Verify the response time is reasonable (< ${max_response_time}ms)\n3. If ${expected_content} is set, verify the response contains it\n4. Report any issues found\n\nIf everything is OK, report 'OK' with response time. If there's an issue, describe it clearly.",
+  "description": "Periodically check an HTTP endpoint and alert on issues",
+  "criteria": "",
+  "default_interval": "1/5m"
+}

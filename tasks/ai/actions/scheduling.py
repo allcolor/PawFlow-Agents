@@ -413,91 +413,18 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "list_templates":
-        import os
-        from core.paths import TASK_TEMPLATES_FILE, ensure_seed_file
-        ensure_seed_file(TASK_TEMPLATES_FILE, "task_templates.json")
-        _tpl_path = str(TASK_TEMPLATES_FILE)
-        templates_out = []
-        try:
-            with open(_tpl_path, "r") as f:
-                _tpls = json.load(f)
-            category_filter = body.get("category", "")
-            for name, tpl in _tpls.items():
-                if category_filter and tpl.get("category") != category_filter:
-                    continue
-                templates_out.append({
-                    "name": name,
-                    "category": tpl.get("category", ""),
-                    "description": tpl.get("description", ""),
-                    "default_interval": tpl.get("default_interval", ""),
-                    "variables": tpl.get("variables", {}),
-                    "has_criteria": bool(tpl.get("criteria")),
-                })
-        except FileNotFoundError:
-            pass
-        flowfile.set_content(json.dumps({"templates": templates_out}).encode())
-        return [flowfile]
-
-    if action == "instantiate_template":
-        template_name = body.get("template_name", "")
-        custom_name = body.get("name", "")  # optional override name
-        variables = body.get("variables", {})
-        if not template_name:
-            flowfile.set_content(json.dumps({"error": "Missing template_name"}).encode())
-            flowfile.set_attribute("http.response.status", "400")
-            return [flowfile]
-        from core.paths import TASK_TEMPLATES_FILE, ensure_seed_file
-        ensure_seed_file(TASK_TEMPLATES_FILE, "task_templates.json")
-        _tpl_path = str(TASK_TEMPLATES_FILE)
-        try:
-            with open(_tpl_path, "r") as f:
-                _tpls = json.load(f)
-        except FileNotFoundError:
-            _tpls = {}
-        tpl = _tpls.get(template_name)
-        if not tpl:
-            flowfile.set_content(json.dumps({"error": f"Template '{template_name}' not found"}).encode())
-            flowfile.set_attribute("http.response.status", "404")
-            return [flowfile]
-        # Validate required variables
-        for vname, vspec in (tpl.get("variables") or {}).items():
-            if isinstance(vspec, dict) and vspec.get("required") and vname not in variables:
-                flowfile.set_content(json.dumps(
-                    {"error": f"Missing required variable: {vname}"}).encode())
-                flowfile.set_attribute("http.response.status", "400")
-                return [flowfile]
-        # Apply defaults for unset variables
-        for vname, vspec in (tpl.get("variables") or {}).items():
-            if isinstance(vspec, dict) and vname not in variables:
-                variables[vname] = vspec.get("default", "")
-        # Create user-scoped task_def
+        # Templates are just global task_defs in the repository
         from core.resource_store import ResourceStore
-        import time as _time
         rs = ResourceStore.instance()
-        def_name = custom_name or template_name
-        task_def = {
-            "name": def_name,
-            "prompt": tpl.get("prompt", ""),
-            "criteria": tpl.get("criteria", ""),
-            "default_interval": tpl.get("default_interval", "6/1m"),
-            "description": tpl.get("description", ""),
-            "category": tpl.get("category", ""),
-            "created_by": user_id,
-            "created_at": _time.time(),
-            "updated_at": _time.time(),
-            "from_template": template_name,
-            "_scope": "user",
-        }
-        # Resolve variables in prompt and criteria
-        for vname, vval in variables.items():
-            task_def["prompt"] = task_def["prompt"].replace(f"${{{vname}}}", str(vval))
-            if task_def["criteria"]:
-                task_def["criteria"] = task_def["criteria"].replace(f"${{{vname}}}", str(vval))
-        rs.save("task_def", def_name, task_def, user_id=user_id)
-        flowfile.set_content(json.dumps({
-            "ok": True, "name": def_name, "from_template": template_name,
-            "variables_applied": variables,
-        }).encode())
+        from core.resource_store import GLOBAL_USER_ID
+        all_tasks = rs.list("task_def", GLOBAL_USER_ID)
+        templates_out = [{
+            "name": t["name"],
+            "description": t.get("description", ""),
+            "default_interval": t.get("default_interval", ""),
+            "has_criteria": bool(t.get("criteria")),
+        } for t in all_tasks]
+        flowfile.set_content(json.dumps({"templates": templates_out}).encode())
         return [flowfile]
 
     if action == "task_history":

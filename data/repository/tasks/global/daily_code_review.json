@@ -1,0 +1,7 @@
+{
+  "name": "daily_code_review",
+  "prompt": "Review the latest code changes in the project. Focus on:\n- Code quality and best practices\n- Potential bugs or security issues\n- Performance concerns\n- Readability and maintainability\n\nProvide a concise summary with actionable feedback for each issue found.",
+  "description": "Review recent code changes and provide feedback",
+  "criteria": "Code review completed with at least one actionable finding or explicit confirmation that code quality is satisfactory.",
+  "default_interval": "1/1d"
+}

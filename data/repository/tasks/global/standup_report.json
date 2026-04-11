@@ -1,0 +1,7 @@
+{
+  "name": "standup_report",
+  "prompt": "Generate a standup report based on recent activity:\n\n**Yesterday:**\n- Summarize completed work from the last 24 hours\n\n**Today:**\n- List planned tasks and priorities\n\n**Blockers:**\n- Identify any blockers or risks\n\nKeep it concise and actionable. Use bullet points.",
+  "description": "Generate a daily standup report from recent activity",
+  "criteria": "Report generated with all three sections (yesterday, today, blockers).",
+  "default_interval": "1/1d"
+}

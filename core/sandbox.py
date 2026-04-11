@@ -468,29 +468,28 @@ def build_sandbox_globals(
     def _get_secret(key: str, user_id: str) -> str:
         """Get a decrypted secret by name. Usage: get_secret('my_api_key')"""
         import json as _j
-        from core.paths import AGENT_SECRETS_FILE
-        secrets_path = AGENT_SECRETS_FILE
+        from core.paths import user_secrets_path
+        secrets_path = user_secrets_path(user_id)
         if not secrets_path.exists():
             raise KeyError(f"Secret '{key}' not found")
         data = _j.loads(secrets_path.read_text(encoding="utf-8"))
-        namespaced = f"{user_id}.{key}"
-        entry = data.get(namespaced)
-        if entry is None:
+        encrypted = data.get(key)
+        if encrypted is None:
             raise KeyError(f"Secret '{key}' not found for user '{user_id}'")
-        encrypted = entry.get("value", "") if isinstance(entry, dict) else entry
+        if isinstance(encrypted, dict):
+            encrypted = encrypted.get("value", encrypted)
         from core.secrets import get_secrets_manager
         return get_secrets_manager().decrypt(encrypted)
 
     def _get_variable(key: str, user_id: str) -> str:
         """Get a stored variable by name. Usage: get_variable('my_var')"""
         import json as _j
-        from core.paths import AGENT_VARIABLES_FILE
-        var_path = AGENT_VARIABLES_FILE
-        if not var_path.exists():
+        from core.paths import user_params_path
+        params_path = user_params_path(user_id)
+        if not params_path.exists():
             raise KeyError(f"Variable '{key}' not found")
-        data = _j.loads(var_path.read_text(encoding="utf-8"))
-        namespaced = f"{user_id}.{key}"
-        entry = data.get(namespaced)
+        data = _j.loads(params_path.read_text(encoding="utf-8"))
+        entry = data.get(key)
         if entry is None:
             raise KeyError(f"Variable '{key}' not found for user '{user_id}'")
         return entry.get("value", "") if isinstance(entry, dict) else str(entry)

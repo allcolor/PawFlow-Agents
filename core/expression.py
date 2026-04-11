@@ -16,8 +16,6 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 from core.paths import (
-    AGENT_SECRETS_FILE,
-    AGENT_VARIABLES_FILE,
     GLOBAL_PARAMS_FILE,
     GLOBAL_SECRETS_FILE,
     USER_CONFIG_DIR,
@@ -25,24 +23,8 @@ from core.paths import (
 )
 
 
-def _load_variables() -> Dict[str, str]:
-    """Load variables from the agent variables store (plaintext)."""
-    if not AGENT_VARIABLES_FILE.exists():
-        return {}
-    try:
-        raw = json.loads(AGENT_VARIABLES_FILE.read_text(encoding="utf-8"))
-        return {k: v.get("value", "") if isinstance(v, dict) else str(v)
-                for k, v in raw.items()}
-    except Exception as e:
-        logger.warning(f"Failed to load variables: {e}")
-        return {}
 
 
-def _load_secrets() -> Dict[str, str]:
-    """Load and decrypt secrets from the agent secrets store."""
-    from core.config_store import ConfigStore
-    values = ConfigStore.load_secrets(AGENT_SECRETS_FILE)
-    return {k: str(v) for k, v in values.items()}
 
 
 def _load_global_parameters() -> Dict[str, str]:
@@ -395,24 +377,11 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
         val, found = _cascade_secret(key, exact_scope=exact_scope)
         if found:
             return _return_val(val)
-        # Legacy per-user secrets (agent_secrets.json)
-        if secrets is None:
-            secrets = _load_secrets()
-        if key in secrets:
-            resolved = _resolve_value(secrets[key])
-            if resolved is not None:
-                return _return_val(resolved)
 
         # 2. Parameters: flow → conv → user → global
         val, found = _cascade_param(key, exact_scope=exact_scope)
         if found:
             return _return_val(val)
-
-        # 3. Legacy variables (agent_variables.json)
-        if variables is None:
-            variables = _load_variables()
-        if key in variables:
-            return _return_val(variables[key])
 
         # Not found — try pipeline operations with empty (e.g. ${x:default("fallback")})
         if operations:

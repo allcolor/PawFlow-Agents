@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 from core import FlowFile, TaskFactory
 from core.tool_registry import (
-    ScraplingFetchHandler, create_default_registry, load_agent_tools,
+    ScraplingFetchHandler, create_default_registry,
 )
 
 

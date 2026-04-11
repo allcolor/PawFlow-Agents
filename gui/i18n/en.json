@@ -1,14 +1,12 @@
 {
     "app.name": "PawFlow",
     "app.subtitle": "Data Flow Engine",
-
     "nav.dashboard": "Dashboard",
     "nav.editor": "Editor",
     "nav.runtime": "Runtime",
     "nav.monitoring": "Monitoring",
     "nav.settings": "Settings",
     "nav.documentation": "Documentation",
-
     "common.save": "Save",
     "common.cancel": "Cancel",
     "common.delete": "Delete",
@@ -31,7 +29,6 @@
     "common.description": "Description",
     "common.version": "Version",
     "common.id": "ID",
-
     "connection.mode": "Connection Mode",
     "connection.direct": "Direct",
     "connection.api": "API",
@@ -42,7 +39,6 @@
     "connection.login": "Login",
     "connection.username": "Username",
     "connection.password": "Password",
-
     "dashboard.title": "Dashboard",
     "dashboard.flows": "Flows",
     "dashboard.no_flows": "No flows found.",
@@ -53,7 +49,6 @@
     "dashboard.search_placeholder": "Search flows by name, ID or description...",
     "dashboard.no_search_results": "No flows match your search.",
     "dashboard.system_health": "System Health",
-
     "editor.title": "Flow Editor",
     "editor.new_flow": "New Flow",
     "editor.save_flow": "Save Flow",
@@ -82,7 +77,6 @@
     "editor.subflow_ports": "Subflow Ports",
     "editor.canvas": "Canvas",
     "editor.json_preview": "JSON Preview",
-
     "runtime.title": "Runtime",
     "runtime.manual": "Manual Execution",
     "runtime.continuous": "Continuous",
@@ -104,19 +98,16 @@
     "runtime.history": "Execution History",
     "runtime.no_history": "No execution history.",
     "runtime.download_results": "Download Results",
-
     "runtime.continuous.start": "Start Continuous",
     "runtime.continuous.stop": "Stop",
     "runtime.continuous.inject": "Inject FlowFile",
     "runtime.continuous.status": "Status",
     "runtime.continuous.queue_stats": "Queue Statistics",
-
     "runtime.cron.add_job": "Add Job",
     "runtime.cron.job_id": "Job ID",
     "runtime.cron.cron_expr": "CRON Expression",
     "runtime.cron.flow_path": "Flow Path",
     "runtime.cron.no_jobs": "No scheduled jobs.",
-
     "runtime.trigger.create": "Create Trigger",
     "runtime.trigger.type": "Trigger Type",
     "runtime.trigger.file_watcher": "File Watcher",
@@ -133,7 +124,6 @@
     "runtime.trigger.stopped": "Stopped",
     "runtime.trigger.history": "Trigger History",
     "runtime.trigger.no_triggers": "No triggers configured.",
-
     "runtime.debug.title": "Debug",
     "runtime.debug.breakpoints": "Breakpoints",
     "runtime.debug.continue": "Continue",
@@ -142,7 +132,6 @@
     "runtime.debug.paused_at": "Paused at {task_id}",
     "runtime.debug.snapshots": "Snapshots",
     "runtime.debug.inspector": "FlowFile Inspector",
-
     "monitoring.title": "Monitoring",
     "monitoring.bulletins": "Bulletins",
     "monitoring.provenance": "Provenance",
@@ -153,7 +142,6 @@
     "monitoring.success_rate": "Success Rate",
     "monitoring.avg_duration": "Average Duration",
     "monitoring.active_executions": "Active Executions",
-
     "settings.title": "Settings",
     "settings.general": "General",
     "settings.storage": "Storage",
@@ -225,7 +213,6 @@
     "settings.nifi_upload_hint": "Upload a NiFi export file to get started.",
     "settings.nifi_conversion_error": "Conversion error:",
     "settings.converting": "Converting...",
-
     "runtime.flow_view": "Flow View",
     "runtime.auto_layout": "Auto Layout",
     "runtime.freeze": "Freeze",
@@ -233,7 +220,6 @@
     "runtime.inject_success": "FlowFile injected",
     "runtime.inject_backpressure": "Backpressure: injection refused",
     "runtime.inject_target": "Target task (entry point)",
-
     "runtime.performance.title": "Task Performance",
     "runtime.performance.runs": "Runs",
     "runtime.performance.errors": "Errors",
@@ -241,7 +227,6 @@
     "runtime.performance.bytes_out": "Bytes Out",
     "runtime.performance.error_rate": "Error Rate",
     "runtime.performance.bottleneck": "Bottleneck",
-
     "logs.title": "Logs",
     "logs.level": "Level",
     "logs.task_filter": "Task",
@@ -250,13 +235,11 @@
     "logs.export": "Export",
     "logs.search_placeholder": "Search in logs...",
     "logs.empty": "No log entries",
-
     "editor.annotation": "Note",
     "editor.annotation_placeholder": "Add a comment about this task...",
     "editor.selection": "Selection",
     "editor.click_to_configure": "Click a node to configure its parameters.",
     "editor.empty_canvas_hint": "Add tasks from the palette on the left to get started.",
-
     "task.categories.system": "System",
     "task.categories.io": "I/O",
     "task.categories.data": "Data",
@@ -265,12 +248,10 @@
     "task.categories.messaging": "Messaging",
     "task.categories.ai": "AI",
     "task.categories.plugins": "Plugins",
-
     "language.selector": "Language",
     "language.en": "English",
     "language.fr": "Français",
     "language.es": "Español",
-
     "queue.title": "Queue Management",
     "queue.contents": "Queue Contents",
     "queue.clear": "Clear Queue",
@@ -290,7 +271,6 @@
     "queue.stats_out": "Out",
     "queue.ttl": "TTL",
     "queue.expired": "Expired",
-
     "settings.audit": "Audit",
     "settings.webhooks": "Webhooks",
     "settings.cluster": "Cluster",
@@ -306,7 +286,6 @@
     "settings.cluster.title": "Cluster Status",
     "settings.cluster.instances": "Instances",
     "settings.cluster.no_instances": "No cluster instances",
-
     "service.title": "Services",
     "service.start": "Start",
     "service.stop": "Stop",
@@ -322,7 +301,6 @@
     "service.disable_success": "Service '{id}' disabled.",
     "service.list_empty": "No services installed. Use /service install <type> <name> to add one.",
     "service.install_usage": "Usage: /service install <type> <name> [key=value,...]",
-
     "auth.login": "Login",
     "auth.logout": "Logout",
     "auth.username": "Username",
@@ -351,7 +329,6 @@
     "auth.auth_disabled_info": "Authentication disabled. All users have full access.",
     "auth.no_oauth_providers": "No OAuth2 providers configured.",
     "auth.configure_oauth_hint": "Configure OAuth2 in Settings > Security",
-
     "cluster.title": "Cluster & Workers",
     "cluster.instances": "Instances",
     "cluster.no_instances": "No cluster instances",
@@ -364,14 +341,12 @@
     "cluster.worker_url": "Worker URL",
     "cluster.status": "Status",
     "cluster.tasks_assigned": "Tasks Assigned",
-
     "secrets.title": "Secrets Management",
     "secrets.add": "Add Secret",
     "secrets.name": "Secret Name",
     "secrets.value": "Secret Value",
     "secrets.no_secrets": "No secrets configured",
     "secrets.encrypted": "Encrypted",
-
     "params.title": "Parameter Contexts",
     "params.add_context": "Add Context",
     "params.context_name": "Context Name",
@@ -380,7 +355,6 @@
     "params.add_param": "Add Parameter",
     "params.value": "Value",
     "params.sensitive": "Sensitive",
-
     "preview.title": "Data Preview",
     "preview.enable": "Enable Capture",
     "preview.disable": "Disable Capture",
@@ -395,7 +369,6 @@
     "preview.sample_count": "Samples",
     "preview.capture_active": "Capture active",
     "preview.capture_inactive": "Capture inactive",
-
     "diff.title": "Flow Diff",
     "diff.compare": "Compare",
     "diff.no_changes": "No changes detected",
@@ -407,7 +380,6 @@
     "diff.summary": "Summary",
     "diff.category": "Category",
     "diff.select_version": "Select version to compare",
-
     "editor.undo": "Undo",
     "editor.redo": "Redo",
     "editor.duplicate": "Duplicate",
@@ -417,7 +389,6 @@
     "editor.expr_input": "Expression",
     "editor.expr_attrs": "Attributes (JSON)",
     "editor.expr_unresolved": "unresolved",
-
     "runtime.input_file_path": "Input file path",
     "runtime.upload_file": "Or upload a file",
     "runtime.file_loaded": "File loaded: {name} ({size} bytes)",
@@ -497,7 +468,6 @@
     "runtime.svc_use_local": "Use flow's own service (local)",
     "runtime.svc_forwarded_to": "Forwarded to",
     "runtime.no_routes": "Service {svc_id}: no routes registered!",
-
     "monitor.execution": "Execution: {id}",
     "monitor.running_progress": "Execution in progress...",
     "monitor.success_progress": "Execution completed successfully",
@@ -533,7 +503,6 @@
     "monitor.status_success": "Success",
     "monitor.status_failed": "Failed",
     "monitor.status_cancelled": "Cancelled",
-
     "common.navigation": "Navigation",
     "common.configuration": "Configuration",
     "common.total": "Total",
@@ -544,29 +513,22 @@
     "common.condition": "Condition",
     "common.filters": "Filters",
     "common.all": "All",
-
     "connection.logged_in": "Logged in",
-
     "editor.show_minimap": "Show minimap",
     "editor.show_controls": "Show controls",
     "editor.read_error": "Cannot read saved flow file.",
-
     "cluster.no_workers": "No workers registered.",
     "cluster.worker_added": "Worker added: {name}",
     "cluster.max_concurrent": "Max concurrent",
     "cluster.labels_json": "Labels (JSON)",
-
     "secrets.info": "Secrets are stored encrypted using PAWFLOW_SECRET_KEY or auto-generated key.",
     "secrets.saved": "Secret '{name}' saved",
     "secrets.reveal": "Reveal",
-
     "params.context_created": "Context '{name}' created",
-
     "runtime.continuous_desc": "FlowFiles flow continuously through the flow. Errors trigger cascading backpressure.",
     "runtime.new_flow": "New flow...",
     "runtime.executor_not_found": "Executor not found.",
     "runtime.routes_label": "Routes {svc_id}: {routes}",
-
     "runtime.debug.paused_at_task": "Paused at task: **{task}**",
     "runtime.debug.step_mode": "Step mode active",
     "runtime.debug.running_with_bp": "Running with {count} breakpoint(s)",
@@ -576,7 +538,6 @@
     "runtime.debug.bp_log_message": "Log message",
     "runtime.debug.no_snapshots": "No snapshots captured yet.",
     "runtime.debug.no_snapshots_hint": "No snapshots yet. Set breakpoints and execute to capture FlowFile data.",
-
     "runtime.trigger.create_button": "Create trigger",
     "runtime.trigger.created": "Trigger '{id}' created and started",
     "runtime.trigger.id_flow_required": "Trigger ID and flow path are required",
@@ -587,8 +548,6 @@
     "runtime.trigger.condition_label": "Condition",
     "runtime.trigger.json_path": "JSON path",
     "runtime.trigger.expected_value": "Expected value",
-
-    "monitor.execution_trend": "Execution Trend",
     "monitor.executions_per_flow": "Executions per flow",
     "monitor.execution_duration": "Execution Duration",
     "monitor.kb_processed": "KB processed",
@@ -597,7 +556,6 @@
     "monitor.clean_orphans": "Clean orphans",
     "monitor.orphans_cleaned": "{count} orphan(s) cleaned",
     "monitor.spilltracker_unavailable": "SpillTracker unavailable: {error}",
-
     "auth.copy_key_warning": "Copy this key now, it will not be shown again.",
     "auth.configure_oauth": "Configure an OAuth2 provider",
     "auth.provider_name": "Provider name",
@@ -608,7 +566,6 @@
     "auth.userinfo_url": "UserInfo URL",
     "auth.redirect_uri": "Redirect URI",
     "auth.provider_saved": "Provider {name} configured",
-
     "settings.nifi_preview": "Converted flow preview",
     "settings.nifi_warnings": "{count} warning(s)",
     "settings.nifi_unmapped": "{count} unmapped processor(s)",
@@ -619,7 +576,6 @@
     "settings.nifi_llm_config": "LLM Configuration (optional)",
     "settings.llm_api_key_note": "Provider, URL and model are saved to disk. API key is session-only (not persisted for security).",
     "settings.nifi_flow_imported": "Flow imported: {path}",
-
     "doc.title": "Documentation",
     "doc.getting_started": "Getting Started",
     "doc.getting_started_1": "**Create a flow**: Go to the Editor and add tasks",
@@ -633,7 +589,6 @@
     "doc.architecture_engine": "**Engine**: Parser, validator, and flow executor",
     "doc.architecture_tasks": "**Tasks**: System tasks (log, replace_text, wait, fail)",
     "doc.architecture_storage": "**Storage**: Git, PostgreSQL, SQLite, Filesystem",
-
     "editor.canvas_options": "Canvas Options",
     "editor.layout": "Layout",
     "editor.layout_manual": "Manual (free drag)",
@@ -650,7 +605,6 @@
     "runtime.cron.never_executed": "Never executed",
     "settings.about": "About",
     "settings.nifi_empty_script": "Empty script — nothing to convert",
-
     "tree.structure": "Flow Structure",
     "tree.entries": "Entries",
     "tree.tasks": "Tasks",
@@ -665,23 +619,19 @@
     "tree.possible_paths": "Possible paths",
     "tree.execution_order": "Execution Order",
     "tree.cycle_detected": "Cycle detected",
-
     "editor.color_legend": "Color Legend",
     "editor.flow_tree": "Flow Tree",
     "editor.add_variable": "Add Variable",
-
     "logs.persistence": "Log Persistence",
     "logs.persist_to_file": "Save logs to file",
     "logs.log_dir": "Log directory",
     "logs.retention_days": "Retention (days)",
     "logs.file_saved": "Logs saved to {path}",
     "logs.auto_persist": "Auto-persist on execution",
-
     "monitor.active_spill_files": "Active spill files",
     "monitor.total_size": "Total size",
     "monitor.total_spills": "Total spills",
     "monitor.cleaned_orphans": "Cleaned orphans",
-
     "doc.task_reference": "Task Reference",
     "doc.task_reference_desc": "All available task types with their parameters and usage.",
     "doc.expressions": "Expressions",
@@ -707,18 +657,15 @@
     "doc.no_params": "No configurable parameters",
     "doc.required": "Required",
     "doc.optional": "Optional",
-
     "editor.metadata": "Metadata",
     "editor.author": "Author",
     "editor.import_json": "Import JSON",
     "editor.template_tags": "Tags (comma separated)",
     "editor.template_difficulty": "Difficulty",
     "common.export": "Export",
-
     "runtime.cron.params_help": "JSON dict of parameters to inject into the flow at each execution",
     "runtime.cron.last_run": "Last run",
     "runtime.cron.next_run": "Next run",
-
     "editor.groups": "Process Groups",
     "editor.add_group": "Add Group",
     "editor.group_name": "Group Name",
@@ -728,7 +675,6 @@
     "editor.group_created": "Group '{name}' created",
     "editor.assign_to_group": "Assign to group",
     "editor.remove_from_group": "Remove from group",
-
     "monitor.last_update": "Last update",
     "monitor.today": "today",
     "monitor.view_full_details": "View full details",
@@ -749,7 +695,6 @@
     "monitor.started": "Started: {time}",
     "monitor.worker_tasks": "Tasks: {current}/{max}",
     "monitor.worker_stats": "Executed: {executed} | Errors: {errors}",
-
     "settings.tasks_available": "{count} tasks available",
     "settings.port": "Port",
     "settings.logs_cleaned": "{count} old log file(s) removed",
@@ -758,7 +703,6 @@
     "settings.limit": "Limit",
     "settings.webhook_url": "URL (POST)",
     "settings.webhook_headers": "Headers (JSON)",
-
     "doc.syntax_reference": "Syntax Reference",
     "doc.attribute_expressions": "Attribute expressions",
     "doc.flow_parameters": "Flow parameters",
@@ -773,14 +717,12 @@
     "doc.relation_success_desc": "Task completed without error",
     "doc.relation_failure_desc": "Task raised an exception",
     "doc.relation_both_desc": "Always routes, regardless of outcome",
-
     "common.reset": "Reset",
     "common.help": "Help",
     "common.provider": "Provider",
     "common.api_key": "API Key",
     "common.base_url": "Base URL",
     "common.model": "Model",
-
     "runtime.trigger.trigger_id": "Trigger ID",
     "runtime.trigger.name": "Name",
     "runtime.trigger.flow_select": "Flow",
@@ -793,7 +735,6 @@
     "runtime.trigger.webhook_port": "Port",
     "runtime.trigger.url_path": "URL path",
     "runtime.trigger.secret": "Secret (optional)",
-
     "editor.tpl_author": "Author",
     "editor.tpl_difficulty": "Difficulty",
     "editor.tpl_tasks_count": "Tasks",
@@ -803,12 +744,10 @@
     "editor.subflow_default_input": "Default input port",
     "editor.subflow_outputs": "Outputs (data leaving the subflow)",
     "editor.subflow_relationship": "Relationship for `{name}` ({id})",
-
     "doc.shortcuts_title": "Keyboard Shortcuts",
     "doc.shortcuts_editor": "Editor",
     "doc.shortcuts_canvas": "Canvas",
     "doc.shortcuts_general": "General",
-
     "dashboard.running_flows": "Running Flows",
     "dashboard.success_rate": "Success Rate",
     "dashboard.task_types": "Task Types",
@@ -825,7 +764,6 @@
     "dashboard.quick_actions": "Quick Actions",
     "dashboard.open_runtime": "Open Runtime",
     "dashboard.versions_available": "versions",
-
     "timeline.title": "Execution Timeline",
     "timeline.task": "Task",
     "timeline.status": "Status",
@@ -840,7 +778,6 @@
     "timeline.total_duration": "Total Duration",
     "timeline.slowest_task": "Slowest Task",
     "timeline.error_count": "Errors",
-
     "agent.title": "Agent LLM",
     "agent.iterations": "Iterations",
     "agent.tools_called": "Tools Called",
@@ -851,39 +788,11 @@
     "agent.no_tools": "No tools configured",
     "agent.llm_service": "LLM Service",
     "agent.source": "Source",
-
     "prompt.title": "Prompts",
     "prompt.select": "Select Prompt",
     "prompt.empty": "No prompts available",
     "prompt.library": "Prompt Library",
     "prompt.category": "Category",
-
-    "agent_tools.title": "Agent Tools",
-    "agent_tools.section": "Agent Tools Configuration",
-    "agent_tools.type": "Type",
-    "agent_tools.type_builtin": "Builtin",
-    "agent_tools.type_http": "HTTP Endpoint",
-    "agent_tools.type_task": "PawFlow Task",
-    "agent_tools.type_mcp": "MCP Tool",
-    "agent_tools.type_mcp_server": "MCP Server (auto-discover)",
-    "agent_tools.endpoint": "Endpoint URL",
-    "agent_tools.method": "HTTP Method",
-    "agent_tools.handler": "Builtin Handler",
-    "agent_tools.task_type": "Task Type",
-    "agent_tools.server_url": "MCP Server URL",
-    "agent_tools.tool_name": "Tool Name",
-    "agent_tools.description": "Description",
-    "agent_tools.parameters": "Parameters Schema",
-    "agent_tools.headers": "Headers",
-    "agent_tools.timeout": "Timeout (s)",
-    "agent_tools.config": "Task Config",
-    "agent_tools.parameter_mapping": "Parameter Mapping",
-    "agent_tools.add_tool": "Add Tool",
-    "agent_tools.remove_tool": "Remove Tool",
-    "agent_tools.no_tools": "No agent tools defined. The agent will use default builtin tools.",
-    "agent_tools.discover": "Discover Tools",
-    "agent_tools.discovered": "Discovered {count} tools from MCP server",
-
     "scrapling.title": "Scrapling Fetch",
     "scrapling.mode": "Fetch Mode",
     "scrapling.mode_fast": "Fast (HTTP, no JS)",
@@ -894,25 +803,20 @@
     "scrapling.output_text": "Text",
     "scrapling.output_html": "HTML",
     "scrapling.impersonate": "Impersonate Browser",
-
     "conversation.store": "Conversation Store",
     "conversation.ttl": "Conversation TTL (s)",
     "conversation.id": "Conversation ID",
     "conversation.multi_turn": "Multi-turn Conversations",
-
     "file_store.title": "File Store",
     "file_store.ttl": "File TTL (s)",
     "file_store.base_url": "File Download Base URL",
     "file_store.created": "File Created",
     "file_store.expired": "File Expired",
-
     "serve_file.title": "Serve File",
     "serve_file.not_found": "File not found or expired",
-
     "chat_ui.title": "Chat Interface",
     "chat_ui.agent_path": "Agent API Path",
     "chat_ui.login_url": "Login URL",
-
     "oauth.title": "OAuth2 Authentication",
     "oauth.provider": "OAuth2 Provider",
     "oauth.client_id": "Client ID",
@@ -936,14 +840,12 @@
     "oauth.success_redirect": "Success Redirect URL",
     "oauth.allowed_roles": "Allowed Roles",
     "oauth.allowed_roles.desc": "Roles that can access this tool (empty = all)",
-
     "streaming.title": "SSE Streaming",
     "streaming.enabled": "Enable streaming mode",
     "streaming.sse_path": "SSE Events Path",
     "streaming.agent_events.title": "Agent SSE Stream",
     "streaming.agent_events.desc": "Stream agent events to client via Server-Sent Events",
     "streaming.timeout": "SSE Connection Timeout",
-
     "conversations.title": "Conversations",
     "conversations.new": "New Chat",
     "conversations.empty": "No conversations yet",
@@ -1044,7 +946,6 @@
     "messaging.link_code_generated": "Verification code generated. Send /link {code} on the other channel.",
     "messaging.link_success": "Identity linked successfully",
     "messaging.link_invalid_code": "Invalid or expired link code",
-
     "filesystem.local_name": "Local Filesystem (HTTP Relay)",
     "filesystem.ws_name": "Local Filesystem (WebSocket)",
     "filesystem.browser_name": "Browser Filesystem",
@@ -1098,7 +999,6 @@
     "exec.approval_auto": "Auto (low=auto, high=ask)",
     "exec.approval_ask": "Ask (medium+=ask)",
     "exec.approval_strict": "Strict (all ask)",
-
     "relay.connected": "Relay '{id}' connected ({type})",
     "relay.disconnected": "Relay '{id}' disconnected",
     "relay.no_relay": "No relay connected. Run: python pawflow_executor_relay.py --connect ws://<server>/ws/relay --token <api_key> --secret <secret> --dir <path>",
@@ -1107,19 +1007,16 @@
     "relay.reconnecting": "Relay reconnecting...",
     "relay.status_connected": "Connected",
     "relay.status_disconnected": "Disconnected",
-
     "tool_approval.title": "Tool Permission",
     "tool_approval.deny": "Deny",
     "tool_approval.allow_once": "Allow Once",
     "tool_approval.allow_session": "Allow for Session",
     "tool_approval.always_allow": "Always Allow",
     "tool_approval.timeout": "Approval timed out",
-
     "service.heartbeat_down": "Service '{id}' disconnected — relay is no longer reachable",
     "service.auto_installed": "Service '{id}' auto-installed from relay",
     "service.auto_disabled": "Service '{id}' auto-disabled (relay disconnected)",
     "service.multi_available": "Multiple services available. Use 'service' parameter to choose.",
-
     "resources.title": "Resources",
     "resources.agents": "Agents",
     "resources.prompts": "Prompts",

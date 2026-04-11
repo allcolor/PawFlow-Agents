@@ -41,7 +41,7 @@ from core.llm_client import (
     LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
     LLMToolCall, LLMToolResult, LLMClientError,
 )
-from core.tool_registry import ToolRegistry, create_default_registry, load_agent_tools
+from core.tool_registry import ToolRegistry, create_default_registry
 
 logger = logging.getLogger(__name__)
 
@@ -190,15 +190,10 @@ class AgentLoopTask(
 
         Priority:
         1. Custom registry set via set_tool_registry()
-        2. Flow-level agent_tools (injected by parser)
-        3. Default builtin registry
+        2. Default builtin registry
         """
         if self._tool_registry is None:
-            agent_tools_config = self.config.get("agent_tools", {})
-            if agent_tools_config:
-                self._tool_registry = load_agent_tools(agent_tools_config)
-            else:
-                self._tool_registry = create_default_registry()
+            self._tool_registry = create_default_registry()
             # Merge dynamic user-uploaded tools
             try:
                 from core.dynamic_tool_store import DynamicToolStore

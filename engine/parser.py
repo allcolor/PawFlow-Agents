@@ -114,14 +114,6 @@ class FlowParser:
         # Parser les variables
         flow.variables = config.get('variables', {})
 
-        # Parser les agent_tools et les injecter dans les tasks agentLoop
-        agent_tools = config.get('agent_tools', {})
-        flow.agent_tools = agent_tools
-        if agent_tools:
-            for task_id, task in flow.tasks.items():
-                if getattr(task, 'TYPE', '') == 'agentLoop':
-                    task.config['agent_tools'] = agent_tools
-
         return flow
     
     @classmethod

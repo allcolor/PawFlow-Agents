@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 from core import FlowFile, TaskFactory
 from core.tool_registry import (
-    ToolRegistry, ToolHandler, create_default_registry, load_agent_tools,
+    ToolRegistry, ToolHandler, create_default_registry,
 )
 
 
@@ -625,8 +625,6 @@ class TestToolFilteringByRole(unittest.TestCase):
         count_before = len(registry.list_tools())
         assert count_before > 0  # has default tools
 
-
-# ── load_agent_tools allowed_roles ──────────────────────────────────
 
 
 class TestLoadAgentToolsAllowedRoles(unittest.TestCase):

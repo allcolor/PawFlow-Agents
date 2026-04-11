@@ -1,14 +1,12 @@
 {
     "app.name": "PawFlow",
     "app.subtitle": "Motor de flujo de datos",
-
     "nav.dashboard": "Panel de control",
     "nav.editor": "Editor",
     "nav.runtime": "Ejecución",
     "nav.monitoring": "Supervisión",
     "nav.settings": "Configuración",
     "nav.documentation": "Documentación",
-
     "common.save": "Guardar",
     "common.cancel": "Cancelar",
     "common.delete": "Eliminar",
@@ -31,7 +29,6 @@
     "common.description": "Descripción",
     "common.version": "Versión",
     "common.id": "ID",
-
     "connection.mode": "Modo de conexión",
     "connection.direct": "Directo",
     "connection.api": "API",
@@ -42,7 +39,6 @@
     "connection.login": "Iniciar sesión",
     "connection.username": "Nombre de usuario",
     "connection.password": "Contraseña",
-
     "dashboard.title": "Panel de control",
     "dashboard.flows": "Flujos",
     "dashboard.no_flows": "No se encontraron flujos.",
@@ -53,7 +49,6 @@
     "dashboard.search_placeholder": "Buscar flujos por nombre, ID o descripción...",
     "dashboard.no_search_results": "Ningún flujo coincide con su búsqueda.",
     "dashboard.system_health": "Salud del sistema",
-
     "editor.title": "Editor de flujos",
     "editor.new_flow": "Nuevo flujo",
     "editor.save_flow": "Guardar flujo",
@@ -82,7 +77,6 @@
     "editor.subflow_ports": "Puertos del subflujo",
     "editor.canvas": "Lienzo",
     "editor.json_preview": "Vista previa JSON",
-
     "runtime.title": "Ejecución",
     "runtime.manual": "Ejecución manual",
     "runtime.continuous": "Continua",
@@ -104,19 +98,16 @@
     "runtime.history": "Historial de ejecuciones",
     "runtime.no_history": "Sin historial de ejecuciones.",
     "runtime.download_results": "Descargar resultados",
-
     "runtime.continuous.start": "Iniciar en continuo",
     "runtime.continuous.stop": "Detener",
     "runtime.continuous.inject": "Inyectar FlowFile",
     "runtime.continuous.status": "Estado",
     "runtime.continuous.queue_stats": "Estadísticas de colas",
-
     "runtime.cron.add_job": "Añadir tarea programada",
     "runtime.cron.job_id": "ID de la tarea",
     "runtime.cron.cron_expr": "Expresión CRON",
     "runtime.cron.flow_path": "Ruta del flujo",
     "runtime.cron.no_jobs": "Sin tareas programadas.",
-
     "runtime.trigger.create": "Crear disparador",
     "runtime.trigger.type": "Tipo de disparador",
     "runtime.trigger.file_watcher": "Vigilancia de archivos",
@@ -133,7 +124,6 @@
     "runtime.trigger.stopped": "Detenido",
     "runtime.trigger.history": "Historial de disparadores",
     "runtime.trigger.no_triggers": "Sin disparadores configurados.",
-
     "runtime.debug.title": "Depuración",
     "runtime.debug.breakpoints": "Puntos de interrupción",
     "runtime.debug.continue": "Continuar",
@@ -142,7 +132,6 @@
     "runtime.debug.paused_at": "En pausa en {task_id}",
     "runtime.debug.snapshots": "Instantáneas",
     "runtime.debug.inspector": "Inspector de FlowFile",
-
     "monitoring.title": "Supervisión",
     "monitoring.bulletins": "Boletines",
     "monitoring.provenance": "Procedencia",
@@ -153,7 +142,6 @@
     "monitoring.success_rate": "Tasa de éxito",
     "monitoring.avg_duration": "Duración media",
     "monitoring.active_executions": "Ejecuciones activas",
-
     "settings.title": "Configuración",
     "settings.general": "General",
     "settings.storage": "Almacenamiento",
@@ -225,7 +213,6 @@
     "settings.nifi_upload_hint": "Suba un archivo de exportación NiFi para comenzar.",
     "settings.nifi_conversion_error": "Error de conversión:",
     "settings.converting": "Convirtiendo...",
-
     "runtime.flow_view": "Vista del flujo",
     "runtime.auto_layout": "Auto Layout",
     "runtime.freeze": "Bloquear",
@@ -233,7 +220,6 @@
     "runtime.inject_success": "FlowFile inyectado",
     "runtime.inject_backpressure": "Contrapresión: inyección rechazada",
     "runtime.inject_target": "Tarea destino (punto de entrada)",
-
     "runtime.performance.title": "Rendimiento de tareas",
     "runtime.performance.runs": "Ejecuciones",
     "runtime.performance.errors": "Errores",
@@ -241,7 +227,6 @@
     "runtime.performance.bytes_out": "Bytes salida",
     "runtime.performance.error_rate": "Tasa de error",
     "runtime.performance.bottleneck": "Cuello de botella",
-
     "logs.title": "Logs",
     "logs.level": "Nivel",
     "logs.task_filter": "Tarea",
@@ -250,13 +235,11 @@
     "logs.export": "Exportar",
     "logs.search_placeholder": "Buscar en los logs...",
     "logs.empty": "Sin entradas de log",
-
     "editor.annotation": "Nota",
     "editor.annotation_placeholder": "Añadir un comentario sobre esta tarea...",
     "editor.selection": "Selección",
     "editor.click_to_configure": "Haga clic en un nodo para configurar sus parámetros.",
     "editor.empty_canvas_hint": "Añada tareas desde la paleta a la izquierda para empezar.",
-
     "task.categories.system": "Sistema",
     "task.categories.io": "E/S",
     "task.categories.data": "Datos",
@@ -265,12 +248,10 @@
     "task.categories.messaging": "Mensajería",
     "task.categories.ai": "IA",
     "task.categories.plugins": "Extensiones",
-
     "language.selector": "Idioma",
     "language.en": "English",
     "language.fr": "Français",
     "language.es": "Español",
-
     "queue.title": "Gestión de colas",
     "queue.contents": "Contenido de la cola",
     "queue.clear": "Vaciar cola",
@@ -290,7 +271,6 @@
     "queue.stats_out": "Salida",
     "queue.ttl": "TTL",
     "queue.expired": "Expirado",
-
     "settings.audit": "Auditoría",
     "settings.webhooks": "Webhooks",
     "settings.cluster": "Clúster",
@@ -306,7 +286,6 @@
     "settings.cluster.title": "Estado del clúster",
     "settings.cluster.instances": "Instancias",
     "settings.cluster.no_instances": "Sin instancias de clúster",
-
     "service.title": "Servicios",
     "service.start": "Iniciar",
     "service.stop": "Detener",
@@ -322,7 +301,6 @@
     "service.disable_success": "Servicio '{id}' desactivado.",
     "service.list_empty": "Sin servicios instalados. Use /service install <tipo> <nombre> para agregar uno.",
     "service.install_usage": "Uso: /service install <tipo> <nombre> [clave=valor,...]",
-
     "auth.login": "Iniciar sesión",
     "auth.logout": "Cerrar sesión",
     "auth.username": "Nombre de usuario",
@@ -351,7 +329,6 @@
     "auth.auth_disabled_info": "Autenticación desactivada. Todos los usuarios tienen acceso completo.",
     "auth.no_oauth_providers": "Ningún proveedor OAuth2 configurado.",
     "auth.configure_oauth_hint": "Configure OAuth2 en Ajustes > Seguridad",
-
     "cluster.title": "Clúster & Workers",
     "cluster.instances": "Instancias",
     "cluster.no_instances": "Sin instancias de clúster",
@@ -364,14 +341,12 @@
     "cluster.worker_url": "URL del worker",
     "cluster.status": "Estado",
     "cluster.tasks_assigned": "Tareas asignadas",
-
     "secrets.title": "Gestión de secretos",
     "secrets.add": "Añadir secreto",
     "secrets.name": "Nombre del secreto",
     "secrets.value": "Valor del secreto",
     "secrets.no_secrets": "Sin secretos configurados",
     "secrets.encrypted": "Cifrado",
-
     "params.title": "Contextos de parámetros",
     "params.add_context": "Añadir contexto",
     "params.context_name": "Nombre del contexto",
@@ -380,7 +355,6 @@
     "params.add_param": "Añadir parámetro",
     "params.value": "Valor",
     "params.sensitive": "Sensible",
-
     "preview.title": "Vista previa de datos",
     "preview.enable": "Activar captura",
     "preview.disable": "Desactivar captura",
@@ -395,7 +369,6 @@
     "preview.sample_count": "Muestras",
     "preview.capture_active": "Captura activa",
     "preview.capture_inactive": "Captura inactiva",
-
     "diff.title": "Comparación de flujos",
     "diff.compare": "Comparar",
     "diff.no_changes": "No se detectaron cambios",
@@ -407,7 +380,6 @@
     "diff.summary": "Resumen",
     "diff.category": "Categoría",
     "diff.select_version": "Seleccionar versión a comparar",
-
     "editor.undo": "Deshacer",
     "editor.redo": "Rehacer",
     "editor.duplicate": "Duplicar",
@@ -417,7 +389,6 @@
     "editor.expr_input": "Expresión",
     "editor.expr_attrs": "Atributos (JSON)",
     "editor.expr_unresolved": "sin resolver",
-
     "runtime.input_file_path": "Ruta del archivo de entrada",
     "runtime.upload_file": "O subir un archivo",
     "runtime.file_loaded": "Archivo cargado: {name} ({size} bytes)",
@@ -497,7 +468,6 @@
     "runtime.svc_use_local": "Usar el servicio del flujo (local)",
     "runtime.svc_forwarded_to": "Redirigido a",
     "runtime.no_routes": "Servicio {svc_id}: ¡sin rutas registradas!",
-
     "monitor.execution": "Ejecución: {id}",
     "monitor.running_progress": "Ejecución en curso...",
     "monitor.success_progress": "Ejecución completada con éxito",
@@ -533,7 +503,6 @@
     "monitor.status_success": "Éxito",
     "monitor.status_failed": "Fallido",
     "monitor.status_cancelled": "Cancelado",
-
     "common.navigation": "Navegación",
     "common.configuration": "Configuración",
     "common.total": "Total",
@@ -544,29 +513,22 @@
     "common.condition": "Condición",
     "common.filters": "Filtros",
     "common.all": "Todos",
-
     "connection.logged_in": "Conectado",
-
     "editor.show_minimap": "Mostrar minimapa",
     "editor.show_controls": "Mostrar controles",
     "editor.read_error": "No se puede leer el archivo de flujo guardado.",
-
     "cluster.no_workers": "Sin workers registrados.",
     "cluster.worker_added": "Worker añadido: {name}",
     "cluster.max_concurrent": "Max concurrente",
     "cluster.labels_json": "Labels (JSON)",
-
     "secrets.info": "Los secretos se almacenan cifrados usando PAWFLOW_SECRET_KEY o una clave auto-generada.",
     "secrets.saved": "Secreto '{name}' guardado",
     "secrets.reveal": "Revelar",
-
     "params.context_created": "Contexto '{name}' creado",
-
     "runtime.continuous_desc": "Los FlowFiles fluyen continuamente. Los errores activan contrapresión en cascada.",
     "runtime.new_flow": "Nuevo flujo...",
     "runtime.executor_not_found": "Ejecutor no encontrado.",
     "runtime.routes_label": "Rutas {svc_id}: {routes}",
-
     "runtime.debug.paused_at_task": "En pausa en tarea: **{task}**",
     "runtime.debug.step_mode": "Modo paso a paso activo",
     "runtime.debug.running_with_bp": "En ejecución con {count} punto(s) de interrupción",
@@ -576,7 +538,6 @@
     "runtime.debug.bp_log_message": "Mensaje de log",
     "runtime.debug.no_snapshots": "Sin instantáneas capturadas.",
     "runtime.debug.no_snapshots_hint": "Sin instantáneas. Defina puntos de interrupción y ejecute para capturar datos.",
-
     "runtime.trigger.create_button": "Crear disparador",
     "runtime.trigger.created": "Disparador '{id}' creado e iniciado",
     "runtime.trigger.id_flow_required": "El ID del disparador y la ruta del flujo son obligatorios",
@@ -587,8 +548,6 @@
     "runtime.trigger.condition_label": "Condición",
     "runtime.trigger.json_path": "Ruta JSON",
     "runtime.trigger.expected_value": "Valor esperado",
-
-    "monitor.execution_trend": "Tendencia de ejecución",
     "monitor.executions_per_flow": "Ejecuciones por flujo",
     "monitor.execution_duration": "Duración de ejecución",
     "monitor.kb_processed": "KB procesados",
@@ -597,7 +556,6 @@
     "monitor.clean_orphans": "Limpiar huérfanos",
     "monitor.orphans_cleaned": "{count} huérfano(s) limpiado(s)",
     "monitor.spilltracker_unavailable": "SpillTracker no disponible: {error}",
-
     "auth.copy_key_warning": "Copie esta clave ahora, no se mostrará de nuevo.",
     "auth.configure_oauth": "Configurar un proveedor OAuth2",
     "auth.provider_name": "Nombre del proveedor",
@@ -608,7 +566,6 @@
     "auth.userinfo_url": "URL UserInfo",
     "auth.redirect_uri": "URI de redirección",
     "auth.provider_saved": "Proveedor {name} configurado",
-
     "settings.nifi_preview": "Vista previa del flujo convertido",
     "settings.nifi_warnings": "{count} advertencia(s)",
     "settings.nifi_unmapped": "{count} procesador(es) no mapeado(s)",
@@ -619,7 +576,6 @@
     "settings.nifi_llm_config": "Configuración LLM (opcional)",
     "settings.llm_api_key_note": "El proveedor, URL y modelo se guardan en disco. La clave API permanece solo en sesión (no se persiste por seguridad).",
     "settings.nifi_flow_imported": "Flujo importado: {path}",
-
     "doc.title": "Documentación",
     "doc.getting_started": "Cómo empezar",
     "doc.getting_started_1": "**Crear un flujo**: Vaya al Editor y añada tareas",
@@ -633,7 +589,6 @@
     "doc.architecture_engine": "**Engine**: Parser, validador y ejecutor de flujos",
     "doc.architecture_tasks": "**Tasks**: Tareas del sistema (log, replace_text, wait, fail)",
     "doc.architecture_storage": "**Storage**: Git, PostgreSQL, SQLite, Archivos",
-
     "editor.canvas_options": "Opciones del lienzo",
     "editor.layout": "Disposición",
     "editor.layout_manual": "Manual (arrastre libre)",
@@ -650,7 +605,6 @@
     "runtime.cron.never_executed": "Nunca ejecutado",
     "settings.about": "Acerca de",
     "settings.nifi_empty_script": "Script vacío — nada que convertir",
-
     "tree.structure": "Estructura del flujo",
     "tree.entries": "Entradas",
     "tree.tasks": "Tareas",
@@ -665,23 +619,19 @@
     "tree.possible_paths": "Caminos posibles",
     "tree.execution_order": "Orden de ejecución",
     "tree.cycle_detected": "Ciclo detectado",
-
     "editor.color_legend": "Leyenda de colores",
     "editor.flow_tree": "Árbol del flujo",
     "editor.add_variable": "Añadir variable",
-
     "logs.persistence": "Persistencia de logs",
     "logs.persist_to_file": "Guardar logs en archivo",
     "logs.log_dir": "Directorio de logs",
     "logs.retention_days": "Retención (días)",
     "logs.file_saved": "Logs guardados: {path}",
     "logs.auto_persist": "Guardar automáticamente al ejecutar",
-
     "monitor.active_spill_files": "Archivos spill activos",
     "monitor.total_size": "Tamaño total",
     "monitor.total_spills": "Total spills",
     "monitor.cleaned_orphans": "Huérfanos limpiados",
-
     "doc.task_reference": "Referencia de tareas",
     "doc.task_reference_desc": "Todos los tipos de tareas disponibles con sus parámetros y uso.",
     "doc.expressions": "Expresiones",
@@ -707,18 +657,15 @@
     "doc.no_params": "Sin parámetros configurables",
     "doc.required": "Requerido",
     "doc.optional": "Opcional",
-
     "editor.metadata": "Metadatos",
     "editor.author": "Autor",
     "editor.import_json": "Importar JSON",
     "editor.template_tags": "Tags (separados por comas)",
     "editor.template_difficulty": "Dificultad",
     "common.export": "Exportar",
-
     "runtime.cron.params_help": "Diccionario JSON de parámetros para inyectar en el flujo en cada ejecución",
     "runtime.cron.last_run": "Última ejecución",
     "runtime.cron.next_run": "Próxima ejecución",
-
     "editor.groups": "Grupos de procesos",
     "editor.add_group": "Añadir grupo",
     "editor.group_name": "Nombre del grupo",
@@ -728,7 +675,6 @@
     "editor.group_created": "Grupo '{name}' creado",
     "editor.assign_to_group": "Asignar al grupo",
     "editor.remove_from_group": "Quitar del grupo",
-
     "monitor.last_update": "Última actualización",
     "monitor.today": "hoy",
     "monitor.view_full_details": "Ver detalles completos",
@@ -749,7 +695,6 @@
     "monitor.started": "Iniciado: {time}",
     "monitor.worker_tasks": "Tareas: {current}/{max}",
     "monitor.worker_stats": "Ejecutados: {executed} | Errores: {errors}",
-
     "settings.tasks_available": "{count} tareas disponibles",
     "settings.port": "Puerto",
     "settings.logs_cleaned": "{count} archivo(s) de log antiguo(s) eliminado(s)",
@@ -758,7 +703,6 @@
     "settings.limit": "Límite",
     "settings.webhook_url": "URL (POST)",
     "settings.webhook_headers": "Headers (JSON)",
-
     "doc.syntax_reference": "Referencia de sintaxis",
     "doc.attribute_expressions": "Expresiones de atributos",
     "doc.flow_parameters": "Parámetros del flujo",
@@ -773,14 +717,12 @@
     "doc.relation_success_desc": "Tarea completada sin error",
     "doc.relation_failure_desc": "La tarea lanzó una excepción",
     "doc.relation_both_desc": "Siempre enruta, independientemente del resultado",
-
     "common.reset": "Restablecer",
     "common.help": "Ayuda",
     "common.provider": "Proveedor",
     "common.api_key": "Clave API",
     "common.base_url": "URL base",
     "common.model": "Modelo",
-
     "runtime.trigger.trigger_id": "ID del disparador",
     "runtime.trigger.name": "Nombre",
     "runtime.trigger.flow_select": "Flujo",
@@ -793,7 +735,6 @@
     "runtime.trigger.webhook_port": "Puerto",
     "runtime.trigger.url_path": "Ruta URL",
     "runtime.trigger.secret": "Secreto (opcional)",
-
     "editor.tpl_author": "Autor",
     "editor.tpl_difficulty": "Dificultad",
     "editor.tpl_tasks_count": "Tareas",
@@ -803,12 +744,10 @@
     "editor.subflow_default_input": "Puerto de entrada predeterminado",
     "editor.subflow_outputs": "Salidas (datos saliendo del subflujo)",
     "editor.subflow_relationship": "Relación para `{name}` ({id})",
-
     "doc.shortcuts_title": "Atajos de teclado",
     "doc.shortcuts_editor": "Editor",
     "doc.shortcuts_canvas": "Lienzo",
     "doc.shortcuts_general": "General",
-
     "dashboard.running_flows": "Flujos en ejecución",
     "dashboard.success_rate": "Tasa de éxito",
     "dashboard.task_types": "Tipos de tareas",
@@ -825,7 +764,6 @@
     "dashboard.quick_actions": "Acciones rápidas",
     "dashboard.open_runtime": "Abrir ejecución",
     "dashboard.versions_available": "versiones",
-
     "timeline.title": "Cronología de ejecución",
     "timeline.task": "Tarea",
     "timeline.status": "Estado",
@@ -840,7 +778,6 @@
     "timeline.total_duration": "Duración total",
     "timeline.slowest_task": "Tarea más lenta",
     "timeline.error_count": "Errores",
-
     "agent.title": "Agente LLM",
     "agent.iterations": "Iteraciones",
     "agent.tools_called": "Herramientas llamadas",
@@ -851,39 +788,11 @@
     "agent.no_tools": "Ninguna herramienta configurada",
     "agent.llm_service": "Servicio LLM",
     "agent.source": "Fuente",
-
     "prompt.title": "Prompts",
     "prompt.select": "Seleccionar prompt",
     "prompt.empty": "No hay prompts disponibles",
     "prompt.library": "Biblioteca de prompts",
     "prompt.category": "Categoría",
-
-    "agent_tools.title": "Herramientas del agente",
-    "agent_tools.section": "Configuración de herramientas del agente",
-    "agent_tools.type": "Tipo",
-    "agent_tools.type_builtin": "Integrado",
-    "agent_tools.type_http": "Endpoint HTTP",
-    "agent_tools.type_task": "Tarea PawFlow",
-    "agent_tools.type_mcp": "Herramienta MCP",
-    "agent_tools.type_mcp_server": "Servidor MCP (auto-descubrimiento)",
-    "agent_tools.endpoint": "URL del endpoint",
-    "agent_tools.method": "Método HTTP",
-    "agent_tools.handler": "Handler integrado",
-    "agent_tools.task_type": "Tipo de tarea",
-    "agent_tools.server_url": "URL del servidor MCP",
-    "agent_tools.tool_name": "Nombre de la herramienta",
-    "agent_tools.description": "Descripción",
-    "agent_tools.parameters": "Esquema de parámetros",
-    "agent_tools.headers": "Encabezados",
-    "agent_tools.timeout": "Timeout (s)",
-    "agent_tools.config": "Config de la tarea",
-    "agent_tools.parameter_mapping": "Mapeo de parámetros",
-    "agent_tools.add_tool": "Añadir herramienta",
-    "agent_tools.remove_tool": "Eliminar herramienta",
-    "agent_tools.no_tools": "No hay herramientas de agente definidas. El agente usará las herramientas integradas por defecto.",
-    "agent_tools.discover": "Descubrir herramientas",
-    "agent_tools.discovered": "{count} herramientas descubiertas del servidor MCP",
-
     "scrapling.title": "Scrapling Fetch",
     "scrapling.mode": "Modo de obtención",
     "scrapling.mode_fast": "Rápido (HTTP, sin JS)",
@@ -894,25 +803,20 @@
     "scrapling.output_text": "Texto",
     "scrapling.output_html": "HTML",
     "scrapling.impersonate": "Imitar navegador",
-
     "conversation.store": "Almacén de conversaciones",
     "conversation.ttl": "TTL de conversaciones (s)",
     "conversation.id": "ID de conversación",
     "conversation.multi_turn": "Conversaciones multi-turno",
-
     "file_store.title": "Almacén de archivos",
     "file_store.ttl": "TTL de archivos (s)",
     "file_store.base_url": "URL base para archivos",
     "file_store.created": "Archivo creado",
     "file_store.expired": "Archivo expirado",
-
     "serve_file.title": "Servir archivo",
     "serve_file.not_found": "Archivo no encontrado o expirado",
-
     "chat_ui.title": "Interfaz de chat",
     "chat_ui.agent_path": "Ruta API del agente",
     "chat_ui.login_url": "URL de inicio de sesión",
-
     "oauth.title": "Autenticación OAuth2",
     "oauth.provider": "Proveedor OAuth2",
     "oauth.client_id": "Client ID",
@@ -936,14 +840,12 @@
     "oauth.success_redirect": "URL de redirección tras éxito",
     "oauth.allowed_roles": "Roles autorizados",
     "oauth.allowed_roles.desc": "Roles que pueden acceder a esta herramienta (vacío = todos)",
-
     "streaming.title": "Streaming SSE",
     "streaming.enabled": "Activar modo streaming",
     "streaming.sse_path": "Ruta de eventos SSE",
     "streaming.agent_events.title": "Stream SSE del Agente",
     "streaming.agent_events.desc": "Transmitir eventos del agente al cliente via SSE",
     "streaming.timeout": "Timeout conexión SSE",
-
     "conversations.title": "Conversaciones",
     "conversations.new": "Nuevo Chat",
     "conversations.empty": "Sin conversaciones",
@@ -1044,7 +946,6 @@
     "messaging.link_code_generated": "Código de verificación generado. Envíe /link {code} en el otro canal.",
     "messaging.link_success": "Identidad vinculada exitosamente",
     "messaging.link_invalid_code": "Código de vinculación inválido o expirado",
-
     "filesystem.local_name": "Sistema de archivos local (Relay HTTP)",
     "filesystem.ws_name": "Sistema de archivos local (WebSocket)",
     "filesystem.browser_name": "Sistema de archivos del navegador",
@@ -1098,7 +999,6 @@
     "exec.approval_auto": "Auto (bajo=auto, alto=preguntar)",
     "exec.approval_ask": "Preguntar (medio+=preguntar)",
     "exec.approval_strict": "Estricto (preguntar todo)",
-
     "relay.connected": "Relay '{id}' conectado ({type})",
     "relay.disconnected": "Relay '{id}' desconectado",
     "relay.no_relay": "No hay relay conectado. Ejecute: python pawflow_executor_relay.py --connect ws://<server>/ws/relay --token <api_key> --secret <secret> --dir <path>",
@@ -1107,19 +1007,16 @@
     "relay.reconnecting": "Reconectando relay...",
     "relay.status_connected": "Conectado",
     "relay.status_disconnected": "Desconectado",
-
     "tool_approval.title": "Permiso de herramienta",
     "tool_approval.deny": "Denegar",
     "tool_approval.allow_once": "Permitir una vez",
     "tool_approval.allow_session": "Permitir para la sesión",
     "tool_approval.always_allow": "Permitir siempre",
     "tool_approval.timeout": "Tiempo de aprobación agotado",
-
     "service.heartbeat_down": "Servicio '{id}' desconectado — el relay ya no es accesible",
     "service.auto_installed": "Servicio '{id}' instalado automáticamente desde el relay",
     "service.auto_disabled": "Servicio '{id}' desactivado (relay desconectado)",
     "service.multi_available": "Múltiples servicios disponibles. Use el parámetro 'service' para elegir.",
-
     "resources.title": "Recursos",
     "resources.agents": "Agentes",
     "resources.prompts": "Prompts",

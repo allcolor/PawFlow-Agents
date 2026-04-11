@@ -15,7 +15,7 @@ from core.llm_client import (
     LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
     LLMToolCall, LLMToolResult, LLMClientError,
 )
-from core.tool_registry import ToolRegistry, create_default_registry, load_agent_tools
+from core.tool_registry import ToolRegistry, create_default_registry
 from tasks.ai.agent_summarize import AgentSummarizeMixin
 from tasks.ai.agent_cc_context import AgentCCContextMixin
 

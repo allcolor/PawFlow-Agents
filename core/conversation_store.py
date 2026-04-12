@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import CONVERSATIONS_DIR; _DEFAULT_DIR = str(CONVERSATIONS_DIR)
+import core.paths as _paths
 
 
 class ConversationStore:
@@ -42,7 +42,7 @@ class ConversationStore:
     _lock = threading.Lock()
 
     def __init__(self, store_dir: str = ""):
-        self._store_dir = Path(store_dir or _DEFAULT_DIR)
+        self._store_dir = Path(store_dir or str(_paths.CONVERSATIONS_DIR))
         self._store_dir.mkdir(parents=True, exist_ok=True)
         self._conv_locks: Dict[str, threading.Lock] = {}
         self._conv_locks_lock = threading.Lock()

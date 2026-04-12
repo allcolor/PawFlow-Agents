@@ -3,8 +3,8 @@
 Manages the inventory of ALL deployed instances (running + stopped).
 Uses filesystem-based persistence: data/deployments/{owner}/*.json.
 
-A "template" is a flow JSON in flows/. A "deployment" is an instance
-of that template with its own parameters, owner, and lifecycle.
+A flow is versioned in the repository (FQN like default.pawflow_agent:1.0.0).
+A deployment is a running instance pinned to a specific flow version.
 """
 
 import json

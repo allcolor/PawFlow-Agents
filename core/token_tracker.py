@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import TOKEN_USAGE_FILE; _DEFAULT_PATH = str(TOKEN_USAGE_FILE)
+import core.paths as _paths
 
 
 class TokenTracker:
@@ -23,7 +23,7 @@ class TokenTracker:
     _lock = threading.Lock()
 
     def __init__(self, path: str = ""):
-        self._path = Path(path or _DEFAULT_PATH)
+        self._path = Path(path or str(_paths.TOKEN_USAGE_FILE))
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._data: Dict[str, Dict[str, Any]] = {}
         self._store_lock = threading.Lock()

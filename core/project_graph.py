@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import GRAPHS_DIR; _DEFAULT_DIR = str(GRAPHS_DIR)
+import core.paths as _paths
 
 # Extensions supported by graphify AST extraction
 _CODE_EXTENSIONS = (
@@ -163,7 +163,7 @@ class ProjectGraph:
                 if key not in cls._instances:
                     safe_user = user_id.replace("/", "_").replace("\\", "_")
                     safe_conv = conv_id.replace(":", "_")
-                    path = Path(_DEFAULT_DIR) / safe_user / safe_conv / "graph.json"
+                    path = Path(str(_paths.GRAPHS_DIR)) / safe_user / safe_conv / "graph.json"
                     cls._instances[key] = cls(str(path))
         return cls._instances[key]
 

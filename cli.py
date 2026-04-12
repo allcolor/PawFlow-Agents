@@ -473,7 +473,7 @@ def cmd_import_flow(args):
         converter = NiFiConverter()
         result = converter.convert(content)
 
-        output_path = args.output or "flows/imported_flow.json"
+        output_path = args.output or "imported_flow.json"
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
             json.dump(result.flow, f, indent=2)
@@ -485,7 +485,7 @@ def cmd_import_flow(args):
                 print(f"  - {w}")
         if result.subflows:
             for sf in result.subflows:
-                sf_path = f"flows/{sf.get('id', 'subflow')}.json"
+                sf_path = f"{sf.get('id', 'subflow')}.json"
                 with open(sf_path, 'w') as f_out:
                     json.dump(sf, f_out, indent=2)
                 print(f"  Subflow: {sf_path}")

@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-from core.paths import KNOWLEDGE_GRAPHS_DIR; _DEFAULT_DIR = str(KNOWLEDGE_GRAPHS_DIR)
+import core.paths as _paths
 
 
 def _safe_filename(user_id: str) -> str:
@@ -321,6 +321,6 @@ class KnowledgeGraph:
     @classmethod
     def for_user(cls, user_id: str, store_dir: str = "") -> "KnowledgeGraph":
         """Get or create a KnowledgeGraph for a user."""
-        d = Path(store_dir or _DEFAULT_DIR)
+        d = Path(store_dir or str(_paths.KNOWLEDGE_GRAPHS_DIR))
         d.mkdir(parents=True, exist_ok=True)
         return cls(str(d / f"{_safe_filename(user_id)}.json"))

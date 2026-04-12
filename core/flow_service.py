@@ -107,7 +107,10 @@ class FlowService:
         self.initialize()
 
         if filepath is None:
-            filepath = f"flows/{flow.id}.json"
+            from core.paths import REPOSITORY_DIR
+            pkg_dir = REPOSITORY_DIR / "flows" / "global" / "default" / flow.id
+            pkg_dir.mkdir(parents=True, exist_ok=True)
+            filepath = str(pkg_dir / "latest.json")
 
         # Créer le répertoire s'il n'existe pas
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)

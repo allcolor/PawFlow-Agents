@@ -322,7 +322,7 @@ class NiFiConverter:
             flow["tasks"][task_id] = {
                 "type": "executeFlow",
                 "parameters": {
-                    "flow_path": f"flows/{child_id}.json",
+                    "flow_path": f"data/repository/flows/global/default/{child_id}/versions/1.0.0.json",
                     "pass_attributes": True,
                     "parameter_mapping": {},
                 },
@@ -603,7 +603,7 @@ class NiFiConverter:
             flow["tasks"][task_id] = {
                 "type": "executeFlow",
                 "parameters": {
-                    "flow_path": f"flows/{child_id}.json",
+                    "flow_path": f"data/repository/flows/global/default/{child_id}/versions/1.0.0.json",
                     "pass_attributes": True,
                     "parameter_mapping": {},
                 },

@@ -16,14 +16,14 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import MEMORIES_DIR; _DEFAULT_DIR = str(MEMORIES_DIR)
+import core.paths as _paths
 
 
 class AgentDiary:
     """Per-agent diary stored as JSONL."""
 
     def __init__(self, store_dir: str = ""):
-        self._store_dir = Path(store_dir or _DEFAULT_DIR)
+        self._store_dir = Path(store_dir or str(_paths.MEMORIES_DIR))
 
     @classmethod
     def instance(cls) -> "AgentDiary":

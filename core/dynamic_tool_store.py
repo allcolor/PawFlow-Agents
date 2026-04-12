@@ -24,8 +24,8 @@ from core.tool_registry import ToolHandler
 
 logger = logging.getLogger(__name__)
 
-from core.paths import REPOSITORY_DIR
-_DEFAULT_DIR = str(REPOSITORY_DIR / "tools")
+import core.paths as _paths
+
 
 # Modules allowed in dynamic tools (same as ExecuteScriptHandler)
 _SAFE_MODULES = frozenset({
@@ -65,7 +65,7 @@ class DynamicToolStore:
     _lock = threading.Lock()
 
     def __init__(self, store_dir: str = ""):
-        self._store_dir = Path(store_dir or _DEFAULT_DIR)
+        self._store_dir = Path(store_dir or str(_paths.REPOSITORY_DIR / "tools"))
         self._store_dir.mkdir(parents=True, exist_ok=True)
         self._handlers: Dict[str, ToolHandler] = {}  # tool_name -> handler
         self._metadata: Dict[str, Dict[str, Any]] = {}  # tool_name -> meta

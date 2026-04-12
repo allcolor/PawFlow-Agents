@@ -35,8 +35,11 @@ data/repository/*/users/
 # Runtime: all generated state → ignored
 data/runtime/
 
-# System: all server config → ignored (seeded from defaults/)
+# System: all server config → ignored
 data/system/
+
+# Stale top-level dirs that must not be recreated
+flows/
 
 # ── Legacy data dirs (pre-migration) ─────────────────────────
 data/config/

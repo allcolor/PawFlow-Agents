@@ -87,6 +87,13 @@ def _isolate_data_dir(tmp_path_factory):
                     _shutil.copytree(sub, dst,
                                      ignore=_shutil.ignore_patterns("users"))
 
+    # Reset module-level caches
+    try:
+        import core.stream as _stream_mod
+        _stream_mod._spill_dir = None
+    except Exception:
+        pass
+
     # Reset singletons that cache paths
     for _reset in [
         lambda: __import__('core.plan_store', fromlist=['PlanStore']).PlanStore.__setattr__('_instance', None),

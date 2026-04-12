@@ -38,8 +38,10 @@ data/runtime/
 # System: all server config → ignored
 data/system/
 
-# Stale top-level dirs that must not be recreated
+# Stale/external top-level dirs
 flows/
+projects/
+checkpoints/
 
 # ── Legacy data dirs (pre-migration) ─────────────────────────
 data/config/

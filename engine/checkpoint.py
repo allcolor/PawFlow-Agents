@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # Max content size to inline as base64 in checkpoint JSON
 INLINE_MAX_BYTES = 256 * 1024  # 256KB
 
-CHECKPOINT_DIR = "checkpoints"
+import core.paths as _paths
 
 
 class CheckpointManager:
@@ -64,10 +64,10 @@ class CheckpointManager:
             flowfiles_by_queue = mgr.restore_flowfiles(data)
     """
 
-    def __init__(self, flow_id: str, checkpoint_dir: str = CHECKPOINT_DIR,
+    def __init__(self, flow_id: str, checkpoint_dir: str = "",
                  max_checkpoints: int = 5):
         self._flow_id = flow_id
-        self._dir = Path(checkpoint_dir) / flow_id
+        self._dir = Path(checkpoint_dir or str(_paths.RUNTIME_DIR / "checkpoints")) / flow_id
         self._dir.mkdir(parents=True, exist_ok=True)
         self._max_checkpoints = max_checkpoints
         self._lock = threading.Lock()

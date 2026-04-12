@@ -204,8 +204,42 @@ class _RequestHandler(BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         query = self.path.split('?', 1)[1] if '?' in self.path else ""
 
-        # Auth is handled by the flow pipeline (validate_auth task + private gateway).
-        # No HTTP listener-level auth check.
+        # Session auth for all routes except /auth/* (login, callback, logout)
+        if not path.startswith("/auth/"):
+            try:
+                from core.security import SecurityManager
+                sm = SecurityManager.get_instance()
+                token = None
+                cookie_header = self.headers.get("Cookie", "")
+                if cookie_header:
+                    for part in cookie_header.split(";"):
+                        part = part.strip()
+                        if part.startswith("pawflow_token="):
+                            token = part[len("pawflow_token="):]
+                            break
+                if not token:
+                    auth_header = self.headers.get("Authorization", "")
+                    if auth_header and auth_header.lower().startswith("bearer "):
+                        token = auth_header[7:].strip()
+                session = sm.get_session(token) if token else None
+                if not session and token:
+                    session = True if sm.validate_api_key(token) else None
+                if not session:
+                    self.send_response(401)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"error": "Unauthorized"}')
+                    return
+                # Renew cookie to extend browser-side expiry (sliding window)
+                if token and cookie_header and session is not True:
+                    self._renew_cookie = f"pawflow_token={token}; Path=/; Max-Age={int(sm._session_ttl)}; HttpOnly; SameSite=Lax"
+            except Exception as e:
+                logger.error("Session auth check failed: %s", e, exc_info=True)
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error": "Internal Server Error"}')
+                return
 
         # WebSocket upgrades are intercepted in _HTTPServerWithRegistry.process_request
         # BEFORE reaching this handler — so no WS detection needed here.

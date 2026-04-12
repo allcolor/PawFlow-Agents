@@ -76,6 +76,18 @@ def _isolate_data_dir(tmp_path_factory):
               paths.USER_CONFIG_DIR, paths.CONVERSATIONS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
 
+    # Reset singletons that cache paths
+    try:
+        from core.plan_store import PlanStore
+        PlanStore._instance = None
+    except Exception:
+        pass
+    try:
+        from core.conversation_store import ConversationStore
+        ConversationStore.reset()
+    except Exception:
+        pass
+
     yield tmp
 
     # Restore originals

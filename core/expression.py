@@ -15,11 +15,7 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import (
-    GLOBAL_PARAMS_FILE,
-    GLOBAL_SECRETS_FILE,
-    USER_CONFIG_DIR,
-)
+import core.paths as _paths
 
 
 
@@ -28,24 +24,24 @@ from core.paths import (
 
 def _load_global_parameters() -> Dict[str, str]:
     """Load global parameters via ConfigStore (supports spilled values)."""
-    if not GLOBAL_PARAMS_FILE.exists():
+    if not _paths.GLOBAL_PARAMS_FILE.exists():
         return {}
     from core.config_store import ConfigStore
-    values = ConfigStore.load_params(GLOBAL_PARAMS_FILE)
+    values = ConfigStore.load_params(_paths.GLOBAL_PARAMS_FILE)
     return values
 
 
 def _load_global_secrets() -> Dict[str, str]:
     """Load and decrypt global secrets via ConfigStore."""
     from core.config_store import ConfigStore
-    values = ConfigStore.load_secrets(GLOBAL_SECRETS_FILE)
+    values = ConfigStore.load_secrets(_paths.GLOBAL_SECRETS_FILE)
     return values  # Dict[str, ConfigValue]
 
 
 def _load_user_parameters(username: str) -> Dict[str, str]:
     """Load user-level parameters via ConfigStore."""
     from core.config_store import ConfigStore
-    path = USER_CONFIG_DIR / username / "parameters.json"
+    path = _paths.USER_CONFIG_DIR / username / "parameters.json"
     values = ConfigStore.load_params(path)
     return values  # Dict[str, ConfigValue]
 
@@ -53,7 +49,7 @@ def _load_user_parameters(username: str) -> Dict[str, str]:
 def _load_user_secrets(username: str) -> Dict[str, str]:
     """Load and decrypt user-level secrets via ConfigStore."""
     from core.config_store import ConfigStore
-    path = USER_CONFIG_DIR / username / "secrets.json"
+    path = _paths.USER_CONFIG_DIR / username / "secrets.json"
     values = ConfigStore.load_secrets(path)
     return values  # Dict[str, ConfigValue]
 

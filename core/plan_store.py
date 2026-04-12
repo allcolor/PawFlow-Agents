@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
-from core.paths import PLANS_DIR as _PLANS_DIR
+import core.paths as _paths
 
 
 class PlanStore:
@@ -40,7 +40,7 @@ class PlanStore:
             raise ValueError("BUG: user_id is required for plan storage")
         safe_user = user_id.replace("/", "_").replace("\\", "_")
         safe_conv = conv_id.replace(":", "_")
-        return _PLANS_DIR / safe_user / safe_conv
+        return _paths.PLANS_DIR / safe_user / safe_conv
 
     def _plan_path(self, user_id: str, conv_id: str, plan_id: str) -> Path:
         return self._plan_dir(user_id, conv_id) / f"{plan_id}.json"

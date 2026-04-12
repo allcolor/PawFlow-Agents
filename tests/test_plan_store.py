@@ -13,7 +13,7 @@ import time
 import uuid
 import pytest
 
-from core.plan_store import PlanStore, _PLANS_DIR
+from core.plan_store import PlanStore; import core.paths as _paths
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +27,7 @@ def reset_singleton():
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     """Create a PlanStore that writes to a temp directory."""
-    monkeypatch.setattr("core.plan_store._PLANS_DIR", tmp_path / "plans")
+    monkeypatch.setattr("core.plan_store._paths.PLANS_DIR", tmp_path / "plans")
     return PlanStore()
 
 

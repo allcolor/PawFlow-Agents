@@ -77,10 +77,10 @@ class TestCascadeResolution(unittest.TestCase):
         import json, tempfile, shutil
         self._orig_global = None
         self._user_dir = None
-        # Save original global params
-        from core.paths import GLOBAL_PARAMS_FILE, USER_CONFIG_DIR
-        self._global_file = GLOBAL_PARAMS_FILE
-        self._user_config_dir = USER_CONFIG_DIR
+        # Save original global params — use dynamic paths (conftest may have patched)
+        import core.paths as _p
+        self._global_file = _p.GLOBAL_PARAMS_FILE
+        self._user_config_dir = _p.USER_CONFIG_DIR
         if self._global_file.exists():
             self._orig_global = self._global_file.read_text(encoding="utf-8")
         # Write test global params

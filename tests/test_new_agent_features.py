@@ -156,7 +156,7 @@ class TestPlanHandlers(unittest.TestCase):
         # Ensure clean plan state
         from core.plan_store import PlanStore
         PlanStore._instance = None
-        from core.paths import PLANS_DIR; shutil.rmtree(str(PLANS_DIR), ignore_errors=True)
+        import core.paths as _p; shutil.rmtree(str(_p.PLANS_DIR), ignore_errors=True); _p.PLANS_DIR.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
         ConversationStore.reset()
@@ -164,7 +164,7 @@ class TestPlanHandlers(unittest.TestCase):
         # Clean up plans created during test
         from core.plan_store import PlanStore
         PlanStore._instance = None
-        from core.paths import PLANS_DIR; shutil.rmtree(str(PLANS_DIR), ignore_errors=True)
+        import core.paths as _p; shutil.rmtree(str(_p.PLANS_DIR), ignore_errors=True); _p.PLANS_DIR.mkdir(parents=True, exist_ok=True)
 
     def test_create_plan(self):
         h = CreatePlanHandler()

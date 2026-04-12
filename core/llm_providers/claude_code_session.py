@@ -222,17 +222,26 @@ class ClaudeCodeSessionMixin:
 
         Returns {"access_token", "refresh_token", "expires_at", "pool_index"}
         """
+        import time as _t
         svc_id = getattr(self, '_agent_service', '') or ''
         pool = _load_credentials_pool(svc_id)
         if not pool:
             return {"access_token": "", "refresh_token": "", "expires_at": 0, "pool_index": -1}
 
-        if 0 <= pool_index < len(pool):
+        # Purge expired credentials (expires_at is in milliseconds)
+        now_ms = int(_t.time() * 1000)
+        valid = [(i, c) for i, c in enumerate(pool) if c.get("expires_at", 0) > now_ms]
+        if not valid and pool:
+            # All expired — try the most recent one (might still refresh)
+            valid = [(len(pool) - 1, pool[-1])]
+
+        if 0 <= pool_index < len(pool) and pool[pool_index].get("expires_at", 0) > now_ms:
             idx = pool_index
         else:
             with ClaudeCodeSessionMixin._pool_lock:
-                idx = ClaudeCodeSessionMixin._pool_counter % len(pool)
+                pick = ClaudeCodeSessionMixin._pool_counter % len(valid)
                 ClaudeCodeSessionMixin._pool_counter += 1
+                idx = valid[pick][0]
         cred = pool[idx]
         return {
             "access_token": cred.get("access_token", ""),
@@ -384,54 +393,85 @@ class ClaudeCodeSessionMixin:
     def _setup_credentials(self, workdir: str, pool_index: int = -1):
         """Write .credentials.json in session workdir for Claude Code auth.
 
-        Uses round-robin credential from pool, or specific pool_index for
-        session resume (same credential that created the session).
-
-        Raises LLMClientError if no credentials configured.
+        Tries credentials from the pool. If a credential is expired, attempts
+        refresh. If refresh fails, removes it from the pool and tries the next.
+        Only raises if NO valid credential can be obtained.
         """
         from core.llm_client import LLMClientError
+        import time as _time
 
-        tokens = self._resolve_service_tokens(pool_index=pool_index)
-        access_token = tokens["access_token"]
-        refresh_token = tokens["refresh_token"]
-        expires_at = tokens["expires_at"]
-        _pidx = tokens["pool_index"]
-
-        if not access_token:
+        svc_id = getattr(self, '_agent_service', '') or ''
+        pool = _load_credentials_pool(svc_id)
+        if not pool:
             raise LLMClientError(
                 "Claude Code credentials not configured. "
                 "Use /cls to authenticate with your Claude subscription.")
 
-        # Check expiry — refresh automatically if expired or near expiry (5min buffer)
-        import time as _time
-        if expires_at:
-            _exp_s = int(expires_at) / 1000 if int(expires_at) > 1e12 else int(expires_at)
-            _remaining = _exp_s - _time.time()
-            if _remaining < 300 and refresh_token:  # 5min buffer, same as CC
-                logger.info("OAuth token [pool:%d] %s — attempting refresh", _pidx,
-                            "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
-                try:
-                    new_tokens = self._refresh_oauth_token(refresh_token)
-                    access_token = new_tokens["access_token"]
-                    refresh_token = new_tokens.get("refresh_token", refresh_token)
-                    expires_at = new_tokens["expires_at"]
-                    _svc_id = getattr(self, '_agent_service', '') or ''
-                    _persist_tokens_to_service(
-                        access_token, refresh_token, int(expires_at),
-                        service_id=_svc_id, pool_index=_pidx)
-                    logger.info("OAuth token [pool:%d] refreshed — expires in %.1fh",
-                                _pidx, (int(expires_at)/1000 - _time.time()) / 3600)
-                except Exception as e:
-                    if _remaining < 0:
-                        raise LLMClientError(
-                            f"OAuth token [pool:{_pidx}] expired and refresh failed: {e}. "
-                            "Use /cls to re-authenticate.")
-                    else:
-                        logger.warning("OAuth refresh failed [pool:%d] (still valid %.0fs): %s",
-                                       _pidx, _remaining, e)
+        # Build ordered list of indices to try
+        if 0 <= pool_index < len(pool):
+            indices = [pool_index] + [i for i in range(len(pool)) if i != pool_index]
+        else:
+            # Round-robin start, then try all others
+            with ClaudeCodeSessionMixin._pool_lock:
+                start = ClaudeCodeSessionMixin._pool_counter % len(pool)
+                ClaudeCodeSessionMixin._pool_counter += 1
+            indices = [(start + i) % len(pool) for i in range(len(pool))]
 
-        # Store the pool index used for this session (for resume)
-        self._current_pool_index = _pidx
+        dead_indices = []
+        for _pidx in indices:
+            cred = pool[_pidx]
+            access_token = cred.get("access_token", "")
+            refresh_token = cred.get("refresh_token", "")
+            expires_at = cred.get("expires_at", 0)
+
+            if not access_token:
+                dead_indices.append(_pidx)
+                continue
+
+            # Check expiry — refresh if expired or near expiry (5min buffer)
+            if expires_at:
+                _exp_s = int(expires_at) / 1000 if int(expires_at) > 1e12 else int(expires_at)
+                _remaining = _exp_s - _time.time()
+                if _remaining < 300 and refresh_token:
+                    logger.info("OAuth token [pool:%d] %s — attempting refresh", _pidx,
+                                "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
+                    try:
+                        new_tokens = self._refresh_oauth_token(refresh_token)
+                        access_token = new_tokens["access_token"]
+                        refresh_token = new_tokens.get("refresh_token", refresh_token)
+                        expires_at = new_tokens["expires_at"]
+                        _persist_tokens_to_service(
+                            access_token, refresh_token, int(expires_at),
+                            service_id=svc_id, pool_index=_pidx)
+                        logger.info("OAuth token [pool:%d] refreshed — expires in %.1fh",
+                                    _pidx, (int(expires_at)/1000 - _time.time()) / 3600)
+                    except Exception as e:
+                        logger.warning("OAuth token [pool:%d] refresh failed, removing: %s",
+                                       _pidx, e)
+                        dead_indices.append(_pidx)
+                        continue
+                elif _remaining < 0 and not refresh_token:
+                    logger.warning("OAuth token [pool:%d] expired, no refresh token", _pidx)
+                    dead_indices.append(_pidx)
+                    continue
+
+            # This credential works — use it
+            self._current_pool_index = _pidx
+
+            # Clean up dead credentials
+            if dead_indices:
+                pool = [c for i, c in enumerate(pool) if i not in dead_indices]
+                _save_credentials_pool(pool, service_id=svc_id)
+                logger.info("Removed %d dead credential(s) from pool, %d remaining",
+                            len(dead_indices), len(pool))
+            break
+        else:
+            # All credentials failed
+            pool = [c for i, c in enumerate(pool) if i not in dead_indices]
+            _save_credentials_pool(pool, service_id=svc_id)
+            raise LLMClientError(
+                "All Claude Code credentials expired and refresh failed. "
+                "Use /cls to re-authenticate.")
 
         creds = {
             "claudeAiOauth": {

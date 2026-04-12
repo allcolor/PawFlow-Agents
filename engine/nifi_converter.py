@@ -12,6 +12,7 @@ Handles:
 """
 
 import json
+import core.paths as _paths
 import logging
 import re
 import uuid
@@ -322,7 +323,7 @@ class NiFiConverter:
             flow["tasks"][task_id] = {
                 "type": "executeFlow",
                 "parameters": {
-                    "flow_path": f"data/repository/flows/global/default/{child_id}/versions/1.0.0.json",
+                    "flow_path": str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / child_id / "versions" / "1.0.0.json"),
                     "pass_attributes": True,
                     "parameter_mapping": {},
                 },
@@ -603,7 +604,7 @@ class NiFiConverter:
             flow["tasks"][task_id] = {
                 "type": "executeFlow",
                 "parameters": {
-                    "flow_path": f"data/repository/flows/global/default/{child_id}/versions/1.0.0.json",
+                    "flow_path": str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / child_id / "versions" / "1.0.0.json"),
                     "pass_attributes": True,
                     "parameter_mapping": {},
                 },

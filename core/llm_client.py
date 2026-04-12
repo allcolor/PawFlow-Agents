@@ -82,6 +82,22 @@ class LLMToolResult:
     content: str
 
 
+_TOOL_ALIASES = {
+    # CC hallucinations (common LLM mistakes)
+    "run_command": "bash", "shell": "bash", "execute": "bash",
+    "run": "bash", "terminal": "bash", "exec": "bash",
+    "search": "grep", "find_files": "glob", "list_files": "glob",
+    "cat": "read", "view": "read", "open": "read",
+    "create_file": "write", "save": "write",
+    "replace": "edit", "patch": "edit", "modify": "edit",
+    "web_fetch": "fetch", "http": "fetch",
+    # CC official legacy aliases
+    "Task": "Agent", "Brief": "SendUserMessage",
+    "KillShell": "TaskStop",
+    "AgentOutputTool": "TaskOutput", "BashOutputTool": "TaskOutput",
+}
+
+
 def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
     """Unwrap wrapper tool names to the inner tool name + arguments.
 
@@ -90,9 +106,13 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
     mcp__pawflow__get_tool_schema(...) → ("get_tool_schema", arguments)
     get_tool_schema(...) → ("get_tool_schema", arguments)
     anything_else → (name, arguments)
+
+    Also resolves tool aliases (shell → bash, etc.) so display is correct.
     """
     if name in ("mcp__pawflow__use_tool", "use_tool") and isinstance(arguments, dict):
-        return arguments.get("tool_name", name), arguments.get("arguments", arguments)
+        tool_name = arguments.get("tool_name", name)
+        tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
+        return tool_name, arguments.get("arguments", arguments)
     if name in ("mcp__pawflow__get_tool_schema", "get_tool_schema"):
         return "get_tool_schema", arguments
     return name, arguments

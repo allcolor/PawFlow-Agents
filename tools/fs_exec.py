@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict
 
-from fs_actions import (
+from fs_common import (
     MAX_EXEC_OUTPUT,
     _docker_cmd,
     _resolve_shell,

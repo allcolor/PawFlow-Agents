@@ -649,15 +649,9 @@ class AgentCoreMixin:
                                 ) for tc in tool_calls
                             ]
                             for tc_obj in tc_objects:
-                                # Unwrap MCP tool names for display
-                                _display_name = tc_obj.name
-                                if _display_name.startswith("mcp__"):
-                                    # mcp__server__tool → tool
-                                    _parts = _display_name.split("__", 2)
-                                    _display_name = _parts[-1] if len(_parts) >= 3 else _display_name
-                                    # For use_tool, show the inner tool_name
-                                    if _display_name == "use_tool" and isinstance(tc_obj.arguments, dict):
-                                        _display_name = tc_obj.arguments.get("tool_name", _display_name)
+                                from core.llm_client import unwrap_mcp_tool
+                                _display_name, _ = unwrap_mcp_tool(
+                                    tc_obj.name, tc_obj.arguments)
                                 tools_called.append(_display_name)
                                 ctx["_last_tool"] = _display_name
 

@@ -397,14 +397,7 @@ class TestListSFTPTask:
         assert task._passes_filters(FakeEntry("report_2024.csv"), time.time()) is True
         assert task._passes_filters(FakeEntry("data.csv"), time.time()) is False
 
-    def test_requires_paramiko(self):
-        """Without paramiko, should raise TaskError."""
-        from tasks.io.list_sftp import ListSFTPTask, _get_paramiko
-        if _get_paramiko() is not None:
-            pytest.skip("paramiko is installed")
-        task = ListSFTPTask({
-            "hostname": "h", "username": "u", "remote_directory": "/",
-        })
-        from core import TaskError
-        with pytest.raises(TaskError, match="paramiko"):
-            task.execute(None)
+    def test_paramiko_available(self):
+        """paramiko must be installed (builtin dependency)."""
+        from tasks.io.list_sftp import _get_paramiko
+        assert _get_paramiko() is not None

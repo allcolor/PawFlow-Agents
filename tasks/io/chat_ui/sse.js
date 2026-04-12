@@ -690,7 +690,7 @@ function connectSSE(cid, onReady) {
     if (data.tool === 'delegate') {
       // Store tc_id so we can suppress the tool_result too
       if (data.tc_id) _delegateGroups['__tc__' + data.tc_id] = true;
-      if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
+      if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: (_TOOL_DISPLAY[data.tool] || data.tool)});
       return;
     }
     // Single rendering path: addMsg handles ALL tool_call rendering
@@ -725,7 +725,7 @@ function connectSSE(cid, onReady) {
         childContainer.appendChild(tcEl);
       }
     }
-    if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
+    if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: (_TOOL_DISPLAY[data.tool] || data.tool)});
   });
 
   eventSource.addEventListener('tool_result', (e) => {

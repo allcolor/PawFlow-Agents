@@ -19,6 +19,22 @@ from tasks.io.validate_http_auth import ValidateHTTPAuthTask
 from core import FlowFile
 
 
+def _create_test_session():
+    """Create a test session in SecurityManager and return the token."""
+    from core.security import SecurityManager, Role
+    sm = SecurityManager.get_instance()
+    if "test_user" not in sm._users:
+        sm.create_user("test_user", "test", Role.ADMIN)
+    user = sm.get_user("test_user")
+    session = sm._create_session(user)
+    return session.session_id
+
+
+def _auth_headers(token):
+    """Return headers dict with auth cookie."""
+    return {"Cookie": f"pawflow_token={token}"}
+
+
 # ---------------------------------------------------------------------------
 # RouteRegistry tests
 # ---------------------------------------------------------------------------
@@ -165,6 +181,7 @@ class TestHTTPListenerService:
             def on_request(req):
                 results.append(req)
             svc.register_route("GET", "/hello", "test", on_request)
+            _tok = _create_test_session()
 
             # Make HTTP request in a thread
             response_holder = [None]
@@ -173,6 +190,7 @@ class TestHTTPListenerService:
                     req = urllib.request.Request(
                         "http://127.0.0.1:19879/hello",
                         method="GET",
+                        headers={"Cookie": f"pawflow_token={_tok}"},
                     )
                     resp = urllib.request.urlopen(req, timeout=5)
                     response_holder[0] = (resp.status, resp.read())
@@ -203,7 +221,8 @@ class TestHTTPListenerService:
                 req = urllib.request.Request(
                     "http://127.0.0.1:19880/nonexistent",
                     method="GET",
-                )
+                        headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+                    )
                 urllib.request.urlopen(req, timeout=5)
                 assert False, "Should have raised"
             except urllib.error.HTTPError as e:
@@ -227,7 +246,8 @@ class TestHTTPListenerService:
                 req = urllib.request.Request(
                     "http://127.0.0.1:19881/slow",
                     method="GET",
-                )
+                        headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+                    )
                 urllib.request.urlopen(req, timeout=5)
                 assert False, "Should have raised"
             except urllib.error.HTTPError as e:
@@ -505,6 +525,7 @@ class TestHTTPListenerIntegration:
                     req = urllib.request.Request(
                         f"http://127.0.0.1:{port}/api/greet/World",
                         method="GET",
+                        headers={"Cookie": f"pawflow_token={_create_test_session()}"},
                     )
                     resp = urllib.request.urlopen(req, timeout=5)
                     response_holder[0] = (resp.status, resp.read().decode())
@@ -560,14 +581,19 @@ class TestHTTPListenerIntegration:
             })
             validator.set_services({"auth": auth_svc, "listener": listener_svc})
 
-            # Request WITH valid token
+            # Request WITH valid session cookie (HTTP listener auth) AND
+            # valid bearer token (flow-level HTTPAuthService auth)
+            _real_token = _create_test_session()
             response_holder = [None]
             def make_authed_request():
                 try:
                     req = urllib.request.Request(
                         f"http://127.0.0.1:{port}/secure",
                         method="GET",
-                        headers={"Authorization": "Bearer validtoken"},
+                        headers={
+                            "Cookie": f"pawflow_token={_real_token}",
+                            "Authorization": "Bearer validtoken",
+                        },
                     )
                     resp = urllib.request.urlopen(req, timeout=5)
                     response_holder[0] = (resp.status, resp.read())
@@ -619,14 +645,18 @@ class TestHTTPListenerIntegration:
             })
             validator.set_services({"auth": auth_svc, "listener": listener_svc})
 
-            # Request with WRONG token
+            # Request with WRONG auth token (but valid session cookie to pass listener auth)
+            _real_token = _create_test_session()
             response_holder = [None]
             def make_bad_request():
                 try:
                     req = urllib.request.Request(
                         f"http://127.0.0.1:{port}/protected",
                         method="GET",
-                        headers={"Authorization": "Bearer wrongtoken"},
+                        headers={
+                            "Cookie": f"pawflow_token={_real_token}",
+                            "Authorization": "Bearer wrongtoken",
+                        },
                     )
                     urllib.request.urlopen(req, timeout=5)
                 except urllib.error.HTTPError as e:
@@ -669,6 +699,7 @@ class TestHTTPListenerIntegration:
             })
             responder.set_services({"listener": svc})
 
+            _tok = _create_test_session()
             response_holder = [None]
             def make_request():
                 try:
@@ -676,7 +707,10 @@ class TestHTTPListenerIntegration:
                         f"http://127.0.0.1:{port}/create",
                         method="POST",
                         data=b'{"name": "test"}',
-                        headers={"Content-Type": "application/json"},
+                        headers={
+                            "Content-Type": "application/json",
+                            "Cookie": f"pawflow_token={_tok}",
+                        },
                     )
                     resp = urllib.request.urlopen(req, timeout=5)
                     response_holder[0] = (resp.status, resp.read(), dict(resp.headers))
@@ -765,6 +799,7 @@ class TestSharedPort:
         """Flow A disconnect -> server stays up; Flow B disconnect -> server stops."""
         port = 19895
         svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+        svc._ref_count = 0  # ensure clean state
 
         # Flow A connects
         svc.connect()

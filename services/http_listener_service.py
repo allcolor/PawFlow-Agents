@@ -886,22 +886,6 @@ class HTTPListenerService(BaseService):
         )
         self._server_thread.start()
 
-        # Register in ServiceRegistry for discoverability
-        svc_id = f"_http_listener_{self._port}"
-        try:
-            from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
-            reg = ServiceRegistry.get_instance()
-            if not reg.get_definition(SCOPE_GLOBAL, "", svc_id):
-                reg.install(SCOPE_GLOBAL, "", service_id=svc_id,
-                            service_type=self.TYPE, config=self.config,
-                            description=f"HTTP listener on port {self._port}")
-            # Ensure we're the live instance
-            with reg._data_lock:
-                reg._live_instances.setdefault(
-                    reg._resolve_scope_id(SCOPE_GLOBAL, ""), {})[svc_id] = self
-        except Exception as e:
-            logger.debug("Failed to register in ServiceRegistry: %s", e)
-
         logger.info(f"HTTPListenerService started on {proto} {self._host}:{self._port}")
         return self._server
 
@@ -967,20 +951,8 @@ class HTTPListenerService(BaseService):
             self._server_thread.join(timeout=5)
             self._server_thread = None
 
-        # Deregister
-        svc_id = f"_http_listener_{self._port}"
         with _instances_lock:
             _instances.pop(self._port, None)
-        try:
-            from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
-            reg = ServiceRegistry.get_instance()
-            with reg._data_lock:
-                reg._live_instances.get(
-                    reg._resolve_scope_id(SCOPE_GLOBAL, ""), {}).pop(svc_id, None)
-            if svc_id != "_http_listener_9090":
-                reg.uninstall(SCOPE_GLOBAL, "", svc_id)
-        except Exception:
-            pass
 
         logger.info(f"HTTPListenerService stopped on port {self._port}")
 

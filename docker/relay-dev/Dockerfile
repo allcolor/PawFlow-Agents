@@ -222,6 +222,7 @@ RUN mkdir -p /workspace && chown pawflow:pawflow /workspace \
 
 # ── PawFlow relay + SDK (LAST — changes often, don't bust cache) ──
 COPY pawflow_relay.py /opt/pawflow/pawflow_relay.py
+COPY fs_common.py /opt/pawflow/fs_common.py
 COPY fs_actions.py /opt/pawflow/fs_actions.py
 COPY fs_exec.py /opt/pawflow/fs_exec.py
 COPY fs_screen.py /opt/pawflow/fs_screen.py

@@ -48,27 +48,22 @@ scrapling[all]>=0.4.0
 # Code structure graph
 networkx>=3.0
 
-# GUI (optional — for the flow editor)
-# streamlit>=1.28.0
-# streamlit-flow-component>=0.5.0
+# Embeddings (semantic memory)
+sentence-transformers>=2.2.0
 
-# Embeddings (optional — for semantic memory)
-# sentence-transformers>=2.2.0
+# Tree-sitter parsers (code graph)
+tree-sitter>=0.23.0
+tree-sitter-python
+tree-sitter-javascript
+tree-sitter-typescript
 
-# Tree-sitter parsers (optional — for code graph)
-# tree-sitter>=0.23.0
-# tree-sitter-python
-# tree-sitter-javascript
-# tree-sitter-typescript
-
-# Optional connectors — uncomment as needed
-# paramiko>=3.3.0           # SFTP tasks
-# boto3>=1.34.0             # S3 tasks
-# kafka-python>=2.0.0       # Kafka tasks
-# paho-mqtt>=1.6.0          # MQTT tasks
-# fastavro>=1.8.0           # Avro tasks
-# pyarrow>=13.0.0           # Parquet tasks
-# google-cloud-storage>=2.10.0  # GCS tasks
-# azure-storage-blob>=12.17.0   # Azure tasks
-# psycopg2-binary>=2.9.0   # PostgreSQL storage
-# pymysql>=1.1.0            # MySQL storage
+# Connectors
+paramiko>=3.3.0
+boto3>=1.34.0
+kafka-python>=2.0.0
+paho-mqtt>=1.6.0
+fastavro>=1.8.0
+pyarrow>=13.0.0
+google-cloud-storage>=2.10.0
+azure-storage-blob>=12.17.0
+psycopg2-binary>=2.9.0

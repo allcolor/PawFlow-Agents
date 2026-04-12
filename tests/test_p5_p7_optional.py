@@ -18,6 +18,7 @@ def _tf_make(task_type, config=None):
     return cls(config)
 
 
+
 # ============================================================================
 # MQTT Tasks — Registration & basic checks (no broker needed)
 # ============================================================================
@@ -141,54 +142,42 @@ class TestAvroParquetTasks:
         assert 'compression' in schema
 
     def test_avro_roundtrip(self):
-        """JSON → Avro → JSON roundtrip (requires fastavro)."""
-        from core import TaskFactory, FlowFile, TaskError
+        """JSON → Avro → JSON roundtrip."""
+        from core import TaskFactory, FlowFile
         data = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
         ff = FlowFile(content=json.dumps(data).encode('utf-8'))
 
-        try:
-            # JSON → Avro
-            to_avro = _tf_make('convertJSONToAvro', {})
-            [ff_avro] = to_avro.execute(ff)
-            assert ff_avro.get_attribute('mime.type') == 'application/avro'
-            assert len(ff_avro.get_content()) > 0
+        # JSON → Avro
+        to_avro = _tf_make('convertJSONToAvro', {})
+        [ff_avro] = to_avro.execute(ff)
+        assert ff_avro.get_attribute('mime.type') == 'application/avro'
+        assert len(ff_avro.get_content()) > 0
 
-            # Avro → JSON
-            to_json = _tf_make('convertAvroToJSON', {})
-            [ff_json] = to_json.execute(ff_avro)
-            result = json.loads(ff_json.get_content().decode('utf-8'))
-            assert len(result) == 2
-            assert result[0]['name'] == 'Alice'
-            assert result[1]['age'] == 25
-
-        except TaskError as e:
-            if 'fastavro' in str(e):
-                pytest.skip("fastavro not installed")
-            raise
+        # Avro → JSON
+        to_json = _tf_make('convertAvroToJSON', {})
+        [ff_json] = to_json.execute(ff_avro)
+        result = json.loads(ff_json.get_content().decode('utf-8'))
+        assert len(result) == 2
+        assert result[0]['name'] == 'Alice'
+        assert result[1]['age'] == 25
 
     def test_parquet_roundtrip(self):
-        """JSON → Parquet → JSON roundtrip (requires pyarrow)."""
-        from core import TaskFactory, FlowFile, TaskError
+        """JSON → Parquet → JSON roundtrip."""
+        from core import TaskFactory, FlowFile
         data = [{"city": "Paris", "pop": 2100000}, {"city": "Lyon", "pop": 500000}]
         ff = FlowFile(content=json.dumps(data).encode('utf-8'))
 
-        try:
-            # JSON → Parquet
-            to_parquet = _tf_make('convertJSONToParquet', {'compression': 'none'})
-            [ff_pq] = to_parquet.execute(ff)
-            assert ff_pq.get_attribute('mime.type') == 'application/parquet'
+        # JSON → Parquet
+        to_parquet = _tf_make('convertJSONToParquet', {'compression': 'none'})
+        [ff_pq] = to_parquet.execute(ff)
+        assert ff_pq.get_attribute('mime.type') == 'application/parquet'
 
-            # Parquet → JSON
-            to_json = _tf_make('convertParquetToJSON', {})
-            [ff_json] = to_json.execute(ff_pq)
-            result = json.loads(ff_json.get_content().decode('utf-8'))
-            assert len(result) == 2
-            assert result[0]['city'] == 'Paris'
-
-        except TaskError as e:
-            if 'pyarrow' in str(e):
-                pytest.skip("pyarrow not installed")
-            raise
+        # Parquet → JSON
+        to_json = _tf_make('convertParquetToJSON', {})
+        [ff_json] = to_json.execute(ff_pq)
+        result = json.loads(ff_json.get_content().decode('utf-8'))
+        assert len(result) == 2
+        assert result[0]['city'] == 'Paris'
 
     def test_avro_invalid_data(self):
         """Invalid data should raise TaskError."""

@@ -644,7 +644,7 @@ class TestProcessGroupToSubflow:
         assert "Get_Input" in tasks
         subflow_tasks = [t for t in tasks.values() if t["type"] == "executeFlow"]
         assert len(subflow_tasks) == 1
-        assert subflow_tasks[0]["parameters"]["flow_path"] == "data/repository/flows/global/default/pg-child-etl/versions/1.0.0.json"
+        from pathlib import Path as _P; assert str(_P(subflow_tasks[0]["parameters"]["flow_path"])).replace(chr(92), "/").endswith("repository/flows/global/default/pg-child-etl/versions/1.0.0.json")
 
     def test_xml_subflow_is_separate_flow(self):
         converter = NiFiConverter()

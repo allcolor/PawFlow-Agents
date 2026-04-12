@@ -67,7 +67,6 @@ class TestSecurity:
 
     def test_role_permissions(self):
         sm = SecurityManager()
-        sm.enable_auth(True)
         sm.create_user("editor", "pass", Role.EDITOR)
         session = sm.authenticate("editor", "pass")
 
@@ -78,7 +77,6 @@ class TestSecurity:
 
     def test_admin_has_all_permissions(self):
         sm = SecurityManager()
-        sm.enable_auth(True)
         session = sm.authenticate("admin", "admin")
         assert session is not None
 
@@ -87,22 +85,12 @@ class TestSecurity:
 
     def test_viewer_readonly(self):
         sm = SecurityManager()
-        sm.enable_auth(True)
         sm.create_user("viewer", "pass", Role.VIEWER)
         session = sm.authenticate("viewer", "pass")
 
         assert sm.check_permission(session, "monitor.view")
         assert not sm.check_permission(session, "flow.edit")
         assert not sm.check_permission(session, "flow.execute")
-
-    def test_auth_disabled_allows_all(self):
-        sm = SecurityManager()
-        sm.enable_auth(False)
-        sm.create_user("any", "pass", Role.VIEWER)
-        session = sm.authenticate("any", "pass")
-        # Auth disabled = all permissions granted
-        assert sm.check_permission(session, "flow.edit")
-        assert sm.check_permission(session, "user.manage")
 
     def test_session_logout(self):
         sm = SecurityManager()

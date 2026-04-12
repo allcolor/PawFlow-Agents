@@ -626,27 +626,26 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             try:
                 from core.security import SecurityManager
                 sm = SecurityManager.get_instance()
-                if sm.auth_enabled:
-                    ws_token = None
-                    # 1. Cookie: pawflow_token
-                    cookie_header = headers.get("Cookie", "")
-                    for part in cookie_header.split(";"):
-                        part = part.strip()
-                        if part.startswith("pawflow_token="):
-                            ws_token = part[len("pawflow_token="):]
-                            break
-                    # 2. Query param: ?token=xxx
-                    if not ws_token and "token=" in query:
-                        from urllib.parse import parse_qs
-                        ws_token = parse_qs(query).get("token", [""])[0]
-                    # Validate
-                    if not ws_token or (
-                        not sm.get_session(ws_token) and
-                        not sm.validate_api_key(ws_token)
-                    ):
-                        sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
-                        sock.close()
-                        return
+                ws_token = None
+                # 1. Cookie: pawflow_token
+                cookie_header = headers.get("Cookie", "")
+                for part in cookie_header.split(";"):
+                    part = part.strip()
+                    if part.startswith("pawflow_token="):
+                        ws_token = part[len("pawflow_token="):]
+                        break
+                # 2. Query param: ?token=xxx
+                if not ws_token and "token=" in query:
+                    from urllib.parse import parse_qs
+                    ws_token = parse_qs(query).get("token", [""])[0]
+                # Validate
+                if not ws_token or (
+                    not sm.get_session(ws_token) and
+                    not sm.validate_api_key(ws_token)
+                ):
+                    sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
+                    sock.close()
+                    return
             except Exception as e:
                 logger.error("WS session auth check failed: %s", e, exc_info=True)
                 sock.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")

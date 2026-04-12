@@ -87,11 +87,9 @@ class ClaudeCodePool:
         # Kill orphan pool containers from previous PawFlow runs
         self._cleanup_orphans()
 
-        # Sessions volume: host path for data/claude_sessions
-        _raw_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "claude_sessions",
-        )
+        # Sessions volume: host path for CC sessions
+        import core.paths as _paths
+        _raw_path = str(_paths.CLAUDE_SESSIONS_DIR)
         # translate_path converts Windows paths (C:\...) to WSL mount paths (/mnt/c/...)
         from pawflow_relay.utils import translate_path
         self._sessions_host_path = translate_path(to_host_path(_raw_path))

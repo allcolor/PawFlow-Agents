@@ -721,8 +721,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     inner = args.get("arguments", {})
                     if not inner or inner == {}:
                         return False
-                    # bash with empty/whitespace command
+                    # bash with empty/whitespace command (resolve aliases)
+                    from core.llm_client import _TOOL_ALIASES
                     inner_tool = args.get("tool_name", "")
+                    inner_tool = _TOOL_ALIASES.get(inner_tool, inner_tool)
                     if inner_tool == "bash" and isinstance(inner, dict) and not str(inner.get("command", "")).strip():
                         return False
                     # Any tool where all string values are empty
@@ -963,14 +965,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             _pending_tool_ids.add(_block_id)
                             # Unwrap MCP wrapper for display:
                             # mcp__pawflow__use_tool(tool_name=X, arguments={...})
-                            # → X({...})
+                            # → X({...})  (with alias resolution: shell→bash etc.)
                             _tc_name = block.get("name", "")
                             _tc_args = block.get("input", {})
-                            if _tc_name == "mcp__pawflow__use_tool" and isinstance(_tc_args, dict):
-                                _tc_name = _tc_args.get("tool_name", _tc_name)
-                                _tc_args = _tc_args.get("arguments", _tc_args)
-                            elif _tc_name == "mcp__pawflow__get_tool_schema":
-                                _tc_name = "get_tool_schema"
+                            from core.llm_client import unwrap_mcp_tool
+                            _tc_name, _tc_args = unwrap_mcp_tool(_tc_name, _tc_args)
                             # Don't emit SSE for empty-arg tool calls — likely
                             # an incremental update that will be followed by the
                             # real one with actual arguments.
@@ -1045,10 +1044,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             _tr_name = tc_id
                             for _tc in _turn_tool_calls:
                                 if _tc.get("id") == tc_id:
-                                    _tr_name = _tc.get("name", tc_id)
-                                    # Unwrap MCP wrapper name
-                                    if _tr_name == "mcp__pawflow__use_tool":
-                                        _tr_name = _tc.get("arguments", {}).get("tool_name", _tr_name)
+                                    from core.llm_client import unwrap_mcp_tool
+                                    _tr_name, _ = unwrap_mcp_tool(
+                                        _tc.get("name", tc_id), _tc.get("arguments", {}))
                                     break
                             # Skip meta tool results from SSE
                             if _tr_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):

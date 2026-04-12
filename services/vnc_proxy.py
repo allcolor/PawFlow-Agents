@@ -247,7 +247,6 @@ def _check_http_session_auth(pending_req) -> bool:
     try:
         from core.security import SecurityManager
         sm = SecurityManager.get_instance()
-        # Auth is always required for VNC
         token = None
         cookie_header = pending_req.headers.get("Cookie", "") or pending_req.headers.get("cookie", "")
         for part in cookie_header.split(";"):
@@ -278,8 +277,7 @@ def vnc_http_proxy(pending_req):
     returns 405 (websockify without --web) or is unreachable.
     Route pattern: /vnc/{session_id}/{path}
     """
-    if not _check_http_session_auth(pending_req):
-        return
+    # Auth already checked by HTTP listener
 
     import urllib.request
     import urllib.error

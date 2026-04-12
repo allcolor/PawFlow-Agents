@@ -204,11 +204,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         query = self.path.split('?', 1)[1] if '?' in self.path else ""
 
-        # Session auth for all routes except /auth/* and /vnc/*
-        # (VNC proxy handles its own auth)
-        if path.startswith("/vnc/"):
-            logger.info("VNC route bypass auth: %s", path)
-        if not path.startswith("/auth/") and not path.startswith("/vnc/"):
+        # Session auth for all routes except /auth/*
+        if not path.startswith("/auth/"):
             try:
                 from core.security import SecurityManager
                 sm = SecurityManager.get_instance()
@@ -269,8 +266,6 @@ class _RequestHandler(BaseHTTPRequestHandler):
         registry: RouteRegistry = self.server._route_registry
         timeout: float = self.server._request_timeout
         result = registry.match(method, path)
-        if path.startswith("/vnc/"):
-            logger.info("VNC route match: %s → %s", path, result[0].pattern if result else "NO MATCH")
 
         if result is None:
             # Redirect unmatched GET requests to /chat
@@ -662,33 +657,31 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 return
 
             # Session auth check for WebSocket connections
-            # (skip /vnc/ — VNC proxy handles its own auth)
-            if not path.startswith("/vnc/"):
-                try:
-                    from core.security import SecurityManager
-                    sm = SecurityManager.get_instance()
-                    ws_token = None
-                    cookie_header = headers.get("Cookie", "")
-                    for part in cookie_header.split(";"):
-                        part = part.strip()
-                        if part.startswith("pawflow_token="):
-                            ws_token = part[len("pawflow_token="):]
-                            break
-                    if not ws_token and "token=" in query:
-                        from urllib.parse import parse_qs
-                        ws_token = parse_qs(query).get("token", [""])[0]
-                    if not ws_token or (
-                        not sm.get_session(ws_token) and
-                        not sm.validate_api_key(ws_token)
-                    ):
-                        sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
-                        sock.close()
-                        return
-                except Exception as e:
-                    logger.error("WS session auth check failed: %s", e, exc_info=True)
-                    sock.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
+            try:
+                from core.security import SecurityManager
+                sm = SecurityManager.get_instance()
+                ws_token = None
+                cookie_header = headers.get("Cookie", "")
+                for part in cookie_header.split(";"):
+                    part = part.strip()
+                    if part.startswith("pawflow_token="):
+                        ws_token = part[len("pawflow_token="):]
+                        break
+                if not ws_token and "token=" in query:
+                    from urllib.parse import parse_qs
+                    ws_token = parse_qs(query).get("token", [""])[0]
+                if not ws_token or (
+                    not sm.get_session(ws_token) and
+                    not sm.validate_api_key(ws_token)
+                ):
+                    sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
                     sock.close()
                     return
+            except Exception as e:
+                logger.error("WS session auth check failed: %s", e, exc_info=True)
+                sock.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
+                sock.close()
+                return
 
             # Match route
             result = self._route_registry.match("GET", path)

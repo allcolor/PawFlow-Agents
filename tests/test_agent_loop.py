@@ -1226,27 +1226,12 @@ class TestRandomThought(unittest.TestCase):
         from core.poll_scheduler import PollScheduler
         ConversationStore.reset()
         PollScheduler.reset()
-        self._tmpdir = tempfile.mkdtemp()
-        store = ConversationStore.instance()
-        store._store_dir = Path(self._tmpdir)
-        store._store_dir.mkdir(parents=True, exist_ok=True)
-        # Point PollScheduler to temp dir
-        import core.poll_scheduler as ps
-        self._orig_data_dir = ps._DATA_DIR
-        self._orig_schedule_file = ps._SCHEDULE_FILE
-        ps._DATA_DIR = str(Path(self._tmpdir) / "poll")
-        ps._SCHEDULE_FILE = str(Path(self._tmpdir) / "poll" / "schedule.json")
 
     def tearDown(self):
         from core.conversation_store import ConversationStore
         from core.poll_scheduler import PollScheduler
-        import core.poll_scheduler as ps
         ConversationStore.reset()
         PollScheduler.reset()
-        ps._DATA_DIR = self._orig_data_dir
-        ps._SCHEDULE_FILE = self._orig_schedule_file
-        import shutil
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
 
     def _make_task(self):
         return AgentLoopTask({

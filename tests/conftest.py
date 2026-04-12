@@ -88,16 +88,18 @@ def _isolate_data_dir(tmp_path_factory):
                                      ignore=_shutil.ignore_patterns("users"))
 
     # Reset singletons that cache paths
-    try:
-        from core.plan_store import PlanStore
-        PlanStore._instance = None
-    except Exception:
-        pass
-    try:
-        from core.conversation_store import ConversationStore
-        ConversationStore.reset()
-    except Exception:
-        pass
+    for _reset in [
+        lambda: __import__('core.plan_store', fromlist=['PlanStore']).PlanStore.__setattr__('_instance', None),
+        lambda: __import__('core.conversation_store', fromlist=['ConversationStore']).ConversationStore.reset(),
+        lambda: __import__('core.deployment_registry', fromlist=['DeploymentRegistry']).DeploymentRegistry.reset(),
+        lambda: __import__('core.file_store', fromlist=['FileStore']).FileStore.reset(),
+        lambda: __import__('core.resource_store', fromlist=['ResourceStore']).ResourceStore.reset(),
+        lambda: __import__('core.poll_scheduler', fromlist=['PollScheduler']).PollScheduler.reset(),
+    ]:
+        try:
+            _reset()
+        except Exception:
+            pass
 
     yield tmp
 

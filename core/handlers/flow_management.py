@@ -173,40 +173,48 @@ class FlowManagerHandler(ToolHandler):
     def _owner_tag(self) -> str:
         return self._user_id or None
 
-    @staticmethod
-    def _get_template_dirs():
-        """Return directories where flow templates can be found."""
-        from pathlib import Path
-        dirs = [Path("flows")]
-        # Also check configured flow directories
-        env_dir = __import__("os").environ.get("PAWFLOW_FLOWS_DIR", "")
-        if env_dir:
-            dirs.append(Path(env_dir))
-        return [d for d in dirs if d.exists()]
-
     def _catalog(self) -> str:
         """List available flow templates from the repository."""
+        import core.paths as _p
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+        # List all flow packages in global scope
+        flows_dir = _p.REPOSITORY_DIR / "flows" / "global"
         templates = []
-        for tdir in self._get_template_dirs():
-            for f in sorted(tdir.glob("*.json")):
-                try:
-                    data = json.loads(f.read_text(encoding="utf-8"))
-                    templates.append({
-                        "id": data.get("id", f.stem),
-                        "name": data.get("name", f.stem),
-                        "version": data.get("version", ""),
-                        "description": data.get("description", ""),
-                        "path": str(f),
-                    })
-                except Exception:
+        if flows_dir.exists():
+            for pkg_dir in sorted(flows_dir.iterdir()):
+                if not pkg_dir.is_dir():
                     continue
+                for flow_dir in sorted(pkg_dir.iterdir()):
+                    if not flow_dir.is_dir():
+                        continue
+                    latest = flow_dir / "latest.json"
+                    if not latest.exists():
+                        continue
+                    try:
+                        ver_info = json.loads(latest.read_text(encoding="utf-8"))
+                        ver = ver_info.get("version", "")
+                        ver_file = flow_dir / "versions" / f"{ver}.json"
+                        if ver_file.exists():
+                            data = json.loads(ver_file.read_text(encoding="utf-8"))
+                        else:
+                            data = {}
+                        fqn = f"{pkg_dir.name}.{flow_dir.name}:{ver}"
+                        templates.append({
+                            "fqn": fqn,
+                            "name": data.get("name", flow_dir.name),
+                            "version": ver,
+                            "description": data.get("description", ""),
+                        })
+                    except Exception:
+                        continue
         if not templates:
             return "No flow templates found in the repository."
         lines = []
         for t in templates:
             ver = f" v{t['version']}" if t["version"] else ""
             desc = f" — {t['description']}" if t["description"] else ""
-            lines.append(f"- {t['id']}{ver}: {t['name']}{desc}")
+            lines.append(f"- {t['fqn']}: {t['name']}{desc}")
         return f"Available templates ({len(templates)}):\n" + "\n".join(lines)
 
     def _deploy_template(self, template_id: str, params: dict = None) -> str:

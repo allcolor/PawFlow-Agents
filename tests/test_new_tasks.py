@@ -208,7 +208,7 @@ class TestListFilesTask(unittest.TestCase):
 
     def test_list_directory(self):
         # Use the repository tasks directory which has .json files
-        task = ListFilesTask({'directory': 'data/repository/tasks/global', 'pattern': '*.json'})
+        task = ListFilesTask({'directory': str(__import__('core.paths', fromlist=['REPOSITORY_DIR']).REPOSITORY_DIR / 'tasks' / 'global'), 'pattern': '*.json'})
         ff = FlowFile(content=b"")
         results = task.execute(ff)
         self.assertGreater(len(results), 0)

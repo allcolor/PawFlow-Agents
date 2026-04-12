@@ -476,25 +476,14 @@ class TestCreateToolHandler(unittest.TestCase):
 class TestFlowManagerHandler(unittest.TestCase):
 
     def setUp(self):
-        self.tmpdir = tempfile.mkdtemp()
-        self._orig_cwd = os.getcwd()
-        os.chdir(self.tmpdir)
-        # Reset DeploymentRegistry singleton
-        from core.deployment_registry import DeploymentRegistry, DEPLOYMENTS_DIR
-        import core.deployment_registry as dep_mod
-        DeploymentRegistry.reset()
-        self._orig_dep_dir = DEPLOYMENTS_DIR
-        self._dep_dir = Path(self.tmpdir) / "deployments"
-        self._dep_dir.mkdir()
-        dep_mod.DEPLOYMENTS_DIR = self._dep_dir
-
-    def tearDown(self):
-        os.chdir(self._orig_cwd)
-        import core.deployment_registry as dep_mod
-        dep_mod.DEPLOYMENTS_DIR = self._orig_dep_dir
         from core.deployment_registry import DeploymentRegistry
         DeploymentRegistry.reset()
-        shutil.rmtree(self.tmpdir, ignore_errors=True)
+        import core.paths as _p
+        _p.DEPLOYMENTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        from core.deployment_registry import DeploymentRegistry
+        DeploymentRegistry.reset()
 
     def _make_handler(self, user_id="alice"):
         h = FlowManagerHandler()
@@ -756,11 +745,8 @@ class TestFlowManagerSchedule(unittest.TestCase):
         self.handler = FlowManagerHandler()
         self.handler.set_user_id("testuser")
         self.tmpdir = tempfile.mkdtemp()
-        self._orig_cwd = os.getcwd()
-        os.chdir(self.tmpdir)
 
     def tearDown(self):
-        os.chdir(self._orig_cwd)
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
 
@@ -777,39 +763,32 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         self.handler.set_user_id("user1")
         self.handler.set_conversation_id("conv-1")
         self.tmpdir = tempfile.mkdtemp()
-        self._orig_cwd = os.getcwd()
-        os.chdir(self.tmpdir)
 
         # Redirect deployments to temp dir
-        self._orig_dep_dir = dep_mod.DEPLOYMENTS_DIR
-        dep_mod.DEPLOYMENTS_DIR = Path(self.tmpdir) / "deployments"
-        dep_mod.DEPLOYMENTS_DIR.mkdir()
+        import core.paths as _p; _p.DEPLOYMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Create a fake flows/ directory with templates
-        flows_dir = Path(self.tmpdir) / "flows"
-        flows_dir.mkdir()
-        (flows_dir / "hello.json").write_text(json.dumps({
+        # Create test flow templates in the repository
+        import core.paths as _p
+        from core.repository import ScopedRepository
+        repo = ScopedRepository.instance()
+        repo.create_flow("default.hello_world:1.0.0", "global", {
             "id": "hello-world",
             "name": "Hello World",
-            "version": "1.0.0",
             "description": "A simple hello flow",
             "tasks": {"t1": {"type": "logAttribute"}},
             "relations": [],
             "parameters": {"greeting": "hello"},
-        }), encoding="utf-8")
-        (flows_dir / "pipeline.json").write_text(json.dumps({
+        })
+        repo.create_flow("default.data_pipeline:2.0.0", "global", {
             "id": "data-pipeline",
             "name": "Data Pipeline",
-            "version": "2.0.0",
             "description": "ETL pipeline",
             "tasks": {"extract": {"type": "fetchData"}, "load": {"type": "putFile"}},
             "relations": [{"from": "extract", "to": "load", "type": "success"}],
-        }), encoding="utf-8")
+        })
 
     def tearDown(self):
-        os.chdir(self._orig_cwd)
         import core.deployment_registry as dep_mod
-        dep_mod.DEPLOYMENTS_DIR = self._orig_dep_dir
         from core.deployment_registry import DeploymentRegistry
         DeploymentRegistry.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
@@ -1013,19 +992,13 @@ class TestConversationScoping(unittest.TestCase):
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
-        self._orig_cwd = os.getcwd()
-        os.chdir(self.tmpdir)
         from core.deployment_registry import DeploymentRegistry
         import core.deployment_registry as dep_mod
         DeploymentRegistry.reset()
-        self._orig_dep_dir = dep_mod.DEPLOYMENTS_DIR
-        dep_mod.DEPLOYMENTS_DIR = Path(self.tmpdir) / "deployments"
-        dep_mod.DEPLOYMENTS_DIR.mkdir()
+        import core.paths as _p; _p.DEPLOYMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
-        os.chdir(self._orig_cwd)
         import core.deployment_registry as dep_mod
-        dep_mod.DEPLOYMENTS_DIR = self._orig_dep_dir
         from core.deployment_registry import DeploymentRegistry
         DeploymentRegistry.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)

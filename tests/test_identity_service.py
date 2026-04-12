@@ -16,13 +16,17 @@ class TestIdentityService(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self.path = os.path.join(self.tmp, "mappings.json")
         IdentityService.reset()
-        self.ids = IdentityService(path=self.path)
+        import core.paths as _paths
+        self._orig_ucd = _paths.USER_CONFIG_DIR
+        _paths.USER_CONFIG_DIR = __import__('pathlib').Path(self.tmp)
+        self.ids = IdentityService()
         IdentityService._instance = self.ids
 
     def tearDown(self):
         IdentityService.reset()
+        import core.paths as _paths
+        _paths.USER_CONFIG_DIR = self._orig_ucd
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_link_basic(self):
@@ -93,9 +97,9 @@ class TestIdentityService(unittest.TestCase):
     def test_persistence(self):
         self.ids.link("alice@test.com", "telegram", "123456")
         self.ids.set_active_conv("alice@test.com", "telegram", "conv-abc")
-        # Reload
+        # Reload — paths still point to tmp dir
         IdentityService.reset()
-        ids2 = IdentityService(path=self.path)
+        ids2 = IdentityService()
         user = ids2.resolve_user("telegram", "123456")
         self.assertEqual(user, "alice@test.com")
         active = ids2.get_active_conv("alice@test.com", "telegram")
@@ -125,11 +129,13 @@ class TestAgentLoopTelegramAuth(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         IdentityService.reset()
-        self.ids = IdentityService(path=os.path.join(self.tmp, "id.json"))
+        import core.paths as _p; self._orig_ucd = _p.USER_CONFIG_DIR; _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp); self.ids = IdentityService()
         IdentityService._instance = self.ids
 
     def tearDown(self):
         IdentityService.reset()
+        import core.paths as _p
+        _p.USER_CONFIG_DIR = self._orig_ucd
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_unlinked_telegram_user_rejected(self):
@@ -177,7 +183,7 @@ class TestTelegramConvCommands(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         IdentityService.reset()
-        self.ids = IdentityService(path=os.path.join(self.tmp, "id.json"))
+        import core.paths as _p; self._orig_ucd = _p.USER_CONFIG_DIR; _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp); self.ids = IdentityService()
         IdentityService._instance = self.ids
         ConversationStore.reset()
         self.store = ConversationStore(store_dir=os.path.join(self.tmp, "convs"))
@@ -264,7 +270,7 @@ class TestAgentLoopAccountLinking(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         IdentityService.reset()
-        self.ids = IdentityService(path=os.path.join(self.tmp, "id.json"))
+        import core.paths as _p; self._orig_ucd = _p.USER_CONFIG_DIR; _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp); self.ids = IdentityService()
         IdentityService._instance = self.ids
         ConversationStore.reset()
         self.store = ConversationStore(store_dir=os.path.join(self.tmp, "convs"))
@@ -368,11 +374,13 @@ class TestIdentityBotToken(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         IdentityService.reset()
-        self.ids = IdentityService(path=os.path.join(self.tmp, "id.json"))
+        import core.paths as _p; self._orig_ucd = _p.USER_CONFIG_DIR; _p.USER_CONFIG_DIR = __import__("pathlib").Path(self.tmp); self.ids = IdentityService()
         IdentityService._instance = self.ids
 
     def tearDown(self):
         IdentityService.reset()
+        import core.paths as _p
+        _p.USER_CONFIG_DIR = self._orig_ucd
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_link_with_bot_token(self):
@@ -401,7 +409,7 @@ class TestIdentityBotToken(unittest.TestCase):
         self.ids.link("alice@test.com", "telegram", "123", bot_token="BOT:xxx")
         # Reload
         IdentityService.reset()
-        ids2 = IdentityService(path=os.path.join(self.tmp, "id.json"))
+        ids2 = IdentityService()
         token = ids2.get_bot_token("alice@test.com", "telegram")
         self.assertEqual(token, "BOT:xxx")
 

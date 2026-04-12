@@ -2,6 +2,8 @@
 
 import json
 import os
+from pathlib import Path
+import shutil
 import tempfile
 import time
 from unittest.mock import MagicMock, patch
@@ -170,11 +172,13 @@ class TestIdentityServiceCrossChannel:
 
     def _make_service(self):
         from core.identity_service import IdentityService
-        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
-        tmp.write(b"{}")
-        tmp.close()
-        svc = IdentityService(path=tmp.name)
-        return svc, tmp.name
+        import core.paths as _p
+        self._tmp_dir = tempfile.mkdtemp()
+        self._orig_ucd = _p.USER_CONFIG_DIR
+        _p.USER_CONFIG_DIR = Path(self._tmp_dir)
+        IdentityService.reset()
+        svc = IdentityService()
+        return svc, self._tmp_dir
 
     def test_link_discord_identity(self):
         svc, path = self._make_service()
@@ -182,7 +186,7 @@ class TestIdentityServiceCrossChannel:
             svc.link("user1", "discord", "disc123")
             assert svc.resolve_user("discord", "disc123") == "user1"
         finally:
-            os.unlink(path)
+            import core.paths as _p2; _p2.USER_CONFIG_DIR = self._orig_ucd; shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def test_link_whatsapp_identity(self):
         svc, path = self._make_service()
@@ -190,7 +194,7 @@ class TestIdentityServiceCrossChannel:
             svc.link("user1", "whatsapp", "+33600000000")
             assert svc.resolve_user("whatsapp", "+33600000000") == "user1"
         finally:
-            os.unlink(path)
+            import core.paths as _p2; _p2.USER_CONFIG_DIR = self._orig_ucd; shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def test_link_slack_identity(self):
         svc, path = self._make_service()
@@ -198,7 +202,7 @@ class TestIdentityServiceCrossChannel:
             svc.link("user1", "slack", "U01ABC")
             assert svc.resolve_user("slack", "U01ABC") == "user1"
         finally:
-            os.unlink(path)
+            import core.paths as _p2; _p2.USER_CONFIG_DIR = self._orig_ucd; shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def test_resolve_user_all_channels(self):
         svc, path = self._make_service()
@@ -210,7 +214,7 @@ class TestIdentityServiceCrossChannel:
             assert svc.resolve_user("whatsapp", "w1") == "alice"
             assert svc.resolve_user("slack", "s1") == "alice"
         finally:
-            os.unlink(path)
+            import core.paths as _p2; _p2.USER_CONFIG_DIR = self._orig_ucd; shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def test_get_active_conv_cross_channel(self):
         svc, path = self._make_service()
@@ -222,7 +226,7 @@ class TestIdentityServiceCrossChannel:
                 user = svc.resolve_user(ch, ext_id)
                 assert user == "bob"
         finally:
-            os.unlink(path)
+            import core.paths as _p2; _p2.USER_CONFIG_DIR = self._orig_ucd; shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

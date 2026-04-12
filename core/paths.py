@@ -147,7 +147,6 @@ SPILL_DIR = RUNTIME_DIR / "spill"
 # Runtime data files
 TOKEN_USAGE_FILE = RUNTIME_DIR / "token_usage.json"
 POLL_SCHEDULE_FILE = RUNTIME_DIR / "poll_schedule.json"
-IDENTITY_MAPPINGS_FILE = RUNTIME_DIR / "identity_mappings.json"
 GATEWAY_BANS_FILE = RUNTIME_DIR / "gateway_bans.json"
 
 

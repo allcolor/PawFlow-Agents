@@ -657,40 +657,6 @@ class TestAgentLoopTask(unittest.TestCase):
 # ── Template ─────────────────────────────────────────────────────────
 
 
-class TestAgentTemplate(unittest.TestCase):
-
-    def test_agent_template_exists(self):
-        from core.template_service import TemplateService
-        svc = TemplateService()
-        templates = svc.list_templates()
-        ids = [t["id"] for t in templates]
-        assert "builtin_agent_llm" in ids
-
-    def test_agent_template_content(self):
-        from core.template_service import TemplateService
-        svc = TemplateService()
-        tpl = svc.get_template("builtin_agent_llm")
-        assert tpl is not None
-        assert "agentLoop_1" in tpl["tasks"]
-        assert "httpReceiver_1" in tpl["tasks"]
-        assert "handleHTTPResponse_1" in tpl["tasks"]
-        assert tpl["category"] == "Integration"
-        assert tpl["difficulty"] == "advanced"
-
-    def test_agent_template_relations(self):
-        from core.template_service import TemplateService
-        svc = TemplateService()
-        tpl = svc.get_template("builtin_agent_llm")
-        froms = [r["from"] for r in tpl["relations"]]
-        tos = [r["to"] for r in tpl["relations"]]
-        assert "httpReceiver_1" in froms
-        assert "agentLoop_1" in tos
-        assert "handleHTTPResponse_1" in tos
-
-
-# ── i18n ─────────────────────────────────────────────────────────────
-
-
 class TestLLMConnectionServiceTools(unittest.TestCase):
 
     def test_complete_accepts_tools_parameter(self):

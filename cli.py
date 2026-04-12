@@ -10,8 +10,6 @@ Usage:
     python cli.py info <flow.json>
     python cli.py serve [--host] [--port] [--reload]
     python cli.py gui [--host] [--port] [--headless]
-    python cli.py plugins list|install|remove
-    python cli.py export <flow> [-o output]
     python cli.py import <file> [-o output]
     python cli.py cluster status [--api-url]
 """
@@ -337,158 +335,31 @@ def cmd_start(args):
         _shutdown(None, None)
 
 
-def cmd_plugins(args):
-    """Manage plugins."""
-    from core.plugin import PluginManager
-    pm = PluginManager()
-
-    if args.action == "list":
-        plugins = pm.list_plugins()
-        if not plugins:
-            print("No plugins installed.")
-            return 0
-        for p in plugins:
-            print(f"  {p['id']} v{p.get('version', '?')} — {p.get('description', '')}")
-    elif args.action == "install":
-        if not args.path:
-            print("ERREUR: --path is required for install.")
-            return 1
-        result = pm.install(args.path)
-        print(f"Installed: {result.id}")
-    elif args.action == "remove":
-        if not args.plugin_id:
-            print("ERREUR: --plugin-id is required for remove.")
-            return 1
-        pm.uninstall(args.plugin_id)
-        print(f"Removed: {args.plugin_id}")
-    elif args.action == "upgrade":
-        if not args.plugin_id:
-            print("ERREUR: --plugin-id is required for upgrade.")
-            return 1
-        try:
-            result = pm.upgrade(args.plugin_id, args.version)
-            print(f"Upgraded: {result.id} to v{result.version}")
-        except Exception as e:
-            print(f"ERREUR: {e}")
-            return 1
-    elif args.action == "downgrade":
-        if not args.plugin_id:
-            print("ERREUR: --plugin-id is required for downgrade.")
-            return 1
-        if not args.version:
-            print("ERREUR: --version is required for downgrade.")
-            return 1
-        try:
-            result = pm.downgrade(args.plugin_id, args.version)
-            print(f"Downgraded: {result.id} to v{result.version}")
-        except Exception as e:
-            print(f"ERREUR: {e}")
-            return 1
-    elif args.action == "history":
-        if not args.plugin_id:
-            print("ERREUR: --plugin-id is required for history.")
-            return 1
-        history = pm.get_plugin_history(args.plugin_id)
-        if not history:
-            print(f"No version history for plugin '{args.plugin_id}'.")
-            return 0
-        print(f"Version history for '{args.plugin_id}':")
-        for entry in history:
-            ts = entry.get("timestamp", "?")
-            action = entry.get("action", "?")
-            version = entry.get("version", "?")
-            prev = entry.get("previous_version")
-            if prev:
-                print(f"  [{ts}] {action}: {prev} -> {version}")
-            else:
-                print(f"  [{ts}] {action}: {version}")
-    elif args.action == "info":
-        if not args.plugin_id:
-            print("ERREUR: --plugin-id is required for info.")
-            return 1
-        version = pm.get_installed_version(args.plugin_id)
-        if version is None:
-            print(f"Plugin '{args.plugin_id}' is not installed.")
-            return 1
-        loaded = pm.get_plugin(args.plugin_id)
-        print(f"Plugin: {args.plugin_id}")
-        print(f"  Version: {version}")
-        if loaded:
-            desc = loaded.descriptor
-            print(f"  Name: {desc.name}")
-            print(f"  Author: {desc.author}")
-            print(f"  Description: {desc.description}")
-            print(f"  Tasks: {loaded.loaded_tasks}")
-            print(f"  Services: {loaded.loaded_services}")
-            print(f"  Flows: {loaded.loaded_flows}")
-        available = pm.list_versions(args.plugin_id)
-        if available:
-            print(f"  Available versions: {', '.join(available)}")
-        deps = pm.check_dependencies(args.plugin_id)
-        if deps.get("details"):
-            print(f"  Dependencies satisfied: {deps['satisfied']}")
-            for dep_id, info in deps["details"].items():
-                status = "OK" if info.get("satisfied") else "MISSING"
-                print(f"    {dep_id}: {info.get('required', '?')} [{status}]")
-        history = pm.get_plugin_history(args.plugin_id)
-        if history:
-            last = history[-1]
-            print(f"  Last action: {last['action']} v{last['version']} at {last['timestamp']}")
-    return 0
-
-
-
-def cmd_export(args):
-    """Export a flow as .pfp plugin."""
-    flow_path = Path(args.flow_path)
-    if not flow_path.exists():
-        print(f"ERREUR: Fichier introuvable: {flow_path}")
-        return 1
-    try:
-        with open(flow_path) as f:
-            flow_config = json.load(f)
-    except Exception as e:
-        print(f"ERREUR: Impossible de lire le flow: {e}")
-        return 1
-
-    from core.plugin import export_flow_as_plugin
-    output = args.output or f"{flow_path.stem}.pfp"
-    export_flow_as_plugin(flow_config, output)
-    print(f"Exported: {output}")
-    return 0
-
-
 def cmd_import_flow(args):
-    """Import a NiFi flow or .pfp plugin."""
+    """Import a NiFi flow."""
     path = args.path
-    if path.endswith('.pfp'):
-        from core.plugin import PluginManager
-        pm = PluginManager()
-        result = pm.install(path)
-        print(f"Imported plugin: {result.id}")
-    else:
-        from engine.nifi_converter import NiFiConverter
-        with open(path) as f:
-            content = f.read()
-        converter = NiFiConverter()
-        result = converter.convert(content)
+    from engine.nifi_converter import NiFiConverter
+    with open(path) as f:
+        content = f.read()
+    converter = NiFiConverter()
+    result = converter.convert(content)
 
-        output_path = args.output or "imported_flow.json"
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, 'w') as f:
-            json.dump(result.flow, f, indent=2)
+    output_path = args.output or "imported_flow.json"
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, 'w') as f:
+        json.dump(result.flow, f, indent=2)
 
-        print(f"Imported flow: {output_path}")
-        if result.warnings:
-            print(f"Warnings ({len(result.warnings)}):")
-            for w in result.warnings[:5]:
-                print(f"  - {w}")
-        if result.subflows:
-            for sf in result.subflows:
-                sf_path = f"{sf.get('id', 'subflow')}.json"
-                with open(sf_path, 'w') as f_out:
-                    json.dump(sf, f_out, indent=2)
-                print(f"  Subflow: {sf_path}")
+    print(f"Imported flow: {output_path}")
+    if result.warnings:
+        print(f"Warnings ({len(result.warnings)}):")
+        for w in result.warnings[:5]:
+            print(f"  - {w}")
+    if result.subflows:
+        for sf in result.subflows:
+            sf_path = f"{sf.get('id', 'subflow')}.json"
+            with open(sf_path, 'w') as f_out:
+                json.dump(sf, f_out, indent=2)
+            print(f"  Subflow: {sf_path}")
     return 0
 
 
@@ -694,20 +565,7 @@ def main():
     start_parser.add_argument('--host', default='localhost', help='Host (default: localhost)')
     start_parser.add_argument('--port', type=int, default=9090, help='Port (default: 9090)')
 
-    # plugins
-    plugins_parser = subparsers.add_parser('plugins', help='Manage plugins')
-    plugins_parser.add_argument('action',
-                                choices=['list', 'install', 'remove',
-                                         'upgrade', 'downgrade', 'history', 'info'],
-                                help='Plugin action')
-    plugins_parser.add_argument('--path', help='Path to .pfp file (for install)')
-    plugins_parser.add_argument('--plugin-id', help='Plugin ID')
-    plugins_parser.add_argument('--version', help='Target version (for upgrade/downgrade)')
 
-    # export
-    export_parser = subparsers.add_parser('export', help='Export a flow as .pfp plugin')
-    export_parser.add_argument('flow_path', help='Flow JSON file to export')
-    export_parser.add_argument('-o', '--output', help='Output .pfp path')
 
     # import
     import_parser = subparsers.add_parser('import', help='Import a NiFi flow or .pfp plugin')
@@ -752,10 +610,6 @@ def main():
         sys.exit(cmd_info(args))
     elif args.command == 'start':
         sys.exit(cmd_start(args))
-    elif args.command == 'plugins':
-        sys.exit(cmd_plugins(args))
-    elif args.command == 'export':
-        sys.exit(cmd_export(args))
     elif args.command == 'import':
         sys.exit(cmd_import_flow(args))
     elif args.command == 'triggers':

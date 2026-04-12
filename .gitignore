@@ -42,6 +42,8 @@ data/system/
 flows/
 projects/
 checkpoints/
+templates/
+plugins/
 
 # ── Legacy data dirs (pre-migration) ─────────────────────────
 data/config/

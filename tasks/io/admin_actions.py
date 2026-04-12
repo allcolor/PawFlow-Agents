@@ -22,12 +22,11 @@ def _get_registries():
     from core.executor_registry import ExecutorRegistry
     from core.deployment_registry import DeploymentRegistry
     from core.service_registry import ServiceRegistry
-    from core.template_service import TemplateService
     return (
         ExecutorRegistry.get_instance(),
         DeploymentRegistry.get_instance(),
         ServiceRegistry.get_instance(),
-        TemplateService(),
+        None,  # TemplateService removed
     )
 
 

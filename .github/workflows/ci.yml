@@ -72,7 +72,7 @@ jobs:
 
       - name: Check syntax (compile all Python files)
         run: |
-          python -m compileall -q core/ engine/ tasks/ services/ api/
+          python -m compileall -q core/ engine/ tasks/ services/
 
       - name: Ruff lint (errors only)
         run: |

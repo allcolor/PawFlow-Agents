@@ -16,6 +16,7 @@ from core.paths import LLM_PROFILES_FILE
 def load_profiles() -> Dict[str, Dict[str, Any]]:
     """Load profiles from llm_profiles.json. Returns empty dict on error."""
     if not LLM_PROFILES_FILE.exists():
+        return {}
     try:
         return json.loads(LLM_PROFILES_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:

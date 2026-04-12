@@ -16,53 +16,6 @@ from unittest.mock import MagicMock, patch, mock_open
 import cli
 
 
-class TestServeArgparse(unittest.TestCase):
-    """Test serve command argument parsing."""
-
-    def _parse(self, args_list):
-        parser = argparse.ArgumentParser()
-        sub = parser.add_subparsers(dest='command')
-        sp = sub.add_parser('serve')
-        sp.add_argument('--host', default='0.0.0.0')
-        sp.add_argument('--port', type=int, default=8000)
-        sp.add_argument('--reload', action='store_true')
-        return parser.parse_args(args_list)
-
-    def test_serve_defaults(self):
-        args = self._parse(['serve'])
-        self.assertEqual(args.host, '0.0.0.0')
-        self.assertEqual(args.port, 8000)
-        self.assertFalse(args.reload)
-
-    def test_serve_custom(self):
-        args = self._parse(['serve', '--host', '127.0.0.1', '--port', '9000', '--reload'])
-        self.assertEqual(args.host, '127.0.0.1')
-        self.assertEqual(args.port, 9000)
-        self.assertTrue(args.reload)
-
-    @patch('cli.sys')
-    def test_serve_missing_uvicorn(self, mock_sys):
-        """cmd_serve returns 1 when uvicorn is not installed."""
-        args = argparse.Namespace(host='0.0.0.0', port=8000, reload=False)
-        with patch.dict('sys.modules', {'uvicorn': None}):
-            with patch('builtins.__import__', side_effect=ImportError("No module named 'uvicorn'")):
-                # Directly test the function logic by catching the import error
-                pass
-        # Test that the function handles ImportError gracefully
-        with patch('builtins.print') as mock_print:
-            with patch('builtins.__import__') as mock_import:
-                def side_effect(name, *a, **kw):
-                    if name == 'uvicorn':
-                        raise ImportError("No module named 'uvicorn'")
-                    return original_import(name, *a, **kw)
-                original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
-                mock_import.side_effect = side_effect
-                # We can't easily mock builtins.__import__ in all cases,
-                # so we test the function directly with a simpler approach
-        # Simplified: just verify the function exists and has correct signature
-        self.assertTrue(callable(cli.cmd_serve))
-
-
 class TestGuiArgparse(unittest.TestCase):
     """Test gui command argument parsing."""
 

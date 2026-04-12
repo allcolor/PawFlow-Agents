@@ -609,24 +609,3 @@ class TestCLIParamOverride:
 # ============================================================================
 # P8.3 — API models have parameters field
 # ============================================================================
-
-class TestAPIModels:
-
-    def test_batch_request_has_parameters(self):
-        from api.routers.execution_router import BatchExecuteRequest
-        req = BatchExecuteRequest(flow_id="test", parameters={"env": "prod"})
-        assert req.parameters == {"env": "prod"}
-
-    def test_batch_request_parameters_optional(self):
-        from api.routers.execution_router import BatchExecuteRequest
-        req = BatchExecuteRequest(flow_id="test")
-        assert req.parameters is None
-
-    def test_continuous_request_has_parameters(self):
-        from api.routers.execution_router import ContinuousStartRequest
-        req = ContinuousStartRequest(flow_id="test", parameters={"mode": "fast"})
-        assert req.parameters == {"mode": "fast"}
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

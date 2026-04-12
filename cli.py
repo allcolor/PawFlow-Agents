@@ -224,28 +224,12 @@ def cmd_info(args):
     return 0
 
 
-def cmd_serve(args):
-    """Start the PawFlow API server."""
-    try:
-        import uvicorn
-    except ImportError:
-        print("ERREUR: uvicorn n'est pas installe. Installez-le avec: pip install uvicorn")
-        return 1
-    try:
-        from api.app import app
-    except ImportError as e:
-        print(f"ERREUR: Impossible d'importer l'API: {e}")
-        return 1
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info",
-                reload=args.reload)
 
-
-def cmd_gui(args):
-    """Start PawFlow server with native admin GUI.
+def cmd_start(args):
+    """Start PawFlow server.
 
     The PawFlow server (HTTP :9090, chat, agents) runs in the main process.
     Admin GUI is served natively at /admin via the pawflow-admin flow.
-    Streamlit GUI is deprecated (gui_deprecated/).
     """
     import signal
 
@@ -705,16 +689,10 @@ def main():
     info_parser = subparsers.add_parser('info', help='Infos sur un flow')
     info_parser.add_argument('flow', help='Fichier JSON du flow')
 
-    # serve
-    serve_parser = subparsers.add_parser('serve', help='Start the PawFlow API server')
-    serve_parser.add_argument('--host', default='0.0.0.0', help='Host to bind (default: 0.0.0.0)')
-    serve_parser.add_argument('--port', type=int, default=8000, help='Port (default: 8000)')
-    serve_parser.add_argument('--reload', action='store_true', help='Enable auto-reload')
-
-    # gui
-    gui_parser = subparsers.add_parser('gui', help='Start PawFlow server with native admin GUI')
-    gui_parser.add_argument('--host', default='localhost', help='Host (default: localhost)')
-    gui_parser.add_argument('--port', type=int, default=9090, help='Port (default: 9090)')
+    # start
+    start_parser = subparsers.add_parser('start', help='Start PawFlow server')
+    start_parser.add_argument('--host', default='localhost', help='Host (default: localhost)')
+    start_parser.add_argument('--port', type=int, default=9090, help='Port (default: 9090)')
 
     # plugins
     plugins_parser = subparsers.add_parser('plugins', help='Manage plugins')
@@ -772,10 +750,8 @@ def main():
         cmd_list_tasks(args)
     elif args.command == 'info':
         sys.exit(cmd_info(args))
-    elif args.command == 'serve':
-        sys.exit(cmd_serve(args))
-    elif args.command == 'gui':
-        sys.exit(cmd_gui(args))
+    elif args.command == 'start':
+        sys.exit(cmd_start(args))
     elif args.command == 'plugins':
         sys.exit(cmd_plugins(args))
     elif args.command == 'export':

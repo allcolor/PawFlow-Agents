@@ -247,8 +247,7 @@ def _check_http_session_auth(pending_req) -> bool:
     try:
         from core.security import SecurityManager
         sm = SecurityManager.get_instance()
-        if not sm.auth_enabled:
-            return True
+        # Auth is always required for VNC
         token = None
         cookie_header = pending_req.headers.get("Cookie", "") or pending_req.headers.get("cookie", "")
         for part in cookie_header.split(";"):

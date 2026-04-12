@@ -196,7 +196,6 @@ class SecurityManager:
         self._users: Dict[str, User] = {}
         self._sessions: Dict[str, Session] = {}
         self._session_ttl = 3600 * 8  # 8 hours
-        self._auth_enabled = False
         self._oauth_config: Dict[str, Any] = {}
         self._api_keys: Dict[str, str] = {}
         self._auto_provision: Dict[str, Any] = {"rules": [], "default_action": "deny"}
@@ -204,13 +203,6 @@ class SecurityManager:
         self._load_users()
         self._load_sessions()
 
-    @property
-    def auth_enabled(self) -> bool:
-        return self._auth_enabled
-
-    def enable_auth(self, enabled: bool = True):
-        self._auth_enabled = enabled
-        self._save_config()
 
     # -- User management --
 
@@ -320,8 +312,6 @@ class SecurityManager:
 
     def check_permission(self, session: Session, permission: str) -> bool:
         """Check if a session has a specific permission."""
-        if not self._auth_enabled:
-            return True  # Auth disabled = everything allowed
         if session.is_expired:
             return False
         return permission in ROLE_PERMISSIONS.get(session.role, set())
@@ -373,7 +363,6 @@ class SecurityManager:
             try:
                 with open(path, 'r') as f:
                     data = json.load(f)
-                self._auth_enabled = data.get("auth_enabled", False)
                 self._session_ttl = data.get("session_ttl", 3600 * 8)
                 self._oauth_config = data.get("oauth_providers", {})
                 self._api_keys = data.get("api_keys", {})
@@ -387,7 +376,6 @@ class SecurityManager:
         path = _paths.SECURITY_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            "auth_enabled": self._auth_enabled,
             "session_ttl": self._session_ttl,
             "oauth_providers": self._oauth_config,
             "api_keys": self._api_keys,

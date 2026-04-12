@@ -195,7 +195,7 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
 # Base directory for per-session Claude Code workdirs — read dynamically
 def _get_sessions_base():
     import core.paths as _p
-    return str(_p.CLAUDE_SESSIONS_DIR)
+    return str(_p.CLAUDE_SESSIONS_DIR.resolve())
 
 
 class ClaudeCodeSessionMixin:

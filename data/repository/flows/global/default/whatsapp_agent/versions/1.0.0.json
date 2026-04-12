@@ -1,0 +1,66 @@
+{
+  "id": "whatsapp-agent",
+  "name": "whatsapp_agent",
+  "version": "1.0.0",
+  "description": "LLM agent accessible via WhatsApp. Messages are processed by the agent and responses are sent back.",
+  "parameters": {
+    "llm_service": "${llm.default.service}",
+    "phone_number_id": "",
+    "whatsapp_access_token": "",
+    "whatsapp_verify_token": "",
+    "conversation_ttl": 0
+  },
+  "services": {
+    "whatsapp": {
+      "type": "whatsappCloud",
+      "parameters": {
+        "phone_number_id": "${phone_number_id}",
+        "access_token": "${whatsapp_access_token}",
+        "verify_token": "${whatsapp_verify_token}"
+      }
+    }
+  },
+  "tasks": {
+    "receive": {
+      "type": "whatsappReceiver",
+      "parameters": {
+        "service_id": "whatsapp"
+      }
+    },
+    "agent": {
+      "type": "agentLoop",
+      "parameters": {
+        "llm_service": "${llm_service}",
+        "system_prompt": "You are a helpful AI assistant on WhatsApp. Be concise and helpful.",
+        "conversation_attribute": "whatsapp.phone",
+        "conversation_ttl": "${conversation_ttl}",
+        "max_iterations": 50
+      }
+    },
+    "send_reply": {
+      "type": "whatsappSend",
+      "parameters": {
+        "service_id": "whatsapp",
+        "phone": "${whatsapp.phone}"
+      }
+    }
+  },
+  "connections": [
+    {
+      "source": "receive",
+      "target": "agent",
+      "relationships": [
+        "success"
+      ]
+    },
+    {
+      "source": "agent",
+      "target": "send_reply",
+      "relationships": [
+        "success"
+      ]
+    }
+  ],
+  "fqn": "default.whatsapp_agent:1.0.0",
+  "package": "default"
+}

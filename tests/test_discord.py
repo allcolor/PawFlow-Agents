@@ -270,7 +270,7 @@ class TestDiscordFlow:
     @pytest.fixture
     def flow_data(self):
         flow_path = os.path.join(
-            os.path.dirname(__file__), "..", "flows", "discord_agent.json"
+            os.path.dirname(__file__), "..", "data", "repository", "flows", "global", "default", "discord_agent", "versions", "1.0.0.json"
         )
         with open(flow_path, "r", encoding="utf-8") as f:
             return json.load(f)

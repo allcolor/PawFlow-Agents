@@ -16,21 +16,14 @@ from core.resource_store import ResourceStore, VALID_TYPES
 def reset_singleton(tmp_path):
     """Reset singleton and redirect repository to tmp_path."""
     ResourceStore.reset()
-    # Redirect REPOSITORY_DIR and DEFAULTS_DIR to tmp_path
-    from core import repository as repo_mod
     from core import paths as paths_mod
+    from core.repository import ScopedRepository
     repo_dir = tmp_path / "repository"
     repo_dir.mkdir()
-    defaults_dir = tmp_path / "_no_defaults"
-    defaults_dir.mkdir()
-    with patch.object(paths_mod, "REPOSITORY_DIR", repo_dir), \
-         patch.object(paths_mod, "DEFAULTS_DIR", defaults_dir), \
-         patch.object(repo_mod, "REPOSITORY_DIR", repo_dir), \
-         patch.object(repo_mod, "DEFAULTS_DIR", defaults_dir):
-        # Also reset ScopedRepository singleton
-        repo_mod.ScopedRepository.reset()
+    with patch.object(paths_mod, "REPOSITORY_DIR", repo_dir):
+        ScopedRepository.reset()
         yield tmp_path
-    repo_mod.ScopedRepository.reset()
+    ScopedRepository.reset()
     ResourceStore.reset()
 
 

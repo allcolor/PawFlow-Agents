@@ -21,8 +21,9 @@ from typing import Any, Dict, List, Optional
 
 import re
 
+import core.paths as _paths
 from core.paths import (
-    REPO_TYPES, REPOSITORY_DIR, DEFAULTS_DIR,
+    REPO_TYPES,
     _MARKDOWN_TYPES,
     repo_dir, repo_file,
     flow_package_dir, flow_dir, flow_latest_file, flow_version_file,
@@ -373,21 +374,6 @@ class ScopedRepository:
         self._write_json(latest_file, {"version": version})
 
         return self._read_json(ver_file)
-
-    # ── Seed ───────────────────────────────────────────────────────
-
-    def seed_from_defaults(self, rtype: str):
-        """Seed global scope from defaults/ directory if empty."""
-        global_dir = repo_dir(rtype, SCOPE_GLOBAL)
-        if global_dir.exists() and any(global_dir.glob("*.json")):
-            return
-        seed_dir = DEFAULTS_DIR / rtype
-        if not seed_dir.exists():
-            return
-        global_dir.mkdir(parents=True, exist_ok=True)
-        for src in seed_dir.glob("*.json"):
-            shutil.copy2(src, global_dir / src.name)
-            logger.info("Seeded %s/global/%s from defaults", rtype, src.name)
 
     # ── Internal ───────────────────────────────────────────────────
 

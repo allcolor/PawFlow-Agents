@@ -10,13 +10,12 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import LLM_PROFILES_FILE, ensure_seed_file
+from core.paths import LLM_PROFILES_FILE
 
 
 def load_profiles() -> Dict[str, Dict[str, Any]]:
     """Load profiles from llm_profiles.json. Returns empty dict on error."""
     if not LLM_PROFILES_FILE.exists():
-        ensure_seed_file(LLM_PROFILES_FILE, "llm_profiles.json")
     try:
         return json.loads(LLM_PROFILES_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:

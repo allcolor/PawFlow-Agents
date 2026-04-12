@@ -29,10 +29,8 @@ node_modules/
 
 # ── Data layout: repository/ runtime/ system/ ────────────────
 
-# Repository: global definitions are tracked (seed data)
-# User/conv scoped definitions are runtime → ignored
+# Repository: global scope is tracked, user/conv scope is runtime
 data/repository/*/users/
-data/repository/flows/global/*/
 
 # Runtime: all generated state → ignored
 data/runtime/

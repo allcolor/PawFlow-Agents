@@ -374,8 +374,8 @@ class TestFlowMigration(unittest.TestCase):
     """Verify existing flows have been migrated to llm_service."""
 
     def _load_flow(self, name):
-        import os
-        path = os.path.join("flows", name)
+        stem = name.replace(".json", "")
+        path = f"data/repository/flows/global/default/{stem}/versions/1.0.0.json"
         with open(path, encoding="utf-8") as f:
             return json.load(f)
 

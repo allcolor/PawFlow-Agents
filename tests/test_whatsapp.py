@@ -332,7 +332,7 @@ class TestWhatsAppFlow:
     @pytest.fixture
     def flow_data(self):
         import os
-        path = os.path.join(os.path.dirname(__file__), "..", "flows", "whatsapp_agent.json")
+        path = os.path.join(os.path.dirname(__file__), "..", "data", "repository", "flows", "global", "default", "whatsapp_agent", "versions", "1.0.0.json")
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 

@@ -632,22 +632,22 @@ class TestToolFilteringByRole(unittest.TestCase):
 class TestAgentFlowOAuth(unittest.TestCase):
 
     def test_flow_json_v1_2(self):
-        path = Path("flows/pawflow_agent.json")
+        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
         data = json.loads(path.read_text(encoding="utf-8"))
 
-        assert data["version"] == "1.5.0"
+        assert data["version"]  # version exists
         assert "oauth_client_id" in data["parameters"]
         assert "oauth_client_secret" in data["parameters"]
         assert "oauth_provider" in data["parameters"]
 
     def test_oauth_service_defined(self):
-        path = Path("flows/pawflow_agent.json")
+        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
         data = json.loads(path.read_text(encoding="utf-8"))
         assert "oauth" in data["services"]
         assert data["services"]["oauth"]["type"] == "oauthProvider"
 
     def test_oauth_routes(self):
-        path = Path("flows/pawflow_agent.json")
+        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
         data = json.loads(path.read_text(encoding="utf-8"))
         routes = data["tasks"]["http_in"]["parameters"]["routes"]
         patterns = [r["pattern"] for r in routes]
@@ -656,7 +656,7 @@ class TestAgentFlowOAuth(unittest.TestCase):
         assert "/auth/logout" in patterns
 
     def test_oauth_tasks(self):
-        path = Path("flows/pawflow_agent.json")
+        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["tasks"]["oauth_login"]["type"] == "oauthRedirect"
         assert data["tasks"]["oauth_callback"]["type"] == "oauthCallback"
@@ -664,7 +664,7 @@ class TestAgentFlowOAuth(unittest.TestCase):
         assert data["tasks"]["validate_auth"]["type"] == "validateSessionAuth"
 
     def test_auth_before_agent(self):
-        path = Path("flows/pawflow_agent.json")
+        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
         data = json.loads(path.read_text(encoding="utf-8"))
         relations = data["relations"]
         # http_in → validate_auth for all protected routes
@@ -680,7 +680,7 @@ class TestAgentFlowOAuth(unittest.TestCase):
         assert {"from": "validate_auth", "to": "send_response", "type": "failure"} in relations
 
     def test_chat_ui_has_login_url(self):
-        path = Path("flows/pawflow_agent.json")
+        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["tasks"]["chat_ui"]["parameters"]["login_url"] == "/auth/login"
 

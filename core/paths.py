@@ -19,8 +19,6 @@ REPOSITORY_DIR = DATA_DIR / "repository"
 RUNTIME_DIR = DATA_DIR / "runtime"
 SYSTEM_DIR = DATA_DIR / "system"
 
-# ── Defaults (seed data, tracked in git) ──────────────────────────
-DEFAULTS_DIR = Path("defaults")
 
 # ── Repository resource types ────────────────────────────────────
 REPO_TYPES = frozenset({
@@ -184,13 +182,3 @@ def user_oauth_path(user_id: str) -> Path:
 
 # ── Helpers ──────────────────────────────────────────────────────
 
-def ensure_seed_file(target: Path, default_name: str) -> None:
-    """Copy a seed file from defaults/ to target if target doesn't exist."""
-    if target.exists():
-        return
-    source = DEFAULTS_DIR / default_name
-    if not source.exists():
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    import shutil
-    shutil.copy2(source, target)

@@ -1,0 +1,100 @@
+{
+  "name": "demo_pipeline",
+  "description": "Demonstrates PawFlow capabilities with 25 task types",
+  "version": "1.0.0",
+  "parameters": {
+    "greeting": "Bienvenue dans PawFlow"
+  },
+  "tasks": {
+    "generate": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content": "{\"user\": {\"name\": \"Alice\", \"email\": \"alice@example.com\", \"age\": 30}, \"items\": [{\"id\": 1, \"price\": 10.5}, {\"id\": 2, \"price\": 25.0}]}",
+        "content_type": "application/json",
+        "count": 1
+      }
+    },
+    "validate": {
+      "type": "validateJSON",
+      "parameters": {
+        "destination_attribute": "json.valid",
+        "route_to": "valid"
+      }
+    },
+    "extract_name": {
+      "type": "evaluateJSONPath",
+      "parameters": {
+        "expressions": {
+          "user.name": "user.name",
+          "user.email": "user.email",
+          "first_item_price": "items.0.price"
+        }
+      }
+    },
+    "hash": {
+      "type": "hashContent",
+      "parameters": {
+        "algorithm": "sha256"
+      }
+    },
+    "count": {
+      "type": "countText",
+      "parameters": {}
+    },
+    "log_result": {
+      "type": "log",
+      "parameters": {
+        "message": "${greeting} - User: ${name}, Email: ${email}, Hash: ${content.hash}",
+        "level": "INFO"
+      }
+    },
+    "update_attrs": {
+      "type": "updateAttribute",
+      "parameters": {
+        "attributes": {
+          "pipeline": "demo",
+          "processed": "true"
+        }
+      }
+    },
+    "output": {
+      "type": "putFile",
+      "parameters": {
+        "output_directory": "output",
+        "create_dirs": true
+      }
+    }
+  },
+  "relations": [
+    {
+      "from": "generate",
+      "to": "validate"
+    },
+    {
+      "from": "validate",
+      "to": "extract_name"
+    },
+    {
+      "from": "extract_name",
+      "to": "hash"
+    },
+    {
+      "from": "hash",
+      "to": "count"
+    },
+    {
+      "from": "count",
+      "to": "log_result"
+    },
+    {
+      "from": "log_result",
+      "to": "update_attrs"
+    },
+    {
+      "from": "update_attrs",
+      "to": "output"
+    }
+  ],
+  "fqn": "default.demo_pipeline:1.0.0",
+  "package": "default"
+}

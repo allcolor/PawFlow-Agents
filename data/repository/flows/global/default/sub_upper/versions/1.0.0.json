@@ -1,0 +1,17 @@
+{
+  "name": "sub_upper",
+  "tasks": {
+    "upper": {
+      "type": "replace_text",
+      "parameters": {
+        "search_pattern": ".*",
+        "replacement": "PROCESSED",
+        "regex": true
+      }
+    }
+  },
+  "relations": [],
+  "fqn": "default.sub_upper:1.0.0",
+  "package": "default",
+  "version": "1.0.0"
+}

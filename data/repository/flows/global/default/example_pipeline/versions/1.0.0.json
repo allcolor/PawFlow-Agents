@@ -1,0 +1,67 @@
+{
+  "id": "example_pipeline",
+  "name": "example_pipeline",
+  "version": "1.0.0",
+  "description": "Pipeline de demo: lit des fichiers, log le contenu, ecrit le resultat",
+  "author": "PawFlow Team",
+  "parameters": {},
+  "entries": [],
+  "exits": [],
+  "tasks": {
+    "read_files": {
+      "type": "getFile",
+      "parameters": {
+        "input_directory": "./test_input",
+        "file_filter": "*.txt",
+        "recursive": false,
+        "keep_source": true
+      }
+    },
+    "add_metadata": {
+      "type": "updateAttribute",
+      "parameters": {
+        "set": {
+          "pipeline": "example",
+          "processed_by": "PawFlow"
+        }
+      }
+    },
+    "log_info": {
+      "type": "log",
+      "parameters": {
+        "message": "Processing file: ${filename} (${fileSize} bytes)",
+        "level": "INFO",
+        "include_attributes": true
+      }
+    },
+    "write_output": {
+      "type": "putFile",
+      "parameters": {
+        "output_directory": "./test_output",
+        "conflict_resolution": "replace",
+        "create_dirs": true
+      }
+    }
+  },
+  "groups": {},
+  "relations": [
+    {
+      "from": "read_files",
+      "to": "add_metadata",
+      "type": "success"
+    },
+    {
+      "from": "add_metadata",
+      "to": "log_info",
+      "type": "success"
+    },
+    {
+      "from": "log_info",
+      "to": "write_output",
+      "type": "success"
+    }
+  ],
+  "variables": {},
+  "fqn": "default.example_pipeline:1.0.0",
+  "package": "default"
+}

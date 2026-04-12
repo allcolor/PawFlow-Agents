@@ -410,7 +410,7 @@ class TestSlackFlow:
 
     def test_load_flow(self):
         import os
-        flow_path = os.path.join(os.path.dirname(__file__), "..", "flows", "slack_agent.json")
+        flow_path = os.path.join(os.path.dirname(__file__), "..", "data", "repository", "flows", "global", "default", "slack_agent", "versions", "1.0.0.json")
         assert os.path.exists(flow_path), f"Flow file not found: {flow_path}"
         with open(flow_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -418,7 +418,7 @@ class TestSlackFlow:
 
     def test_flow_has_correct_structure(self):
         import os
-        flow_path = os.path.join(os.path.dirname(__file__), "..", "flows", "slack_agent.json")
+        flow_path = os.path.join(os.path.dirname(__file__), "..", "data", "repository", "flows", "global", "default", "slack_agent", "versions", "1.0.0.json")
         with open(flow_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         assert "connections" in data or "edges" in data or "links" in data

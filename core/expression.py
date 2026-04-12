@@ -19,7 +19,6 @@ from core.paths import (
     GLOBAL_PARAMS_FILE,
     GLOBAL_SECRETS_FILE,
     USER_CONFIG_DIR,
-    ensure_seed_file,
 )
 
 
@@ -30,10 +29,10 @@ from core.paths import (
 def _load_global_parameters() -> Dict[str, str]:
     """Load global parameters via ConfigStore (supports spilled values)."""
     if not GLOBAL_PARAMS_FILE.exists():
-        ensure_seed_file(GLOBAL_PARAMS_FILE, "global_parameters.json")
+        return {}
     from core.config_store import ConfigStore
     values = ConfigStore.load_params(GLOBAL_PARAMS_FILE)
-    return values  # Dict[str, ConfigValue] — str() works for small values
+    return values
 
 
 def _load_global_secrets() -> Dict[str, str]:

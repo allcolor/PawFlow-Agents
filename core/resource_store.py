@@ -84,11 +84,7 @@ class ResourceStore:
     _lock = threading.Lock()
 
     def __init__(self):
-        # Seed global scope from defaults/ on first access
-        from core.repository import ScopedRepository
-        repo = ScopedRepository.instance()
-        for rtype in _TYPE_MAP.values():
-            repo.seed_from_defaults(rtype)
+        pass
 
     @classmethod
     def instance(cls) -> "ResourceStore":

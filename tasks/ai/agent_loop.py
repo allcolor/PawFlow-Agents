@@ -306,8 +306,8 @@ class AgentLoopTask(
                 "description": "Dedicated LLM service for tool-call narration.",
             },
             "llm_service": {
-                "type": "string", "required": False, "default": "${llm_default_service}",
-                "description": "LLM service ID (from global/user services).",
+                "type": "string", "required": False, "default": "",
+                "description": "LLM service ID — leave empty when agents have their own (conv_agents config).",
             },
             "resilience_style": {
                 "type": "string", "required": False, "default": "balanced",

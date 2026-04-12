@@ -385,12 +385,12 @@ class TestFlowMigration(unittest.TestCase):
         params = flow.get("parameters", {})
         self.assertNotIn("provider", params)
         self.assertNotIn("api_key", params)
-        self.assertIn("llm_service", params)
+        # llm_service is per-agent (conv_agents), not in flow params
+        self.assertNotIn("llm_service", params)
 
         agent_params = flow["tasks"]["agent"]["parameters"]
         self.assertNotIn("provider", agent_params)
         self.assertNotIn("api_key", agent_params)
-        self.assertIn("llm_service", agent_params)
 
     def test_all_agent_flows_migrated(self):
         for name in ["slack_agent.json", "discord_agent.json",

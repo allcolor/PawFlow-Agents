@@ -73,23 +73,30 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         _user_id_for_svc = flowfile.get_attribute("http.auth.principal") or ""
         if not _user_id_for_svc:
             raise ValueError("BUG: missing http.auth.principal on flowfile — all requests require authentication")
+        # Task-level llm_service is a fallback — per-agent config takes priority
+        # (resolved later when active agent is known)
         task_llm_service = self._resolve_service_param("llm_service", _user_id_for_svc)
-        if not task_llm_service:
-            _agent_hint = self.config.get("agent_name", "(unknown agent)")
-            raise RuntimeError(
-                f"No llm_service configured for agent '{_agent_hint}'. "
-                f"Set llm_service in the agent definition or flow config.")
-        client, resolved_svc = self._resolve_client(
-            task_llm_service, _user_id_for_svc,
-            raise_on_missing=True, default_model=model,
-        )
+        client, resolved_svc = None, None
+        if task_llm_service and not task_llm_service.startswith("${"):
+            # Resolved service ID — try to connect
+            client, resolved_svc = self._resolve_client(
+                task_llm_service, _user_id_for_svc,
+                raise_on_missing=False, default_model=model,
+            )
+        elif not task_llm_service and self.config.get("api_key"):
+            # Legacy inline config (api_key + provider) — no service ID
+            client, resolved_svc = self._resolve_client(
+                "", _user_id_for_svc,
+                raise_on_missing=False, default_model=model,
+            )
         # _is_claude_code and _claude_has_session are set after agent resolution below
 
         registry = self.get_tool_registry()
         # Handlers are fully configured later (after conversation_id/user_id are known)
 
         # Wire embedding function for semantic memory handlers
-        self._wire_embed_fn(registry, client)
+        if client:
+            self._wire_embed_fn(registry, client)
 
         # Set up SubAgentExecutor for delegate/get_agent_results
         from core.agent_executor import SubAgentExecutor
@@ -358,6 +365,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             raise ValueError(
                 "No agent configured for this conversation. "
                 "Select an agent before sending a message.")
+
+        # Ensure we have a client (either from per-agent or task default)
+        if client is None:
+            raise ValueError(
+                f"No LLM service resolved for agent '{_active_agent_name or '?'}'. "
+                f"Set llm_service in the conversation agent config.")
 
         # Provider detection (now with the correct resolved service)
         _is_claude_code = (

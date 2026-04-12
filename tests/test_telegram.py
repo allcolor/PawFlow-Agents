@@ -21,6 +21,7 @@ from core import FlowFile, TaskFactory, ServiceFactory
 # ── TelegramBotService ──────────────────────────────────────────────
 
 
+import core.paths as _paths
 class TestTelegramBotService(unittest.TestCase):
 
     def test_service_registered(self):
@@ -293,21 +294,21 @@ class TestTelegramSendHandler(unittest.TestCase):
 class TestTelegramFlow(unittest.TestCase):
 
     def test_flow_file_valid(self):
-        path = Path("data/repository/flows/global/default/telegram_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
         assert path.exists()
         flow = json.loads(path.read_text(encoding="utf-8"))
         assert flow["id"] == "telegram-agent"
         assert flow["version"] == "1.0.0"
 
     def test_flow_has_required_services(self):
-        path = Path("data/repository/flows/global/default/telegram_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         assert "telegram_bot" in flow["services"]
         svc = flow["services"]["telegram_bot"]
         assert svc["type"] == "telegramBot"
 
     def test_flow_has_required_tasks(self):
-        path = Path("data/repository/flows/global/default/telegram_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         tasks = flow["tasks"]
         assert "receive" in tasks
@@ -318,7 +319,7 @@ class TestTelegramFlow(unittest.TestCase):
         assert tasks["send_reply"]["type"] == "telegramSend"
 
     def test_flow_connections(self):
-        path = Path("data/repository/flows/global/default/telegram_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         conns = flow["connections"]
         sources = [c["source"] for c in conns]

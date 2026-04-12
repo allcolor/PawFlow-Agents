@@ -15,7 +15,7 @@ import threading
 import time
 from typing import List
 
-from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin, _SESSIONS_BASE
+from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin, _get_sessions_base
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             from core.claude_code_pool import ClaudeCodePool
             pool = ClaudeCodePool.instance()
             container = pool.acquire()
-            _rel = os.path.relpath(workdir, _SESSIONS_BASE).replace("\\", "/")
+            _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
             _session_dir = f"/cc_sessions/{_rel}"
             proc = pool.exec_claude(
                 container, _session_dir, cmd[1:],  # skip 'claude' binary

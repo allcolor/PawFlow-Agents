@@ -76,6 +76,17 @@ def _isolate_data_dir(tmp_path_factory):
               paths.USER_CONFIG_DIR, paths.CONVERSATIONS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
 
+    # Copy global repository definitions so structural tests work
+    import shutil as _shutil
+    real_repo = originals["REPOSITORY_DIR"]
+    if real_repo.exists():
+        for sub in real_repo.iterdir():
+            if sub.is_dir():
+                dst = repo_dir / sub.name
+                if not dst.exists():
+                    _shutil.copytree(sub, dst,
+                                     ignore=_shutil.ignore_patterns("users"))
+
     # Reset singletons that cache paths
     try:
         from core.plan_store import PlanStore

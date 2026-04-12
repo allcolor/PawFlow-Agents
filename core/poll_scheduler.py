@@ -17,9 +17,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("pawflow.poll_scheduler")
 
-from core.paths import POLL_SCHEDULE_FILE
-_DATA_DIR = str(POLL_SCHEDULE_FILE.parent)
-_SCHEDULE_FILE = str(POLL_SCHEDULE_FILE)
+import core.paths as _paths
 
 
 class PollScheduler:
@@ -185,10 +183,10 @@ class PollScheduler:
     # ── Persistence ─────────────────────────────────────────────────
 
     def _load(self) -> None:
-        if not os.path.exists(_SCHEDULE_FILE):
+        if not os.path.exists(str(_paths.POLL_SCHEDULE_FILE)):
             return
         try:
-            with open(_SCHEDULE_FILE, "r", encoding="utf-8") as f:
+            with open(str(_paths.POLL_SCHEDULE_FILE), "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list):
                 now = time.time()
@@ -218,8 +216,8 @@ class PollScheduler:
 
     def _save(self) -> None:
         try:
-            os.makedirs(_DATA_DIR, exist_ok=True)
-            with open(_SCHEDULE_FILE, "w", encoding="utf-8") as f:
+            os.makedirs(str(_paths.POLL_SCHEDULE_FILE.parent), exist_ok=True)
+            with open(str(_paths.POLL_SCHEDULE_FILE), "w", encoding="utf-8") as f:
                 json.dump(list(self._schedules.values()), f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[poll_scheduler] Failed to save schedule: {e}")

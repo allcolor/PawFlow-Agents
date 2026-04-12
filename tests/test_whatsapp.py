@@ -46,6 +46,9 @@ def _verify_request(token="my_token", challenge="challenge123"):
 # 1. TestWhatsAppService
 # ===========================================================================
 
+import core.paths as _paths
+
+
 class TestWhatsAppService:
     """Tests for services.whatsapp_service.WhatsAppService."""
 
@@ -332,7 +335,7 @@ class TestWhatsAppFlow:
     @pytest.fixture
     def flow_data(self):
         import os
-        path = os.path.join(os.path.dirname(__file__), "..", "data", "repository", "flows", "global", "default", "whatsapp_agent", "versions", "1.0.0.json")
+        path = str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / "whatsapp_agent" / "versions" / "1.0.0.json")
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 

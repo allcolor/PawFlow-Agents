@@ -192,11 +192,10 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
     logger.info("[claude-code] credential updated in pool for '%s'", sid)
 
 
-# Base directory for per-session Claude Code workdirs
-_SESSIONS_BASE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "data", "claude_sessions",
-)
+# Base directory for per-session Claude Code workdirs — read dynamically
+def _get_sessions_base():
+    import core.paths as _p
+    return str(_p.CLAUDE_SESSIONS_DIR)
 
 
 class ClaudeCodeSessionMixin:
@@ -309,7 +308,7 @@ class ClaudeCodeSessionMixin:
         uid = uid.replace(':', '_').replace('/', '_').replace('\\', '_')
         cid = cid.replace(":", "_")
         agent = agent_name
-        workdir = os.path.join(_SESSIONS_BASE, uid, cid, agent)
+        workdir = os.path.join(_get_sessions_base(), uid, cid, agent)
         os.makedirs(workdir, exist_ok=True)
         return workdir
 

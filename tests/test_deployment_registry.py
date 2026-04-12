@@ -13,9 +13,9 @@ from unittest.mock import MagicMock, patch
 from core.deployment_registry import (
     DeployedInstance,
     DeploymentRegistry,
-    DEPLOYMENTS_DIR,
     GLOBAL_OWNER,
 )
+import core.paths as _paths
 
 
 class TestDeployedInstance(unittest.TestCase):
@@ -93,7 +93,7 @@ class TestDeploymentRegistry(unittest.TestCase):
     def setUp(self):
         DeploymentRegistry.reset()
         # Use a temp dir for deployments
-        self._orig_dir = DEPLOYMENTS_DIR
+        self._orig_dir = _paths.DEPLOYMENTS_DIR
         self._tmp = Path(tempfile.mkdtemp())
         self._dep_dir = self._tmp / "deployments"
         self._dep_dir.mkdir()
@@ -113,11 +113,11 @@ class TestDeploymentRegistry(unittest.TestCase):
         # Monkey-patch the module-level DEPLOYMENTS_DIR
         import core.deployment_registry as mod
         self._mod = mod
-        mod.DEPLOYMENTS_DIR = self._dep_dir
+        _paths.DEPLOYMENTS_DIR = self._dep_dir
 
     def tearDown(self):
         DeploymentRegistry.reset()
-        self._mod.DEPLOYMENTS_DIR = self._orig_dir
+        _paths.DEPLOYMENTS_DIR = self._orig_dir
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def _get_reg(self):

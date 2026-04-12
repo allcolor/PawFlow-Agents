@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
-from core.paths import DEPLOYMENTS_DIR
+import core.paths as _paths
 GLOBAL_OWNER = "__global__"
 
 
@@ -368,8 +368,8 @@ class DeploymentRegistry:
     def _owner_dir(self, owner: Optional[str]) -> Path:
         """Get the directory for a given owner."""
         if owner is None:
-            return DEPLOYMENTS_DIR / "global"
-        return DEPLOYMENTS_DIR / owner
+            return _paths.DEPLOYMENTS_DIR / "global"
+        return _paths.DEPLOYMENTS_DIR / owner
 
     def _save_instance(self, inst: DeployedInstance) -> None:
         """Save an instance to its JSON file on disk."""
@@ -401,10 +401,10 @@ class DeploymentRegistry:
 
     def _scan_disk(self) -> None:
         """Scan data/deployments/ and load all instances."""
-        if not DEPLOYMENTS_DIR.exists():
+        if not _paths.DEPLOYMENTS_DIR.exists():
             return
 
-        for owner_dir in DEPLOYMENTS_DIR.iterdir():
+        for owner_dir in _paths.DEPLOYMENTS_DIR.iterdir():
             if not owner_dir.is_dir():
                 continue
             owner = None if owner_dir.name == "global" else owner_dir.name
@@ -443,7 +443,7 @@ class DeploymentRegistry:
 
         Returns the number of migrated instances.
         """
-        agent_dir = DEPLOYMENTS_DIR.parent / "agent_flows"  # legacy migration path
+        agent_dir = _paths.DEPLOYMENTS_DIR.parent / "agent_flows"  # legacy migration path
         if not agent_dir.exists():
             return 0
 
@@ -473,7 +473,7 @@ class DeploymentRegistry:
                 )
 
                 # Save to new location
-                owner_dir = DEPLOYMENTS_DIR / (owner if owner else "global")
+                owner_dir = _paths.DEPLOYMENTS_DIR / (owner if owner else "global")
                 owner_dir.mkdir(parents=True, exist_ok=True)
                 out_path = owner_dir / f"{inst.instance_id}.json"
                 out_path.write_text(
@@ -511,14 +511,14 @@ class DeploymentRegistry:
                 continue
 
             # Check if already exists in deployments
-            global_dir = DEPLOYMENTS_DIR / "global"
+            global_dir = _paths.DEPLOYMENTS_DIR / "global"
             if (global_dir / f"{flow_id}.json").exists():
                 continue
 
             # Also check all owner dirs
             found = False
-            if DEPLOYMENTS_DIR.exists():
-                for od in DEPLOYMENTS_DIR.iterdir():
+            if _paths.DEPLOYMENTS_DIR.exists():
+                for od in _paths.DEPLOYMENTS_DIR.iterdir():
                     if od.is_dir() and (od / f"{flow_id}.json").exists():
                         found = True
                         break

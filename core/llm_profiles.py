@@ -10,17 +10,17 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import LLM_PROFILES_FILE
+import core.paths as _paths
 
 
 def load_profiles() -> Dict[str, Dict[str, Any]]:
     """Load profiles from llm_profiles.json. Returns empty dict on error."""
-    if not LLM_PROFILES_FILE.exists():
+    if not _paths.LLM_PROFILES_FILE.exists():
         return {}
     try:
-        return json.loads(LLM_PROFILES_FILE.read_text(encoding="utf-8"))
+        return json.loads(_paths.LLM_PROFILES_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        logger.debug("llm_profiles.json not found at %s", LLM_PROFILES_FILE)
+        logger.debug("llm_profiles.json not found at %s", _paths.LLM_PROFILES_FILE)
         return {}
     except Exception as e:
         logger.warning("Failed to load llm_profiles.json: %s", e)

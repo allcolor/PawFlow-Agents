@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-from core.paths import FILES_DIR
+import core.paths as _paths
 
 BUCKET_MAX = 50
 ACCESS_PRIVATE = "private"
@@ -51,7 +51,7 @@ class FileStore:
     _lock = threading.Lock()
 
     def __init__(self, base_dir: Optional[str] = None):
-        self._base_dir = Path(base_dir or str(FILES_DIR))
+        self._base_dir = Path(base_dir or str(_paths.FILES_DIR))
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._entries: Dict[str, Dict[str, Any]] = {}
         self._store_lock = threading.RLock()

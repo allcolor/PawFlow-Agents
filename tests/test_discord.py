@@ -11,6 +11,9 @@ from unittest.mock import MagicMock, patch, PropertyMock
 # 1. TestDiscordBotService
 # ---------------------------------------------------------------------------
 
+import core.paths as _paths
+
+
 class TestDiscordBotService:
     """Tests for DiscordBotService configuration and setup."""
 

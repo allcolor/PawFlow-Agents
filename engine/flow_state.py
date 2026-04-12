@@ -19,9 +19,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-from core.paths import RUNTIME_DIR, SYSTEM_DIR
-_STATE_DIR = str(RUNTIME_DIR)
-_STATE_FILE = str(RUNTIME_DIR / "running_flows.json")
+import core.paths as _paths
 
 
 class FlowStateEntry:
@@ -68,8 +66,8 @@ class FlowStateEntry:
 class FlowStateManager:
     """Manages persistent state of running flows."""
 
-    def __init__(self, state_file: str = _STATE_FILE):
-        self._state_file = state_file
+    def __init__(self, state_file: str = ""):
+        self._state_file = state_file or str(_paths.RUNTIME_DIR / "running_flows.json")
         self._entries: Dict[str, FlowStateEntry] = {}
         os.makedirs(os.path.dirname(state_file) or ".", exist_ok=True)
 

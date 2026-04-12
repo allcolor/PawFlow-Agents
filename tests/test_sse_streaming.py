@@ -28,6 +28,7 @@ from core.conversation_event_bus import ConversationEventBus
 # ── SSEEvent ────────────────────────────────────────────────────────
 
 
+import core.paths as _paths
 class TestSSEEvent(unittest.TestCase):
 
     def test_basic_encode(self):
@@ -524,30 +525,30 @@ class TestLLMClientCompleteStream(unittest.TestCase):
 class TestStreamingFlowStructure(unittest.TestCase):
 
     def test_flow_version_1_3(self):
-        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["version"]  # version exists
 
     def test_sse_route_exists(self):
-        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         routes = data["tasks"]["http_in"]["parameters"]["routes"]
         patterns = [r["pattern"] for r in routes]
         assert "/api/agent/events" in patterns
 
     def test_agent_events_task(self):
-        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         assert "agent_events" in data["tasks"]
         assert data["tasks"]["agent_events"]["type"] == "agentSSEStream"
 
     def test_agent_streaming_enabled(self):
-        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["tasks"]["agent"]["parameters"]["streaming"] is True
 
     def test_sse_relation(self):
-        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         relations = data["relations"]
         # SSE route goes through validate_auth → route_after_auth → agent_events
@@ -556,13 +557,13 @@ class TestStreamingFlowStructure(unittest.TestCase):
         assert {"from": "agent_events", "to": "send_response", "type": "success"} in relations
 
     def test_seven_routes_from_http_in(self):
-        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         froms = [r["from"] for r in data["relations"]]
         assert froms.count("http_in") == 8
 
     def test_chat_ui_has_sse_path(self):
-        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["tasks"]["chat_ui"]["parameters"]["sse_path"] == "/api/agent/events"
 

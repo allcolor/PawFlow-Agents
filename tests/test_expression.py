@@ -18,6 +18,9 @@ from core import TaskError
 # TestExpression
 # ============================================================================
 
+import core.paths as _paths
+
+
 class TestExpression(unittest.TestCase):
     """Tests pour le moteur de resolution d'expressions ${...}."""
 
@@ -235,7 +238,7 @@ class TestFlowParser(unittest.TestCase):
 
     def test_parse_from_file(self):
         """Parser flows/exemple_flux.json."""
-        flow = FlowParser.parse_from_file("data/repository/flows/global/default/exemple_flux/versions/1.0.0.json")
+        flow = FlowParser.parse_from_file(str(_paths.REPOSITORY_DIR / "flows/global/default/exemple_flux/versions/1.0.0.json"))
         self.assertEqual(len(flow.tasks), 3)
         self.assertIn("log1", flow.tasks)
         self.assertIn("replace1", flow.tasks)
@@ -280,7 +283,7 @@ class TestFlowParser(unittest.TestCase):
 
     def test_parse_pipeline_flow(self):
         """Parser le pipeline d'exemple complet."""
-        flow = FlowParser.parse_from_file("data/repository/flows/global/default/example_pipeline/versions/1.0.0.json")
+        flow = FlowParser.parse_from_file(str(_paths.REPOSITORY_DIR / "flows/global/default/example_pipeline/versions/1.0.0.json"))
         self.assertEqual(len(flow.tasks), 4)
         self.assertEqual(len(flow.relations), 3)
         self.assertEqual(flow.tasks["read_files"].get_type(), "getFile")

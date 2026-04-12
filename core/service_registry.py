@@ -22,8 +22,8 @@ from core import ServiceFactory, Service
 
 logger = logging.getLogger(__name__)
 
-from core.paths import RUNTIME_DIR
-_SERVICES_DIR = RUNTIME_DIR / "services"
+import core.paths as _paths
+_SERVICES_DIR = _paths.RUNTIME_DIR / "services"
 _GLOBAL_SERVICES_DIR = _SERVICES_DIR / "global"
 _USER_SERVICES_DIR = _SERVICES_DIR / "users"
 CONV_EXTRAS_KEY = "conv_services"

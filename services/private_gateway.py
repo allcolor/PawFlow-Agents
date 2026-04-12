@@ -61,7 +61,7 @@ _lock = threading.Lock()
 _COOLDOWNS = [0, 1, 3, 10, 30]
 _MAX_FAILURES = 5
 _BAN_DURATION = 24 * 3600
-from core.paths import GATEWAY_BANS_FILE as _BAN_FILE
+import core.paths as _paths
 
 
 def _save_bans():
@@ -69,18 +69,18 @@ def _save_bans():
     now = time.time()
     bans = {ip: st for ip, st in _ip_state.items() if st.get("banned_until", 0) > now}
     try:
-        _BAN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _BAN_FILE.write_text(json.dumps(bans), encoding="utf-8")
+        _paths.GATEWAY_BANS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _paths.GATEWAY_BANS_FILE.write_text(json.dumps(bans), encoding="utf-8")
     except Exception as e:
         logger.warning("Failed to save gateway bans: %s", e)
 
 
 def _load_bans():
     """Load banned IPs from disk on startup."""
-    if not _BAN_FILE.exists():
+    if not _paths.GATEWAY_BANS_FILE.exists():
         return
     try:
-        data = json.loads(_BAN_FILE.read_text(encoding="utf-8"))
+        data = json.loads(_paths.GATEWAY_BANS_FILE.read_text(encoding="utf-8"))
         now = time.time()
         with _lock:
             for ip, st in data.items():

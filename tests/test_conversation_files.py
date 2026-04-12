@@ -31,6 +31,7 @@ from core.tool_registry import CreateFileHandler, create_default_registry
 # ── ConversationStore ────────────────────────────────────────────────
 
 
+import core.paths as _paths
 class TestConversationStore(unittest.TestCase):
 
     def setUp(self):
@@ -450,7 +451,7 @@ class TestAgentLoopConversationStore(unittest.TestCase):
 class TestAgentFlowStructure(unittest.TestCase):
 
     def test_flow_json_valid(self):
-        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
 
         assert data["id"] == "pawflow-agent"
@@ -467,7 +468,7 @@ class TestAgentFlowStructure(unittest.TestCase):
         assert froms.count("http_in") == 8  # 8 relations from http_in
 
     def test_flow_has_conversation_store(self):
-        path = Path("data/repository/flows/global/default/pawflow_agent/versions/1.0.0.json")
+        path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         agent_params = data["tasks"]["agent"]["parameters"]
         assert agent_params["conversation_store"] is True

@@ -21,6 +21,7 @@ from core import FlowFile
 # ── Feature 1: LLM Service Routing ──────────────────────────────────
 
 
+import core.paths as _paths
 class TestLLMConnectionServiceCapacity(unittest.TestCase):
     """Test LLMConnectionService get_client, complete_stream, capacity."""
 
@@ -375,7 +376,7 @@ class TestFlowMigration(unittest.TestCase):
 
     def _load_flow(self, name):
         stem = name.replace(".json", "")
-        path = f"data/repository/flows/global/default/{stem}/versions/1.0.0.json"
+        path = str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / stem / "versions" / "1.0.0.json")
         with open(path, encoding="utf-8") as f:
             return json.load(f)
 

@@ -12,7 +12,7 @@ from core.flow_service import FlowService
 from engine.continuous_executor import ContinuousFlowExecutor
 from engine.provenance import get_provenance_repository
 from engine.debugger import FlowDebugger
-from engine.flow_state import FlowStateManager, FlowVersionStore
+from engine.flow_state import FlowStateManager
 from core import FlowFile
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,6 @@ _executors_lock = threading.Lock()
 
 _flow_service = FlowService()
 _flow_state = FlowStateManager()
-_flow_versions = FlowVersionStore()
 
 
 def get_flow_service() -> FlowService:
@@ -139,7 +138,7 @@ def start_continuous(
     # Save flow config version before starting
     flow_config = svc.flow_to_dict(flow) if hasattr(svc, 'flow_to_dict') else {}
     if flow_config:
-        _flow_versions.save_version(req.flow_id, flow_config, label="start")
+        pass  # flow versioning removed
 
     executor = ContinuousFlowExecutor(
         flow,
@@ -693,7 +692,7 @@ def list_config_versions(
     _=Depends(require_permission("monitor.view")),
 ):
     """List saved config versions for a flow."""
-    return _flow_versions.list_versions(flow_id)
+    return []  # flow versioning removed
 
 
 @router.get("/continuous/{flow_id}/config-versions/{version}")
@@ -703,7 +702,7 @@ def get_config_version(
     _=Depends(require_permission("monitor.view")),
 ):
     """Get a specific config version."""
-    config = _flow_versions.get_version(flow_id, version)
+    config = None  # flow versioning removed
     if config is None:
         raise HTTPException(404, f"Version {version} not found for flow '{flow_id}'")
     return config
@@ -723,7 +722,7 @@ def downgrade_flow(
     3. Writes the old config to the flow file
     4. If flow is running: hot-updates with update_flow()
     """
-    old_config = _flow_versions.get_version(flow_id, version)
+    old_config = None  # flow versioning removed
     if old_config is None:
         raise HTTPException(404, f"Version {version} not found for flow '{flow_id}'")
 
@@ -732,7 +731,7 @@ def downgrade_flow(
         current_flow = _find_flow(flow_id, svc)
         current_config = svc.flow_to_dict(current_flow) if hasattr(svc, 'flow_to_dict') else {}
         if current_config:
-            _flow_versions.save_version(flow_id, current_config, label="pre-downgrade backup")
+            pass  # flow versioning removed
     except Exception:
         pass  # Flow might not exist yet
 
@@ -757,7 +756,7 @@ def downgrade_flow(
             success = executor.update_flow(new_flow)
             result["hot_updated"] = success
             if success:
-                _flow_versions.save_version(flow_id, old_config, label=f"downgraded to v{version}")
+                pass  # flow versioning removed
         except Exception as e:
             result["hot_update_error"] = str(e)
 

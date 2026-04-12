@@ -168,7 +168,7 @@ class ExecutorRegistry:
                     continue
                 self._restore_instance(iid, inst.flow_path,
                                        inst.max_workers, inst.max_retries,
-                                       flow_version=getattr(inst, 'flow_version', 0),
+                                       flow_fqn=getattr(inst, 'flow_fqn', ''),
                                        parameters=inst.parameters)
 
         # Clean up legacy state file if present
@@ -183,28 +183,30 @@ class ExecutorRegistry:
 
     def _restore_instance(self, instance_id: str, flow_path: str,
                           max_workers: int = 4, max_retries: int = 3,
-                          flow_version: Optional[int] = None,
+                          flow_fqn: str = "",
                           parameters: Optional[Dict[str, Any]] = None) -> bool:
-        """Restore a single executor from a flow file or version store."""
+        """Restore a single executor from the repository or flow_path."""
         try:
-            # Ensure tasks & services are registered before parsing
             from tasks import register_all_tasks
             register_all_tasks()
 
             raw = None
-            # Try version store first (versioned deployment)
-            if flow_version and flow_version > 0:
-                from engine.flow_state import FlowVersionStore
-                vs = FlowVersionStore()
-                # Need flow_id — extract from instance_id or flow_path
-                _flow_id = Path(flow_path).stem if flow_path else instance_id.split("__")[0]
-                raw = vs.get_version(_flow_id, flow_version)
-                if raw:
-                    logger.info("Restored '%s' from version store (v%d)", instance_id, flow_version)
-            # Fallback to flow_path (legacy unversioned deployments)
+            # Try repository FQN first
+            if flow_fqn:
+                try:
+                    from core.repository import ScopedRepository
+                    raw = ScopedRepository.instance().get_flow(flow_fqn, "global")
+                    if raw:
+                        logger.info("Restored '%s' from repository (%s)",
+                                    instance_id, flow_fqn)
+                except Exception as e:
+                    logger.debug("Repository lookup failed for '%s': %s",
+                                 flow_fqn, e)
+            # Fallback to flow_path
             if raw is None:
                 if not flow_path or not Path(flow_path).exists():
-                    logger.warning("Cannot restore '%s': file not found (%s)", instance_id, flow_path)
+                    logger.warning("Cannot restore '%s': not found (fqn=%s, path=%s)",
+                                   instance_id, flow_fqn, flow_path)
                     return False
                 with open(flow_path, "r", encoding="utf-8") as ff:
                     raw = json.load(ff)
@@ -225,8 +227,8 @@ class ExecutorRegistry:
                 max_retries=max_retries,
                 parameters=parameters if parameters else None,
             )
-            if flow_version and isinstance(flow_version, int):
-                executor._flow_version = flow_version
+            if flow_fqn:
+                executor._flow_fqn = flow_fqn
 
             # Try to restore checkpoint
             if executor._checkpoint_mgr:

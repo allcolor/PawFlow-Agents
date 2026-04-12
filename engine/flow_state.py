@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 from core.paths import RUNTIME_DIR, SYSTEM_DIR
 _STATE_DIR = str(RUNTIME_DIR)
 _STATE_FILE = str(RUNTIME_DIR / "running_flows.json")
-_VERSIONS_DIR = str(RUNTIME_DIR / "flow_versions")
 
 
 class FlowStateEntry:
@@ -160,91 +159,3 @@ class FlowStateManager:
         return self._entries.get(flow_id)
 
 
-class FlowVersionStore:
-    """Stores flow config versions for rollback/downgrade.
-
-    Each time a flow is started or updated, a versioned copy is saved.
-    """
-
-    def __init__(self, versions_dir: str = _VERSIONS_DIR):
-        self._versions_dir = versions_dir
-        os.makedirs(versions_dir, exist_ok=True)
-
-    def _flow_dir(self, flow_id: str) -> str:
-        d = os.path.join(self._versions_dir, flow_id)
-        os.makedirs(d, exist_ok=True)
-        return d
-
-    def save_version(self, flow_id: str, flow_config: Dict[str, Any],
-                     label: str = "") -> int:
-        """Save a version of the flow config. Returns version number."""
-        flow_dir = self._flow_dir(flow_id)
-        existing = self.list_versions(flow_id)
-        version = max([v["version"] for v in existing], default=0) + 1
-
-        path = os.path.join(flow_dir, f"v{version}.json")
-        data = {
-            "version": version,
-            "timestamp": datetime.now().isoformat(),
-            "label": label or f"Version {version}",
-            "config": flow_config,
-        }
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
-
-        # Keep max 50 versions
-        if len(existing) >= 50:
-            oldest = sorted(existing, key=lambda v: v["version"])
-            for old in oldest[:len(existing) - 49]:
-                old_path = os.path.join(flow_dir, f"v{old['version']}.json")
-                try:
-                    os.remove(old_path)
-                except OSError:
-                    pass
-
-        logger.info(f"Flow '{flow_id}' saved as version {version}")
-        return version
-
-    def list_versions(self, flow_id: str) -> List[Dict[str, Any]]:
-        """List available versions for a flow."""
-        flow_dir = self._flow_dir(flow_id)
-        versions = []
-        for fname in os.listdir(flow_dir):
-            if fname.startswith("v") and fname.endswith(".json"):
-                try:
-                    with open(os.path.join(flow_dir, fname)) as f:
-                        data = json.load(f)
-                    versions.append({
-                        "version": data["version"],
-                        "timestamp": data["timestamp"],
-                        "label": data.get("label", ""),
-                    })
-                except (json.JSONDecodeError, KeyError, OSError):
-                    continue
-        return sorted(versions, key=lambda v: v["version"])
-
-    def get_version(self, flow_id: str, version: int) -> Optional[Dict[str, Any]]:
-        """Get a specific version's config."""
-        flow_dir = self._flow_dir(flow_id)
-        path = os.path.join(flow_dir, f"v{version}.json")
-        if not os.path.exists(path):
-            return None
-        try:
-            with open(path) as f:
-                data = json.load(f)
-            return data.get("config")
-        except (json.JSONDecodeError, OSError):
-            return None
-
-    def get_latest_version(self, flow_id: str) -> Optional[Dict[str, Any]]:
-        """Get the latest version's config."""
-        versions = self.list_versions(flow_id)
-        if not versions:
-            return None
-        return self.get_version(flow_id, versions[-1]["version"])
-
-    def delete_versions(self, flow_id: str):
-        """Delete all versions for a flow."""
-        flow_dir = self._flow_dir(flow_id)
-        if os.path.exists(flow_dir):
-            shutil.rmtree(flow_dir, ignore_errors=True)

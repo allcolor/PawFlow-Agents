@@ -218,43 +218,50 @@ class FlowManagerHandler(ToolHandler):
         return f"Available templates ({len(templates)}):\n" + "\n".join(lines)
 
     def _deploy_template(self, template_id: str, params: dict = None) -> str:
-        """Deploy a flow template as a new instance in this conversation."""
+        """Deploy a flow from the repository. template_id is a FQN like default.hello_world:1.0.0."""
         if not template_id:
-            return "Error: template_id is required"
+            return "Error: template_id is required (use FQN like default.flow_name:1.0.0)"
 
-        # Find the template file
-        template_path = None
-        template_name = template_id
-        for tdir in self._get_template_dirs():
-            for f in tdir.glob("*.json"):
-                try:
-                    data = json.loads(f.read_text(encoding="utf-8"))
-                    if data.get("id") == template_id or f.stem == template_id:
-                        template_path = str(f)
-                        template_name = data.get("name", template_id)
-                        break
-                except Exception:
-                    continue
-            if template_path:
-                break
+        # Resolve FQN to repository flow
+        from core.repository import ScopedRepository
+        from core.paths import parse_flow_fqn
+        try:
+            package, flowname, version = parse_flow_fqn(template_id)
+        except Exception:
+            return f"Error: invalid FQN '{template_id}'. Use package.flow_name:version"
 
-        if not template_path:
+        repo = ScopedRepository.instance()
+        flow_data = repo.get_flow(template_id, "global")
+        if flow_data is None:
             return (
-                f"Error: template '{template_id}' not found. "
-                "Use action 'catalog' to see available templates."
+                f"Error: flow '{template_id}' not found in repository. "
+                "Use action 'catalog' to see available flows."
             )
+
+        # Write to a temp file for deploy (DeploymentRegistry.deploy expects a path)
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".json", prefix=f"{flowname}_", delete=False, mode="w")
+        json.dump(flow_data, tmp, ensure_ascii=False, indent=2)
+        tmp.close()
 
         try:
             dep_reg = self._get_deployment_registry()
             instance_id = dep_reg.deploy(
-                template_path=template_path,
+                template_path=tmp.name,
                 owner=self._owner_tag(),
                 parameters=params or {},
                 source="agent",
                 conversation_id=self._conversation_id,
             )
+            # Update the deployment with FQN
+            dep_reg._ensure_loaded()
+            inst = dep_reg._instances.get(instance_id)
+            if inst:
+                inst.flow_fqn = template_id
+                dep_reg._save_instance(inst)
             return (
-                f"Template '{template_name}' deployed as instance "
+                f"Flow '{template_id}' deployed as instance "
                 f"'{instance_id}'. Use start to run it."
             )
         except Exception as e:

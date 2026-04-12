@@ -198,7 +198,8 @@ class SecurityManager:
         self._session_ttl = 3600 * 8  # 8 hours
         self._auth_enabled = False
         self._oauth_config: Dict[str, Any] = {}
-        self._api_keys: Dict[str, str] = {}  # key -> description
+        self._api_keys: Dict[str, str] = {}
+        self._auto_provision: Dict[str, Any] = {"rules": [], "default_action": "deny"}
         self._load_config()
         self._load_users()
         self._load_sessions()
@@ -376,6 +377,9 @@ class SecurityManager:
                 self._session_ttl = data.get("session_ttl", 3600 * 8)
                 self._oauth_config = data.get("oauth_providers", {})
                 self._api_keys = data.get("api_keys", {})
+                self._auto_provision = data.get("auto_provision", {
+                    "rules": [], "default_action": "deny",
+                })
             except Exception as e:
                 logger.error(f"Failed to load security config: {e}")
 
@@ -387,9 +391,18 @@ class SecurityManager:
             "session_ttl": self._session_ttl,
             "oauth_providers": self._oauth_config,
             "api_keys": self._api_keys,
+            "auto_provision": getattr(self, '_auto_provision', {
+                "rules": [], "default_action": "deny",
+            }),
         }
         with open(path, 'w') as f:
             json.dump(data, f, indent=2)
+
+    def get_auto_provision(self) -> dict:
+        """Get auto-provisioning rules (read from security.json, not flow config)."""
+        return getattr(self, '_auto_provision', {
+            "rules": [], "default_action": "deny",
+        })
 
     def _load_users(self):
         path = _paths.USERS_FILE

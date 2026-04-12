@@ -87,11 +87,6 @@ class AuthGatewayService(BaseService):
                 "description": "Provider configs: {name: {enabled: true, ...provider-specific}}",
                 "default": {"builtin": {"enabled": True}},
             },
-            "auto_provision": {
-                "type": "map", "required": False,
-                "description": 'User provisioning rules: {"rules": [{"match": "expr", "role": "viewer"}], "default_action": "deny"}',
-                "default": {"rules": [], "default_action": "deny"},
-            },
             "session_ttl": {
                 "type": "integer", "required": False, "default": 86400,
                 "description": "Session TTL in seconds (default: 24h)",
@@ -263,10 +258,10 @@ class AuthGatewayService(BaseService):
             auth_result.roles = [existing.role.value]
             return auth_result
 
-        # New user — evaluate provisioning rules
-        auto_provision = self.config.get("auto_provision", {})
-        rules = auto_provision.get("rules", []) if isinstance(auto_provision, dict) else []
-        default_action = auto_provision.get("default_action", "deny") if isinstance(auto_provision, dict) else "deny"
+        # New user — evaluate provisioning rules (from security.json, not flow config)
+        auto_provision = sm.get_auto_provision()
+        rules = auto_provision.get("rules", [])
+        default_action = auto_provision.get("default_action", "deny")
 
         role_str = None
         for rule in rules:

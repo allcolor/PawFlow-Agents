@@ -47,10 +47,6 @@
             "client_secret": "${oauth_client_secret}"
           }
         },
-        "auto_provision": {
-          "rules": [],
-          "default_action": "deny"
-        },
         "session_ttl": 86400
       }
     }

@@ -206,6 +206,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
 
         # Session auth for all routes except /auth/* and /vnc/*
         # (VNC proxy handles its own auth)
+        if path.startswith("/vnc/"):
+            logger.info("VNC route bypass auth: %s", path)
         if not path.startswith("/auth/") and not path.startswith("/vnc/"):
             try:
                 from core.security import SecurityManager
@@ -267,6 +269,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
         registry: RouteRegistry = self.server._route_registry
         timeout: float = self.server._request_timeout
         result = registry.match(method, path)
+        if path.startswith("/vnc/"):
+            logger.info("VNC route match: %s → %s", path, result[0].pattern if result else "NO MATCH")
 
         if result is None:
             # Redirect unmatched GET requests to /chat

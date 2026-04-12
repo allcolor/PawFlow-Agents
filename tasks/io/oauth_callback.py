@@ -306,7 +306,7 @@ class OAuthCallbackTask(BaseTask):
         result = auth_svc.authenticate_oauth(provider_name, code, redirect_uri, ip=ip)
 
         if not result.success:
-            return [self._error_response(flowfile, 403, result.error)]
+            return [self._login_redirect(flowfile, result.error)]
 
         # Create session
         from core.security import SecurityManager
@@ -382,6 +382,16 @@ class OAuthCallbackTask(BaseTask):
             from services.oauth_provider_service import OAuthProviderService
             return OAuthProviderService(self.config)
         return None
+
+    def _login_redirect(self, flowfile: FlowFile, error: str) -> FlowFile:
+        """Redirect to login page with error message."""
+        logger.warning(f"OAuth login failed: {error}")
+        redirect = f"/auth/login?error={urllib.parse.quote(error)}"
+        flowfile.set_content(b"")
+        flowfile.set_attribute("http.response.status", "302")
+        flowfile.set_attribute("http.response.header.Location", redirect)
+        flowfile.set_attribute("http.response.header.Cache-Control", "no-cache, no-store")
+        return flowfile
 
     def _error_response(self, flowfile: FlowFile, status: int, message: str) -> FlowFile:
         """Build an error response."""

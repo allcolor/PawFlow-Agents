@@ -317,22 +317,33 @@ class AuthGatewayService(BaseService):
         return auth_result
 
     def _find_existing_user(self, sm, auth_result: AuthResult):
-        """Find existing user by linked identity or email."""
+        """Find existing user by linked identity, username, or email."""
         from core.identity_service import IdentityService
         ids = IdentityService.instance()
 
-        # 1. Search by linked identity (IdentityService — primary)
+        # 1. Search by linked identity (IdentityService)
         username = ids.resolve(auth_result.provider, auth_result.user_id)
         if username:
             user = sm.get_user(username)
             if user:
                 return user
 
-        # 2. Fallback: search by email
+        # 2. Search by username (OAuth username or derived)
+        if auth_result.username:
+            user = sm.get_user(auth_result.username)
+            if user:
+                return user
+
+        # 3. Search by email
         if auth_result.email:
             for udict in sm.list_users():
                 if udict.get("email", "").lower() == auth_result.email.lower():
                     return sm.get_user(udict["username"])
+            # Also match username == email-derived name
+            email_user = auth_result.email.split("@")[0]
+            user = sm.get_user(email_user)
+            if user:
+                return user
 
         return None
 

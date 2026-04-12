@@ -130,7 +130,7 @@ class CheckpointManager:
                 payload,
                 "application/json",
                 category="checkpoint",
-                    user_id=user_id,
+                user_id=user_id,
                 conversation_id=conversation_id,
             )
             logger.debug(f"[checkpoint] captured {path} for {checkpoint_id[:8]} "
@@ -142,7 +142,8 @@ class CheckpointManager:
     @classmethod
     def capture_before_delete(cls, svc, path: str,
                               conversation_id: str, checkpoint_id: str,
-                              service_id: str = "") -> None:
+                              service_id: str = "",
+                              user_id: str = "") -> None:
         """Capture file content before deletion."""
         if not conversation_id or not checkpoint_id:
             return
@@ -178,7 +179,7 @@ class CheckpointManager:
                 json.dumps({**metadata, "content": content.decode("utf-8", errors="replace")}).encode("utf-8"),
                 "application/json",
                 category="checkpoint",
-                    user_id=user_id,
+                user_id=user_id,
                 conversation_id=conversation_id,
             )
         except Exception as e:

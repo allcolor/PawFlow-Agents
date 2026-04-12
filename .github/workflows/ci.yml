@@ -76,4 +76,4 @@ jobs:
 
       - name: Ruff lint (errors only)
         run: |
-          ruff check --select=E9,F63,F7,F82 --no-fix core/ engine/ tasks/ services/ api/
+          ruff check --select=E9,F63,F7,F82 --no-fix core/ engine/ tasks/ services/

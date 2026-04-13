@@ -649,13 +649,18 @@ def check_request(handler) -> bool:
 
 
 def _check_request_inner(handler) -> bool:
-    if not is_enabled():
-        return False
-
+    _enabled = is_enabled()
     ip = handler.client_address[0] if handler.client_address else "0.0.0.0"
     path = handler.path.split('?', 1)[0]
+    logger.info(
+        "[gw-trace] %s %s from %s — is_enabled=%s",
+        handler.command, path, ip, _enabled)
+    if not _enabled:
+        logger.info("[gw-trace] gateway disabled — pass through (→ session auth)")
+        return False
 
     if path in _EXEMPT_PATHS:
+        logger.info("[gw-trace] %s is EXEMPT — pass through", path)
         return False
 
     # /files/{file_id} — check if public or gateway_key access
@@ -679,18 +684,26 @@ def _check_request_inner(handler) -> bool:
                 pass
 
     if is_banned(ip):
+        logger.warning("[gw-trace] ip %s is BANNED — 403", ip)
         _send_page(handler, 403, b"Forbidden", "text/plain")
         return True
 
     cookie_header = handler.headers.get("Cookie", "")
+    _cookie_seen = False
     for part in cookie_header.split(";"):
         part = part.strip()
         if part.startswith(_COOKIE_NAME + "="):
+            _cookie_seen = True
             cookie_val = part[len(_COOKIE_NAME) + 1:]
             if _verify_cookie(cookie_val, ip):
+                logger.info("[gw-trace] valid cookie — pass through")
                 return False
+            logger.info("[gw-trace] cookie present but INVALID for ip %s", ip)
 
     if handler.command == "POST" and path == "/_gateway":
+        logger.info(
+            "[gw-trace] POST /_gateway — calling _handle_submit (cookie_seen=%s)",
+            _cookie_seen)
         content_length = int(handler.headers.get('Content-Length', 0))
         body = handler.rfile.read(content_length) if content_length > 0 else b""
         return _handle_submit(handler, ip, body)
@@ -722,14 +735,25 @@ def _handle_submit(handler, ip, body):
     if not next_url.startswith("/"):
         next_url = "/"
 
+    logger.info(
+        "[gw-trace] submit from ip=%s, secret_len=%d (first 4 chars=%r), "
+        "body_len=%d, all_param_keys=%s",
+        ip, len(submitted), submitted[:4], len(body), list(params.keys()))
+
     cooldown = get_cooldown_remaining(ip)
     if cooldown > 0:
+        logger.info("[gw-trace] cooldown active (%.1fs) — 429", cooldown)
         record_failure(ip)
         page = render_challenge(error="Too many attempts.", cooldown=get_cooldown_remaining(ip), next_url=next_url)
         _send_page(handler, 429, page, "text/html; charset=utf-8")
         return True
 
-    if not submitted or not verify_secret(submitted):
+    _secrets = _load_gateway_secrets()
+    logger.info("[gw-trace] loaded %d privategateway.* secret(s): %s",
+                len(_secrets), list(_secrets.keys()))
+    _ok = submitted and verify_secret(submitted)
+    logger.info("[gw-trace] verify_secret → %s", _ok)
+    if not _ok:
         record_failure(ip)
         if is_banned(ip):
             _send_page(handler, 403, b"Forbidden", "text/plain")

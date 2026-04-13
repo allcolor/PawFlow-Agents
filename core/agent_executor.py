@@ -412,13 +412,18 @@ class SubAgentExecutor:
             "_event_cid": getattr(client, "_event_cid", ""),
             "_subagent_event_cb": getattr(client, "_subagent_event_cb", None),
         }
+        # A delegate has its OWN context (governed by task.context_mode),
+        # distinct from the main agent's context of the same name.
+        # Key the CC workdir + session on a separate namespace so the
+        # delegate session survives across multiple delegate calls to
+        # the same agent — but never shares storage with the main
+        # agent's `<parent_conv>/<agent>` context.
+        _delegate_conv_id = (
+            f"{task.parent_conversation_id}::delegate::{task.agent_name}"
+            if task.parent_conversation_id else sub_conv_id or ""
+        )
         try:
-            # Use parent_conversation_id (not sub_conv_id) so the CC
-            # workdir + session_id lookup are stable across delegate
-            # calls — the sub-agent's session survives between delegates
-            # to the same agent in the same parent conversation. CC keys
-            # its session under (parent_conv, agent_name).
-            client._conversation_id = task.parent_conversation_id or sub_conv_id or ""
+            client._conversation_id = _delegate_conv_id
             client._agent_name = task.agent_name or ""
             client._user_id = task.user_id or ""
             # Suppress raw provider SSE events to the parent bus — the
@@ -645,7 +650,7 @@ class SubAgentExecutor:
                         try:
                             from core.conversation_store import ConversationStore
                             ConversationStore.instance().set_extra(
-                                task.parent_conversation_id,
+                                _delegate_conv_id,
                                 f"claude_session:{task.agent_name}", "")
                         except Exception:
                             pass
@@ -654,7 +659,7 @@ class SubAgentExecutor:
                         if hasattr(client, '_recover_tokens') and hasattr(client, '_get_session_workdir'):
                             try:
                                 _wd = client._get_session_workdir(
-                                    task.parent_conversation_id or "",
+                                    _delegate_conv_id,
                                     task.agent_name, task.user_id)
                                 client._recover_tokens(_wd)
                             except Exception:

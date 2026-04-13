@@ -295,15 +295,29 @@ function ctxToggleSelect(row, event) {
 }
 async function ctxDeleteSelected() {
   if (!_ctxSelected.size) return;
-  if (_ctxAgentFilter === 'transcript') {
-    const mids = Array.from(document.querySelectorAll('.ctx-selected[data-msgid]'))
-      .map(r => r.dataset.msgid).filter(Boolean);
-    _ctxSelected.clear();
-    if (mids.length) await _ctxMutate({action: 'delete_message', msg_ids: mids});
-  } else {
-    const indices = Array.from(_ctxSelected).map(Number).sort((a, b) => b - a);
-    _ctxSelected.clear();
-    await _ctxMutate({action: 'delete_context_messages', agent_name: _ctxAgentFilter, indices});
+  // Prefer msg_id-based deletion whenever rows expose data-msgid: it
+  // works for the transcript view AND for any agent whose context is
+  // not diverged (get_context returns transcript rows with msg_ids in
+  // that case). The index-based path is only correct when the agent
+  // truly has its own diverged context — and even then, indices are
+  // page-local while the server treats them as full-context indices,
+  // so it's unsafe whenever the editor is paginated. Use it only as
+  // a last resort for diverged agents with rows missing msg_id.
+  const selectedRows = Array.from(document.querySelectorAll('.ctx-selected'));
+  const mids = selectedRows.map(r => r.dataset.msgid).filter(Boolean);
+  _ctxSelected.clear();
+  if (mids.length) {
+    await _ctxMutate({action: 'delete_message', msg_ids: mids});
+    return;
+  }
+  if (_ctxAgentFilter && _ctxAgentFilter !== 'transcript') {
+    const indices = selectedRows
+      .map(r => Number(r.dataset.ctxIdx))
+      .filter(n => !Number.isNaN(n))
+      .sort((a, b) => b - a);
+    if (indices.length) {
+      await _ctxMutate({action: 'delete_context_messages', agent_name: _ctxAgentFilter, indices});
+    }
   }
 }
 

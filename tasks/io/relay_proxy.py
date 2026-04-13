@@ -36,21 +36,16 @@ def _get_http_listener():
 
 def _resolve_relay_service(user_id: str, relay_id: str):
     """Return the live RelayService instance for (user_id, relay_id)."""
-    try:
-        from gui.services.user_service_registry import UserServiceRegistry
-        svc = UserServiceRegistry.get_instance().get_live_instance(
-            user_id, relay_id)
-        if svc:
-            return svc
-    except Exception:
-        pass
-    try:
-        from gui.services.global_service_registry import GlobalServiceRegistry
-        svc = GlobalServiceRegistry.get_instance().get_live_instance(relay_id)
-        if svc:
-            return svc
-    except Exception:
-        pass
+    from core.service_registry import ServiceRegistry
+    reg = ServiceRegistry.get_instance()
+    # Try user scope first, then global
+    for scope, sid in (("user", user_id), ("global", "")):
+        try:
+            svc = reg.get_live_instance(scope, sid, relay_id)
+            if svc:
+                return svc
+        except Exception:
+            pass
     return None
 
 

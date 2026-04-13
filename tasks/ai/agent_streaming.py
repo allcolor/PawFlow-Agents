@@ -270,7 +270,11 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     flowfile.set_attribute("agent.conversation_id", conversation_id)
                     return [flowfile]
                 else:
-                    logger.warning("[agent:%s] CC process dead — restarting", conversation_id[:8])
+                    # send_user_message returned False — either the proc is
+                    # dead OR CC has already emitted its final result and
+                    # the message was queued in _lost_preempt_messages.
+                    # Fall through to the regular queue path which schedules
+                    # a re-trigger via PollScheduler in the finally block.
                     _already_active = False
                     with self._active_contexts_lock:
                         self._active_claude_client.pop(_agent_key, None)

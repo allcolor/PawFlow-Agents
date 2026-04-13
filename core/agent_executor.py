@@ -247,14 +247,20 @@ class SubAgentExecutor:
         # Tools have NO timeout — only cancellation breaks the sub-agent.
         max_iter = task.max_iterations or self._default_max_iterations
 
-        # Resolve LLM client: per-agent service or default.
-        # If the agent declares an llm_service it MUST resolve — silently
-        # falling back to the default (first enabled llmConnection) ran
-        # the sub-agent on the wrong provider and crashed deep inside
-        # HTTPConnection("NoneType has no attribute 'rfind'") when the
-        # default happened to be an anthropic service without base_url.
-        client = self._client
+        # Resolve LLM client strictly from the agent's conv_agents link.
+        # NO default client — an unresolvable llm_service is a hard error.
+        client = None
         resolved_svc = None
+        if not task.llm_service:
+            _msg = (f"Sub-agent '{task.agent_name}' has no llm_service "
+                    f"— conv_agents link is missing or misconfigured.")
+            logger.error("[sub-agent:%s] %s", task.agent_name, _msg)
+            return AgentResult(
+                task_id=task.id,
+                agent_name=task.agent_name,
+                error=_msg,
+                status="error",
+            )
         if task.llm_service and self._client_resolver:
             try:
                 resolved_client, resolved_svc = self._client_resolver(

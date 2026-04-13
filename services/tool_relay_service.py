@@ -319,25 +319,11 @@ class ToolRelayService(BaseService):
                     svc_id, uid, ", ".join(_tried) or "none")
                 return None, None
 
-            # Default client = the live LLM service used by the agent that
-            # invoked the tool. We don't have direct access here, so pick
-            # any enabled LLM service as a fallback.
-            _default_client = None
-            try:
-                for _scope, _sid in (("user", user_id), ("global", "")):
-                    for _sd in _SR.get_instance().get_compatible(
-                            _scope, _sid, "llmConnection"):
-                        if not _sd.enabled:
-                            continue
-                        _live = _SR.get_instance().get_live_instance(
-                            _scope, _sid, _sd.service_id)
-                        if _live and hasattr(_live, "get_client"):
-                            _default_client = _live.get_client()
-                            break
-                    if _default_client:
-                        break
-            except Exception:
-                pass
+            # NO default LLM client. An agent's llm_service is always
+            # resolved per-task via _client_resolver (from the conv_agents
+            # link of the delegate target). If resolution fails, the
+            # sub-agent errors out — never silently falls back to
+            # "whatever LLM was enabled first".
 
             # Bridge sub-agent events to the conversation SSE bus so the
             # webchat can render delegate blocks live (mirrors the wiring in
@@ -359,8 +345,8 @@ class ToolRelayService(BaseService):
                     pass
 
             for h in registry.list_tools():
-                if isinstance(h, SpawnAgentsHandler) and _default_client:
-                    h.set_spawn_deps(_default_client, _client_resolver,
+                if isinstance(h, SpawnAgentsHandler):
+                    h.set_spawn_deps(None, _client_resolver,
                                       on_event=_sub_on_event, registry=registry)
         except Exception as _e:
             logger.warning("[tool-relay] SpawnAgents wiring failed: %s", _e)

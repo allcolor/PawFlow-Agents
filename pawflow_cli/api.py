@@ -59,23 +59,10 @@ def acquire_gateway_cookie(server_url: str, gateway_key: str) -> str:
     if not cookie_val:
         _body_preview = (raw[:200].decode("utf-8", errors="replace")
                          if raw else "")
-        # status=401 with a JSON {"error":"Unauthorized"} comes from the
-        # HTTP listener's session-auth middleware, NOT from the gateway
-        # itself: it means the private gateway middleware is DISABLED
-        # server-side (private_gateway_enabled ≠ true in global params),
-        # so /_gateway isn't intercepted and the request falls through
-        # to the normal auth layer — which rejects it because there's
-        # no session cookie. The --gateway-key is useless in that case.
-        _hint = ""
-        if status == 401 and '"Unauthorized"' in _body_preview:
-            _hint = (" — hint: the server's private_gateway_enabled "
-                     "global param is probably 'false' or unset; enable "
-                     "it (or drop --gateway-key if the server doesn't "
-                     "use a private gateway).")
         print(
             f"[PawCode] Gateway at {server_url}/_gateway returned "
             f"status={status}, no _pf_gw cookie. Body preview: "
-            f"{_body_preview!r}{_hint}",
+            f"{_body_preview!r}",
             file=_sys.stderr)
     return cookie_val
 

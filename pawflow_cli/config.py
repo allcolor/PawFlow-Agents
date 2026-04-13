@@ -22,23 +22,39 @@ def load_session(include_expired: bool = False) -> Dict[str, Any]:
 
     Token is stored encrypted via OS credential protection (DPAPI on Windows).
     """
+    def _trace(msg):
+        try:
+            with open(CONFIG_DIR / "pawcode_start.log", "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} [load_session] {msg}\n")
+        except Exception:
+            pass
+    _trace(f"entered, SESSION_FILE={SESSION_FILE}")
     if not SESSION_FILE.exists():
+        _trace("session file does not exist — returning {}")
         return {}
     try:
+        _trace("reading session file")
         data = json.loads(SESSION_FILE.read_text())
+        _trace(f"parsed, expires_at={data.get('expires_at', 0)}")
         if not include_expired and data.get("expires_at", 0) < time.time():
+            _trace("expired — returning {}")
             return {}  # expired
         # Decrypt token
         encrypted_token = data.get("token", "")
         if encrypted_token:
             try:
+                _trace("calling unprotect (DPAPI/AES)")
                 from pawflow_cli.secure_store import unprotect
                 data["token"] = unprotect(encrypted_token)
-            except Exception:
+                _trace("unprotect returned")
+            except Exception as _ue:
+                _trace(f"unprotect raised {type(_ue).__name__}: {_ue} — fallback")
                 # Migration: token might be plain text from old version
                 data["token"] = encrypted_token
+        _trace("returning data")
         return data
-    except Exception:
+    except Exception as _le:
+        _trace(f"exception: {type(_le).__name__}: {_le}")
         return {}
 
 

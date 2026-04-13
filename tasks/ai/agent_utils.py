@@ -437,7 +437,8 @@ class AgentUtilsMixin:
 
 
     @staticmethod
-    def _deflate_image_messages(messages: List[LLMMessage], keep_last: bool = False):
+    def _deflate_image_messages(messages: List[LLMMessage], keep_last: bool = False,
+                                 user_id: str = "", conversation_id: str = ""):
         """Replace multimodal image content with text-only references in-place.
 
         Called after the LLM has seen the images so base64 data doesn't
@@ -486,7 +487,8 @@ class AgentUtilsMixin:
                                 import time as _t
                                 fname = f"image_{int(_t.time())}_{len(img_refs)}.{ext}"
                                 fid = FileStore.instance().store(
-                                    fname, _b64d.b64decode(b64), mime)
+                                    fname, _b64d.b64decode(b64), mime,
+                                    user_id=user_id, conversation_id=conversation_id)
                                 img_refs.append(f"fs://filestore/{fid}/{fname}")
                         except Exception:
                             img_refs.append("(image)")

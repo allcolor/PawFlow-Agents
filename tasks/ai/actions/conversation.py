@@ -239,7 +239,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         from core.file_store import FileStore
         mime = "application/json" if fmt == "json" else "text/markdown"
         fid = FileStore.instance().store(filename, export.encode("utf-8"), mime,
-                                           user_id=user_id)
+                                           user_id=user_id, conversation_id=conv_id)
         flowfile.set_content(json.dumps({
             "ok": True,
             "url": f"/files/{fid}/{filename}",

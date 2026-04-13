@@ -19,6 +19,8 @@ class AgentCCContextMixin:
         self,
         messages: List[LLMMessage],
         max_recent: int = 50,
+        user_id: str = "",
+        conversation_id: str = "",
     ) -> List[LLMMessage]:
         """Prepare context for Claude Code by offloading old messages to FileStore.
 
@@ -65,6 +67,8 @@ class AgentCCContextMixin:
                 "conversation_history.jsonl",
                 jsonl_content.encode("utf-8"),
                 "application/jsonl",
+                user_id=user_id,
+                conversation_id=conversation_id,
                 category="context",
             )
         except Exception as e:

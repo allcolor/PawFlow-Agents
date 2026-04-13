@@ -21,13 +21,14 @@ _FILESTORE_ALIASES = {"filestore", "store", "server", ""}
 class StorageResolver:
     """Resolve storage targets and perform I/O operations."""
 
-    def __init__(self, user_id: str = "", fs_resolver=None):
+    def __init__(self, user_id: str = "", fs_resolver=None, conversation_id: str = ""):
         """
         Args:
             user_id: Current user ID (for FileStore ownership)
             fs_resolver: Callable(service_name, user_id) -> filesystem service instance
         """
         self._user_id = user_id
+        self._conversation_id = conversation_id
         self._fs_resolver = fs_resolver
 
     def write(self, destination: str, path: str, data: bytes,
@@ -85,7 +86,8 @@ class StorageResolver:
         store = FileStore.instance()
         file_id = store.store(filename, data,
                               content_type=content_type,
-                              user_id=self._user_id)
+                              user_id=self._user_id,
+                              conversation_id=self._conversation_id)
         base_url = store.get_base_url() if hasattr(store, 'get_base_url') else ""
         url = f"{base_url}/files/{file_id}" if base_url else f"/files/{file_id}"
         return {

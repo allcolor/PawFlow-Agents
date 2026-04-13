@@ -187,7 +187,10 @@ class SeeHandler(BaseFsHandler):
 
         # Store in FileStore for URL access
         from core.file_store import FileStore
-        fid = FileStore.instance().store(fname, data, mime, user_id=self._user_id)
+        fid = FileStore.instance().store(
+            fname, data, mime,
+            user_id=self._user_id,
+            conversation_id=getattr(self, '_conversation_id', '') or '')
         url = f"fs://filestore/{fid}/{fname}"
 
         # Return marker — agent loop converts to multimodal content

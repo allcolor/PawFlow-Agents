@@ -76,7 +76,7 @@ class CreateFileHandler(ToolHandler):
             content_type = self._guess_content_type(filename)
 
         from core.storage_resolver import StorageResolver
-        resolver = StorageResolver(user_id=self._user_id)
+        resolver = StorageResolver(user_id=self._user_id, conversation_id=getattr(self, "_conversation_id", "") or "")
         result = resolver.write(destination, filename,
                                 content.encode("utf-8"), content_type)
 

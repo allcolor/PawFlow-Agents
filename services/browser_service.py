@@ -361,8 +361,13 @@ class BrowserService(BaseService):
 
         # Store in FileStore
         from core.file_store import FileStore
+        _uid = getattr(session, "user_id", "") or ""
+        if not _uid:
+            raise ValueError("browser screenshot: session has no user_id")
         file_id = FileStore.instance().store("screenshot.png", png_bytes,
-                                              content_type="image/png")
+                                              content_type="image/png",
+                                              user_id=_uid,
+                                              conversation_id=conversation_id)
         b64 = base64.b64encode(png_bytes).decode("ascii")
         return f"Screenshot taken (file_id: {file_id}, size: {len(png_bytes)} bytes, base64 length: {len(b64)})"
 

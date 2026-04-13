@@ -132,7 +132,7 @@ class ImageGenerationHandler(ToolHandler):
             filename = arguments.get("path") or f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
 
             from core.storage_resolver import StorageResolver
-            resolver = StorageResolver(user_id=self._user_id)
+            resolver = StorageResolver(user_id=self._user_id, conversation_id=getattr(self, "_conversation_id", "") or "")
             write_result = resolver.write(destination, filename,
                                            result["image_bytes"], ct)
 
@@ -255,7 +255,7 @@ class VideoGenerationHandler(ToolHandler):
             filename = arguments.get("path") or f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
 
             from core.storage_resolver import StorageResolver
-            resolver = StorageResolver(user_id=self._user_id)
+            resolver = StorageResolver(user_id=self._user_id, conversation_id=getattr(self, "_conversation_id", "") or "")
             write_result = resolver.write(destination, filename,
                                            result["video_bytes"], ct)
 
@@ -365,7 +365,7 @@ class AudioGenerationHandler(ToolHandler):
             filename = arguments.get("path") or f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
 
             from core.storage_resolver import StorageResolver
-            resolver = StorageResolver(user_id=self._user_id)
+            resolver = StorageResolver(user_id=self._user_id, conversation_id=getattr(self, "_conversation_id", "") or "")
             write_result = resolver.write(destination, filename,
                                            result["audio_bytes"], ct)
 

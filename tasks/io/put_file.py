@@ -63,7 +63,13 @@ class PutFileTask(BaseTask):
         from core.file_store import FileStore
         store = FileStore.instance()
         filename = flowfile.get_attribute('filename') or flowfile.process_id[:8]
-        file_id = store.store(filename, flowfile.get_content(), ttl=3600)
+        _uid = flowfile.get_attribute('user_id') or flowfile.get_attribute('http.auth.principal') or ''
+        _cid = flowfile.get_attribute('conversation_id') or ''
+        if not _uid or not _cid:
+            raise ValueError(
+                "putFile: user_id and conversation_id flowfile attributes required")
+        file_id = store.store(filename, flowfile.get_content(),
+                              user_id=_uid, conversation_id=_cid, ttl=3600)
         flowfile.set_attribute('output.file_id', file_id)
         flowfile.set_attribute('output.filename', filename)
         return [flowfile]

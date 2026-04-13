@@ -446,7 +446,8 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
             logger.info(f"[compact] Removed {_pre_orphan - len(messages)} orphan tool result(s)")
 
         # Deflate old images
-        self._deflate_image_messages(messages, keep_last=True)
+        self._deflate_image_messages(messages, keep_last=True,
+                                      user_id=user_id, conversation_id=conversation_id)
 
         # Strip base64 blobs
         import re as _re_b64

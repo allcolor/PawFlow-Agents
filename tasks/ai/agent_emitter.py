@@ -504,7 +504,10 @@ class StreamEmitter(AgentEmitter):
 
         # Deflate on copy — don't affect live context
         _persist = copy.deepcopy(new_messages)
-        self.agent._deflate_image_messages(_persist)
+        self.agent._deflate_image_messages(
+            _persist,
+            user_id=getattr(self, "_user_id", "") or "",
+            conversation_id=getattr(self, "_conversation_id", "") or "")
 
         all_serialized = self.agent._serialize_messages(_persist, channel=self._channel)
 

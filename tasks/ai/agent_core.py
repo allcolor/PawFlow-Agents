@@ -363,7 +363,7 @@ class AgentCoreMixin:
                         if ctx.get("_claude_has_session"):
                             llm_context = list(messages)
                         else:
-                            llm_context = self._prepare_cc_file_context(list(messages))
+                            llm_context = self._prepare_cc_file_context(list(messages), user_id=user_id, conversation_id=conversation_id)
                     else:
                         _max_ctx = ctx.get("max_context_size", 64000)
                         _cpt = ctx.get("chars_per_token", 0)
@@ -769,7 +769,7 @@ class AgentCoreMixin:
                             ctx["_claude_has_session"] = False
 
                             # 4. Prepare for new CC session with compacted context
-                            llm_context = self._prepare_cc_file_context(messages)
+                            llm_context = self._prepare_cc_file_context(messages, user_id=user_id, conversation_id=conversation_id)
                             logger.info("[agent:%s] PawFlow compact done, new CC session will start",
                                         conversation_id[:8])
                         except Exception as compact_err:
@@ -828,7 +828,7 @@ class AgentCoreMixin:
                             ctx["_claude_has_session"] = False
                             try:
                                 _check_budget(ctx, total_tokens_in, total_tokens_out)
-                                llm_context = self._prepare_cc_file_context(list(messages))
+                                llm_context = self._prepare_cc_file_context(list(messages), user_id=user_id, conversation_id=conversation_id)
                                 response = _llm_call(llm_context)
                                 _resume_retried = True
                             except Exception as retry_err:
@@ -851,7 +851,8 @@ class AgentCoreMixin:
                             emitter.on_overflow_retry(iteration)
                             if _is_claude_code:
                                 llm_context = self._prepare_cc_file_context(
-                                    list(messages), max_recent=20)
+                                    list(messages), max_recent=20,
+                                    user_id=user_id, conversation_id=conversation_id)
                             else:
                                 llm_context = self._compact(
                                     llm_context, compact_client,
@@ -893,7 +894,7 @@ class AgentCoreMixin:
                                     except Exception:
                                         pass
                                     ctx["_claude_has_session"] = False
-                                    llm_context = self._prepare_cc_file_context(list(messages))
+                                    llm_context = self._prepare_cc_file_context(list(messages), user_id=user_id, conversation_id=conversation_id)
                                 time.sleep(5)
                                 try:
                                     _check_budget(ctx, total_tokens_in, total_tokens_out)
@@ -959,7 +960,8 @@ class AgentCoreMixin:
                                 "agent_name": ctx.get("active_agent_name", ""),
                             })
 
-                    self._deflate_image_messages(messages)
+                    self._deflate_image_messages(
+                        messages, user_id=user_id, conversation_id=conversation_id)
                     # Clear old tool results — keep last 3 (2 was too aggressive, caused repeats)
                     _keep = 3
                     self._clear_seen_tool_results(
@@ -1089,7 +1091,9 @@ class AgentCoreMixin:
                             if isinstance(m.content, str) and len(m.content) > 5000:
                                 from core.file_store import FileStore
                                 fid = FileStore.instance().store(
-                                    "tool_result.txt", m.content.encode(), "text/plain")
+                                    "tool_result.txt", m.content.encode(), "text/plain",
+                                    user_id=user_id or "",
+                                    conversation_id=conversation_id or "")
                                 _saved = len(m.content)
                                 m.content = (
                                     f"[Result too large ({_saved:,} chars) — saved to "

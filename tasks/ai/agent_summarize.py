@@ -116,6 +116,7 @@ class AgentSummarizeMixin:
         compact_key = "CK_" + uuid.uuid4().hex[:8]
         file_id = FileStore.instance().store(
             "compact_input.txt", text.encode("utf-8"), "text/plain",
+            user_id=user_id, conversation_id=conversation_id,
             category="compact")
         logger.info("[compact] wrote %d chars as %s, key=%s", len(text), file_id, compact_key)
 

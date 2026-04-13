@@ -825,7 +825,8 @@ class ShowFileHandler(ToolHandler):
             content_type = mimetypes.guess_type(fname)[0] or "application/octet-stream"
             # Store in FileStore for the viewer URL
             file_id = store.store(fname, data, content_type=content_type,
-                                  user_id=self._user_id)
+                                  user_id=self._user_id,
+                                  conversation_id=getattr(self, '_conversation_id', '') or '')
         elif filename:
             # Search by filename in FileStore
             found = None

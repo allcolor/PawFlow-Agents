@@ -1314,7 +1314,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 _img_fname = f"image_{int(_time.time())}_{len(parts)}.{filename.rsplit('.', 1)[-1] if '.' in filename else 'png'}"
                 _img_fid = FileStore.instance().store(
                     _img_fname, _img_bytes, mime,
-                    user_id=getattr(self, '_user_id', ''), category="attachment")
+                    user_id=getattr(self, '_user_id', ''),
+                    conversation_id=conversation_id or "",
+                    category="attachment")
                 logger.info("Attachment image stored: %s (%d bytes) -> %s",
                             filename, len(_img_bytes), _img_fid)
                 parts.append({
@@ -1331,7 +1333,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     raw = base64.b64decode(data_b64)
                     _fid = FileStore.instance().store(
                         filename, raw, mime,
-                        user_id=getattr(self, '_user_id', ''), category="attachment")
+                        user_id=getattr(self, '_user_id', ''),
+                        conversation_id=conversation_id or "",
+                        category="attachment")
                     logger.info("Attachment stored: %s (%s, %d bytes) -> %s",
                                 filename, mime, len(raw), _fid)
                     parts.append({

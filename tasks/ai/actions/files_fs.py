@@ -500,6 +500,11 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
     if action == "fs_copy_to_store":
         import mimetypes as _mt_fcs
         from core.handlers._fs_base import find_fs_service as _find_svc
+        _conv_id = body.get("conversation_id", "")
+        if not _conv_id:
+            flowfile.set_content(json.dumps({"error": "conversation_id is required"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         _fs_svc = _find_svc(user_id, body.get("service", ""))
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
@@ -511,7 +516,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             fname = fpath.rsplit("/", 1)[-1] if "/" in fpath else fpath
             mime = _mt_fcs.guess_type(fname)[0] or "application/octet-stream"
             from core.file_store import FileStore
-            fid = FileStore.instance().store(fname, data, mime, user_id=user_id)
+            fid = FileStore.instance().store(fname, data, mime,
+                                              user_id=user_id, conversation_id=_conv_id)
             flowfile.set_content(json.dumps({"ok": True, "file_id": fid, "url": f"/files/{fid}/{fname}", "filename": fname, "size": len(data)}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -535,6 +541,11 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         """Zip a directory on a relay filesystem and return a FileStore download URL."""
         import mimetypes as _mt_zip
         from core.handlers._fs_base import find_fs_service as _find_svc
+        _conv_id = body.get("conversation_id", "")
+        if not _conv_id:
+            flowfile.set_content(json.dumps({"error": "conversation_id is required"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         _fs_svc = _find_svc(user_id, body.get("service", ""))
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
@@ -554,7 +565,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             import base64 as _b64
             zip_bytes = _b64.b64decode(result["stdout"].strip())
             from core.file_store import FileStore
-            fid = FileStore.instance().store(zip_name, zip_bytes, "application/zip", user_id=user_id)
+            fid = FileStore.instance().store(zip_name, zip_bytes, "application/zip",
+                                              user_id=user_id, conversation_id=_conv_id)
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "file_id": fid,

@@ -82,12 +82,14 @@ class FileStore:
               category: str = "") -> str:
         """Store a file. Returns file_id (UUID for URL).
 
-        user_id and conversation_id are required — every file belongs to
-        a user in a conversation context.
+        user_id and conversation_id are REQUIRED — every file lives
+        within a (user, conversation) scope. There is no '_system'
+        fallback — calls without context raise ValueError.
         """
-        if not user_id or not conversation_id:
-            logger.warning("FileStore.store called without user_id=%r conv_id=%r for %s",
-                           user_id, conversation_id, filename)
+        if not user_id:
+            raise ValueError(f"FileStore.store: user_id is required (filename={filename!r})")
+        if not conversation_id:
+            raise ValueError(f"FileStore.store: conversation_id is required (filename={filename!r})")
         file_id = uuid.uuid4().hex[:12]
         safe_name = Path(filename).name or "file"
         disk_name = f"{file_id}_{safe_name}"
@@ -418,14 +420,13 @@ class FileStore:
 
     # ── Internal ─────────────────────────────────────────────────
 
-    def _scope_dir(self, user_id: str = "", conversation_id: str = "") -> Path:
-        """Scope directory for a file."""
-        if user_id and conversation_id:
-            return self._base_dir / user_id / conversation_id
-        # Fallback for system-generated files (no user context)
-        if user_id:
-            return self._base_dir / user_id / "_system"
-        return self._base_dir / "_system"
+    def _scope_dir(self, user_id: str, conversation_id: str) -> Path:
+        """Scope directory for a file. Both args required."""
+        if not user_id or not conversation_id:
+            raise ValueError(
+                f"FileStore: user_id and conversation_id are required "
+                f"(got user_id={user_id!r}, conv_id={conversation_id!r})")
+        return self._base_dir / user_id / conversation_id
 
     def _pick_bucket(self, scope_dir: Path) -> str:
         """Find or create a bucket with room (< BUCKET_MAX files)."""

@@ -1161,26 +1161,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             "num_turns": event.get("num_turns", _turn_count),
                             "duration_ms": event.get("duration_ms", 0),
                         })
-                    # result = CC is done with ALL pending work (including
-                    # any preempted messages). Always break — CC processes
-                    # all preempts in the same session before emitting result.
+                    # result = CC is done with ALL pending work, including
+                    # preempts (CC processes them inline within the same
+                    # session and emits ONE final result). Always break.
                     _pending = getattr(self, '_preempt_pending', 0)
-                    _num_turns = event.get("num_turns", 1)
                     if _pending > 0:
-                        logger.info("[claude-code] result event with %d pending preempt(s), "
-                                    "num_turns=%d — continuing to read (CC will process preempts)",
-                                    _pending, _num_turns)
-                        # DON'T break — CC will continue processing the preempt(s).
-                        # It will emit more assistant/tool/result events for each preempt.
-                        # We keep reading stdout until CC emits a result with 0 pending preempts.
+                        logger.info("[claude-code] result event with %d pending "
+                                    "preempt(s) — clearing and breaking", _pending)
                         self._preempt_pending = 0
                         self._had_preempts_this_turn = True
-                        # Reset turn state for the next CC turn (preempt response)
-                        _turn_text_parts = []
-                        _turn_tool_calls = []
-                        _turn_thinking = ""
-                        _turn_count += 1
-                        continue  # keep reading stdout
                     break
 
         except _CC401Retry:

@@ -70,21 +70,25 @@ function renameConvInline(e, cid) {
 
 function reloadConv() {
   if (!conversationId) return;
-  // Don't close/reopen SSE — just reload the messages.
-  _expectingClear = true;
-  document.getElementById('messages').innerHTML = '';
-  _expectingClear = false;
-  _seenMsgIds.clear();
-  serverMsgCount = 0;
-  // Drop stale SSE-side DOM references (task/delegate blocks). Without
-  // this, in-flight live events keep targeting detached nodes after a
-  // reload (e.g. after a delete-message), producing an out-of-order or
-  // truncated transcript until the next hard page reload.
-  if (typeof window._sseClearLiveBlocks === 'function') {
-    window._sseClearLiveBlocks();
-  }
+  // Race-free reload: fetch first, then clear + repopulate atomically.
+  // The previous version cleared _seenMsgIds *before* the network round
+  // trip, so any SSE event arriving in that window registered its
+  // msg_id, and _renderHistory then deduped (skipped) those same
+  // messages from the history payload — the visible transcript was
+  // truncated to whatever happened to arrive between the two calls.
   action$('load_history', { conversation_id: conversationId, limit: displayWindow, offset: 0 })
-    .subscribe(data => _renderHistory(data));
+    .subscribe(data => {
+      _expectingClear = true;
+      document.getElementById('messages').innerHTML = '';
+      _expectingClear = false;
+      _seenMsgIds.clear();
+      serverMsgCount = 0;
+      // Drop stale SSE-side DOM references (task/delegate blocks).
+      if (typeof window._sseClearLiveBlocks === 'function') {
+        window._sseClearLiveBlocks();
+      }
+      _renderHistory(data);
+    });
 }
 
 function resumeConv(cid, force) {

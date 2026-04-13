@@ -103,8 +103,14 @@ class PawCode:
         # Check auth — don't auto-open browser, let user /login manually
         self.renderer.print_banner(self.directory)
 
+        import sys as _sys
+        _sys.stderr.write("[PawCode] checking session...\n")
+        _sys.stderr.flush()
         from pawflow_cli.auth import check_session
         auth = check_session(self.server_url, gateway_cookie=self.gateway_cookie)
+        _sys.stderr.write(f"[PawCode] check_session returned: "
+                          f"{'ok' if auth else 'no session'}\n")
+        _sys.stderr.flush()
         if auth:
             self.session_token = auth["token"]
             self.username = auth["username"]
@@ -119,6 +125,8 @@ class PawCode:
         self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
 
         if self.session_token:
+            _sys.stderr.write("[PawCode] connecting relay...\n")
+            _sys.stderr.flush()
             try:
                 self.connect_relay(self.directory)
             except Exception as e:
@@ -138,13 +146,21 @@ class PawCode:
         config = load_config()
         last_cid = config.get("last_conversation_id")
         if last_cid and self.session_token:
+            _sys.stderr.write(f"[PawCode] resuming conv {last_cid[:8]}...\n")
+            _sys.stderr.flush()
             try:
                 self.conversation_id = last_cid
                 # Connect SSE FIRST so send_action can receive command_result
+                _sys.stderr.write("[PawCode]   → opening SSE...\n")
+                _sys.stderr.flush()
                 self._ensure_sse()
                 # Start event consumer thread so SSE events are processed
+                _sys.stderr.write("[PawCode]   → starting event consumer...\n")
+                _sys.stderr.flush()
                 self._start_event_consumer()
                 # Now we can safely wait for the result
+                _sys.stderr.write("[PawCode]   → loading history...\n")
+                _sys.stderr.flush()
                 data = self.api.send_action("load_history",
                                              conversation_id=last_cid, limit=50, offset=0)
                 if not data.get("error"):

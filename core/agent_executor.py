@@ -483,13 +483,40 @@ class SubAgentExecutor:
                     except Exception:
                         pass
 
-                response = client.complete(
-                    messages=messages,
-                    model=task.model or None,
-                    temperature=0.7,
-                    max_tokens=0,
-                    tools=tool_defs if tool_defs else None,
-                )
+                try:
+                    response = client.complete(
+                        messages=messages,
+                        model=task.model or None,
+                        temperature=0.7,
+                        max_tokens=0,
+                        tools=tool_defs if tool_defs else None,
+                    )
+                except Exception as _llm_err:
+                    # CC auto-compact (CC's own context full) — clear the
+                    # CC session for this sub-agent and retry once with a
+                    # fresh session. The sub-agent loses its CC-side
+                    # memory but the current delegate request still
+                    # completes.
+                    if "CC auto-compact detected" in str(_llm_err):
+                        logger.warning(
+                            "[sub-agent:%s] CC auto-compact — clearing session and retrying",
+                            task.agent_name)
+                        try:
+                            from core.conversation_store import ConversationStore
+                            ConversationStore.instance().set_extra(
+                                task.parent_conversation_id,
+                                f"claude_session:{task.agent_name}", "")
+                        except Exception:
+                            pass
+                        response = client.complete(
+                            messages=messages,
+                            model=task.model or None,
+                            temperature=0.7,
+                            max_tokens=0,
+                            tools=tool_defs if tool_defs else None,
+                        )
+                    else:
+                        raise
 
                 result.tokens_in += response.tokens_in
                 result.tokens_out += response.tokens_out

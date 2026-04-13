@@ -368,8 +368,12 @@ class SubAgentExecutor:
             client._conversation_id = sub_conv_id or task.parent_conversation_id or ""
             client._agent_name = task.agent_name or ""
             client._user_id = task.user_id or ""
-        except Exception:
-            pass
+            logger.info("[sub-agent:%s] client wired conv=%s agent=%s user=%s",
+                        task.agent_name,
+                        client._conversation_id, client._agent_name, client._user_id)
+        except Exception as _e:
+            logger.warning("[sub-agent:%s] failed to wire client: %s",
+                            task.agent_name, _e)
             # Try to resume existing sub-conversation
             try:
                 from core.conversation_store import ConversationStore

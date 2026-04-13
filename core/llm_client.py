@@ -462,12 +462,12 @@ class LLMClient(
             if self.provider == "openai":
                 result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools)
             elif self.provider == "claude-code":
-                # CC only has stream-json mode. complete() reuses the
-                # streaming path with a no-op callback; the LLMResponse
-                # carries the final text + tool_calls just the same.
+                # CC only has stream-json mode — complete() and stream()
+                # share the same path; complete() simply doesn't pass a
+                # streaming callback. The LLMResponse carries the final
+                # text + tool_calls.
                 result = self._stream_claude_code(
                     messages, mdl, temperature, max_tokens, tools,
-                    callback=lambda _t: None, turn_callback=None,
                 )
             else:
                 result = self._complete_anthropic(messages, mdl, temperature, max_tokens, tools, thinking_budget=thinking_budget)

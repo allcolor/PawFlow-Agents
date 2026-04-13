@@ -427,7 +427,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             return ""
 
     def _stream_claude_code(
-        self, messages, model, temperature, max_tokens, tools, callback,
+        self, messages, model, temperature, max_tokens, tools, callback=None,
         turn_callback=None, _is_auth_retry=False,
     ):
         """Stream from claude CLI using bidirectional stream-json.

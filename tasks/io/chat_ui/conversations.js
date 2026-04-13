@@ -155,8 +155,11 @@ function _renderHistory(data) {
     }
     const el = addMsg(m.type || m.role, content, m);
     // task_id can be top-level (SSE) or in source (stored messages)
-    // Use task_iteration to create separate blocks per iteration
-    const _taskId = m.task_id || (m.source && m.source.task_id) || '';
+    // Use task_iteration to create separate blocks per iteration.
+    // Delegate traces are their own top-level block — never wrap them
+    // in a generic task-block (delegate is not a task).
+    const _isDelegateTrace = (m.type === 'sub_agent_trace' || m.role === 'sub_agent_trace');
+    const _taskId = _isDelegateTrace ? '' : (m.task_id || (m.source && m.source.task_id) || '');
     if (_taskId && el) {
       const agentName = (m.source && m.source.name) || '';
       const _iter = (m.source && m.source.task_iteration) || 1;
@@ -234,7 +237,8 @@ function loadMoreMessages() {
           content = content.replace(/^\[[^\]]+\]:\s*/, '');
         }
         const el = addMsg(m.type || m.role, content, m);
-        const _taskId = m.task_id || (m.source && m.source.task_id) || '';
+        const _isDelegateTrace = (m.type === 'sub_agent_trace' || m.role === 'sub_agent_trace');
+        const _taskId = _isDelegateTrace ? '' : (m.task_id || (m.source && m.source.task_id) || '');
         if (!el) continue;
         if (el.parentNode) el.parentNode.removeChild(el);
         if (_taskId) {

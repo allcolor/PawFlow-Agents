@@ -42,19 +42,9 @@ def _resolve_relay_service(user_id: str, relay_id: str):
         try:
             svc = reg.get_live_instance(scope, sid, relay_id)
             if svc:
-                logger.info("relay-proxy: resolved %s/%s/%s -> %s",
-                            scope, sid, relay_id, type(svc).__name__)
                 return svc
-            else:
-                _defs = reg._definitions.get(sid, {})
-                logger.info("relay-proxy: no live %s/%s/%s (defs has %d, "
-                            "%s present=%s, enabled=%s)",
-                            scope, sid, relay_id, len(_defs),
-                            relay_id, relay_id in _defs,
-                            getattr(_defs.get(relay_id), "enabled", None))
-        except Exception as e:
-            logger.warning("relay-proxy: lookup failed for %s/%s/%s: %s",
-                            scope, sid, relay_id, e)
+        except Exception:
+            pass
     return None
 
 
@@ -65,9 +55,6 @@ def _relay_proxy_handler(pending_req):
     relay_id = pending_req.path_params.get("relay_id", "")
     token = pending_req.path_params.get("token", "")
     rest = pending_req.path_params.get("rest", "")
-    logger.info("relay-proxy: %s relay=%s token=%s... rest=%s from=%s",
-                pending_req.method, relay_id, token[:8] if token else "?",
-                rest[:80], pending_req.remote_addr)
 
     # Source IP restriction — no external access even with a valid token
     src_ip = pending_req.remote_addr or ""

@@ -1034,12 +1034,17 @@ class RelayService(BaseService):
         on_output(kind, data) is called with kind in {"start", "chunk", "end"}.
         Used by the /relay-proxy/ route to pipe Anthropic API calls through
         a user-local endpoint (llama-server, etc.).
+
+        local=True ensures the request is executed on the user's host (via
+        PawCode CLI), not inside the relay container — so 'localhost' in
+        the target URL means the user's actual localhost.
         """
         import base64 as _b64
         _body = body if isinstance(body, (bytes, bytearray)) else (body or b"")
         return self._request_stream(
             "http_fetch", ".",
             on_output=on_output,
+            local=True,
             url=url,
             method=method,
             headers=headers or {},

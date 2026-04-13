@@ -441,6 +441,26 @@ class RelayThread:
             resp = json.dumps({"type": "result", "data": result}) + "\n"
             conn.sendall(resp.encode("utf-8"))
 
+        elif action == "http_fetch":
+            # Run the fetch on the host (where 'localhost' = real localhost).
+            # Stream chunks back as http_response events; the relay forwards
+            # them to PawFlow via WebSocket.
+            from fs_http import action_http_fetch as _http_fetch
+
+            def _on_chunk(kind, data):
+                try:
+                    msg = json.dumps({"type": "http_response", "kind": kind,
+                                       "data": data}) + "\n"
+                    conn.sendall(msg.encode("utf-8"))
+                except Exception:
+                    pass
+            try:
+                result = _http_fetch(".", ".", req, on_chunk=_on_chunk)
+                resp = json.dumps({"type": "result", "data": result}) + "\n"
+            except Exception as e:
+                resp = json.dumps({"type": "error", "error": str(e)}) + "\n"
+            conn.sendall(resp.encode("utf-8"))
+
         else:
             resp = json.dumps({"type": "error", "error": f"Unknown action: {action}"}) + "\n"
             conn.sendall(resp.encode("utf-8"))

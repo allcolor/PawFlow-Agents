@@ -580,7 +580,11 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         slow clients, half-open TCP, or browser preflight connections.
         """
         # Read headers to determine HTTP vs WS (64KB max to prevent abuse)
-        request.settimeout(10.0)
+        try:
+            request.settimeout(10.0)
+        except OSError:
+            # Socket already closed by the client — bail out cleanly
+            return
         try:
             data = b""
             while b"\r\n\r\n" not in data:

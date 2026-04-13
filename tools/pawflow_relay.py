@@ -732,6 +732,20 @@ def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
                             ws_send_fn(ws_sock, progress)
                         except Exception:
                             pass
+                elif resp.get("type") == "http_response":
+                    # Streaming HTTP response chunks (host-side fetch).
+                    # Forward verbatim with our request_id.
+                    if ws_sock:
+                        frame = json.dumps({
+                            "type": "http_response",
+                            "request_id": request_id,
+                            "kind": resp.get("kind", ""),
+                            "data": resp.get("data"),
+                        }).encode("utf-8")
+                        try:
+                            ws_send_fn(ws_sock, frame)
+                        except Exception:
+                            pass
                 elif resp.get("type") == "result":
                     data = resp.get("data", {})
                     if "error" in data:
@@ -1873,6 +1887,17 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         # Note: permission checks are enforced server-side by ToolApprovalGate.
         # (local_screen forwarding handled earlier, before desktop handlers)
+
+        # Generic local=True forward: any action with local=true runs on the
+        # user's host (via PawCode CLI helper), not in this relay container.
+        # This is the equivalent of "exec on host" for all tools — used by
+        # http_fetch (LLM proxy) and any other tool that needs the user's
+        # actual localhost / host network.
+        if msg.get("local"):
+            _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
+            if _hh and ws_sock_ref[0]:
+                _fwd = {k: v for k, v in msg.items() if k != "local"}
+                return _forward_to_host_helper(_hh, _fwd, ws_sock_ref[0], _ws_frame_send)
 
         from fs_actions import ACTIONS as _FS_ACTIONS
         handler_func = _FS_ACTIONS.get(action)

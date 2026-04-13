@@ -61,6 +61,9 @@ def _relay_proxy_handler(pending_req):
     relay_id = pending_req.path_params.get("relay_id", "")
     token = pending_req.path_params.get("token", "")
     rest = pending_req.path_params.get("rest", "")
+    logger.info("relay-proxy: %s relay=%s token=%s... rest=%s from=%s",
+                pending_req.method, relay_id, token[:8] if token else "?",
+                rest[:80], pending_req.remote_addr)
 
     # Source IP restriction — no external access even with a valid token
     src_ip = pending_req.remote_addr or ""

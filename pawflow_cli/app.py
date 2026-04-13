@@ -1002,11 +1002,28 @@ def main():
     gateway_cookie = ""
     if args.gateway_key:
         from pawflow_cli.api import acquire_gateway_cookie
-        gateway_cookie = acquire_gateway_cookie(args.server, args.gateway_key)
+        try:
+            gateway_cookie = acquire_gateway_cookie(args.server, args.gateway_key)
+        except Exception as _ge:
+            print(f"[PawCode] Gateway request failed: {_ge}", file=sys.stderr)
+            sys.exit(1)
         if gateway_cookie:
             print("[PawCode] Gateway cookie acquired.", file=sys.stderr)
         else:
-            print("[PawCode] Warning: gateway POST returned no cookie.", file=sys.stderr)
+            # No cookie = the server either has the private gateway
+            # DISABLED (private_gateway_enabled=false), or it rejected
+            # the key. Without the cookie every /api/* call 401s and the
+            # CLI would just sit there. Exit with a clear next step.
+            print(
+                "[PawCode] Gateway did not return a cookie. Likely causes:\n"
+                "  - The server's private gateway is disabled "
+                "(set private_gateway_enabled=true in global params).\n"
+                "  - The key in --gateway-key is wrong.\n"
+                "  - Your IP hit the ban cooldown (wait it out or clear "
+                "data/runtime/gateway_bans.json on the server).\n"
+                "Aborting.",
+                file=sys.stderr)
+            sys.exit(1)
 
     # ── Subcommands: pawcode auth login | pawcode auth status ──
     if args.command == "auth":

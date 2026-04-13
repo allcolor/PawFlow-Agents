@@ -1015,12 +1015,48 @@ class SubAgentExecutor:
         for task in tasks:
             future = futures[task.id]
             try:
-                result = future.result(timeout=task.timeout + 10)
+                # +30s slack: sub-agent's own loop already enforces
+                # task.timeout; we only time out here if it's truly stuck.
+                result = future.result(timeout=task.timeout + 30)
             except Exception as e:
+                # The future is still running — we MUST kill it before
+                # returning, otherwise the sub-agent's CC subprocess keeps
+                # holding a pool slot + session jsonl, and the parent will
+                # retry delegate in a loop, spawning N parallel claudes on
+                # the same session (corrupts everything).
+                try:
+                    cancel_sub_agent_task(task.id)
+                except Exception:
+                    pass
+                # Kill any CC subprocess registered against this sub-agent
+                try:
+                    from tasks.ai.agent_loop import AgentLoopTask
+                    _inst = AgentLoopTask._live_instance
+                    if _inst:
+                        with _inst._active_contexts_lock:
+                            _keys = [
+                                k for k in _inst._active_claude_client
+                                if k.endswith(f":{task.agent_name}") and (
+                                    k.startswith((task.parent_conversation_id or "") + ":")
+                                    or f"::task::{task.id}" in k
+                                )
+                            ]
+                            _cc_clients = [(k, _inst._active_claude_client.get(k))
+                                           for k in _keys]
+                        for _k, _cc in _cc_clients:
+                            if _cc and hasattr(_cc, "cancel_claude_code"):
+                                _cc.cancel_claude_code(force=True)
+                except Exception:
+                    pass
+                future.cancel()
+                _err = str(e) or f"{type(e).__name__} (no message)"
+                logger.warning(
+                    "[sub-agent:%s] timed out waiting for future: %s (task_id=%s)",
+                    task.agent_name, _err, task.id)
                 result = AgentResult(
                     task_id=task.id,
                     agent_name=task.agent_name,
-                    error=str(e),
+                    error=f"Sub-agent did not return within {task.timeout + 30}s: {_err}",
                     status="error",
                 )
             results.append(result)

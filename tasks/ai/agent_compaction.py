@@ -570,6 +570,7 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                 conversation_id=conversation_id,
                 agent_name=agent_name,
                 compact_instructions=compact_instructions,
+                user_id=user_id,
             )
         except Exception as e:
             if force:

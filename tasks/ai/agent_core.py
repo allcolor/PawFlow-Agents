@@ -525,7 +525,10 @@ class AgentCoreMixin:
                         _irpt_resp = client.complete_stream(
                             messages=self._compact(
                                 copy.deepcopy(messages), compact_client,
-                                ctx.get("max_context_size", 64000), threshold=0.6),
+                                ctx.get("max_context_size", 64000), threshold=0.6,
+                                conversation_id=conversation_id,
+                                agent_name=ctx.get("active_agent_name") or "",
+                                user_id=user_id),
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],
@@ -534,7 +537,10 @@ class AgentCoreMixin:
                         ) if emitter.is_streaming else client.complete(
                             messages=self._compact(
                                 copy.deepcopy(messages), compact_client,
-                                ctx.get("max_context_size", 64000), threshold=0.6),
+                                ctx.get("max_context_size", 64000), threshold=0.6,
+                                conversation_id=conversation_id,
+                                agent_name=ctx.get("active_agent_name") or "",
+                                user_id=user_id),
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],
@@ -858,8 +864,10 @@ class AgentCoreMixin:
                                     llm_context, compact_client,
                                     ctx.get("max_context_size", 64000), threshold=0.5,
                                     conversation_id=conversation_id,
+                                    agent_name=ctx.get("active_agent_name") or "",
                                     tool_defs=ctx.get("tool_defs"),
-                                    chars_per_token=ctx.get("chars_per_token", 0))
+                                    chars_per_token=ctx.get("chars_per_token", 0),
+                                    user_id=user_id)
                             try:
                                 _check_budget(ctx, total_tokens_in, total_tokens_out)
                                 response = _llm_call(llm_context)

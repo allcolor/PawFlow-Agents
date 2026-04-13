@@ -70,6 +70,7 @@ class AgentSummarizeMixin:
         conversation_id: str = "",
         agent_name: str = "",
         compact_instructions: str = "",
+        user_id: str = "",
     ) -> str:
         """Summarize messages using the file-based approach.
 
@@ -88,6 +89,7 @@ class AgentSummarizeMixin:
 
         return self._call_summarize(
             client, total_text, target_tokens,
+            user_id=user_id,
             agent_name=agent_name,
             conversation_id=conversation_id,
             compact_instructions=compact_instructions,
@@ -163,7 +165,7 @@ class AgentSummarizeMixin:
             if _provider == "claude-code":
                 return self._summarize_via_cc(
                     client, prompt, file_id, compact_key, target_tokens,
-                    max_retries, _pub, conversation_id)
+                    max_retries, _pub, conversation_id, user_id)
             else:
                 return self._summarize_via_api(
                     client, prompt, file_id, compact_key, target_tokens,
@@ -176,17 +178,26 @@ class AgentSummarizeMixin:
 
     def _summarize_via_cc(self, client, prompt: str, file_id: str,
                           compact_key: str, target_tokens: int,
-                          max_retries: int, _pub, conversation_id: str) -> str:
+                          max_retries: int, _pub, conversation_id: str,
+                          user_id: str = "") -> str:
         """Run summarization via Claude Code streaming (CC handles tool loop)."""
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
 
-        # Save and clear session — compact uses a temporary session
+        if not user_id:
+            raise ValueError(
+                "BUG: user_id is required for CC-based summarization "
+                "(every conversation belongs to a user)")
+
+        # Save and clear session — compact uses a dedicated workdir per user
+        # so CC's _get_session_workdir doesn't raise on empty conv_id.
         _inner = getattr(client, '_client', client)
         _saved_conv = getattr(_inner, '_conversation_id', '')
         _saved_agent = getattr(_inner, '_agent_name', '')
+        _saved_user = getattr(_inner, '_user_id', '')
         _saved_event_cid = getattr(_inner, '_event_cid', '')
-        _inner._conversation_id = ''
+        _inner._conversation_id = '_compact'
         _inner._agent_name = 'compact'
+        _inner._user_id = user_id
         _inner._event_cid = ''
 
         try:
@@ -226,6 +237,7 @@ class AgentSummarizeMixin:
         finally:
             _inner._conversation_id = _saved_conv
             _inner._agent_name = _saved_agent
+            _inner._user_id = _saved_user
             _inner._event_cid = _saved_event_cid
             # Clean compact workdir
             try:

@@ -22,28 +22,17 @@ def load_session(include_expired: bool = False) -> Dict[str, Any]:
 
     Token is stored encrypted via OS credential protection (DPAPI on Windows).
     """
-    def _trace(msg):
-        try:
-            with open(CONFIG_DIR / "pawcode_start.log", "a", encoding="utf-8") as f:
-                f.write(f"{time.strftime('%H:%M:%S')} [load_session] {msg}\n")
-        except Exception:
-            pass
-    _trace(f"entered, SESSION_FILE={SESSION_FILE}")
     if not SESSION_FILE.exists():
-        _trace("session file does not exist — returning {}")
         return {}
     try:
-        _trace("reading session file")
         data = json.loads(SESSION_FILE.read_text())
-        _trace(f"parsed, expires_at={data.get('expires_at', 0)}")
         if not include_expired and data.get("expires_at", 0) < time.time():
-            _trace("expired — returning {}")
             return {}  # expired
-        # Decrypt token — wrapped in a thread with a hard timeout, because
-        # Windows DPAPI (CryptUnprotectData) has been observed to block
-        # indefinitely on Python 3.14 with corrupted blobs or specific
-        # policies. If decrypt can't answer in 3s, treat the session as
-        # unusable and drop it so the user just /logins again.
+        # Decrypt token — wrapped in a background thread with a 3s hard
+        # timeout: Windows DPAPI (CryptUnprotectData) can hang forever
+        # when lsass is unhealthy (e.g. after system OOM pressure). If
+        # decrypt can't answer in 3s, drop the session file so the user
+        # just /login again.
         encrypted_token = data.get("token", "")
         if encrypted_token:
             import threading as _th
@@ -53,29 +42,23 @@ def load_session(include_expired: bool = False) -> Dict[str, Any]:
                     from pawflow_cli.secure_store import unprotect
                     _result["plain"] = unprotect(encrypted_token)
                 except Exception as _ue:
-                    _result["err"] = f"{type(_ue).__name__}: {_ue}"
-            _trace("calling unprotect (DPAPI/AES) in background thread")
+                    _result["err"] = _ue
             _t = _th.Thread(target=_do_unprotect, daemon=True)
             _t.start()
             _t.join(timeout=3.0)
             if _t.is_alive():
-                _trace("unprotect TIMED OUT — dropping session file")
                 try:
                     SESSION_FILE.unlink()
                 except Exception:
                     pass
                 return {}
             if "plain" in _result:
-                _trace("unprotect returned ok")
                 data["token"] = _result["plain"]
             else:
-                _trace(f"unprotect raised {_result.get('err')} — fallback to plain")
                 # Migration: token might be plain text from old version
                 data["token"] = encrypted_token
-        _trace("returning data")
         return data
-    except Exception as _le:
-        _trace(f"exception: {type(_le).__name__}: {_le}")
+    except Exception:
         return {}
 
 
@@ -83,38 +66,27 @@ def save_session(token: str, username: str, server_url: str, expires_at: float):
     """Save session with encrypted token."""
     ensure_config_dir()
     # Encrypt the token — same DPAPI hang issue as unprotect: wrap in a
-    # thread with a hard timeout, fall back to plain storage if the OS
-    # credential layer doesn't answer in time. Better a plain-text
-    # token than a CLI frozen forever after a successful /login.
+    # thread with a 3s hard timeout and fall back to plain storage if
+    # the OS credential layer doesn't answer. Better a plain-text token
+    # on disk than a CLI frozen forever after a successful /login.
     import threading as _th
-    _trace_path = CONFIG_DIR / "pawcode_start.log"
-    def _trace(msg):
-        try:
-            with open(_trace_path, "a", encoding="utf-8") as f:
-                f.write(f"{time.strftime('%H:%M:%S')} [save_session] {msg}\n")
-        except Exception:
-            pass
     _result = {}
     def _do_protect():
         try:
             from pawflow_cli.secure_store import protect
             _result["enc"] = protect(token)
         except Exception as _pe:
-            _result["err"] = f"{type(_pe).__name__}: {_pe}"
-    _trace("calling protect() in background thread")
+            _result["err"] = _pe
     _t = _th.Thread(target=_do_protect, daemon=True)
     _t.start()
     _t.join(timeout=3.0)
     if _t.is_alive():
-        _trace("protect TIMED OUT — storing token in plain (session still usable)")
         encrypted_token = token
         sys.stderr.write("[PawCode] Warning: OS credential protection timed out; "
                          "storing token unencrypted\n")
     elif "enc" in _result:
-        _trace("protect returned ok")
         encrypted_token = _result["enc"]
     else:
-        _trace(f"protect raised {_result.get('err')} — plain fallback")
         encrypted_token = token
         sys.stderr.write("[PawCode] Warning: could not encrypt session token\n")
     SESSION_FILE.write_text(json.dumps({
@@ -123,7 +95,6 @@ def save_session(token: str, username: str, server_url: str, expires_at: float):
         "server_url": server_url,
         "expires_at": expires_at,
     }, indent=2))
-    _trace("session saved")
 
 
 def clear_session():

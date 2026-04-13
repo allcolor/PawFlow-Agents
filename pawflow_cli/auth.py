@@ -17,26 +17,12 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
     Always tries the server even if the local session is expired — the server
     may silently refresh using stored OAuth refresh tokens.
     """
-    import os as _os, time as _t
-    _trace_path = _os.path.join(_os.path.expanduser("~"),
-                                 ".pawflow", "pawcode_start.log")
-    def _trace(msg):
-        try:
-            with open(_trace_path, "a", encoding="utf-8") as f:
-                f.write(f"{_t.strftime('%H:%M:%S')} [check_session] {msg}\n")
-        except Exception:
-            pass
-    _trace("entered")
     # Load session INCLUDING expired ones — server may still refresh them
     cached = load_session(include_expired=True)
-    _trace(f"cached session exists={bool(cached)} "
-           f"server_url_match={(cached or {}).get('server_url') == server_url}")
     if not cached or cached.get("server_url") != server_url:
-        _trace("no matching cached session — returning {}")
         return {}
     token = cached.get("token", "")
     if not token:
-        _trace("no token in cached session — returning {}")
         return {}
     # Validate token with a lightweight server call (ping action)
     try:
@@ -47,7 +33,6 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
         use_ssl = parsed.scheme == "https"
         host = parsed.hostname or "localhost"
         port = parsed.port or (443 if use_ssl else 80)
-        _trace(f"connecting {host}:{port} ssl={use_ssl}")
         if use_ssl:
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
@@ -60,11 +45,8 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
         if gateway_cookie:
             _headers["Cookie"] = f"_pf_gw={gateway_cookie}"
         _body = json.dumps({"action": "ping"})
-        _trace("about to POST /api/agent")
         conn.request("POST", "/api/agent", body=_body, headers=_headers)
-        _trace("request sent, awaiting response")
         resp = conn.getresponse()
-        _trace(f"got response status={resp.status}")
         # Follow 301/302 (HTTP→HTTPS redirect)
         if resp.status == 301:
             resp.read()
@@ -98,14 +80,11 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
                      time.time() + 8 * 3600)
         return {"token": token, "username": cached.get("username", ""),
                 "server_url": server_url}
-    except Exception as _ce:
-        _trace(f"exception: {type(_ce).__name__}: {_ce}")
+    except Exception:
         # Server unreachable — trust local cache if not expired
         expires = cached.get("expires_at", 0)
         if expires and time.time() < expires:
-            _trace("returning cached (not expired)")
             return cached
-        _trace("clearing session and returning {}")
         clear_session()
         return {}
 

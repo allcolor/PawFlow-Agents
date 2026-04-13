@@ -217,11 +217,6 @@ class _RequestHandler(BaseHTTPRequestHandler):
         _matched = _match[0] if _match else None
         _is_public = bool(_matched and _matched.public)
         _is_private_only = bool(_matched and _matched.private_only)
-        logger.info(
-            "[http-trace] %s %s matched=%s public=%s private_only=%s",
-            method, path,
-            getattr(_matched, "pattern", None) if _matched else None,
-            _is_public, _is_private_only)
 
         # Private-only routes: reject public IPs immediately
         if _is_private_only:
@@ -261,10 +256,6 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 if not session and token:
                     session = True if sm.validate_api_key(token) else None
                 if not session:
-                    logger.info(
-                        "[http-trace] 401 %s %s — no valid session "
-                        "(token_seen=%s, cookie_seen=%s)",
-                        method, path, bool(token), bool(cookie_header))
                     self.send_response(401)
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()

@@ -41,13 +41,17 @@ def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[st
 
     # Locate the PawFlow HTTP listener to expose the proxy route
     try:
-        from services.http_listener_service import HTTPListenerService
-        instances = getattr(HTTPListenerService, "_instances", {}) or {}
+        from services import http_listener_service as _hl_mod
+        instances = getattr(_hl_mod, "_instances", None) or {}
         if not instances:
             logger.warning("No HTTP listener running — cannot build relay-proxy URL")
             return None
-        _listener = next(iter(instances.values()))
-        _port = _listener._port
+        # Prefer the public listener (highest port that's not internal :19895)
+        _public = [(p, lst) for p, lst in instances.items() if p != 19895]
+        if _public:
+            _port, _listener = _public[0]
+        else:
+            _port, _listener = next(iter(instances.items()))
         _scheme = "https" if getattr(_listener, "_default_ssl_ctx", None) else "http"
     except Exception as e:
         logger.warning("HTTP listener lookup failed: %s", e)

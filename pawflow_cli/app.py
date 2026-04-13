@@ -1002,22 +1002,11 @@ def main():
     gateway_cookie = ""
     if args.gateway_key:
         from pawflow_cli.api import acquire_gateway_cookie
-        try:
-            gateway_cookie = acquire_gateway_cookie(args.server, args.gateway_key)
-        except Exception as _ge:
-            print(f"[PawCode] Gateway request failed: {_ge}", file=sys.stderr)
-            sys.exit(1)
+        gateway_cookie = acquire_gateway_cookie(args.server, args.gateway_key)
         if gateway_cookie:
             print("[PawCode] Gateway cookie acquired.", file=sys.stderr)
         else:
-            # No cookie = gateway rejected the key (wrong secret, IP
-            # banned after too many failed attempts, gateway disabled,
-            # etc.). Every downstream call will 401 and the CLI will
-            # hang waiting for auth flows to complete — exit loudly.
-            print("[PawCode] Gateway rejected the key — aborting. "
-                  "Fix --gateway-key (or wait out an IP-ban cooldown).",
-                  file=sys.stderr)
-            sys.exit(1)
+            print("[PawCode] Warning: gateway POST returned no cookie.", file=sys.stderr)
 
     # ── Subcommands: pawcode auth login | pawcode auth status ──
     if args.command == "auth":

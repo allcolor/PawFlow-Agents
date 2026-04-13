@@ -251,12 +251,12 @@ class ConversationStore:
                         pass
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
+                self._validate_message(m)
                 mid = m.get("msg_id", "")
-                if mid and mid in existing_ids:
+                if mid in existing_ids:
                     continue  # skip duplicate
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
-                if mid:
-                    existing_ids.add(mid)
+                existing_ids.add(mid)
 
     @staticmethod
     def _prefix_content(content, prefix: str):
@@ -410,13 +410,13 @@ class ConversationStore:
                         pass
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
+                self._validate_message(m)
                 mid = m.get("msg_id", "")
-                if mid and mid in existing_ids:
+                if mid in existing_ids:
                     continue  # skip duplicate
                 xf = self._transform_for_shared(m)
                 f.write(json.dumps(xf, ensure_ascii=False) + "\n")
-                if mid:
-                    existing_ids.add(mid)
+                existing_ids.add(mid)
 
     def _read_ctx_file(self, path: Path) -> List[Dict]:
         """Read all messages from a context JSONL file."""
@@ -439,6 +439,7 @@ class ConversationStore:
         tmp = path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             for m in messages:
+                self._validate_message(m)
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
         tmp.replace(path)
 
@@ -629,6 +630,7 @@ class ConversationStore:
         with open(self._transcript_path(cid), "w", encoding="utf-8") as f:
             f.write(json.dumps(meta_line, ensure_ascii=False) + "\n")
             for m in messages:
+                self._validate_message(m)
                 line = {"t": "msg", **m}
                 if "ts" not in line and "timestamp" not in line:
                     line["ts"] = _now

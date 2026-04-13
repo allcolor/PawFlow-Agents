@@ -52,7 +52,11 @@ def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[st
             _port, _listener = _public[0]
         else:
             _port, _listener = next(iter(instances.items()))
-        _scheme = "https" if getattr(_listener, "_default_ssl_ctx", None) else "http"
+        # Always HTTP for the proxy URL: the listener supports both HTTP+HTTPS
+        # but the cert may be issued for a hostname (e.g. pawflow.allcolor.org)
+        # that doesn't match the LAN IP we expose. Traffic stays on the
+        # private network (private_only route restriction + token auth).
+        _scheme = "http"
     except Exception as e:
         logger.warning("HTTP listener lookup failed: %s", e)
         return None

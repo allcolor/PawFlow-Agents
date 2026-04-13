@@ -794,6 +794,30 @@ class ToolRelayService(BaseService):
             except Exception as _se:
                 logger.warning("[tool-relay] failed to resolve env/secrets: %s", _se)
 
+        # For delegate calls, set thread-local source_agent + delegate_tc_id
+        # on the SpawnAgentsHandler so sub_agent_* SSE events carry the
+        # delegate_tc_id that the chat UI uses to render delegate-blocks
+        # (otherwise the events fall back to a generic task-block).
+        if tool_name == "delegate":
+            try:
+                from core.handlers.resource_agent import SpawnAgentsHandler
+                _src_svc = ""
+                try:
+                    _parent_cid = (conversation_id.split("::task::")[0]
+                                   if conversation_id and "::task::" in conversation_id
+                                   else conversation_id)
+                    if _parent_cid and agent_name:
+                        from core.conv_agent_config import get_agent_config as _gac
+                        _src_svc = (_gac(_parent_cid, agent_name) or {}).get("llm_service", "") or ""
+                except Exception:
+                    pass
+                for _h in registry.list_tools():
+                    if isinstance(_h, SpawnAgentsHandler):
+                        _h.set_source_agent(agent_name or "", _src_svc)
+                        _h.set_delegate_tc_id(request_id)
+            except Exception as _de:
+                logger.debug("[tool-relay] failed to set delegate ctx: %s", _de)
+
         try:
             logger.debug("[tool-relay] execute %s [req=%s]", tool_name, request_id)
             result = registry.execute(tool_name, arguments)

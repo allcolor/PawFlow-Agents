@@ -998,38 +998,24 @@ def main():
                         help="Resume session (alias for --session-id)")
     args = parser.parse_args()
 
-    # Acquire gateway cookie if key provided
+    # Acquire gateway cookie if key provided. If it fails, just warn
+    # and continue — the user can still authenticate with /login at the
+    # PawCode prompt (session auth works independently of the gateway).
     gateway_cookie = ""
     if args.gateway_key:
         from pawflow_cli.api import acquire_gateway_cookie
         try:
             gateway_cookie = acquire_gateway_cookie(args.server, args.gateway_key)
         except Exception as _ge:
-            print(f"[PawCode] Gateway request failed: {_ge}", file=sys.stderr)
-            sys.exit(1)
+            print(f"[PawCode] Gateway request failed: {_ge} — continuing "
+                  f"without it; use /login at the prompt.",
+                  file=sys.stderr)
         if gateway_cookie:
             print("[PawCode] Gateway cookie acquired.", file=sys.stderr)
         else:
-            # No cookie = the server either has the private gateway
-            # DISABLED (private_gateway_enabled=false), or it rejected
-            # the key. Without the cookie every /api/* call 401s and
-            # the CLI would just sit at the prompt with no hint.
-            print(
-                "[PawCode] Gateway did not return a cookie.\n"
-                "  Likely causes:\n"
-                "    - The server's private gateway is disabled\n"
-                "      (set private_gateway_enabled=true in global params).\n"
-                "    - The key in --gateway-key is wrong.\n"
-                "    - Your IP hit the ban cooldown (wait it out or\n"
-                "      clear data/runtime/gateway_bans.json on the server).\n"
-                "  Options:\n"
-                "    - Fix the server-side gateway config, then rerun.\n"
-                "    - Or drop --gateway-key and use session auth only:\n"
-                "        pawcode auth login --server " + args.server + "\n"
-                "      then rerun without --gateway-key.\n"
-                "Aborting.",
-                file=sys.stderr)
-            sys.exit(1)
+            print("[PawCode] Gateway returned no cookie — continuing "
+                  "without it; use /login at the prompt.",
+                  file=sys.stderr)
 
     # ── Subcommands: pawcode auth login | pawcode auth status ──
     if args.command == "auth":

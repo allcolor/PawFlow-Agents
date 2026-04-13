@@ -483,31 +483,9 @@ class SubAgentExecutor:
                     except Exception:
                         pass
 
-                try:
-                    response = client.complete(
-                        messages=messages,
-                        model=task.model or None,
-                        temperature=0.7,
-                        max_tokens=0,
-                        tools=tool_defs if tool_defs else None,
-                    )
-                except Exception as _llm_err:
-                    # CC auto-compact (CC's own context full) — clear the
-                    # CC session for this sub-agent and retry once with a
-                    # fresh session. The sub-agent loses its CC-side
-                    # memory but the current delegate request still
-                    # completes.
-                    if "CC auto-compact detected" in str(_llm_err):
-                        logger.warning(
-                            "[sub-agent:%s] CC auto-compact — clearing session and retrying",
-                            task.agent_name)
-                        try:
-                            from core.conversation_store import ConversationStore
-                            ConversationStore.instance().set_extra(
-                                task.parent_conversation_id,
-                                f"claude_session:{task.agent_name}", "")
-                        except Exception:
-                            pass
+                _compact_attempts = 0
+                while True:
+                    try:
                         response = client.complete(
                             messages=messages,
                             model=task.model or None,
@@ -515,8 +493,61 @@ class SubAgentExecutor:
                             max_tokens=0,
                             tools=tool_defs if tool_defs else None,
                         )
-                    else:
-                        raise
+                        break
+                    except Exception as _llm_err:
+                        if ("CC auto-compact detected" not in str(_llm_err)
+                                or _compact_attempts >= 2):
+                            raise
+                        _compact_attempts += 1
+                        # Same mechanism as the main agent: PawFlow-side
+                        # summarize of the in-memory messages, clear the
+                        # CC session so a fresh one starts, then retry.
+                        # Transparent — never surfaces as an error.
+                        logger.warning(
+                            "[sub-agent:%s] CCCompactDetected — compacting PawFlow context",
+                            task.agent_name)
+                        try:
+                            from tasks.ai.agent_loop import AgentLoopTask
+                            _alt = AgentLoopTask._live_instance
+                        except Exception:
+                            _alt = None
+                        if _alt and hasattr(_alt, "_auto_compact_messages"):
+                            try:
+                                _max_ctx = 200000
+                                if resolved_svc and getattr(resolved_svc, 'config', None):
+                                    _max_ctx = int(resolved_svc.config.get(
+                                        "max_context_size", _max_ctx) or _max_ctx)
+                                messages = list(_alt._auto_compact_messages(
+                                    messages,
+                                    conversation_id=task.parent_conversation_id or "",
+                                    agent_name=task.agent_name,
+                                    user_id=task.user_id,
+                                    max_context=_max_ctx,
+                                ))
+                                logger.info(
+                                    "[sub-agent:%s] PawFlow compact done (%d messages)",
+                                    task.agent_name, len(messages))
+                            except Exception as _ce:
+                                logger.warning(
+                                    "[sub-agent:%s] PawFlow compact failed: %s — falling back to session reset",
+                                    task.agent_name, _ce)
+                        try:
+                            from core.conversation_store import ConversationStore
+                            ConversationStore.instance().set_extra(
+                                task.parent_conversation_id,
+                                f"claude_session:{task.agent_name}", "")
+                        except Exception:
+                            pass
+                        # Recover OAuth tokens (CC may have refreshed during
+                        # the killed session) before the retry.
+                        if hasattr(client, '_recover_tokens') and hasattr(client, '_get_session_workdir'):
+                            try:
+                                _wd = client._get_session_workdir(
+                                    task.parent_conversation_id or "",
+                                    task.agent_name, task.user_id)
+                                client._recover_tokens(_wd)
+                            except Exception:
+                                pass
 
                 result.tokens_in += response.tokens_in
                 result.tokens_out += response.tokens_out

@@ -3,12 +3,12 @@ import json
 import logging
 from typing import Any, Dict
 
-from core.tool_registry import ToolHandler
+from core.handlers._fs_base import BaseFsHandler
 
 logger = logging.getLogger(__name__)
 
 
-class ScreenHandler(ToolHandler):
+class ScreenHandler(BaseFsHandler):
     """Control the desktop: screenshots, mouse, keyboard.
 
     Routes screen_* actions to a filesystem relay (user's PC) or

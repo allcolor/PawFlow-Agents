@@ -247,7 +247,12 @@ class SubAgentExecutor:
         # Tools have NO timeout — only cancellation breaks the sub-agent.
         max_iter = task.max_iterations or self._default_max_iterations
 
-        # Resolve LLM client: per-agent service or default
+        # Resolve LLM client: per-agent service or default.
+        # If the agent declares an llm_service it MUST resolve — silently
+        # falling back to the default (first enabled llmConnection) ran
+        # the sub-agent on the wrong provider and crashed deep inside
+        # HTTPConnection("NoneType has no attribute 'rfind'") when the
+        # default happened to be an anthropic service without base_url.
         client = self._client
         resolved_svc = None
         if task.llm_service and self._client_resolver:
@@ -255,11 +260,40 @@ class SubAgentExecutor:
                 resolved_client, resolved_svc = self._client_resolver(
                     task.llm_service, task.user_id,
                 )
-                if resolved_client:
-                    client = resolved_client
             except Exception as e:
-                logger.warning("Failed to resolve LLM service '%s': %s",
-                               task.llm_service, e)
+                logger.exception("Failed to resolve LLM service '%s' for sub-agent '%s'",
+                                 task.llm_service, task.agent_name)
+                return AgentResult(
+                    task_id=task.id,
+                    agent_name=task.agent_name,
+                    error=(f"Failed to resolve LLM service '{task.llm_service}': "
+                           f"{type(e).__name__}: {e or 'no details'}"),
+                    status="error",
+                )
+            if not resolved_client:
+                _msg = (f"Sub-agent '{task.agent_name}' requested llm_service "
+                        f"'{task.llm_service}' but it could not be resolved "
+                        f"for user '{task.user_id}'. Check that the service "
+                        f"exists and is enabled in the user or global scope.")
+                logger.error("[sub-agent:%s] %s", task.agent_name, _msg)
+                return AgentResult(
+                    task_id=task.id,
+                    agent_name=task.agent_name,
+                    error=_msg,
+                    status="error",
+                )
+            client = resolved_client
+        elif task.llm_service and not self._client_resolver:
+            _msg = (f"Sub-agent '{task.agent_name}' requested llm_service "
+                    f"'{task.llm_service}' but no client_resolver is "
+                    f"configured on the SubAgentExecutor.")
+            logger.error("[sub-agent:%s] %s", task.agent_name, _msg)
+            return AgentResult(
+                task_id=task.id,
+                agent_name=task.agent_name,
+                error=_msg,
+                status="error",
+            )
 
         # Acquire capacity slot if service has limits
         if resolved_svc and hasattr(resolved_svc, 'try_acquire'):

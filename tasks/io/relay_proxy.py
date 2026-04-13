@@ -38,14 +38,23 @@ def _resolve_relay_service(user_id: str, relay_id: str):
     """Return the live RelayService instance for (user_id, relay_id)."""
     from core.service_registry import ServiceRegistry
     reg = ServiceRegistry.get_instance()
-    # Try user scope first, then global
     for scope, sid in (("user", user_id), ("global", "")):
         try:
             svc = reg.get_live_instance(scope, sid, relay_id)
             if svc:
+                logger.info("relay-proxy: resolved %s/%s/%s -> %s",
+                            scope, sid, relay_id, type(svc).__name__)
                 return svc
-        except Exception:
-            pass
+            else:
+                _defs = reg._definitions.get(sid, {})
+                logger.info("relay-proxy: no live %s/%s/%s (defs has %d, "
+                            "%s present=%s, enabled=%s)",
+                            scope, sid, relay_id, len(_defs),
+                            relay_id, relay_id in _defs,
+                            getattr(_defs.get(relay_id), "enabled", None))
+        except Exception as e:
+            logger.warning("relay-proxy: lookup failed for %s/%s/%s: %s",
+                            scope, sid, relay_id, e)
     return None
 
 

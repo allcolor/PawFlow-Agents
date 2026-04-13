@@ -436,10 +436,10 @@ class AgentActionsMixin:
         try:
             import os
             import shutil
-            from core.llm_providers.claude_code import _SESSIONS_BASE
+            from core.llm_providers.claude_code import _get_sessions_base
             if not conv_id or not agent_name:
                 raise ValueError(f"BUG: conv_id={conv_id!r}, agent_name={agent_name!r}")
-            workdir = os.path.join(_SESSIONS_BASE, conv_id, agent_name)
+            workdir = os.path.join(_get_sessions_base(), conv_id, agent_name)
             for subdir in ("projects", "sessions", ".cache"):
                 _path = os.path.join(workdir, subdir)
                 if os.path.isdir(_path):

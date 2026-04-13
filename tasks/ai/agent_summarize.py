@@ -230,8 +230,8 @@ class AgentSummarizeMixin:
             # Clean compact workdir
             try:
                 import shutil
-                from core.llm_providers.claude_code import _SESSIONS_BASE
-                _compact_workdir = os.path.join(_SESSIONS_BASE, "default", "compact")
+                from core.llm_providers.claude_code import _get_sessions_base
+                _compact_workdir = os.path.join(_get_sessions_base(), "default", "compact")
                 for _subdir in ("projects", "sessions", ".cache"):
                     _p = os.path.join(_compact_workdir, _subdir)
                     if os.path.isdir(_p):

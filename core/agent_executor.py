@@ -372,7 +372,12 @@ class SubAgentExecutor:
             "_event_cid": getattr(client, "_event_cid", ""),
         }
         try:
-            client._conversation_id = sub_conv_id or task.parent_conversation_id or ""
+            # Use parent_conversation_id (not sub_conv_id) so the CC
+            # workdir + session_id lookup are stable across delegate
+            # calls — the sub-agent's session survives between delegates
+            # to the same agent in the same parent conversation. CC keys
+            # its session under (parent_conv, agent_name).
+            client._conversation_id = task.parent_conversation_id or sub_conv_id or ""
             client._agent_name = task.agent_name or ""
             client._user_id = task.user_id or ""
             # Suppress raw provider SSE events to the parent bus — the

@@ -24,12 +24,12 @@ def _find_cc_session_jsonl(conv_id: str, agent_name: str, store,
     if not session_id:
         return ""
 
-    from core.llm_providers.claude_code import _SESSIONS_BASE
+    from core.llm_providers.claude_code import _get_sessions_base
     if not conv_id or not agent_name:
         raise ValueError(f"BUG: conv_id={conv_id!r}, agent_name={agent_name!r} required for CC session")
-    # Path is: _SESSIONS_BASE/{user_id}/{conv_id}/{agent}/
+    # Path is: <sessions_base>/{user_id}/{conv_id}/{agent}/
     uid = user_id or store.get_user_id(conv_id) or "default"
-    workdir = os.path.join(_SESSIONS_BASE, uid, conv_id, agent_name)
+    workdir = os.path.join(_get_sessions_base(), uid, conv_id, agent_name)
     projects_dir = os.path.join(workdir, "projects", "-workspace")
     jsonl_path = os.path.join(projects_dir, f"{session_id}.jsonl")
 

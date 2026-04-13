@@ -1093,9 +1093,8 @@ class AgentCoreMixin:
                                 _saved = len(m.content)
                                 m.content = (
                                     f"[Result too large ({_saved:,} chars) — saved to "
-                                    f"FileStore: /files/{fid}/tool_result.txt. Use "
-                                    f"read(path='tool_result.txt', source='filestore', "
-                                    f"file_id='{fid}') to access.]")
+                                    f"fs://filestore/{fid}/tool_result.txt. Use "
+                                    f"read(path='fs://filestore/{fid}/tool_result.txt') to access.]")
                                 _total_chars -= _saved - len(m.content)
                         logger.info("[agent:%s] aggregate cap: persisted large tool results to FileStore",
                                     conversation_id[:8])

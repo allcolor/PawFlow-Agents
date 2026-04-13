@@ -850,7 +850,7 @@ class ShowFileHandler(ToolHandler):
         else:
             return "Error: Provide file_id, filename, or path+service."
 
-        url = f"{self._base_url}/files/{file_id}"
+        url = f"fs://filestore/{file_id}/{fname}"
         size_kb = len(data) / 1024
 
         # Return a special marker that the chat UI will intercept

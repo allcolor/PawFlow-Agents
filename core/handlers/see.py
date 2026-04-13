@@ -188,7 +188,7 @@ class SeeHandler(BaseFsHandler):
         # Store in FileStore for URL access
         from core.file_store import FileStore
         fid = FileStore.instance().store(fname, data, mime, user_id=self._user_id)
-        url = f"/files/{fid}/{fname}"
+        url = f"fs://filestore/{fid}/{fname}"
 
         # Return marker — agent loop converts to multimodal content
         return f"Image: {url} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"

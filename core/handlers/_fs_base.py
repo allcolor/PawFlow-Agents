@@ -231,10 +231,20 @@ class BaseFsHandler(ToolHandler):
 
     @staticmethod
     def _parse_fs_url(path: str) -> Tuple[str, str]:
-        """Parse fs://service/path into (service_name, path). Returns ("", path) if not a fs:// URL."""
+        """Parse a path into (service_name, path).
+
+        Recognized formats:
+          fs://service/path           → (service, path)
+          fs://filestore/id/name      → ("filestore", "id/name")
+          /files/{id}/{name}          → ("filestore", "id/name")
+          (anything else)             → ("", path)
+        """
         if path.startswith("fs://"):
             parts = path[5:].split("/", 1)
             return (parts[0], parts[1] if len(parts) > 1 else ".")
+        # Bare FileStore URL — auto-route to filestore
+        if path.startswith("/files/"):
+            return ("filestore", path[len("/files/"):])
         return ("", path)
 
     @staticmethod
@@ -285,7 +295,7 @@ class BaseFsHandler(ToolHandler):
         if ct and ct.startswith("image/"):
             import base64 as _b64
             b64 = _b64.b64encode(data).decode("ascii")
-            url = f"/files/{file_id}"
+            url = f"fs://filestore/{file_id}/{fname}"
             return f"Image: {url}\n__image_data__:{ct}:{b64}"
         try:
             text = data.decode("utf-8")

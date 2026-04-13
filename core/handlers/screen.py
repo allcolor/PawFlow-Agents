@@ -186,7 +186,7 @@ class ScreenHandler(BaseFsHandler):
                     fid = FileStore.instance().store(
                         fname, img_bytes, "image/png",
                         user_id=self._user_id, category="screenshot")
-                    url = f"{self._base_url}/files/{fid}/{fname}" if self._base_url else f"/files/{fid}/{fname}"
+                    url = f"fs://filestore/{fid}/{fname}"
                     size_info = f"\nScreen resolution: {width}x{height}" if width and height else ""
                     coord_hint = f" — use these dimensions for x,y coordinates in click/move/scroll actions" if width else ""
                     return f"Screenshot captured: {url}\n{len(img_bytes):,} bytes, {b64_data[:20]}...{size_info}{coord_hint}"

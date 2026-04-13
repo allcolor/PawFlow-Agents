@@ -139,7 +139,7 @@ class SandboxFile:
                     self._name, content, ct,
                     user_id=self._user_id,
                     conversation_id=self._conversation_id)
-                url = f"{self._base_url}/files/{file_id}"
+                url = f"fs://filestore/{file_id}/{self._name}"
                 self._created_files.append(url)
         self._buf.close()
 
@@ -238,7 +238,7 @@ class _FileStoreFile:
                     self._path, content, ct,
                     user_id=self._user_id,
                     conversation_id=self._conversation_id)
-                url = f"{self._base_url}/files/{file_id}"
+                url = f"fs://filestore/{file_id}/{self._path}"
                 self._created_files.append(url)
         self._buf.close()
 

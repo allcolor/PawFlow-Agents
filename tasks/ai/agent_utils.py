@@ -487,9 +487,7 @@ class AgentUtilsMixin:
                                 fname = f"image_{int(_t.time())}_{len(img_refs)}.{ext}"
                                 fid = FileStore.instance().store(
                                     fname, _b64d.b64decode(b64), mime)
-                                _base = FileStore.instance().get_base_url() if hasattr(FileStore.instance(), 'get_base_url') else ""
-                                img_url = f"{_base}/files/{fid}/{fname}" if _base else f"/files/{fid}/{fname}"
-                                img_refs.append(img_url)
+                                img_refs.append(f"fs://filestore/{fid}/{fname}")
                         except Exception:
                             img_refs.append("(image)")
                     elif "/files/" in url:
@@ -593,7 +591,7 @@ class AgentUtilsMixin:
                     agent_name=agent_name,
                     category="tool_result",
                 )
-                url = f"/files/{fid}/{fname}"
+                url = f"fs://filestore/{fid}/{fname}"
                 # Keep a short summary so the LLM knows what happened
                 _first_line = _inner.split("\n", 1)[0][:200]
                 m.content = (

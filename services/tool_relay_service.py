@@ -300,16 +300,23 @@ class ToolRelayService(BaseService):
 
             def _client_resolver(svc_id, uid):
                 _reg = _SR.get_instance()
-                _svc_def = None
+                _tried = []
                 for _scope, _sid in (("user", uid), ("global", "")):
                     try:
                         _svc_def = _reg.get_definition(_scope, _sid, svc_id)
-                        if _svc_def:
-                            _live = _reg.get_live_instance(_scope, _sid, svc_id)
-                            if _live and hasattr(_live, "get_client"):
-                                return _live.get_client(), _live
-                    except Exception:
-                        pass
+                        if not _svc_def:
+                            _tried.append(f"{_scope}/{_sid}:missing")
+                            continue
+                        _live = _reg.get_live_instance(_scope, _sid, svc_id)
+                        if _live and hasattr(_live, "get_client"):
+                            return _live.get_client(), _live
+                        _tried.append(f"{_scope}/{_sid}:no-live-instance")
+                    except Exception as _re:
+                        _tried.append(f"{_scope}/{_sid}:{type(_re).__name__}:{_re}")
+                logger.warning(
+                    "[tool-relay] could not resolve llm_service '%s' "
+                    "for user '%s' (tried: %s)",
+                    svc_id, uid, ", ".join(_tried) or "none")
                 return None, None
 
             # Default client = the live LLM service used by the agent that

@@ -297,13 +297,13 @@ class SeeHandler(BaseFsHandler):
         import re
         from core.file_store import FileStore
         store = FileStore.instance()
-        _fid_match = re.search(r'/?(?:files/)?([a-f0-9]{12})(?:/|$)', path)
+        _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
         file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
-        entry = store.get(file_id)
+        entry = store.get(file_id, user_id=self._user_id)
         if not entry:
             found = store.find_by_name(file_id)
             if found:
-                entry = store.get(found)
+                entry = store.get(found, user_id=self._user_id)
         if not entry:
             raise FileNotFoundError(f"'{file_id}' not found in FileStore")
         return entry[1]

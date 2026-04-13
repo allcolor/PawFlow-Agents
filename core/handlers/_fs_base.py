@@ -282,13 +282,13 @@ class BaseFsHandler(ToolHandler):
         """Read from server FileStore — same pagination as relay read."""
         from core.file_store import FileStore
         store = FileStore.instance()
-        _fid_match = re.search(r'/?(?:files/)?([a-f0-9]{12})(?:/|$)', path)
+        _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
         file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
-        entry = store.get(file_id)
+        entry = store.get(file_id, user_id=self._user_id)
         if not entry:
             found = store.find_by_name(file_id)
             if found:
-                entry = store.get(found)
+                entry = store.get(found, user_id=self._user_id)
         if not entry:
             return f"Error: '{file_id}' not found in FileStore"
         fname, data, ct = entry
@@ -322,23 +322,23 @@ class BaseFsHandler(ToolHandler):
         store = FileStore.instance()
         _id = file_id
         if not _id:
-            _fid_match = re.search(r'/?(?:files/)?([a-f0-9]{12})(?:/|$)', path)
+            _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
             _id = _fid_match.group(1) if _fid_match else path.split("/")[0]
         store.delete(_id)
         return f"Deleted '{_id}' from FileStore"
 
     def _filestore_exists(self, path: str) -> str:
         from core.file_store import FileStore
-        _fid_match = re.search(r'/?(?:files/)?([a-f0-9]{12})(?:/|$)', path)
+        _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
         file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
-        entry = FileStore.instance().get(file_id)
+        entry = FileStore.instance().get(file_id, user_id=self._user_id)
         return "true" if entry else "false"
 
     def _filestore_stat(self, path: str) -> str:
         from core.file_store import FileStore
-        _fid_match = re.search(r'/?(?:files/)?([a-f0-9]{12})(?:/|$)', path)
+        _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
         file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
-        entry = FileStore.instance().get(file_id)
+        entry = FileStore.instance().get(file_id, user_id=self._user_id)
         if not entry:
             return f"Error: '{file_id}' not found in FileStore"
         fname, data, ct = entry

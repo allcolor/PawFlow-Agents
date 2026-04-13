@@ -268,6 +268,7 @@ def cmd_start(args):
         if _shutting_down:
             # Second Ctrl+C → force kill immediately
             logger.info("Force kill.")
+            _kill_spawned_docker_containers()
             os._exit(1)
         _shutting_down = True
         logger.info("Shutting down...")
@@ -291,10 +292,49 @@ def cmd_start(args):
         t = threading.Thread(target=_stop_all, daemon=True)
         t.start()
         t.join(timeout=3)
+        # Nothing we spawned should outlive us. Reap every CC pool +
+        # VNC-login container we created before exiting.
+        _kill_spawned_docker_containers()
         os._exit(0)
+
+    def _kill_spawned_docker_containers():
+        """Hard-kill all containers this PawFlow server spawned.
+
+        Covers: pf-cc-pool-* (ClaudeCodePool) and
+                pawflow-claude-login-* (VNC login sessions).
+        """
+        try:
+            from core.claude_code_pool import ClaudeCodePool
+            ClaudeCodePool.instance().shutdown()
+        except Exception:
+            pass
+        try:
+            import subprocess as _sp
+            from core.docker_utils import docker_cmd
+            for _prefix in ("pf-cc-pool-", "pawflow-claude-login-"):
+                try:
+                    _r = _sp.run(
+                        docker_cmd() + ["ps", "-a", "-q",
+                                         "--filter", f"name={_prefix}"],
+                        capture_output=True, text=True, timeout=5)
+                    _ids = [i for i in (_r.stdout or "").split() if i]
+                    if _ids:
+                        _sp.run(docker_cmd() + ["rm", "-f"] + _ids,
+                                capture_output=True, timeout=10)
+                        logger.info("Reaped %d orphan container(s) matching %s*",
+                                    len(_ids), _prefix)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
+    # atexit belt-and-suspenders: reap spawned containers even on abnormal
+    # exit (uncaught exception, sys.exit, etc.). Signal-driven _shutdown
+    # already covers Ctrl-C; this covers everything else.
+    import atexit as _atexit
+    _atexit.register(_kill_spawned_docker_containers)
 
     # Guardian thread: force-exit after 5s of shutdown
     def _force_exit_guardian():

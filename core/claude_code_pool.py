@@ -65,7 +65,50 @@ class ClaudeCodePool:
             with cls._instance_lock:
                 if cls._instance is None:
                     cls._instance = cls()
+                    cls._instance._register_death_handlers()
         return cls._instance
+
+    def _register_death_handlers(self):
+        """Kill every spawned container when the Python process dies.
+
+        Pool containers are `docker run -d --rm sleep infinity`. Without
+        --rm they leak on crash; with --rm they auto-remove on EXIT, but
+        they NEVER exit on their own because of `sleep infinity`. The
+        server/CLI shutting down doesn't signal them.
+
+        Register atexit + SIGINT/SIGTERM handlers that issue
+        `docker rm -f` on every tracked container. Combined with the
+        boot-time _cleanup_orphans reaper, no container can survive the
+        parent process.
+        """
+        import atexit, signal, sys
+        def _kill_all(*_args, **_kwargs):
+            try:
+                self.shutdown()
+            except Exception:
+                pass
+        atexit.register(_kill_all)
+        # Only install signal handlers in the main thread — subprocesses /
+        # worker threads can't register them and will raise ValueError.
+        try:
+            import threading as _th
+            if _th.current_thread() is _th.main_thread():
+                for _sig in (signal.SIGINT, signal.SIGTERM):
+                    try:
+                        _prev = signal.getsignal(_sig)
+                        def _chain(signum, frame, _p=_prev):
+                            _kill_all()
+                            # Chain to previous handler if it was a callable
+                            if callable(_p) and _p not in (signal.SIG_DFL, signal.SIG_IGN):
+                                _p(signum, frame)
+                            else:
+                                # Default: re-raise as exit
+                                sys.exit(128 + signum)
+                        signal.signal(_sig, _chain)
+                    except (ValueError, OSError):
+                        pass
+        except Exception:
+            pass
 
     def __init__(self):
         self._containers: Dict[str, _ContainerInfo] = {}

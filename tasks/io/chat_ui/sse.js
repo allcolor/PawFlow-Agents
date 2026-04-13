@@ -15,6 +15,16 @@ function connectSSE(cid, onReady) {
   // ── Task block grouping ─────────────────────────────────────────
   const _taskBlocks = {};
 
+  // Expose a reset hook so reloadConv() (which clears #messages but
+  // keeps the SSE socket open) can drop stale DOM references — without
+  // it, subsequent live events keep targeting detached nodes and the
+  // freshly-reloaded transcript ends up out of order or truncated.
+  window._sseClearLiveBlocks = function() {
+    for (const k in _taskBlocks) delete _taskBlocks[k];
+    for (const k in _delegateGroups) delete _delegateGroups[k];
+    for (const k in _delegateSubBlocks) delete _delegateSubBlocks[k];
+  };
+
   function _getTaskBlock(taskId, iteration, agentName) {
     if (!taskId) return null;
     const blockKey = taskId + '::iter' + (iteration || 0);
@@ -369,7 +379,7 @@ function connectSSE(cid, onReady) {
     const label = total > 1
       ? '\u{1F500} ' + escapeHtml(displayAgentName(srcAgent)) + ' \u2192 Delegate (' + total + ' agents)'
       : '\u{1F500} ' + escapeHtml(displayAgentName(srcAgent));
-    summary.innerHTML = label + ' <span class="delegate-status">\u25cf running</span>';
+    summary.innerHTML = label;
     details.appendChild(summary);
     const content = document.createElement('div');
     content.className = 'delegate-body';
@@ -394,7 +404,7 @@ function connectSSE(cid, onReady) {
       const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
       group.summary.innerHTML = '\u{1F500} <span class="delegate-src">' + escapeHtml(displayAgentName(group.summary.dataset.src || ''))
         + '</span> \u2192 <span class="delegate-dst">' + escapeHtml(displayAgentName(dstAgent)) + '</span>'
-        + svcLabel + ' <span class="delegate-status">\u25cf running</span>';
+        + svcLabel;
     }
     // Create sub-block (details for multi, div for single)
     let subEl, subContent, subSummary;
@@ -407,7 +417,6 @@ function connectSSE(cid, onReady) {
       const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
       subSummary.innerHTML = '\u25b8 <span class="delegate-dst">' + escapeHtml(displayAgentName(dstAgent)) + '</span>'
         + svcLabel
-        + ' <span class="delegate-sub-status">\u25cf running</span>'
         + ' <button class="delegate-cancel-btn" data-task-id="' + escapeHtml(taskId) + '" title="Cancel this agent">\u2715</button>';
       subEl.appendChild(subSummary);
       subContent = document.createElement('div');
@@ -585,21 +594,11 @@ function connectSSE(cid, onReady) {
     trackAgentDone(agent);
     const taskId = data.task_id;
     const delegateTcId = data.delegate_tc_id;
-    // Finalize sub-block
+    // Finalize sub-block — a delegate is not a task, no done/error
+    // status badge. Just remove the cancel button and append the
+    // response (or error/question) inline.
     if (taskId && _delegateSubBlocks[taskId]) {
       const block = _delegateSubBlocks[taskId];
-      // Update sub-block status
-      const statusEl = block.summary.querySelector('.delegate-sub-status') || block.summary.querySelector('.delegate-status');
-      if (data.status === 'completed') {
-        if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
-      } else if (data.status === 'needs_input') {
-        if (statusEl) { statusEl.textContent = '\u{1F4AC} waiting for parent'; statusEl.style.color = '#f0ad4e'; }
-      } else if (data.status === 'cancelled') {
-        if (statusEl) { statusEl.textContent = '\u2718 cancelled'; statusEl.style.color = '#f0ad4e'; }
-      } else if (data.status === 'error' || data.status === 'timeout') {
-        if (statusEl) { statusEl.textContent = '\u2718 ' + data.status; statusEl.style.color = '#e94560'; }
-      }
-      // Remove cancel button
       const cancelBtn = block.summary.querySelector('.delegate-cancel-btn');
       if (cancelBtn) cancelBtn.remove();
       // Add question (ask_parent), response, or error
@@ -635,12 +634,10 @@ function connectSSE(cid, onReady) {
         if (group && group.total > 1) {
           setTimeout(() => { block.el.removeAttribute('open'); }, 1500);
         }
-        // Check if all sub-blocks in group are done
+        // Auto-collapse the group when all sub-blocks have finished.
         if (group) {
           group.doneCount++;
           if (group.doneCount >= group.total) {
-            const groupStatus = group.summary.querySelector('.delegate-status');
-            if (groupStatus) { groupStatus.textContent = '\u2713 done'; groupStatus.style.color = '#4ecdc4'; }
             setTimeout(() => { group.el.removeAttribute('open'); }, 2000);
           }
         }

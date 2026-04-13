@@ -70,12 +70,19 @@ function renameConvInline(e, cid) {
 
 function reloadConv() {
   if (!conversationId) return;
-  // Don't close/reopen SSE — just reload the messages
+  // Don't close/reopen SSE — just reload the messages.
   _expectingClear = true;
   document.getElementById('messages').innerHTML = '';
   _expectingClear = false;
   _seenMsgIds.clear();
   serverMsgCount = 0;
+  // Drop stale SSE-side DOM references (task/delegate blocks). Without
+  // this, in-flight live events keep targeting detached nodes after a
+  // reload (e.g. after a delete-message), producing an out-of-order or
+  // truncated transcript until the next hard page reload.
+  if (typeof window._sseClearLiveBlocks === 'function') {
+    window._sseClearLiveBlocks();
+  }
   action$('load_history', { conversation_id: conversationId, limit: displayWindow, offset: 0 })
     .subscribe(data => _renderHistory(data));
 }

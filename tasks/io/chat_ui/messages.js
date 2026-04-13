@@ -259,7 +259,7 @@ function addMsg(role, text, extra) {
         const svcL = firstSvc ? ' via ' + escapeHtml(firstSvc) : '';
         firstSubEl.innerHTML = '<summary class="delegate-sub-header">\u25b8 '
           + '<span class="delegate-dst">' + escapeHtml(displayAgentName(firstAgent)) + '</span>'
-          + svcL + ' <span class="delegate-sub-status" style="color:#4ecdc4">\u2713 done</span></summary>'
+          + svcL + '</summary>'
           + '<div class="delegate-sub-body">' + groupBody.innerHTML + '</div>';
         groupBody.innerHTML = '';
         groupBody.appendChild(firstSubEl);
@@ -268,8 +268,7 @@ function addMsg(role, text, extra) {
         const summaryEl = existingGroup.querySelector('.delegate-header');
         if (summaryEl) {
           summaryEl.innerHTML = '\u{1F500} ' + escapeHtml(displayAgentName(parentAgent))
-            + ' \u2192 Delegate (<span class="delegate-group-count">2 agents</span>)'
-            + ' <span class="delegate-status" style="color:#4ecdc4">\u2713 done</span>';
+            + ' \u2192 Delegate (<span class="delegate-group-count">2 agents</span>)';
         }
       }
       // Add new sub-block
@@ -890,17 +889,12 @@ function renderDelegateBlock(content, extra) {
   const llmService = source.llm_service || '';
   const message = source.message || '';
   const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
-  const doneEntry = trace.find(e => e.type === 'done');
-  const status = doneEntry ? (doneEntry.status || 'done') : 'done';
-  const statusIcon = status === 'completed' ? '\u2713 done' : (status === 'needs_input' ? '\u{1F4AC} waiting' : '\u2718 ' + status);
-  const statusColor = status === 'completed' ? '#4ecdc4' : (status === 'needs_input' || status === 'cancelled' ? '#f0ad4e' : '#e94560');
-  // Group header (first agent)
+  // Group header (first agent) — delegate is not a task, no status badge
   let html = '<summary class="delegate-header">\u{1F500} '
     + '<span class="delegate-src">' + escapeHtml(displayAgentName(parentAgent)) + '</span> \u2192 '
     + '<span class="delegate-dst">' + escapeHtml(displayAgentName(agentName)) + '</span>'
     + svcLabel
     + ' <span class="delegate-group-count"></span>'
-    + ' <span class="delegate-status" style="color:' + statusColor + '">' + statusIcon + '</span>'
     + '</summary>';
   html += '<div class="delegate-body">';
   html += _renderDelegateTraceContent(content, trace, message);
@@ -915,14 +909,9 @@ function renderDelegateSubBlock(content, extra) {
   const llmService = source.llm_service || '';
   const message = source.message || '';
   const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
-  const doneEntry = trace.find(e => e.type === 'done');
-  const status = doneEntry ? (doneEntry.status || 'done') : 'done';
-  const statusIcon = status === 'completed' ? '\u2713 done' : (status === 'needs_input' ? '\u{1F4AC} waiting' : '\u2718 ' + status);
-  const statusColor = status === 'completed' ? '#4ecdc4' : (status === 'needs_input' || status === 'cancelled' ? '#f0ad4e' : '#e94560');
   let html = '<summary class="delegate-sub-header">\u25b8 '
     + '<span class="delegate-dst">' + escapeHtml(displayAgentName(agentName)) + '</span>'
     + svcLabel
-    + ' <span class="delegate-sub-status" style="color:' + statusColor + '">' + statusIcon + '</span>'
     + '</summary>';
   html += '<div class="delegate-sub-body">';
   html += _renderDelegateTraceContent(content, trace, message);

@@ -514,9 +514,13 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                     client_socket = self._ssl_ctx.wrap_socket(
                         client_socket, server_side=True)
                 else:
-                    # Plain HTTP on an HTTPS port — redirect to HTTPS
+                    # Plain HTTP on an HTTPS port. By default redirect to
+                    # HTTPS, but allow public + private_only routes (proxy
+                    # endpoints with token auth) to pass through unencrypted
+                    # since they're LAN-only and TLS cert may not match.
+                    if self._http_route_allows_plain(client_socket, client_address):
+                        return client_socket, client_address
                     self._redirect_to_https(client_socket)
-                    # Return a dummy that will be immediately closed
                     raise OSError("HTTP→HTTPS redirect sent")
             except (ssl.SSLError,) as e:
                 logger.debug("TLS auto-detect failed for %s: %s", client_address, e)
@@ -524,8 +528,48 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 raise  # re-raise redirect OSError
         return client_socket, client_address
 
+    def _http_route_allows_plain(self, sock, client_address):
+        """Peek at the request to decide if plain HTTP is allowed.
+
+        Returns True if the matched route is public AND private_only,
+        leaving the socket with the consumed bytes re-injected via a
+        wrapper. The caller should dispatch normally.
+        """
+        try:
+            # Peek the request line + Host header (~256 bytes is enough)
+            sock.settimeout(2)
+            data = b""
+            while b"\r\n\r\n" not in data and len(data) < 8192:
+                chunk = sock.recv(4096, socket.MSG_PEEK)
+                if not chunk or len(chunk) <= len(data):
+                    break
+                data = chunk
+            if b"\r\n" not in data:
+                return False
+            request_line = data.split(b"\r\n")[0].decode("latin-1", errors="replace")
+            parts = request_line.split()
+            if len(parts) < 2:
+                return False
+            method, path = parts[0], parts[1].split('?', 1)[0]
+            _match = self._route_registry.match(method, path)
+            if not _match:
+                return False
+            entry = _match[0]
+            if not (getattr(entry, "public", False)
+                    and getattr(entry, "private_only", False)):
+                return False
+            # Reset to no-timeout so the dispatcher controls it
+            try:
+                sock.settimeout(None)
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
+
     def _redirect_to_https(self, sock):
-        """Send a 301 redirect from HTTP to HTTPS and close the socket."""
+        """Send a 301 redirect from HTTP to HTTPS — caller checked already
+        that the route is not exempt from redirection."""
         try:
             # Read the HTTP request line to get the path
             data = b""

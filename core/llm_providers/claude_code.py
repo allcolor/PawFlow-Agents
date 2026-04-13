@@ -586,11 +586,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         #   None               → publishing explicitly suppressed (sub-agent path)
         #   "" or missing attr → fall back to conv_id (main agent default)
         #   any string         → publish to that conv
+        # _subagent_event_cb: if set, called INSTEAD of the bus — used by
+        #   SubAgentExecutor to re-emit CC's tool_call/tool_result as
+        #   sub_agent_tool/sub_agent_tool_result so they land in the
+        #   delegate sub-block instead of the main chat.
         _raw_event_cid = getattr(self, '_event_cid', '')
         if _raw_event_cid is None:
             _event_cid = ""
         else:
             _event_cid = _raw_event_cid or conv_id
+        _subagent_event_cb = getattr(self, '_subagent_event_cb', None)
         # Extract task_id from sub-conv ID so frontend can group task events
         _task_id = ''
         if '::task::' in conv_id:
@@ -598,6 +603,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _agent_ctx = getattr(self, '_agent_ctx', {}) or {}
 
         def _pub(event_type, data):
+            if _subagent_event_cb:
+                try:
+                    _subagent_event_cb(event_type, data)
+                except Exception:
+                    pass
+                return
             if not _event_cid:
                 return
             if _task_id:

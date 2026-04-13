@@ -410,6 +410,7 @@ class SubAgentExecutor:
             "_agent_name": getattr(client, "_agent_name", ""),
             "_user_id": getattr(client, "_user_id", ""),
             "_event_cid": getattr(client, "_event_cid", ""),
+            "_subagent_event_cb": getattr(client, "_subagent_event_cb", None),
         }
         try:
             # Use parent_conversation_id (not sub_conv_id) so the CC
@@ -428,6 +429,40 @@ class SubAgentExecutor:
             # into the parent chat as a task-block duplicate of the
             # delegate response — use None as an explicit suppress sentinel.
             client._event_cid = None
+            # Intercept CC's native tool_call / tool_result / thinking
+            # SSE events and re-emit them as sub_agent_* so they land
+            # in the delegate sub-block instead of being dropped.
+            def _subagent_cb(event_type, data):
+                if not task.delegate_tc_id:
+                    return
+                _base = {
+                    "agent_name": task.agent_name,
+                    "task_id": task.id,
+                    "delegate_tc_id": task.delegate_tc_id,
+                }
+                try:
+                    if event_type == "tool_call":
+                        self._emit("sub_agent_tool", {
+                            **_base,
+                            "tool": data.get("tool", ""),
+                            "arguments": data.get("arguments", {}),
+                            "tc_id": data.get("tc_id", ""),
+                        })
+                    elif event_type == "tool_result":
+                        self._emit("sub_agent_tool_result", {
+                            **_base,
+                            "tool": data.get("tool", ""),
+                            "tc_id": data.get("tc_id", ""),
+                            "result": data.get("result", ""),
+                        })
+                    elif event_type == "thinking_content":
+                        self._emit("sub_agent_thinking", {
+                            **_base,
+                            "thinking": (data.get("text") or "")[:2000],
+                        })
+                except Exception:
+                    pass
+            client._subagent_event_cb = _subagent_cb
             logger.info("[sub-agent:%s] client wired conv=%s agent=%s user=%s",
                         task.agent_name,
                         client._conversation_id, client._agent_name, client._user_id)

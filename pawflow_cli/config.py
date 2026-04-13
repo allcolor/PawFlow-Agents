@@ -82,12 +82,39 @@ def load_session(include_expired: bool = False) -> Dict[str, Any]:
 def save_session(token: str, username: str, server_url: str, expires_at: float):
     """Save session with encrypted token."""
     ensure_config_dir()
-    # Encrypt the token
-    try:
-        from pawflow_cli.secure_store import protect
-        encrypted_token = protect(token)
-    except Exception:
-        # Fallback: store as-is (shouldn't happen on supported OS)
+    # Encrypt the token — same DPAPI hang issue as unprotect: wrap in a
+    # thread with a hard timeout, fall back to plain storage if the OS
+    # credential layer doesn't answer in time. Better a plain-text
+    # token than a CLI frozen forever after a successful /login.
+    import threading as _th
+    _trace_path = CONFIG_DIR / "pawcode_start.log"
+    def _trace(msg):
+        try:
+            with open(_trace_path, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} [save_session] {msg}\n")
+        except Exception:
+            pass
+    _result = {}
+    def _do_protect():
+        try:
+            from pawflow_cli.secure_store import protect
+            _result["enc"] = protect(token)
+        except Exception as _pe:
+            _result["err"] = f"{type(_pe).__name__}: {_pe}"
+    _trace("calling protect() in background thread")
+    _t = _th.Thread(target=_do_protect, daemon=True)
+    _t.start()
+    _t.join(timeout=3.0)
+    if _t.is_alive():
+        _trace("protect TIMED OUT — storing token in plain (session still usable)")
+        encrypted_token = token
+        sys.stderr.write("[PawCode] Warning: OS credential protection timed out; "
+                         "storing token unencrypted\n")
+    elif "enc" in _result:
+        _trace("protect returned ok")
+        encrypted_token = _result["enc"]
+    else:
+        _trace(f"protect raised {_result.get('err')} — plain fallback")
         encrypted_token = token
         sys.stderr.write("[PawCode] Warning: could not encrypt session token\n")
     SESSION_FILE.write_text(json.dumps({
@@ -96,6 +123,7 @@ def save_session(token: str, username: str, server_url: str, expires_at: float):
         "server_url": server_url,
         "expires_at": expires_at,
     }, indent=2))
+    _trace("session saved")
 
 
 def clear_session():

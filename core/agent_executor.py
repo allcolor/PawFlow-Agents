@@ -440,6 +440,13 @@ class SubAgentExecutor:
                 }
                 with _active_inst._active_contexts_lock:
                     _active_inst._active_contexts[_active_ctx_key] = _active_ctx
+                    # Register CC client under the task-shaped key so a
+                    # task-targeted force-stop (cancel_interrupt.py line
+                    # 60: `f"::task::{task_id}" in k`) finds and kills
+                    # the sub-agent's CC subprocess. Register only for
+                    # CC clients that expose cancel_claude_code.
+                    if hasattr(client, "cancel_claude_code"):
+                        _active_inst._active_claude_client[_active_ctx_key] = client
         except Exception:
             _active_inst = None
 
@@ -483,15 +490,32 @@ class SubAgentExecutor:
                     except Exception:
                         pass
 
+                # Stream text chunks back to the parent SSE bus so the
+                # delegate sub-block fills progressively (mirrors the
+                # main agent's experience).
+                def _stream_cb(_chunk: str):
+                    if not _chunk or not task.delegate_tc_id:
+                        return
+                    try:
+                        self._emit("sub_agent_text", {
+                            "agent_name": task.agent_name,
+                            "task_id": task.id,
+                            "text": _chunk,
+                            "delegate_tc_id": task.delegate_tc_id,
+                        })
+                    except Exception:
+                        pass
+
                 _compact_attempts = 0
                 while True:
                     try:
-                        response = client.complete(
+                        response = client.complete_stream(
                             messages=messages,
                             model=task.model or None,
                             temperature=0.7,
                             max_tokens=0,
                             tools=tool_defs if tool_defs else None,
+                            callback=_stream_cb,
                         )
                         break
                     except Exception as _llm_err:
@@ -724,11 +748,12 @@ class SubAgentExecutor:
                     setattr(client, _k, _v)
             except Exception:
                 pass
-            # Unregister from active-agents panel
+            # Unregister from active-agents panel + claude-client registry
             if _active_inst and _active_ctx_key:
                 try:
                     with _active_inst._active_contexts_lock:
                         _active_inst._active_contexts.pop(_active_ctx_key, None)
+                        _active_inst._active_claude_client.pop(_active_ctx_key, None)
                 except Exception:
                     pass
 

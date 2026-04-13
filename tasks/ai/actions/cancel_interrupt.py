@@ -65,6 +65,14 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 if client and hasattr(client, 'cancel_claude_code'):
                     client.cancel_claude_code(force=True)
 
+            # 3b. Mark the SubAgentExecutor task as cancelled so its
+            #     iteration loop breaks at the next check.
+            try:
+                from core.agent_executor import cancel_sub_agent_task
+                cancel_sub_agent_task(task_id)
+            except Exception:
+                pass
+
             # 4. Clear task's active context + active_thoughts
             with self._active_contexts_lock:
                 for k in list(self._active_contexts):

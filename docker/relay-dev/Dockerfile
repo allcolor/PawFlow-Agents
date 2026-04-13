@@ -227,6 +227,7 @@ COPY fs_actions.py /opt/pawflow/fs_actions.py
 COPY fs_exec.py /opt/pawflow/fs_exec.py
 COPY fs_screen.py /opt/pawflow/fs_screen.py
 COPY fs_mcp.py /opt/pawflow/fs_mcp.py
+COPY fs_http.py /opt/pawflow/fs_http.py
 COPY pawflow.py /opt/pawflow/pawflow.py
 COPY audio_capture.py /opt/pawflow/audio_capture.py
 ENV PYTHONPATH="/opt/pawflow"

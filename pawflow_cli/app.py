@@ -1012,15 +1012,21 @@ def main():
         else:
             # No cookie = the server either has the private gateway
             # DISABLED (private_gateway_enabled=false), or it rejected
-            # the key. Without the cookie every /api/* call 401s and the
-            # CLI would just sit there. Exit with a clear next step.
+            # the key. Without the cookie every /api/* call 401s and
+            # the CLI would just sit at the prompt with no hint.
             print(
-                "[PawCode] Gateway did not return a cookie. Likely causes:\n"
-                "  - The server's private gateway is disabled "
-                "(set private_gateway_enabled=true in global params).\n"
-                "  - The key in --gateway-key is wrong.\n"
-                "  - Your IP hit the ban cooldown (wait it out or clear "
-                "data/runtime/gateway_bans.json on the server).\n"
+                "[PawCode] Gateway did not return a cookie.\n"
+                "  Likely causes:\n"
+                "    - The server's private gateway is disabled\n"
+                "      (set private_gateway_enabled=true in global params).\n"
+                "    - The key in --gateway-key is wrong.\n"
+                "    - Your IP hit the ban cooldown (wait it out or\n"
+                "      clear data/runtime/gateway_bans.json on the server).\n"
+                "  Options:\n"
+                "    - Fix the server-side gateway config, then rerun.\n"
+                "    - Or drop --gateway-key and use session auth only:\n"
+                "        pawcode auth login --server " + args.server + "\n"
+                "      then rerun without --gateway-key.\n"
                 "Aborting.",
                 file=sys.stderr)
             sys.exit(1)

@@ -63,9 +63,15 @@ class LLMAnthropicMixin:
                 _tool_list[-1]["cache_control"] = _cc
             body["tools"] = _tool_list
 
+        from core.llm_client import LLMClientError
         _base = self.base_url or "https://api.anthropic.com"
         parsed = urlparse(_base)
         host = parsed.hostname
+        if not host:
+            raise LLMClientError(
+                f"Invalid base_url for anthropic provider: {_base!r} — "
+                f"no hostname could be parsed. Check the llm_service config."
+            )
         port = parsed.port
         full_path = (parsed.path.rstrip("/") + "/v1/messages").replace("//", "/")
 

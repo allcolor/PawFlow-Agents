@@ -1339,10 +1339,40 @@ class ConversationStore:
         removed = 0
 
         def _rewrite_jsonl(path: Path) -> int:
-            """Rewrite a JSONL file, removing lines with matching msg_id. Returns count removed."""
+            """Rewrite a JSONL file, removing lines with matching msg_id. Returns count removed.
+
+            Also removes:
+              - sub_agent_trace messages whose trace_id matches an id in
+                `ids` (legacy traces persisted without msg_id used the
+                trace_id as the deletion key);
+              - their associated trace_update lines (orphan otherwise).
+            """
             if not path.exists():
                 return 0
             count = 0
+            # First pass: collect trace_ids that will be deleted (so we
+            # can drop their trace_update follow-ups in the same pass).
+            trace_ids_to_drop = set()
+            try:
+                with open(path, "r", encoding="utf-8") as src:
+                    for raw in src:
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            line = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        if line.get("role") != "sub_agent_trace":
+                            continue
+                        _tid = line.get("trace_id", "")
+                        if not _tid:
+                            continue
+                        if line.get("msg_id") in ids or _tid in ids:
+                            trace_ids_to_drop.add(_tid)
+            except Exception:
+                pass
+
             tmp = path.with_suffix(".tmp")
             with open(path, "r", encoding="utf-8") as src, \
                  open(tmp, "w", encoding="utf-8") as dst:
@@ -1356,6 +1386,15 @@ class ConversationStore:
                         continue
                     if line.get("msg_id") in ids:
                         count += 1
+                        continue
+                    # Legacy sub_agent_trace without msg_id — match on trace_id
+                    if (line.get("role") == "sub_agent_trace"
+                            and line.get("trace_id") in ids):
+                        count += 1
+                        continue
+                    # Drop orphan trace_update lines for deleted traces
+                    if (line.get("t") == "trace_update"
+                            and line.get("trace_id") in trace_ids_to_drop):
                         continue
                     dst.write(json.dumps(line, ensure_ascii=False) + "\n")
             if count:
@@ -1422,8 +1461,12 @@ class ConversationStore:
 
     def create_display_trace(self, cid: str, trace_id: str,
                              source: Dict, user_id: str = "") -> bool:
+        import uuid as _uuid
         lock = self._get_conv_lock(cid)
+        # msg_id is required for the context editor's delete path
+        # (selection sends msg_ids; without one the row is not deletable).
         line = {"t": "msg", "role": "sub_agent_trace", "display_only": True,
+                "msg_id": _uuid.uuid4().hex,
                 "trace_id": trace_id, "source": source, "content": "",
                 "trace": [], "ts": time.time()}
         with lock:

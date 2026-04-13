@@ -264,6 +264,12 @@ class AgentSerializationMixin:
                     "trace": m.get("trace") or [],
                     "trace_id": m.get("trace_id", ""),
                 }
+                # msg_id is what the context editor's delete path keys
+                # on. Older traces were persisted without one — fall back
+                # to trace_id so they're still selectable + deletable.
+                _mid = m.get("msg_id") or m.get("trace_id", "")
+                if _mid:
+                    entry["msg_id"] = _mid
                 if m.get("source"):
                     entry["source"] = m["source"]
                 if m.get("timestamp"):

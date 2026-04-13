@@ -305,9 +305,9 @@ class SubAgentExecutor:
 
         # Detect CLI-based providers that cannot execute tools directly
         _provider = getattr(client, "provider", "") or ""
-        _is_cli_provider = _provider in ("claude-code", "gemini-cli")
+        _is_cli_provider = _provider == "claude-code"
         if _is_cli_provider:
-            # CLI providers (claude-code, gemini-cli) cannot execute tools
+            # CLI providers (claude-code) cannot execute tools
             # natively — they try to run them interactively which causes
             # permission prompts and timeouts.  Instead, we pass tool
             # definitions as text in the system prompt and let the model

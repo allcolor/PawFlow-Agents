@@ -138,7 +138,8 @@ class ClaudeCodePool:
                             info.max_sessions)
 
     def exec_claude(self, container_name: str, session_dir: str,
-                    claude_args: list, **popen_kwargs) -> subprocess.Popen:
+                    claude_args: list, extra_env: dict = None,
+                    **popen_kwargs) -> subprocess.Popen:
         """Start a claude process inside a pool container.
 
         Args:
@@ -146,6 +147,7 @@ class ClaudeCodePool:
             session_dir: path INSIDE the container for CLAUDE_CONFIG_DIR
                          (e.g. /cc_sessions/<user>/<conv>/<agent>)
             claude_args: args for the claude CLI (after 'claude')
+            extra_env: additional env vars (e.g. ANTHROPIC_API_KEY)
             **popen_kwargs: extra args for subprocess.Popen
 
         Returns:
@@ -174,10 +176,15 @@ class ClaudeCodePool:
             "-e", "GIT_CONFIG_COUNT=1",
             "-e", "GIT_CONFIG_KEY_0=safe.directory",
             "-e", "GIT_CONFIG_VALUE_0=/workspace",
+        ]
+        # Pass extra env vars (e.g. ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL)
+        for k, v in (extra_env or {}).items():
+            exec_args.extend(["-e", f"{k}={v}"])
+        exec_args.extend([
             "-w", "/workspace",
             container_name,
             "claude",
-        ] + claude_args
+        ] + claude_args)
 
         cmd = docker_cmd() + ["exec"] + exec_args
         logger.info("Pool exec: %s → %s", container_name,

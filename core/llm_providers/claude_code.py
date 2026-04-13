@@ -199,19 +199,27 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         when done (if not None).
         """
         _containerize = getattr(self, 'containerize', False)
+        _env = self._claude_code_env(workdir)
         if _containerize:
             from core.claude_code_pool import ClaudeCodePool
             pool = ClaudeCodePool.instance()
             container = pool.acquire()
             _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
             _session_dir = f"/cc_sessions/{_rel}"
+            # Pass API key / base URL to container if configured
+            _extra = {}
+            if _env.get("ANTHROPIC_API_KEY"):
+                _extra["ANTHROPIC_API_KEY"] = _env["ANTHROPIC_API_KEY"]
+            if _env.get("ANTHROPIC_BASE_URL"):
+                _extra["ANTHROPIC_BASE_URL"] = _env["ANTHROPIC_BASE_URL"]
             proc = pool.exec_claude(
                 container, _session_dir, cmd[1:],  # skip 'claude' binary
+                extra_env=_extra or None,
                 **popen_kwargs)
             return proc, container
         else:
             proc = subprocess.Popen(
-                cmd, cwd=workdir, env=self._claude_code_env(workdir),
+                cmd, cwd=workdir, env=_env,
                 **popen_kwargs)
             return proc, None
 

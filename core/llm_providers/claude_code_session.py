@@ -327,10 +327,40 @@ class ClaudeCodeSessionMixin:
         Sets CLAUDE_CONFIG_DIR to the session workdir so Claude Code
         reads credentials from our managed .credentials.json instead
         of the user's ~/.claude/.credentials.json.
+
+        If the llm_service has api_key/base_url configured, passes them
+        as ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL so CC uses the API
+        instead of OAuth credentials. This enables routing CC to any
+        compatible endpoint (Ollama, llama.cpp, vLLM, etc.).
         """
         env = os.environ.copy()
         if workdir:
             env["CLAUDE_CONFIG_DIR"] = workdir
+        # API key mode: bypass OAuth credentials entirely
+        _api_key = getattr(self, 'api_key', '')
+        if callable(_api_key):
+            _api_key = _api_key()
+        elif isinstance(_api_key, property):
+            _api_key = ''
+        if _api_key:
+            env["ANTHROPIC_API_KEY"] = _api_key
+        # Custom endpoint: route CC to any Anthropic-compatible server
+        _base_url = getattr(self, 'base_url', '')
+        if callable(_base_url):
+            _base_url = _base_url()
+        elif isinstance(_base_url, property):
+            _base_url = ''
+        if _base_url:
+            # In Docker, localhost means the container — translate to host
+            if getattr(self, 'containerize', False):
+                import re
+                _base_url = re.sub(
+                    r'(https?://)localhost(:\d+)?',
+                    r'\1host.docker.internal\2', _base_url)
+                _base_url = re.sub(
+                    r'(https?://)127\.0\.0\.1(:\d+)?',
+                    r'\1host.docker.internal\2', _base_url)
+            env["ANTHROPIC_BASE_URL"] = _base_url
         return env
 
     # Cached tool relay info (shared across all claude-code agents)
@@ -393,12 +423,26 @@ class ClaudeCodeSessionMixin:
     def _setup_credentials(self, workdir: str, pool_index: int = -1):
         """Write .credentials.json in session workdir for Claude Code auth.
 
-        Tries credentials from the pool. If a credential is expired, attempts
-        refresh. If refresh fails, removes it from the pool and tries the next.
-        Only raises if NO valid credential can be obtained.
+        If ANTHROPIC_API_KEY is set (via api_key config), skips OAuth
+        credentials entirely — CC uses the API key directly.
+
+        Otherwise tries credentials from the pool. If a credential is
+        expired, attempts refresh. If refresh fails, removes it from the
+        pool and tries the next. Only raises if NO valid credential can
+        be obtained.
         """
         from core.llm_client import LLMClientError
         import time as _time
+
+        # API key mode: no OAuth credentials needed
+        _api_key = getattr(self, 'api_key', '')
+        if callable(_api_key):
+            _api_key = _api_key()
+        elif isinstance(_api_key, property):
+            _api_key = ''
+        if _api_key:
+            logger.info("Claude Code using API key (skipping OAuth credentials)")
+            return
 
         svc_id = getattr(self, '_agent_service', '') or ''
         pool = _load_credentials_pool(svc_id)

@@ -89,7 +89,7 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
-        if self.provider in ("claude-code", "gemini-cli"):
+        if self.provider == "claude-code":
             pass  # binary auto-detected at runtime
         else:
             # API-based providers need an api_key
@@ -395,8 +395,8 @@ class LLMConnectionService(BaseService):
             {
                 "when": {"provider": ["claude-code"]},
                 "set": {
-                    "api_key":       {"visible": False},
-                    "base_url":      {"visible": False},
+                    "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth login via claude CLI)"},
+                    "base_url":      {"visible": True, "description": "Anthropic-compatible endpoint (empty = api.anthropic.com)"},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "max_concurrent": {"visible": False},
@@ -406,15 +406,6 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
-                }
-            },
-            {
-                "when": {"provider": ["gemini-cli"]},
-                "set": {
-                    "api_key":       {"visible": True},
-                    "base_url":      {"visible": False},
-                    "max_retries":   {"visible": False},
-                    "fallback_model": {"visible": False},
                 }
             },
         ]

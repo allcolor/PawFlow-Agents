@@ -328,7 +328,7 @@ class AgentToolExecMixin:
             return "continue", msgs, "", need_more_retried
 
         # Heuristic: tool mentioned by name without <tool_call> tag
-        if client_provider in ("claude-code", "gemini-cli") and tool_defs:
+        if client_provider == "claude-code" and tool_defs:
             tool_names = [td.name for td in tool_defs]
             mentioned = [tn for tn in tool_names if tn in response_text]
             if mentioned and not need_more_retried:

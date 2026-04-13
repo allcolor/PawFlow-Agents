@@ -349,17 +349,38 @@ class TestStreamClaude(unittest.TestCase):
 
 
 class TestClaudeCodeEnv(unittest.TestCase):
-    """Test claude-code env setup — CLI uses its own auth."""
+    """Test claude-code env setup."""
 
-    def test_env_is_clean(self):
-        """No ANTHROPIC_API_KEY injected — CLI handles auth via `claude login`."""
-        client = LLMClient(provider="claude-code", config={"api_key": "whatever"})
+    def test_env_clean_without_api_key(self):
+        """No api_key configured → no ANTHROPIC_API_KEY in env (uses OAuth)."""
+        client = LLMClient(provider="claude-code", config={})
         client._conversation_id = "test-conv"
         client._agent_name = "test-agent"
         client._user_id = "test-user"
         env = client._claude_code_env("/tmp")
         self.assertNotIn("ANTHROPIC_API_KEY", env)
         self.assertNotIn("ANTHROPIC_BASE_URL", env)
+        self.assertEqual(env["CLAUDE_CONFIG_DIR"], "/tmp")
+
+    def test_env_with_api_key(self):
+        """api_key configured → ANTHROPIC_API_KEY passed to CC."""
+        client = LLMClient(provider="claude-code", config={"api_key": "sk-test-123"})
+        client._conversation_id = "test-conv"
+        client._agent_name = "test-agent"
+        client._user_id = "test-user"
+        env = client._claude_code_env("/tmp")
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-test-123")
+
+    def test_env_with_base_url(self):
+        """base_url configured → ANTHROPIC_BASE_URL passed to CC."""
+        client = LLMClient(provider="claude-code", config={
+            "api_key": "sk-test", "base_url": "http://localhost:11434/v1"})
+        client._conversation_id = "test-conv"
+        client._agent_name = "test-agent"
+        client._user_id = "test-user"
+        env = client._claude_code_env("/tmp")
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "http://localhost:11434/v1")
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-test")
 
 
 class TestProviderInProviders(unittest.TestCase):
@@ -367,11 +388,9 @@ class TestProviderInProviders(unittest.TestCase):
 
     def test_providers_list(self):
         self.assertIn("claude-code", LLMClient.PROVIDERS)
-        self.assertIn("gemini-cli", LLMClient.PROVIDERS)
 
     def test_default_model(self):
-        self.assertEqual(LLMClient.DEFAULT_MODELS["claude-code"], "sonnet")
-        self.assertEqual(LLMClient.DEFAULT_MODELS["gemini-cli"], "gemini-2.5-flash")
+        self.assertIn("claude-code", LLMClient.DEFAULT_MODELS)
 
     def test_from_config_claude(self):
         client = LLMClient.from_config({
@@ -384,16 +403,6 @@ class TestProviderInProviders(unittest.TestCase):
         # claude_binary is auto-detected, not configurable
         self.assertIsInstance(client.claude_binary, str)
 
-    def test_from_config_gemini(self):
-        client = LLMClient.from_config({
-            "provider": "gemini-cli",
-            "api_key": "test-gemini",
-            "default_model": "gemini-2.5-pro",
-        })
-        self.assertEqual(client.provider, "gemini-cli")
-        self.assertEqual(client.default_model, "gemini-2.5-pro")
-        # gemini_binary is auto-detected, not configurable
-        self.assertIsInstance(client.gemini_binary, str)
 
 
 # ── Gemini CLI Provider Tests ────────────────────────────────────

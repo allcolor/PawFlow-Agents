@@ -24,14 +24,13 @@ from core.llm_providers import (
     LLMOpenaiMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
-    LLMGeminiCliMixin,
 )
 
 logger = logging.getLogger(__name__)
 
 
 def _find_cli_binary(name: str) -> str:
-    """Auto-detect a CLI binary (claude/gemini) in known locations."""
+    """Auto-detect a CLI binary (claude) in known locations."""
     home = os.path.expanduser("~")
     if sys.platform == "win32":
         candidates = [
@@ -186,7 +185,6 @@ class LLMClient(
     LLMOpenaiMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
-    LLMGeminiCliMixin,
 ):
     """Standalone LLM HTTP client (no BaseService dependency).
 
@@ -201,7 +199,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "anthropic", "claude-code", "gemini-cli")
+    PROVIDERS = ("openai", "anthropic", "claude-code")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -210,9 +208,8 @@ class LLMClient(
 
     DEFAULT_MODELS = {
         "openai": "gpt-4o-mini",
-        "anthropic": "claude-sonnet-4-20250514",
-        "claude-code": "sonnet",
-        "gemini-cli": "gemini-2.5-flash",
+        "anthropic": "claude-opus-4-6",
+        "claude-code": "claude-opus-4-6",
     }
 
     # Regex for parsing <tool_call>...</tool_call> tags from claude-code responses
@@ -258,9 +255,7 @@ class LLMClient(
     def claude_binary(self):
         return _find_cli_binary("claude")
 
-    @property
-    def gemini_binary(self):
-        return _find_cli_binary("gemini")
+
 
     @property
     def fallback_model(self):
@@ -422,7 +417,7 @@ class LLMClient(
         Returns:
             LLMResponse with content and/or tool_calls populated.
         """
-        if not self.api_key and self.provider not in ("claude-code", "gemini-cli"):
+        if not self.api_key and self.provider != "claude-code":
             raise LLMClientError("api_key is required")
         if self.provider not in self.PROVIDERS:
             raise LLMClientError(
@@ -437,8 +432,6 @@ class LLMClient(
                 result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools)
             elif self.provider == "claude-code":
                 result = self._complete_claude_code(messages, mdl, temperature, max_tokens, tools)
-            elif self.provider == "gemini-cli":
-                result = self._complete_gemini_cli(messages, mdl, temperature, max_tokens, tools)
             else:
                 result = self._complete_anthropic(messages, mdl, temperature, max_tokens, tools, thinking_budget=thinking_budget)
             result.duration_ms = (time.time() - start) * 1000
@@ -570,7 +563,7 @@ class LLMClient(
 
         Supports both OpenAI and Anthropic streaming.
         """
-        if not self.api_key and self.provider not in ("claude-code", "gemini-cli"):
+        if not self.api_key and self.provider != "claude-code":
             raise LLMClientError("api_key is required")
 
         model = model or self.default_model
@@ -583,8 +576,6 @@ class LLMClient(
             elif self.provider == "claude-code":
                 result = self._stream_claude_code(messages, mdl, temperature, max_tokens, tools, callback,
                                                   turn_callback=turn_callback)
-            elif self.provider == "gemini-cli":
-                result = self._stream_gemini_cli(messages, mdl, temperature, max_tokens, tools, callback)
             elif self.provider == "anthropic":
                 result = self._stream_anthropic(messages, mdl, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
             else:

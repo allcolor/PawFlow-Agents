@@ -412,16 +412,14 @@ class SubAgentExecutor:
             "_event_cid": getattr(client, "_event_cid", ""),
             "_subagent_event_cb": getattr(client, "_subagent_event_cb", None),
         }
-        # A delegate has its OWN context (governed by task.context_mode),
-        # distinct from the main agent's context of the same name.
-        # Key the CC workdir + session on a separate namespace so the
-        # delegate session survives across multiple delegate calls to
-        # the same agent — but never shares storage with the main
-        # agent's `<parent_conv>/<agent>` context.
-        _delegate_conv_id = (
-            f"{task.parent_conversation_id}::delegate::{task.agent_name}"
-            if task.parent_conversation_id else sub_conv_id or ""
-        )
+        # A delegate has its OWN context — exactly what the caller
+        # passed via task.context_mode (built into task.context_messages
+        # by resource_agent._resolve_context). The sub-agent must NOT
+        # inherit the main agent's shared context, nor a previous
+        # delegate's session of the same agent. Each delegate call is a
+        # fresh CC session rooted in sub_conv_id (parent::task::<tid>),
+        # so the initial prompt IS the context_mode-resolved messages.
+        _delegate_conv_id = sub_conv_id or task.parent_conversation_id or ""
         try:
             client._conversation_id = _delegate_conv_id
             client._agent_name = task.agent_name or ""

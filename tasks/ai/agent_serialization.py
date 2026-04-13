@@ -255,6 +255,20 @@ class AgentSerializationMixin:
                 if m.get("timestamp"):
                     _tr_entry["timestamp"] = m["timestamp"]
                 result.append(_tr_entry)
+            elif role == "sub_agent_trace":
+                entry = {
+                    "type": "sub_agent_trace", "role": "sub_agent_trace",
+                    "content": content,
+                    "raw_index": raw_idx,
+                    "display_only": True,
+                    "trace": m.get("trace") or [],
+                    "trace_id": m.get("trace_id", ""),
+                }
+                if m.get("source"):
+                    entry["source"] = m["source"]
+                if m.get("timestamp"):
+                    entry["timestamp"] = m["timestamp"]
+                result.append(entry)
             elif role in ("tool_call", "tool_result", "narration", "thinking"):
                 # Skip meta tools from display
                 if role in ("tool_call", "tool_result") and m.get("tool_name") in _META_TOOLS:

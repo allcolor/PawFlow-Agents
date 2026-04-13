@@ -920,14 +920,22 @@ class ConversationStore:
         """Scan JSONL lines into transcript messages (with patches applied)."""
         msgs = []
         patches = {}
+        trace_updates = {}  # trace_id -> list of (entry, content_update)
         for line in lines:
-            if line.get("t") == "msg_patch":
+            t = line.get("t", "")
+            if t == "msg_patch":
                 mid = line.get("msg_id", "")
                 if mid:
                     patches[mid] = {k: v for k, v in line.items()
                                     if k not in ("t", "msg_id")}
                 continue
-            if line.get("t") != "msg":
+            if t == "trace_update":
+                tid = line.get("trace_id", "")
+                if tid:
+                    trace_updates.setdefault(tid, []).append(
+                        (line.get("entry") or {}, line.get("content_update") or ""))
+                continue
+            if t != "msg":
                 continue
             msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
             if "ts" in line:
@@ -938,6 +946,23 @@ class ConversationStore:
                 mid = msg.get("msg_id", "")
                 if mid and mid in patches:
                     msg.update(patches[mid])
+        if trace_updates:
+            for msg in msgs:
+                if msg.get("role") != "sub_agent_trace":
+                    continue
+                tid = msg.get("trace_id", "")
+                ups = trace_updates.get(tid)
+                if not ups:
+                    continue
+                trace = list(msg.get("trace") or [])
+                content = msg.get("content", "") or ""
+                for entry, cu in ups:
+                    if entry:
+                        trace.append(entry)
+                    if cu:
+                        content += cu
+                msg["trace"] = trace
+                msg["content"] = content
         return msgs
 
     def load(self, cid: str, user_id: str = "") -> Optional[List[Dict]]:
@@ -1030,7 +1055,7 @@ class ConversationStore:
                     t = line.get("t", "")
                     if t == "msg":
                         msg_count += 1
-                    if t in ("msg", "msg_patch"):
+                    if t in ("msg", "msg_patch", "trace_update"):
                         raw_lines.append(line)
                         _lines_collected += 1
 
@@ -1044,7 +1069,7 @@ class ConversationStore:
                     try:
                         line = json.loads(raw)
                         t = line.get("t", "")
-                        if t in ("msg", "msg_patch"):
+                        if t in ("msg", "msg_patch", "trace_update"):
                             raw_lines.append(line)
                             if t == "msg":
                                 msg_count += 1
@@ -1057,14 +1082,22 @@ class ConversationStore:
             # Apply scan_transcript logic (separate msgs from patches)
             msgs = []
             patches = {}
+            trace_updates = {}
             for line in raw_lines:
-                if line.get("t") == "msg_patch":
+                t = line.get("t", "")
+                if t == "msg_patch":
                     mid = line.get("msg_id", "")
                     if mid:
                         patches[mid] = {k: v for k, v in line.items()
                                         if k not in ("t", "msg_id")}
                     continue
-                if line.get("t") != "msg":
+                if t == "trace_update":
+                    tid = line.get("trace_id", "")
+                    if tid:
+                        trace_updates.setdefault(tid, []).append(
+                            (line.get("entry") or {}, line.get("content_update") or ""))
+                    continue
+                if t != "msg":
                     continue
                 msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
                 if "ts" in line:
@@ -1076,6 +1109,23 @@ class ConversationStore:
                     mid = msg.get("msg_id", "")
                     if mid and mid in patches:
                         msg.update(patches[mid])
+            if trace_updates:
+                for msg in msgs:
+                    if msg.get("role") != "sub_agent_trace":
+                        continue
+                    tid = msg.get("trace_id", "")
+                    ups = trace_updates.get(tid)
+                    if not ups:
+                        continue
+                    trace = list(msg.get("trace") or [])
+                    content = msg.get("content", "") or ""
+                    for entry, cu in ups:
+                        if entry:
+                            trace.append(entry)
+                        if cu:
+                            content += cu
+                    msg["trace"] = trace
+                    msg["content"] = content
 
             # Slice: msgs is chronological, we want the last `limit` before `offset`
             total_tail = len(msgs)

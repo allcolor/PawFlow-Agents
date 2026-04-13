@@ -332,10 +332,29 @@ class ToolRelayService(BaseService):
             except Exception:
                 pass
 
+            # Bridge sub-agent events to the conversation SSE bus so the
+            # webchat can render delegate blocks live (mirrors the wiring in
+            # tasks/ai/agent_context.py for non-CC agents).
+            _parent_cid_for_events = (
+                conversation_id.split("::task::")[0]
+                if conversation_id and "::task::" in conversation_id
+                else (conversation_id or "")
+            )
+
+            def _sub_on_event(event_type, data):
+                if not _parent_cid_for_events:
+                    return
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        _parent_cid_for_events, event_type, data)
+                except Exception:
+                    pass
+
             for h in registry.list_tools():
                 if isinstance(h, SpawnAgentsHandler) and _default_client:
                     h.set_spawn_deps(_default_client, _client_resolver,
-                                      on_event=None, registry=registry)
+                                      on_event=_sub_on_event, registry=registry)
         except Exception as _e:
             logger.warning("[tool-relay] SpawnAgents wiring failed: %s", _e)
 

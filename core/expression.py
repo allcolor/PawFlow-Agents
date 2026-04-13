@@ -374,11 +374,7 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
             try:
                 from core.relay_bindings import get_default
                 _agent = params.get("agent_name", "") if key == "agent.relay" else ""
-                # Sub-conversations inherit relay bindings from parent
-                _cid_for_relay = (conversation_id.split("::task::")[0]
-                                  if "::task::" in conversation_id
-                                  else conversation_id)
-                _rid = get_default(_cid_for_relay, _agent)
+                _rid = get_default(conversation_id, _agent)
                 if _rid:
                     return _return_val(_rid)
             except Exception:

@@ -239,6 +239,13 @@ function addMsg(role, text, extra) {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text);
   } else if (role === 'sub_agent_trace') {
     const dtcId = (extra && extra.source && extra.source.delegate_tc_id) || '';
+    const taskId = (extra && extra.source && extra.source.task_id) || '';
+    // Dedupe: if the live SSE already rendered a sub-block for this
+    // sub-agent task, skip — we'd otherwise render a stale duplicate
+    // (e.g. the "running" snapshot side-by-side with the "done" one).
+    if (taskId && document.querySelector('[data-delegate-task-id="' + taskId + '"]')) {
+      return null;
+    }
     const existingGroup = dtcId ? document.querySelector('[data-delegate-group="' + dtcId + '"]') : null;
     if (existingGroup) {
       const groupBody = existingGroup.querySelector('.delegate-body');
@@ -281,6 +288,7 @@ function addMsg(role, text, extra) {
     // First trace for this delegate_tc_id — create group
     el.className = 'msg delegate-block delegate-group';
     if (dtcId) el.dataset.delegateGroup = dtcId;
+    if (taskId) el.dataset.delegateTaskId = taskId;
     const src = (extra && extra.source) || {};
     el.dataset.firstAgent = src.name || 'sub-agent';
     el.dataset.firstSvc = src.llm_service || '';

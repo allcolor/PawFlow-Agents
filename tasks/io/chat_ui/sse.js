@@ -439,6 +439,10 @@ function connectSSE(cid, onReady) {
       group.content.appendChild(subEl);
       scrollBottom();
     }
+    // Tag for cross-rendering dedupe (messages.js looks up this attribute
+    // when classifying a sub_agent_trace from the store and skips it if a
+    // live SSE block for the same sub-agent task already exists).
+    if (subEl && taskId) subEl.dataset.delegateTaskId = taskId;
     const block = { el: subEl, content: subContent, summary: subSummary, agent: dstAgent, taskId };
     _delegateSubBlocks[taskId] = block;
     group.subBlocks[taskId] = block;

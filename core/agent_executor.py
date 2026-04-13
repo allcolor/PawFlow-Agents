@@ -364,10 +364,24 @@ class SubAgentExecutor:
         # CC provider needs conv_id/agent_name/user_id on the client. Set
         # them before the LLM call so per-session workdir + credentials
         # resolve correctly for the sub-agent.
+        # Save fields we will overwrite, so we can restore them in finally.
+        _saved_client_state = {
+            "_conversation_id": getattr(client, "_conversation_id", ""),
+            "_agent_name": getattr(client, "_agent_name", ""),
+            "_user_id": getattr(client, "_user_id", ""),
+            "_event_cid": getattr(client, "_event_cid", ""),
+        }
         try:
             client._conversation_id = sub_conv_id or task.parent_conversation_id or ""
             client._agent_name = task.agent_name or ""
             client._user_id = task.user_id or ""
+            # Suppress raw provider SSE events to the parent bus — the
+            # SubAgentExecutor already emits sub_agent_* events that the UI
+            # uses to render delegate sub-blocks. Leaving _event_cid pointed
+            # at the parent conv would make the sub-agent's assistant_text
+            # / tool_call events leak into the parent chat as a task-block
+            # duplicate of the delegate response.
+            client._event_cid = ""
             logger.info("[sub-agent:%s] client wired conv=%s agent=%s user=%s",
                         task.agent_name,
                         client._conversation_id, client._agent_name, client._user_id)
@@ -611,6 +625,12 @@ class SubAgentExecutor:
                 resolved_svc.release()
             # Clean up cancel registry
             _clear_cancelled(task.id)
+            # Restore client state we mutated for the sub-agent invocation
+            try:
+                for _k, _v in _saved_client_state.items():
+                    setattr(client, _k, _v)
+            except Exception:
+                pass
 
         result.duration_ms = (time.time() - start) * 1000
         _done_data = {

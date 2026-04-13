@@ -237,15 +237,32 @@ class LLMClient(
 
     @property
     def base_url(self):
-        _raw = self._cfg("base_url", "") or self.DEFAULT_URLS.get(self.provider, "")
+        # Read the raw template (LazyResolveDict's auto-resolve doesn't have
+        # conversation context — we must resolve manually with it).
+        _raw_template = ""
+        if self._config_ref:
+            try:
+                _raw_template = dict.__getitem__(self._config_ref, "base_url")
+            except KeyError:
+                _raw_template = ""
+        _uid = getattr(self, "_user_id", "") or ""
+        _cid = getattr(self, "_conversation_id", "") or ""
+        if _raw_template and isinstance(_raw_template, str) and "${" in _raw_template:
+            try:
+                from core.expression import resolve_expression
+                _raw = resolve_expression(_raw_template, owner=_uid, conversation_id=_cid)
+            except Exception:
+                _raw = _raw_template
+        else:
+            _raw = _raw_template or ""
+        if not _raw:
+            _raw = self.DEFAULT_URLS.get(self.provider, "")
         # Relay-proxy format: http(s)://<relay_id>:<host>:<port>/path
         # Transform to a PawFlow-exposed proxy URL with an ephemeral token.
-        # Works for any provider (claude-code, openai, anthropic, …).
         try:
             from core.llm_providers.claude_code_session import (
                 _maybe_transform_relay_proxy_url,
             )
-            _uid = getattr(self, "_user_id", "") or ""
             _proxy = _maybe_transform_relay_proxy_url(_raw, user_id=_uid)
             if _proxy:
                 return _proxy

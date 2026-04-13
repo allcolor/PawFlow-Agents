@@ -47,11 +47,7 @@ function updateActivePanel() {
     const secs = Math.round((now - info.startedAt) / 1000);
     const timeStr = secs < 60 ? secs + 's' : Math.floor(secs/60) + 'm' + (secs%60) + 's';
     let statusParts = [];
-    // Delegate sub-agents run as a single client.complete_stream() call
-    // — the CC-internal multi-turn loop is invisible at the Python level,
-    // so the counter would be stuck at "iter 1" and mislead the user.
-    // Only surface iter for top-level agents.
-    if (info.iteration && !info.taskId) statusParts.push('iter ' + info.iteration);
+    if (info.iteration) statusParts.push('iter ' + info.iteration);
     if (info.round && info.maxRounds > 1) statusParts.push('round ' + info.round + '/' + info.maxRounds);
     if (info.totalTools > 0) statusParts.push(info.totalTools + ' tools');
     if (info.activeTools && info.activeTools.length > 1) {

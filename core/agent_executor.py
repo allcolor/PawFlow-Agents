@@ -507,6 +507,19 @@ class SubAgentExecutor:
                     except Exception:
                         pass
 
+                # CC-internal multi-turn: bump _iteration per turn so the
+                # active-agents panel counter moves just like the main
+                # agent's does (one increment per CC output message).
+                _cc_turn_count = [0]
+
+                def _turn_cb(_text, _tool_calls):
+                    _cc_turn_count[0] += 1
+                    if _active_inst and _active_ctx_key:
+                        try:
+                            _active_ctx["_iteration"] = _cc_turn_count[0]
+                        except Exception:
+                            pass
+
                 _compact_attempts = 0
                 while True:
                     try:
@@ -517,6 +530,7 @@ class SubAgentExecutor:
                             max_tokens=0,
                             tools=tool_defs if tool_defs else None,
                             callback=_stream_cb,
+                            turn_callback=_turn_cb,
                         )
                         break
                     except Exception as _llm_err:

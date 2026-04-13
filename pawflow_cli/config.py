@@ -39,16 +39,37 @@ def load_session(include_expired: bool = False) -> Dict[str, Any]:
         if not include_expired and data.get("expires_at", 0) < time.time():
             _trace("expired — returning {}")
             return {}  # expired
-        # Decrypt token
+        # Decrypt token — wrapped in a thread with a hard timeout, because
+        # Windows DPAPI (CryptUnprotectData) has been observed to block
+        # indefinitely on Python 3.14 with corrupted blobs or specific
+        # policies. If decrypt can't answer in 3s, treat the session as
+        # unusable and drop it so the user just /logins again.
         encrypted_token = data.get("token", "")
         if encrypted_token:
-            try:
-                _trace("calling unprotect (DPAPI/AES)")
-                from pawflow_cli.secure_store import unprotect
-                data["token"] = unprotect(encrypted_token)
-                _trace("unprotect returned")
-            except Exception as _ue:
-                _trace(f"unprotect raised {type(_ue).__name__}: {_ue} — fallback")
+            import threading as _th
+            _result = {}
+            def _do_unprotect():
+                try:
+                    from pawflow_cli.secure_store import unprotect
+                    _result["plain"] = unprotect(encrypted_token)
+                except Exception as _ue:
+                    _result["err"] = f"{type(_ue).__name__}: {_ue}"
+            _trace("calling unprotect (DPAPI/AES) in background thread")
+            _t = _th.Thread(target=_do_unprotect, daemon=True)
+            _t.start()
+            _t.join(timeout=3.0)
+            if _t.is_alive():
+                _trace("unprotect TIMED OUT — dropping session file")
+                try:
+                    SESSION_FILE.unlink()
+                except Exception:
+                    pass
+                return {}
+            if "plain" in _result:
+                _trace("unprotect returned ok")
+                data["token"] = _result["plain"]
+            else:
+                _trace(f"unprotect raised {_result.get('err')} — fallback to plain")
                 # Migration: token might be plain text from old version
                 data["token"] = encrypted_token
         _trace("returning data")

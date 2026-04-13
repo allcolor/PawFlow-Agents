@@ -28,7 +28,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +229,103 @@ class ConversationStore:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return ""
 
+    # ── Cross-file UUID invariant ────────────────────────────────────
+    #
+    #   The SAME logical message must carry the SAME msg_id everywhere
+    #   it's persisted: transcript.jsonl, shared.jsonl, and every
+    #   {agent}/context.jsonl of the same conversation.
+    #
+    #   This is preserved by construction: _transform_for_shared and
+    #   _transform_for_other_agent both start with dict(msg) and only
+    #   mutate role/content — never msg_id. But any regression would
+    #   silently corrupt deletion and dedup, so we assert it at every
+    #   shared/agent context write against the transcript's ids.
+
+    @staticmethod
+    def _msg_fp(content) -> str:
+        """Content fingerprint used to align a ctx row with the transcript."""
+        import hashlib
+        if isinstance(content, str):
+            s = content
+        elif isinstance(content, list):
+            parts = []
+            for p in content:
+                if isinstance(p, dict):
+                    if p.get("type") == "text":
+                        parts.append(p.get("text", ""))
+                    else:
+                        parts.append(p.get("type", "?"))
+                else:
+                    parts.append(str(p))
+            s = "\n".join(parts)
+        elif content is None:
+            s = ""
+        else:
+            s = str(content)
+        return hashlib.sha1(s.encode("utf-8", errors="replace")).hexdigest()[:12]
+
+    def _transcript_key_to_id(self, cid: str) -> Dict[Tuple, str]:
+        """Map (role, ts_rounded) → msg_id from the transcript.
+
+        Keyed on role+ts only (ts has millisecond precision and is
+        unique in practice); skips rows without a ts. Used to detect
+        ctx writes that assign a different msg_id to a msg that
+        already exists in the transcript.
+        """
+        path = self._transcript_path(cid)
+        out: Dict[Tuple, str] = {}
+        if not path.exists():
+            return out
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for raw in f:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        ln = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if ln.get("t") != "msg":
+                        continue
+                    if ln.get("role") == "system":
+                        continue
+                    ts = ln.get("ts") or ln.get("timestamp")
+                    mid = ln.get("msg_id")
+                    if not ts or not mid:
+                        continue
+                    out[(ln.get("role", ""), round(float(ts), 3))] = mid
+        except Exception:
+            pass
+        return out
+
+    def _assert_ctx_msg_id_consistent(self, cid: str, msg: Dict,
+                                      _cache: Optional[Dict[Tuple, str]] = None):
+        """Runtime check: a ctx-bound msg whose (role, ts) matches the
+        transcript MUST carry the transcript's msg_id — otherwise the
+        cross-file invariant is broken. Raises ValueError on violation.
+
+        Pass `_cache` (the result of _transcript_key_to_id) to avoid
+        re-scanning the transcript in a batch write loop.
+        """
+        role = msg.get("role", "")
+        if role == "system":
+            return
+        ts = msg.get("ts") or msg.get("timestamp")
+        mid = msg.get("msg_id")
+        if not ts or not mid:
+            return  # _validate_message handles missing fields separately
+        key = (role, round(float(ts), 3))
+        tmap = _cache if _cache is not None else self._transcript_key_to_id(cid)
+        expected = tmap.get(key)
+        if expected and expected != mid:
+            raise ValueError(
+                f"BUG: cross-file msg_id mismatch in {cid} — "
+                f"transcript has {expected!r} for role={role!r} ts={ts}, "
+                f"ctx write uses {mid!r}. The same message must share "
+                f"the same msg_id across transcript/shared/agent contexts."
+            )
+
     # ── Context file helpers ──────────────────────────────────────────
 
     def _append_ctx_file(self, cid: str, agent: str, messages: List[Dict]):
@@ -249,9 +346,11 @@ class ConversationStore:
                             existing_ids.add(mid)
                     except json.JSONDecodeError:
                         pass
+        _tmap = self._transcript_key_to_id(cid)
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
+                self._assert_ctx_msg_id_consistent(cid, m, _cache=_tmap)
                 mid = m.get("msg_id", "")
                 if mid in existing_ids:
                     continue  # skip duplicate
@@ -408,9 +507,11 @@ class ConversationStore:
                             existing_ids.add(mid)
                     except json.JSONDecodeError:
                         pass
+        _tmap = self._transcript_key_to_id(cid)
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
+                self._assert_ctx_msg_id_consistent(cid, m, _cache=_tmap)
                 mid = m.get("msg_id", "")
                 if mid in existing_ids:
                     continue  # skip duplicate
@@ -865,6 +966,12 @@ class ConversationStore:
         if not self.exists(cid):
             return False
         clean = [m for m in context_messages if not m.get("display_only")]
+        # Cross-file UUID invariant: the same logical message must carry
+        # the same msg_id here as in the transcript.
+        _tmap = self._transcript_key_to_id(cid)
+        for _m in clean:
+            self._validate_message(_m)
+            self._assert_ctx_msg_id_consistent(cid, _m, _cache=_tmap)
         if agent_name:
             self._write_ctx_file(self._agent_ctx_path(cid, agent_name), clean)
         else:

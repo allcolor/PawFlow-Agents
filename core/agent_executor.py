@@ -382,11 +382,12 @@ class SubAgentExecutor:
             client._user_id = task.user_id or ""
             # Suppress raw provider SSE events to the parent bus — the
             # SubAgentExecutor already emits sub_agent_* events that the UI
-            # uses to render delegate sub-blocks. Leaving _event_cid pointed
-            # at the parent conv would make the sub-agent's assistant_text
-            # / tool_call events leak into the parent chat as a task-block
-            # duplicate of the delegate response.
-            client._event_cid = ""
+            # uses to render delegate sub-blocks. Leaving _event_cid at the
+            # default "" would make the provider fall back to conv_id
+            # (= parent_conv) and leak assistant_text / tool_call events
+            # into the parent chat as a task-block duplicate of the
+            # delegate response — use None as an explicit suppress sentinel.
+            client._event_cid = None
             logger.info("[sub-agent:%s] client wired conv=%s agent=%s user=%s",
                         task.agent_name,
                         client._conversation_id, client._agent_name, client._user_id)

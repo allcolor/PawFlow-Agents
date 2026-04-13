@@ -581,9 +581,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             raise LLMClientError(
                 f"Claude CLI pipe broken (exit {proc.returncode}): {stderr[:500]}")
 
-        # SSE publisher for webchat visibility
-        # For task sub-conversations, publish to parent conv so webchat sees them
-        _event_cid = getattr(self, '_event_cid', '') or conv_id
+        # SSE publisher for webchat visibility.
+        # _event_cid sentinel values:
+        #   None               → publishing explicitly suppressed (sub-agent path)
+        #   "" or missing attr → fall back to conv_id (main agent default)
+        #   any string         → publish to that conv
+        _raw_event_cid = getattr(self, '_event_cid', '')
+        if _raw_event_cid is None:
+            _event_cid = ""
+        else:
+            _event_cid = _raw_event_cid or conv_id
         # Extract task_id from sub-conv ID so frontend can group task events
         _task_id = ''
         if '::task::' in conv_id:

@@ -43,9 +43,22 @@ def get_agent_config(conv_id: str, agent_name: str) -> Dict[str, Any]:
 
     Returns config dict with all fields guaranteed present (defaults applied).
     Returns defaults if agent not found (graceful fallback).
+
+    Agent-name lookup is case-insensitive — the resource store's canonical
+    case (e.g. "Claude") may not match the casing used when the conv_agents
+    entry was stored (e.g. "claude"). Without this, a mismatch silently
+    returned defaults (llm_service="") and the sub-agent fell back to the
+    wrong provider.
     """
     configs = get_all_agent_configs(conv_id)
-    raw = configs.get(agent_name, {})
+    raw = configs.get(agent_name)
+    if raw is None and agent_name:
+        _needle = agent_name.lower()
+        for _k, _v in configs.items():
+            if isinstance(_k, str) and _k.lower() == _needle:
+                raw = _v
+                break
+    raw = raw or {}
     result = dict(AGENT_CONFIG_DEFAULTS)
     result.update(raw)
     return result

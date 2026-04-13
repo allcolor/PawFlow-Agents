@@ -1154,11 +1154,34 @@ def resolve_agent_task(
     if agent_def is None:
         raise KeyError(f"Agent '{agent_name}' not found for user '{user_id}'")
 
-    # Resolve runtime config from conv_agents (or defaults)
+    # Resolve runtime config from conv_agents.
+    # An agent's llm_service lives on the conv_agents link, not on the
+    # repository definition. A delegate target MUST be linked in the
+    # conversation — otherwise we have no LLM to run it on.
     from core.expression import resolve_value
-    from core.conv_agent_config import get_agent_config, AGENT_CONFIG_DEFAULTS
-    acfg = get_agent_config(conversation_id, agent_name) if conversation_id else dict(AGENT_CONFIG_DEFAULTS)
+    from core.conv_agent_config import get_all_agent_configs, get_agent_config
+    if not conversation_id:
+        raise KeyError(
+            f"Agent '{agent_name}' cannot be delegated to without a "
+            f"conversation — an agent's llm_service lives on the "
+            f"conv_agents link.")
+    _all_configs = get_all_agent_configs(conversation_id)
+    _linked = agent_name in _all_configs or any(
+        isinstance(_k, str) and _k.lower() == agent_name.lower()
+        for _k in _all_configs
+    )
+    if not _linked:
+        raise KeyError(
+            f"Agent '{agent_name}' is not linked in conversation "
+            f"'{conversation_id}'. Link it first (with an llm_service) "
+            f"before delegating to it.")
+    acfg = get_agent_config(conversation_id, agent_name)
     llm_svc = resolve_value(acfg.get("llm_service", ""), owner=user_id) or ""
+    if not llm_svc:
+        raise KeyError(
+            f"Agent '{agent_name}' is linked in conversation "
+            f"'{conversation_id}' but has no llm_service configured. "
+            f"Fix the conv_agents entry.")
 
     # Inject skills: conv_agent_config skills (inherited) + extra_skills from delegate call
     _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")

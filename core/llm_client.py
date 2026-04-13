@@ -462,7 +462,15 @@ class LLMClient(
             if self.provider == "openai":
                 result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools)
             elif self.provider == "claude-code":
-                result = self._complete_claude_code(messages, mdl, temperature, max_tokens, tools)
+                # CC has no real non-streaming mode — `claude -p` with
+                # --max-turns 1 is a degraded path that breaks tool loops
+                # and sub-agents. Route every complete() through the
+                # streaming path with a no-op callback; the result text +
+                # tool_calls land on the LLMResponse just the same.
+                result = self._stream_claude_code(
+                    messages, mdl, temperature, max_tokens, tools,
+                    callback=lambda _t: None, turn_callback=None,
+                )
             else:
                 result = self._complete_anthropic(messages, mdl, temperature, max_tokens, tools, thinking_budget=thinking_budget)
             result.duration_ms = (time.time() - start) * 1000

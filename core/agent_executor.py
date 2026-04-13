@@ -360,6 +360,16 @@ class SubAgentExecutor:
         _resumed = False
         if task.parent_conversation_id and task.context_mode != "full":
             sub_conv_id = f"{task.parent_conversation_id}::task::{task.id}"
+
+        # CC provider needs conv_id/agent_name/user_id on the client. Set
+        # them before the LLM call so per-session workdir + credentials
+        # resolve correctly for the sub-agent.
+        try:
+            client._conversation_id = sub_conv_id or task.parent_conversation_id or ""
+            client._agent_name = task.agent_name or ""
+            client._user_id = task.user_id or ""
+        except Exception:
+            pass
             # Try to resume existing sub-conversation
             try:
                 from core.conversation_store import ConversationStore

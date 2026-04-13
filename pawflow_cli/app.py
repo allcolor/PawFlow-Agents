@@ -97,20 +97,38 @@ class PawCode:
 
     def start(self):
         """Initialize auth, relay, and start the main loop."""
+        # Trace every step to a file so prompt_toolkit's stdout/stderr
+        # takeover can't swallow the breadcrumbs.
+        import os as _os, time as _time
+        _trace_path = _os.path.join(
+            _os.path.expanduser("~"), ".pawflow", "pawcode_start.log")
+        _os.makedirs(_os.path.dirname(_trace_path), exist_ok=True)
+        _trace_fh = open(_trace_path, "a", encoding="utf-8", buffering=1)
+        def _trace(msg):
+            _trace_fh.write(f"{_time.strftime('%H:%M:%S')} {msg}\n")
+            _trace_fh.flush()
+        _trace("=" * 40)
+        _trace("start() entered")
+
         # Wire status callback for bottom toolbar
         self.renderer.set_status_callback(self._update_status)
 
         # Check auth — don't auto-open browser, let user /login manually
         self.renderer.print_banner(self.directory)
+        _trace("banner printed")
 
         import sys as _sys
         _sys.stderr.write("[PawCode] checking session...\n")
         _sys.stderr.flush()
+        _trace("calling check_session")
         from pawflow_cli.auth import check_session
         auth = check_session(self.server_url, gateway_cookie=self.gateway_cookie)
+        _trace(f"check_session returned: {'ok' if auth else 'no session'}")
         _sys.stderr.write(f"[PawCode] check_session returned: "
                           f"{'ok' if auth else 'no session'}\n")
         _sys.stderr.flush()
+        # Stash so subsequent sites can use the same tracer
+        self._trace = _trace
         if auth:
             self.session_token = auth["token"]
             self.username = auth["username"]
@@ -125,10 +143,12 @@ class PawCode:
         self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
 
         if self.session_token:
+            _trace("connecting relay")
             _sys.stderr.write("[PawCode] connecting relay...\n")
             _sys.stderr.flush()
             try:
                 self.connect_relay(self.directory)
+                _trace("relay connected")
             except Exception as e:
                 if "401" in str(e) or "Unauthorized" in str(e):
                     self.session_token = ""
@@ -186,9 +206,11 @@ class PawCode:
                 self.conversation_id = None
 
         self.renderer.print_system("Ready. Type /help for commands, /quit to exit.\n")
+        _trace("entering main loop")
 
         # Main loop
         self._main_loop()
+        _trace("main loop exited")
 
     _SPINNERS = ["◐", "◓", "◑", "◒"]
     _FADE_COLORS = ["#e94560", "#c73e54", "#a53848", "#c73e54"]

@@ -290,6 +290,55 @@ class ToolRelayService(BaseService):
                     except Exception:
                         pass
 
+        # Configure SpawnAgentsHandler (delegate) — needs a client_resolver
+        # to look up per-agent LLM services. Without this, delegate fails
+        # with "Agent executor not configured (missing client_resolver)".
+        try:
+            from core.handlers.resource_agent import SpawnAgentsHandler
+            from core.llm_client import LLMClient
+            from core.service_registry import ServiceRegistry as _SR
+
+            def _client_resolver(svc_id, uid):
+                _reg = _SR.get_instance()
+                _svc_def = None
+                for _scope, _sid in (("user", uid), ("global", "")):
+                    try:
+                        _svc_def = _reg.get_definition(_scope, _sid, svc_id)
+                        if _svc_def:
+                            _live = _reg.get_live_instance(_scope, _sid, svc_id)
+                            if _live and hasattr(_live, "get_client"):
+                                return _live.get_client(), _live
+                    except Exception:
+                        pass
+                return None, None
+
+            # Default client = the live LLM service used by the agent that
+            # invoked the tool. We don't have direct access here, so pick
+            # any enabled LLM service as a fallback.
+            _default_client = None
+            try:
+                for _scope, _sid in (("user", user_id), ("global", "")):
+                    for _sd in _SR.get_instance().get_compatible(
+                            _scope, _sid, "llmConnection"):
+                        if not _sd.enabled:
+                            continue
+                        _live = _SR.get_instance().get_live_instance(
+                            _scope, _sid, _sd.service_id)
+                        if _live and hasattr(_live, "get_client"):
+                            _default_client = _live.get_client()
+                            break
+                    if _default_client:
+                        break
+            except Exception:
+                pass
+
+            for h in registry.list_tools():
+                if isinstance(h, SpawnAgentsHandler) and _default_client:
+                    h.set_spawn_deps(_default_client, _client_resolver,
+                                      on_event=None, registry=registry)
+        except Exception as _e:
+            logger.warning("[tool-relay] SpawnAgents wiring failed: %s", _e)
+
         # Configure media service resolvers (image/video/audio generation)
         from core.handlers.media import ImageGenerationHandler, ImageModelInfoHandler
         from core.handlers.media import VideoGenerationHandler, AudioGenerationHandler

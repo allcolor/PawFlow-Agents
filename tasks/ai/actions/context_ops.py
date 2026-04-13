@@ -662,12 +662,17 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
                 content = "\n".join(text_parts) if text_parts else str(content)
             has_tool_calls = bool(m.get("tool_calls"))
+            # sub_agent_trace messages persisted before the msg_id fix
+            # have no msg_id — fall back to trace_id so the context
+            # editor can still select + delete them.
+            _row_mid = m.get("msg_id", "") or (
+                m.get("trace_id", "") if role == "sub_agent_trace" else "")
             display_msgs.append({
                 "role": role,
                 "content": content[:300] if isinstance(content, str) else str(content)[:300],
                 "has_tool_calls": has_tool_calls,
                 "source": m.get("source"),
-                "msg_id": m.get("msg_id", ""),
+                "msg_id": _row_mid,
             })
         # Include agent context status map (only on first page)
         _agent_ctx_map = {}

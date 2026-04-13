@@ -1161,16 +1161,39 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             "num_turns": event.get("num_turns", _turn_count),
                             "duration_ms": event.get("duration_ms", 0),
                         })
-                    # result = CC is done with ALL pending work, including
-                    # preempts (CC processes them inline within the same
-                    # session and emits ONE final result). Always break.
+                    # CC emitted a result. Two cases:
+                    #  (a) no preempts pending → done, break.
+                    #  (b) preempts pending → user sent a message during/after
+                    #      result. CC may or may not have seen it (race on
+                    #      stdin). Wait briefly for a new event; if none,
+                    #      break and let the caller requeue.
                     _pending = getattr(self, '_preempt_pending', 0)
-                    if _pending > 0:
-                        logger.info("[claude-code] result event with %d pending "
-                                    "preempt(s) — clearing and breaking", _pending)
-                        self._preempt_pending = 0
-                        self._had_preempts_this_turn = True
-                    break
+                    if _pending == 0:
+                        break
+                    logger.info("[claude-code] result event with %d pending "
+                                "preempt(s) — waiting briefly for CC follow-up",
+                                _pending)
+                    self._preempt_pending = 0
+                    self._had_preempts_this_turn = True
+                    # CC may have already accepted the preempt on stdin and
+                    # will emit follow-up events; or it may have closed past
+                    # the message. Arm a 10s watchdog that kills CC if no
+                    # event arrives — this unblocks readline and the agent
+                    # loop will requeue from the conversation message queue.
+                    def _post_result_watchdog(_p=proc):
+                        time.sleep(10.0)
+                        try:
+                            if _p.poll() is None:
+                                logger.warning("[claude-code] no follow-up after "
+                                                "result+preempt — killing CC, "
+                                                "messages will be requeued")
+                                _p.kill()
+                        except Exception:
+                            pass
+                    threading.Thread(target=_post_result_watchdog,
+                                      daemon=True,
+                                      name="cc-post-result-watchdog").start()
+                    continue
 
         except _CC401Retry:
             # 401 mid-stream: credentials already refreshed, retry once

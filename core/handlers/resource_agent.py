@@ -426,7 +426,7 @@ class SpawnAgentsHandler(ToolHandler):
         self._user_id = uid
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        if not self._client_resolver or not self._default_client:
+        if not self._client_resolver:
             return "Error: Agent executor not configured (missing client_resolver)."
 
         from core.agent_executor import resolve_agent_task, SubAgentExecutor

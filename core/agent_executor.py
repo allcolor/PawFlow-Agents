@@ -413,8 +413,38 @@ class SubAgentExecutor:
             messages = self._build_initial_context(
                 task, sys_prompt, user_source)
 
+        # Register in AgentLoopTask._active_contexts so the chat UI
+        # active-agents panel surfaces this sub-agent. The key uses the
+        # sub-conv id (parent::task::tid:agent) so it matches the
+        # list_active query (startswith parent_conv + ":").
+        _active_ctx_key = ""
+        _active_inst = None
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            _active_inst = AgentLoopTask._live_instance
+            if _active_inst:
+                _ctx_cid = sub_conv_id or task.parent_conversation_id or ""
+                _active_ctx_key = f"{_ctx_cid}:{task.agent_name}"
+                _active_ctx = {
+                    "active_agent_name": task.agent_name,
+                    "_started_at": start,
+                    "_iteration": 0,
+                    "_round": 0,
+                    "max_rounds": max_iter,
+                    "_last_tool": "",
+                }
+                with _active_inst._active_contexts_lock:
+                    _active_inst._active_contexts[_active_ctx_key] = _active_ctx
+        except Exception:
+            _active_inst = None
+
         try:
             for iteration in range(1, max_iter + 1):
+                if _active_inst and _active_ctx_key:
+                    try:
+                        _active_ctx["_iteration"] = iteration
+                    except Exception:
+                        pass
                 if time.time() > deadline:
                     result.error = f"Timeout after {task.timeout}s"
                     result.status = "timeout"
@@ -631,6 +661,13 @@ class SubAgentExecutor:
                     setattr(client, _k, _v)
             except Exception:
                 pass
+            # Unregister from active-agents panel
+            if _active_inst and _active_ctx_key:
+                try:
+                    with _active_inst._active_contexts_lock:
+                        _active_inst._active_contexts.pop(_active_ctx_key, None)
+                except Exception:
+                    pass
 
         result.duration_ms = (time.time() - start) * 1000
         _done_data = {

@@ -104,7 +104,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                     _started = ctx.get("_started_at", 0)
                     # Extract task_id from key pattern conv::task::t_xxx:agent
                     _task_id = ""
-                    _tm = _re_active.search(r'::task::(t_\w+)', _k)
+                    _tm = _re_active.search(r'::task::([^:]+)', _k)
                     if _tm:
                         _task_id = _tm.group(1)
                     active.append({

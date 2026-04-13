@@ -208,16 +208,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         temperature = float(_cfg("temperature", 0.7))
         max_tokens = int(self.config.get("max_context_size", 0))
         max_iterations = int(_cfg("max_iterations", 1000))
-        # Per-agent override from conv_agents (max_depth = max iterations)
-        if conversation_id and _early_agent:
-            try:
-                from core.conv_agent_config import get_agent_config
-                _ac = get_agent_config(conversation_id, _early_agent)
-                _md = int(_ac.get("max_depth") or 0)
-                if _md > 0:
-                    max_iterations = _md
-            except Exception:
-                pass
         max_consecutive_tool_calls = int(_cfg("max_consecutive_tool_calls", 100))
         _resilience_style = _cfg("resilience_style", "balanced")
         if _resilience_style == "cautious":
@@ -331,6 +321,17 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             _parent_cid = conversation_id.split("::task::")[0] if "::task::" in conversation_id else conversation_id
             load_dynamic_tools(_parent_cid, registry)
         _context_agent = _early_agent
+
+        # Per-agent override from conv_agents (max_depth = max iterations)
+        if conversation_id and _early_agent:
+            try:
+                from core.conv_agent_config import get_agent_config
+                _ac = get_agent_config(conversation_id, _early_agent)
+                _md = int(_ac.get("max_depth") or 0)
+                if _md > 0:
+                    max_iterations = _md
+            except Exception:
+                pass
 
         # ── Resolve active agent + LLM service EARLY ──
         # Needed before message loading to know if we should skip compact

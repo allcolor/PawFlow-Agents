@@ -262,6 +262,27 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 _active_client = self._active_claude_client.get(_agent_key)
             if _active_client and hasattr(_active_client, 'send_user_message') and _user_text:
                 _attachments = _body.get("attachments", [])
+                # Persist the message in the conv store BEFORE sending it
+                # via stdin. If CC processes it: fine, it has a matching
+                # assistant reply. If CC misses it (race with result event,
+                # killed by post-result watchdog): the next agent loop
+                # turn will see this user message without a reply and
+                # process it naturally.
+                try:
+                    import uuid as _uuid_pre, time as _time_pre
+                    _pre_uid = flowfile.get_attribute("http.auth.principal") or ""
+                    ConversationStore.instance().append_messages(
+                        conversation_id, [{
+                            "role": "user",
+                            "content": _user_text,
+                            "msg_id": _uuid_pre.uuid4().hex[:12],
+                            "ts": _time_pre.time(),
+                            "channel": "web",
+                            "source": {"type": "user"},
+                        }], user_id=_pre_uid)
+                except Exception as _pe:
+                    logger.warning("[agent:%s] failed to persist preempt msg: %s",
+                                    conversation_id[:8], _pe)
                 if _active_client.send_user_message(_user_text, attachments=_attachments):
                     logger.debug("[agent:%s] preempted active CC session", conversation_id[:8])
                     ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,

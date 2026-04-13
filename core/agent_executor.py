@@ -748,8 +748,11 @@ class SubAgentExecutor:
                 result.status = "completed"
 
         except Exception as e:
-            logger.error("Sub-agent '%s' error: %s", task.agent_name, e)
-            result.error = str(e)
+            # Always log the traceback so we can diagnose silent failures
+            # instead of qwen looping forever on an empty "status: error".
+            logger.exception("Sub-agent '%s' error: %s", task.agent_name, e)
+            _err = str(e) or f"{type(e).__name__} (no message)"
+            result.error = _err
             result.status = "error"
         finally:
             # Release capacity slot

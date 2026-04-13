@@ -236,6 +236,7 @@ class ClaudeCodePool:
 
         run_args = [
             "-d",  # detached
+            "--rm",  # auto-remove on exit — prevents dead-container pileup
             "--name", name,
             "--cpus", self.cpu_limit,
             "--memory", self.memory_limit,
@@ -351,10 +352,17 @@ class ClaudeCodePool:
                         len(to_kill), to_kill)
 
     def _cleanup_orphans(self):
-        """Kill orphan pf-cc-pool containers from previous PawFlow runs."""
+        """Kill + remove orphan pf-cc-pool containers from previous runs.
+
+        Without \`-a\` the previous version only saw RUNNING containers,
+        so Exited pool containers piled up across restarts (seen with
+        hundreds after a few days). \`ps -a\` includes every state
+        (running, exited, created, dead) and \`rm -f\` stops+removes.
+        """
         try:
             result = subprocess.run(
-                docker_cmd() + ["ps", "--filter", "name=pf-cc-pool-",
+                docker_cmd() + ["ps", "-a",
+                                "--filter", "name=pf-cc-pool-",
                                 "--format", "{{.Names}}"],
                 capture_output=True, text=True, timeout=10)
             if result.returncode == 0 and result.stdout.strip():
@@ -364,7 +372,7 @@ class ClaudeCodePool:
                         subprocess.run(
                             docker_cmd() + ["rm", "-f", name],
                             capture_output=True, timeout=10)
-                        logger.info("Pool: killed orphan container %s", name)
+                        logger.info("Pool: removed orphan container %s", name)
                     except Exception:
                         pass
                 if orphans:

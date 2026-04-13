@@ -11,7 +11,13 @@ from urllib.parse import urlparse, urlencode
 
 
 def acquire_gateway_cookie(server_url: str, gateway_key: str) -> str:
-    """POST /_gateway with the access key, return the _pf_gw cookie value or empty string."""
+    """POST /_gateway with the access key, return the _pf_gw cookie value.
+
+    Raises RuntimeError on a non-success response or missing cookie, with
+    the status + short body — silent empty-string returns hid obvious
+    failures like "wrong port" or "wrong secret".
+    """
+    import sys as _sys
     parsed = urlparse(server_url)
     use_ssl = parsed.scheme == "https"
     host = parsed.hostname or "localhost"
@@ -27,23 +33,37 @@ def acquire_gateway_cookie(server_url: str, gateway_key: str) -> str:
 
     body = urlencode({"secret": gateway_key, "next": "/"})
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    conn.request("POST", "/_gateway", body=body, headers=headers)
-    resp = conn.getresponse()
-    resp.read()  # drain
-    # Note: gateway returns 302 redirect with Set-Cookie — don't follow,
-    # just read the cookie from this response.
-
-    cookie_val = ""
-    for hdr in resp.msg.get_all("Set-Cookie") or []:
-        for part in hdr.split(";"):
-            part = part.strip()
-            if part.startswith("_pf_gw="):
-                cookie_val = part[len("_pf_gw="):]
+    try:
+        conn.request("POST", "/_gateway", body=body, headers=headers)
+        resp = conn.getresponse()
+        status = resp.status
+        raw = resp.read()
+        # Note: gateway returns 302 redirect with Set-Cookie — don't
+        # follow, just read the cookie from this response.
+        cookie_val = ""
+        for hdr in resp.msg.get_all("Set-Cookie") or []:
+            for part in hdr.split(";"):
+                part = part.strip()
+                if part.startswith("_pf_gw="):
+                    cookie_val = part[len("_pf_gw="):]
+                    break
+            if cookie_val:
                 break
-        if cookie_val:
-            break
+    except Exception as e:
+        raise RuntimeError(
+            f"Gateway POST to {server_url}/_gateway failed: "
+            f"{type(e).__name__}: {e}") from None
+    finally:
+        conn.close()
 
-    conn.close()
+    if not cookie_val:
+        _body_preview = (raw[:200].decode("utf-8", errors="replace")
+                         if raw else "")
+        print(
+            f"[PawCode] Gateway at {server_url}/_gateway returned "
+            f"status={status}, no _pf_gw cookie. Body preview: "
+            f"{_body_preview!r}",
+            file=_sys.stderr)
     return cookie_val
 
 

@@ -741,8 +741,9 @@ function showAgentMenu(e, name, scope, autoconv) {
   };
   const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:#333;margin:4px 0;'; menu.appendChild(s); };
 
-  item('\u{1F441} View...', () => showResourceEditor('agent', name, !_canEditScope(scope)));
-  if (_canEditScope(scope)) item('\u270F Edit...', () => showResourceEditor('agent', name));
+  item('\u{1F441} View definition...', () => showResourceEditor('agent', name, !_canEditScope(scope)));
+  if (_canEditScope(scope)) item('\u270F Edit definition...', () => showResourceEditor('agent', name));
+  item('\u2699 Configure in conversation...', () => _showAgentConvConfigDialog(name));
   item('\u25B6 Select', () => cmdAgentSelect(name).then(loadResources));
   item('\u{1F9E9} Manage skills...', () => _showAgentSkillsDialog(name));
   if (autoconv) {
@@ -774,6 +775,64 @@ function _showSkillAssignDialog(skillName) {
       var agent = document.getElementById('_skAssignAgent').value;
       overlay.remove();
       cmdResourceAction('assign_skill', { agent_name: agent, skill_name: skillName }).then(loadResources);
+    };
+  });
+}
+
+function _showAgentConvConfigDialog(agentName) {
+  if (!conversationId) { addMsg('error', 'No active conversation'); return; }
+  action$('get_agent_conv_config', { name: agentName, conversation_id: conversationId }).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    var cfg = data.config || {};
+    var services = data.available_services || [];
+    var serviceOpts = services.map(function(s) {
+      var sel = s.id === cfg.llm_service ? ' selected' : '';
+      return '<option value="' + escapeHtml(s.id) + '"' + sel + '>'
+        + escapeHtml(s.id) + ' (' + escapeHtml(s.provider) + ')</option>';
+    }).join('');
+    var toolsStr = Array.isArray(cfg.tools) ? cfg.tools.join(', ') : (cfg.tools || '');
+    var overlay = document.createElement('div');
+    overlay.id = 'agentConvConfigOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    var panel = document.createElement('div');
+    panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:520px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+    panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+      + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">Configure agent in conversation: ' + escapeHtml(agentName) + '</h3>'
+      + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>'
+      + '</div>'
+      + '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">LLM Service *</label>'
+      + '<select id="acc-llm" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
+      + serviceOpts + '</select></div>'
+      + '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Model (override)</label>'
+      + '<input id="acc-model" value="' + escapeHtml(cfg.model || '') + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
+      + '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Tools (comma-separated)</label>'
+      + '<input id="acc-tools" value="' + escapeHtml(toolsStr) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
+      + '<div style="margin-bottom:8px;">'
+      + '<label style="color:#aaa;font-size:11px;">Max iterations (agent loop)</label>'
+      + '<input id="acc-depth" type="number" value="' + (cfg.max_depth || 1000) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
+      + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+      + '<button id="acc-save" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
+      + '</div>';
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    document.getElementById('acc-save').onclick = function() {
+      var llm = document.getElementById('acc-llm').value;
+      var model = document.getElementById('acc-model').value;
+      var tools = document.getElementById('acc-tools').value
+        .split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
+      var depth = parseInt(document.getElementById('acc-depth').value) || 1000;
+      action$('update_agent_conv_config', {
+        name: agentName, conversation_id: conversationId,
+        config: { llm_service: llm, model: model, tools: tools,
+                   max_depth: depth },
+      }).subscribe(function(r) {
+        if (r.error) { addMsg('error', r.error); return; }
+        addMsg('system', agentName + ' config updated for this conversation.');
+        overlay.remove();
+        loadResources();
+      });
     };
   });
 }
@@ -905,7 +964,7 @@ setTimeout(function() { if (document.getElementById('deploy-template')) _onDeplo
 
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {
-  agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['tools','text'],['assigned_skills','skills_picker'],['max_depth','number'],['timeout','number']],
+  agent:    [['prompt','textarea'],['description','text']],
   skill:    [['prompt','textarea'],['description','text']],
   mcp:      [['url','text'],['auth','text'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['skills','skills_picker'],['description','text']],

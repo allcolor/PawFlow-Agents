@@ -9,9 +9,66 @@ import logging
 import os
 from typing import Optional
 
-from core.docker_utils import docker_cmd as _docker_cmd, to_host_path
+from core.docker_utils import docker_cmd as _docker_cmd, to_host_path, get_host_ip
 
 logger = logging.getLogger(__name__)
+
+
+def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[str]:
+    """Detect the relay-proxy format and transform to a PawFlow proxy URL.
+
+    Input format:  http(s)://<relay_id>:<host>:<port>/path
+    Output format: <pawflow_scheme>://<pawflow_host>:<pawflow_port>/relay-proxy/<relay_id>/<token>/[s/]<host>:<port>/path
+
+    An ephemeral token bound to (user_id, relay_id) is minted and injected
+    into the URL — the CC container has no HTTP session and cannot carry
+    auth cookies. The token, not the relay_id, is the actual credential;
+    the route handler rejects external IPs even if the URL leaks.
+
+    The 's/' prefix in the path indicates the target uses HTTPS.
+    Returns None if the URL is not a relay-proxy URL.
+    """
+    import re
+    m = re.match(
+        r'^(https?)://([A-Za-z0-9_.\-]+):([A-Za-z0-9_.\-]+):(\d+)(/.*)?$', url)
+    if not m:
+        return None
+    target_scheme = m.group(1)
+    relay_id = m.group(2)
+    target_host = m.group(3)
+    target_port = int(m.group(4))
+    target_path = m.group(5) or '/'
+
+    # Locate the PawFlow HTTP listener to expose the proxy route
+    try:
+        from services.http_listener_service import HTTPListenerService
+        instances = getattr(HTTPListenerService, "_instances", {}) or {}
+        if not instances:
+            logger.warning("No HTTP listener running — cannot build relay-proxy URL")
+            return None
+        _listener = next(iter(instances.values()))
+        _port = _listener._port
+        _scheme = "https" if getattr(_listener, "_default_ssl_ctx", None) else "http"
+    except Exception as e:
+        logger.warning("HTTP listener lookup failed: %s", e)
+        return None
+
+    if not user_id:
+        logger.warning("Cannot issue proxy token without user_id")
+        return None
+    try:
+        from core.relay_proxy_auth import issue_token
+        _token = issue_token(user_id, relay_id)
+    except Exception as e:
+        logger.warning("Proxy token issue failed: %s", e)
+        return None
+
+    _host = get_host_ip()
+    _target = f"{target_host}:{target_port}"
+    _path = target_path
+    _s_prefix = "s/" if target_scheme == "https" else ""
+    return f"{_scheme}://{_host}:{_port}/relay-proxy/{relay_id}/{_token}/{_s_prefix}{_target}{_path}"
+
 
 def _find_cc_service_id(service_id: str = "") -> str:
     """Find the claude-code LLM service ID."""
@@ -350,17 +407,21 @@ class ClaudeCodeSessionMixin:
             _base_url = _base_url()
         elif isinstance(_base_url, property):
             _base_url = ''
+        # base_url is already transformed (relay-proxy) by LLMClient.base_url
+        # property. If still a localhost URL in Docker, translate to
+        # host.docker.internal so the container can reach the host.
         if _base_url:
-            # In Docker, localhost means the container — translate to host
-            if getattr(self, 'containerize', False):
+            if getattr(self, 'containerize', False) and "/relay-proxy/" not in _base_url:
                 import re
+                _repl = lambda m: m.group(1) + "host.docker.internal" + (m.group(2) or '')
                 _base_url = re.sub(
-                    r'(https?://)localhost(:\d+)?',
-                    r'\1host.docker.internal\2', _base_url)
+                    r'(https?://)localhost(:\d+)?', _repl, _base_url)
                 _base_url = re.sub(
-                    r'(https?://)127\.0\.0\.1(:\d+)?',
-                    r'\1host.docker.internal\2', _base_url)
+                    r'(https?://)127\.0\.0\.1(:\d+)?', _repl, _base_url)
             env["ANTHROPIC_BASE_URL"] = _base_url
+            logger.info("Claude Code using custom endpoint: %s", _base_url)
+        else:
+            logger.info("Claude Code no custom base_url configured")
         return env
 
     # Cached tool relay info (shared across all claude-code agents)

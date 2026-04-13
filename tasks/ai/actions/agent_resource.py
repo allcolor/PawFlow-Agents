@@ -156,6 +156,20 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             }).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
+        # Must have a conv_agents entry with an llm_service before selecting
+        try:
+            from core.conv_agent_config import get_agent_config
+            _acfg = get_agent_config(conv_id, agent_name)
+            if not _acfg.get("llm_service"):
+                flowfile.set_content(json.dumps({
+                    "error": f"Agent '{agent_name}' has no llm_service in this "
+                             f"conversation. Add it via add_agent_to_conv with "
+                             f"an explicit llm_service first.",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+        except Exception as _e:
+            logger.error("Agent config check failed: %s", _e)
         active = store.get_extra(conv_id, "active_resources") or {}
         active["agent"] = agent_name
         store.set_extra(conv_id, "active_resources", active)
@@ -402,16 +416,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if conv_id:
             active = store.get_extra(conv_id, "active_resources") or {}
             active = self._ensure_active_agent(conv_id, active, uid)
-        # Build agents list: only agents that are members of this conversation
-        # (active_resources.agents), not all repo agents.
-        conv_agent_names = active.get("agents", [])
-        # Backward compat: old format had only active.agent (single agent)
-        if not conv_agent_names and active.get("agent"):
-            conv_agent_names = [active["agent"]]
-
-        # Conv agents config (runtime: llm_service, skills, etc.)
+        # conv_agents is the source of truth for agent membership
         from core.conv_agent_config import get_all_agent_configs, get_agent_config
         conv_agent_cfgs = get_all_agent_configs(conv_id) if conv_id else {}
+        conv_agent_names = list(conv_agent_cfgs.keys())
 
         agents_out = []
         for aname in conv_agent_names:
@@ -688,6 +696,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if not rtype or not rname:
             flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
             return [flowfile]
+        # Agent definitions in the repository hold only prompt + description.
+        # Runtime params (llm_service, model, tools, skills, max_depth, timeout)
+        # live in conv_agents — edited via update_agent_conv_config.
+        if rtype == "agent":
+            data = {k: v for k, v in data.items() if k in ("prompt", "description")}
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
@@ -716,6 +729,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if not rtype or not rname:
             flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
             return [flowfile]
+        if rtype == "agent":
+            data = {k: v for k, v in data.items() if k in ("prompt", "description")}
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
@@ -914,8 +929,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
     if action == "add_agent_to_conv":
         conv_id = body.get("conversation_id", "")
         aname = body.get("name", "").strip()
+        llm_service = body.get("llm_service", "").strip()
         if not conv_id or not aname:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if not llm_service:
+            flowfile.set_content(json.dumps({
+                "error": "llm_service is required when adding an agent to a conversation",
+            }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.resource_store import ResourceStore
@@ -925,14 +947,80 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not found in repository"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
+        from core.conv_agent_config import add_agent_to_conv as _add
+        _add(conv_id, aname,
+             llm_service=llm_service,
+             model=body.get("model", ""),
+             tools=body.get("tools", []),
+             max_depth=int(body.get("max_depth", 1000) or 1000),
+             skills=body.get("skills", []))
         active = store.get_extra(conv_id, "active_resources") or {}
-        agents = active.setdefault("agents", [])
-        if aname not in agents:
-            agents.append(aname)
         if not active.get("agent"):
             active["agent"] = aname
         store.set_extra(conv_id, "active_resources", active)
         flowfile.set_content(json.dumps({"ok": True, "agent": aname}).encode())
+        return [flowfile]
+
+    if action == "get_agent_conv_config":
+        conv_id = body.get("conversation_id", "")
+        aname = body.get("name", "").strip()
+        if not conv_id or not aname:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.conv_agent_config import get_all_agent_configs
+        cfgs = get_all_agent_configs(conv_id)
+        if aname not in cfgs:
+            flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not in conversation"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        # Available LLM services for the dropdown
+        from core.service_registry import ServiceRegistry
+        services = []
+        try:
+            for sdef in ServiceRegistry.get_instance().resolve_by_type("llmConnection"):
+                if getattr(sdef, "enabled", True):
+                    services.append({
+                        "id": sdef.service_id,
+                        "provider": (sdef.config or {}).get("provider", ""),
+                    })
+        except Exception:
+            pass
+        flowfile.set_content(json.dumps({
+            "name": aname,
+            "config": cfgs[aname],
+            "available_services": services,
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "update_agent_conv_config":
+        conv_id = body.get("conversation_id", "")
+        aname = body.get("name", "").strip()
+        cfg = body.get("config", {}) or {}
+        if not conv_id or not aname:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if not cfg.get("llm_service"):
+            flowfile.set_content(json.dumps({"error": "llm_service is required"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.conv_agent_config import (
+            get_all_agent_configs, set_agent_config,
+        )
+        configs = get_all_agent_configs(conv_id)
+        if aname not in configs:
+            flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not in conversation"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        # Merge — only update known fields
+        _allowed = {"llm_service", "model", "tools", "max_depth", "skills"}
+        merged = dict(configs[aname])
+        for k, v in cfg.items():
+            if k in _allowed:
+                merged[k] = v
+        set_agent_config(conv_id, aname, merged)
+        flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
 
     if action == "remove_agent_from_conv":
@@ -942,14 +1030,17 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or name"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        from core.conv_agent_config import (
+            get_all_agent_configs, CONV_AGENTS_KEY,
+        )
+        configs = get_all_agent_configs(conv_id)
+        configs.pop(aname, None)
+        store.set_extra(conv_id, CONV_AGENTS_KEY, configs)
+        remaining = list(configs.keys())
         active = store.get_extra(conv_id, "active_resources") or {}
-        agents = active.get("agents", [])
-        if aname in agents:
-            agents.remove(aname)
-        active["agents"] = agents
         # If removed agent was the selected primary, pick next or clear
         if active.get("agent") == aname:
-            active["agent"] = agents[0] if agents else ""
+            active["agent"] = remaining[0] if remaining else ""
         store.set_extra(conv_id, "active_resources", active)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
@@ -957,15 +1048,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
     if action == "list_repo_agents":
         conv_id = body.get("conversation_id", "")
         from core.resource_store import ResourceStore
+        from core.conv_agent_config import get_all_agent_configs
         uid = user_id
         rs = ResourceStore.instance()
         all_agents = rs.list_all("agent", uid)
-        conv_agents = set()
-        if conv_id:
-            active = store.get_extra(conv_id, "active_resources") or {}
-            conv_agents = set(active.get("agents", []))
-            if not conv_agents and active.get("agent"):
-                conv_agents = {active["agent"]}
+        conv_agents = set(get_all_agent_configs(conv_id).keys()) if conv_id else set()
         out = []
         for a in all_agents:
             out.append({
@@ -1024,8 +1111,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 llm_service=acfg.get("llm_service", ""),
                 model=acfg.get("model", ""),
                 tools=acfg.get("tools"),
-                max_depth=int(acfg.get("max_depth", 5)),
-                timeout=int(acfg.get("timeout", 180)),
+                max_depth=int(acfg.get("max_depth", 1000)),
                 skills=acfg.get("skills"),
             )
         # Title

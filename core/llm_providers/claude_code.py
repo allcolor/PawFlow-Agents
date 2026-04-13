@@ -784,7 +784,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # but produces no assistant response within _STALL_TIMEOUT seconds,
         # kill the process. The retry loop in stream_chat will relaunch
         # a fresh CC process with the same session.
-        _STALL_TIMEOUT = 120  # seconds
+        # Read from the LLM service config (timeout property) so users can
+        # tune it without touching code.
+        _STALL_TIMEOUT = int(getattr(self, "timeout", 120) or 120)
         _stall_start_time = 0.0  # time.monotonic() when stall watch begins
         _got_assistant = False   # set True on first assistant event
         _last_tool_result_time = 0.0  # monotonic time of last tool_result with no pending tools

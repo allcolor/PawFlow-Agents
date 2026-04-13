@@ -237,7 +237,21 @@ class LLMClient(
 
     @property
     def base_url(self):
-        return self._cfg("base_url", "") or self.DEFAULT_URLS.get(self.provider, "")
+        _raw = self._cfg("base_url", "") or self.DEFAULT_URLS.get(self.provider, "")
+        # Relay-proxy format: http(s)://<relay_id>:<host>:<port>/path
+        # Transform to a PawFlow-exposed proxy URL with an ephemeral token.
+        # Works for any provider (claude-code, openai, anthropic, …).
+        try:
+            from core.llm_providers.claude_code_session import (
+                _maybe_transform_relay_proxy_url,
+            )
+            _uid = getattr(self, "_user_id", "") or ""
+            _proxy = _maybe_transform_relay_proxy_url(_raw, user_id=_uid)
+            if _proxy:
+                return _proxy
+        except Exception:
+            pass
+        return _raw
 
     @property
     def default_model(self):

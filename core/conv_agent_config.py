@@ -26,8 +26,7 @@ AGENT_CONFIG_DEFAULTS = {
     "llm_service": "",
     "model": "",
     "tools": [],
-    "max_depth": 5,
-    "timeout": 180,
+    "max_depth": 1000,
     "skills": [],
 }
 
@@ -74,56 +73,54 @@ def remove_agent_config(conv_id: str, agent_name: str) -> None:
 
 
 def add_agent_to_conv(conv_id: str, agent_name: str,
-                      llm_service: str = "",
+                      llm_service: str,
                       model: str = "",
                       tools: Optional[List[str]] = None,
-                      max_depth: int = 5,
-                      timeout: int = 180,
+                      max_depth: int = 1000,
                       skills: Optional[List[str]] = None) -> Dict[str, Any]:
     """Add an agent to a conversation with runtime config.
 
-    If llm_service is empty, tries to find {agent_name}_llm_service
-    in the service registry.
+    llm_service is required — an agent without an LLM service cannot run.
+    max_depth = max iterations of the agent loop (1000 by default).
     """
     if not llm_service:
-        llm_service = _guess_llm_service(agent_name, conv_id)
-
+        raise ValueError(
+            f"llm_service is required when adding agent '{agent_name}' to conversation")
     config = {
         "llm_service": llm_service,
         "model": model,
         "tools": tools or [],
         "max_depth": max_depth,
-        "timeout": timeout,
         "skills": skills or [],
     }
     set_agent_config(conv_id, agent_name, config)
     return config
 
 
-def _guess_llm_service(agent_name: str, conv_id: str = "") -> str:
-    """Try to find a matching LLM service for an agent name.
+def guess_llm_service(agent_name: str, conv_id: str = "") -> str:
+    """Suggest a matching LLM service for an agent name (for UI prefill only).
 
     Looks for services named:
       {agent_name}_llm_service → exact match
+      {agent_name}_llm → fallback match
       Otherwise → first enabled llmConnection service
+    Returns "" if nothing found.
     """
     try:
         from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
         reg = ServiceRegistry.get_instance()
-        # Try {agent_name}_llm_service
         candidate = f"{agent_name}_llm_service"
         sdef = reg.get_definition(SCOPE_GLOBAL, "", candidate)
         if sdef and sdef.enabled:
             return candidate
-        # Try {agent_name}_llm
         candidate = f"{agent_name}_llm"
         sdef = reg.get_definition(SCOPE_GLOBAL, "", candidate)
         if sdef and sdef.enabled:
             return candidate
-        # Fallback: first llmConnection service
         all_llm = reg.resolve_by_type("llmConnection")
         if all_llm:
             return all_llm[0].service_id
     except Exception:
         pass
     return ""
+

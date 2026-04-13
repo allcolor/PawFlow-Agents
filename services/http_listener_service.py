@@ -92,6 +92,8 @@ class RouteEntry:
     owner_id: str        # flow_id or task_id that registered this route
     callback: Any        # callable(PendingRequest) -> None
     ws_handler: Any = None  # callable(socket, path_params) for WebSocket upgrades
+    public: bool = False    # if True: skip session auth + private gateway
+    private_only: bool = False  # if True: only accept private-IP clients
 
 
 class RouteConflictError(Exception):
@@ -107,8 +109,15 @@ class RouteRegistry:
         self._lock = threading.Lock()
 
     def register(self, method: str, pattern: str, owner_id: str, callback,
-                 ws_handler=None) -> RouteEntry:
-        """Register a route.  Raises RouteConflictError on overlap."""
+                 ws_handler=None, public: bool = False,
+                 private_only: bool = False) -> RouteEntry:
+        """Register a route.  Raises RouteConflictError on overlap.
+
+        public=True skips session auth and private gateway checks (use for
+        login pages, callbacks, proxy endpoints with their own token auth).
+        private_only=True rejects non-RFC1918 clients even if public=True
+        (use for proxy endpoints leaked URLs must not allow external abuse).
+        """
         method = method.upper()
         regex = self._compile_pattern(pattern)
 
@@ -118,6 +127,8 @@ class RouteRegistry:
                     if existing.owner_id == owner_id:
                         # Same owner, same route — idempotent update
                         existing.callback = callback
+                        existing.public = public
+                        existing.private_only = private_only
                         return existing
                     raise RouteConflictError(
                         f"Route {method} {pattern} already registered by '{existing.owner_id}'"
@@ -127,6 +138,7 @@ class RouteRegistry:
                 method=method, pattern=pattern, regex=regex,
                 owner_id=owner_id, callback=callback,
                 ws_handler=ws_handler,
+                public=public, private_only=private_only,
             )
             self._routes.append(entry)
             return entry
@@ -195,17 +207,36 @@ class _RequestHandler(BaseHTTPRequestHandler):
         logger.debug(f"HTTP: {format % args}")
 
     def _handle(self):
-        # Private gateway — must pass before anything else
-        from services.private_gateway import check_request as _gw_check
-        if _gw_check(self):
-            return
-
         method = self.command
         path = self.path.split('?', 1)[0]
         query = self.path.split('?', 1)[1] if '?' in self.path else ""
 
-        # Session auth for all routes except /auth/*
-        if not path.startswith("/auth/"):
+        # Match route upfront to know if it's public (skip auth/gateway)
+        # and/or private-only (reject external IPs).
+        _match = self.server._route_registry.match(method, path)
+        _matched = _match[0] if _match else None
+        _is_public = bool(_matched and _matched.public)
+        _is_private_only = bool(_matched and _matched.private_only)
+
+        # Private-only routes: reject public IPs immediately
+        if _is_private_only:
+            from core.relay_proxy_auth import is_private_ip
+            _src_ip = self.client_address[0] if self.client_address else ""
+            if not is_private_ip(_src_ip):
+                self.send_response(403)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error": "Forbidden: external IP"}')
+                return
+
+        # Private gateway — skipped for public routes
+        if not _is_public:
+            from services.private_gateway import check_request as _gw_check
+            if _gw_check(self):
+                return
+
+        # Session auth — skipped for public routes
+        if not _is_public:
             try:
                 from core.security import SecurityManager
                 sm = SecurityManager.get_instance()
@@ -959,16 +990,23 @@ class HTTPListenerService(BaseService):
     # -- Route management --
 
     def register_route(self, method: str, pattern: str, owner_id: str, callback,
-                       ws_handler=None) -> RouteEntry:
+                       ws_handler=None, public: bool = False,
+                       private_only: bool = False) -> RouteEntry:
         """Register a route for a flow/task.
 
         Args:
             ws_handler: Optional WebSocket handler callable(socket, path_params, meta).
                         If set, WebSocket upgrade requests on this route are accepted
                         and the handler is called with the raw socket after handshake.
+            public: if True, session auth and private-gateway checks are skipped
+                    for this route — the callback is responsible for its own auth
+                    (login pages, OAuth callbacks, proxy endpoints with tokens…).
+            private_only: if True, only clients with private IPs (RFC 1918 /
+                    localhost) are accepted — even if the route is public.
         """
         return self._registry.register(method, pattern, owner_id, callback,
-                                        ws_handler=ws_handler)
+                                        ws_handler=ws_handler,
+                                        public=public, private_only=private_only)
 
     def unregister_routes(self, owner_id: str):
         """Remove all routes for a flow/task."""

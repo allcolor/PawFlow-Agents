@@ -162,6 +162,7 @@ def register_all_tasks():
     from tasks.io.serve_assets import ServeAssetsTask
     from tasks.io.serve_admin_ui import ServeAdminUITask
     from tasks.io.admin_actions import AdminActionTask
+    from tasks.io.relay_proxy import ServeRelayProxyTask
 
     # Conversation-scoped flow tasks
     from tasks.io.publish_message import PublishMessageTask

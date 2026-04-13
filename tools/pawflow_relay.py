@@ -1884,6 +1884,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 result = handler_func(root_dir, abs_path, msg,
                                        allow_exec=getattr(mock, 'allow_exec', False),
                                        **({"on_output": on_output} if action == "exec_stream" and on_output else {}))
+            elif action == "http_fetch":
+                # http_fetch: stream chunks via on_output(kind, data)
+                def _on_chunk(kind, data):
+                    if on_output:
+                        on_output(kind, data)
+                result = handler_func(root_dir, abs_path, msg, on_chunk=_on_chunk)
             else:
                 result = handler_func(root_dir, abs_path, msg)
             return {"ok": True, "data": result}

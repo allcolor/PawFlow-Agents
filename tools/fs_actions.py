@@ -729,6 +729,7 @@ from fs_mcp import (
     action_mcp_start, action_mcp_discover, action_mcp_call,
     action_mcp_stop, action_mcp_list,
 )
+from fs_http import action_http_fetch
 
 ACTIONS = {
     "list_dir": action_list_dir,
@@ -749,6 +750,7 @@ ACTIONS = {
     "apply_patch": action_apply_patch,
     "exec": action_exec,
     "exec_stream": action_exec_stream,
+    "http_fetch": action_http_fetch,
     "read_file_chunked": action_read_file_chunked,
     "read_chunk": action_read_chunk,
     "write_file_chunked": action_write_file_chunked,

@@ -93,14 +93,24 @@ class HTTPReceiverTask(BaseTask):
             method = route_def.get("method", "GET").upper()
             pattern = route_def.get("pattern", "/")
             relationship = route_def.get("relationship", f"{method}:{pattern}")
+            _public = bool(route_def.get("public", False))
+            _private_only = bool(route_def.get("private_only", False))
 
             def make_callback(rel):
                 def callback(pending_req):
                     self._on_request(pending_req, rel)
                 return callback
 
-            svc.register_route(method, pattern, self._owner_id, make_callback(relationship))
-            logger.info(f"httpReceiver registered {method} {pattern} -> {relationship}")
+            svc.register_route(
+                method, pattern, self._owner_id, make_callback(relationship),
+                public=_public, private_only=_private_only,
+            )
+            logger.info(
+                "httpReceiver registered %s %s -> %s%s%s",
+                method, pattern, relationship,
+                " [public]" if _public else "",
+                " [private_only]" if _private_only else "",
+            )
 
         self._registered = True
 

@@ -84,19 +84,28 @@
           {
             "method": "GET",
             "pattern": "/auth/login",
-            "relationship": "GET:/auth/login"
+            "relationship": "GET:/auth/login",
+            "public": true
           },
           {
             "method": "GET",
             "pattern": "/auth/callback",
-            "relationship": "GET:/auth/callback"
+            "relationship": "GET:/auth/callback",
+            "public": true
           },
           {
             "method": "POST",
             "pattern": "/auth/logout",
-            "relationship": "POST:/auth/logout"
+            "relationship": "POST:/auth/logout",
+            "public": true
           }
         ]
+      }
+    },
+    "relay_proxy": {
+      "type": "serveRelayProxy",
+      "parameters": {
+        "service_id": "http_listener"
       }
     },
     "validate_auth": {

@@ -389,6 +389,8 @@ class WSListener:
                     service._dispatch_progress(msg)
                 elif msg.get("type") == "exec_output":
                     service._dispatch_exec_output(msg)
+                elif msg.get("type") == "http_response":
+                    service._dispatch_http_response(msg)
                 elif msg.get("type") == "terminal_data":
                     try:
                         from services.terminal_proxy import dispatch_terminal_data
@@ -682,6 +684,23 @@ class RelayService(BaseService):
             if cb:
                 try:
                     cb(msg.get("stream", "stdout"), msg.get("data", ""))
+                except Exception:
+                    pass
+
+    def _dispatch_http_response(self, msg: dict):
+        """Forward streaming http_response chunks to the registered callback.
+
+        Message kinds: "start", "chunk", "end" — see fs_http.action_http_fetch.
+        """
+        request_id = msg.get("request_id", "")
+        with self._pending_lock:
+            entry = self._pending.get(request_id)
+        if entry:
+            _, holder = entry
+            cb = holder.get("_on_output")
+            if cb:
+                try:
+                    cb(msg.get("kind", ""), msg.get("data"))
                 except Exception:
                     pass
 
@@ -1006,6 +1025,27 @@ class RelayService(BaseService):
         if shell:
             kwargs["shell"] = shell
         return self._request_stream("exec_stream", path, on_output=on_output, **kwargs)
+
+    def http_fetch_stream(self, url: str, method: str = "GET",
+                           headers: dict = None, body: bytes = b"",
+                           timeout: int = 300, on_output=None):
+        """Fetch an HTTP URL through the relay with streaming response.
+
+        on_output(kind, data) is called with kind in {"start", "chunk", "end"}.
+        Used by the /relay-proxy/ route to pipe Anthropic API calls through
+        a user-local endpoint (llama-server, etc.).
+        """
+        import base64 as _b64
+        _body = body if isinstance(body, (bytes, bytearray)) else (body or b"")
+        return self._request_stream(
+            "http_fetch", ".",
+            on_output=on_output,
+            url=url,
+            method=method,
+            headers=headers or {},
+            body=_b64.b64encode(bytes(_body)).decode("ascii") if _body else "",
+            timeout=timeout,
+        )
 
     # ── Git ──
 

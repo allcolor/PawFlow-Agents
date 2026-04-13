@@ -437,10 +437,16 @@ def main():
                     "KillShell": "TaskStop",
                     "AgentOutputTool": "TaskOutput", "BashOutputTool": "TaskOutput",
                 }
-                if tool_name in _TOOL_ALIASES:
-                    _real = _TOOL_ALIASES[tool_name]
-                    _log(f"USE_TOOL alias: {tool_name} → {_real}")
-                    tool_name = _real
+                # Case-insensitive alias lookup (CC uses Bash/Read/Edit/Write/Glob/Grep)
+                _alias_match = _TOOL_ALIASES.get(tool_name) or _TOOL_ALIASES.get(tool_name.lower())
+                if _alias_match:
+                    _log(f"USE_TOOL alias: {tool_name} → {_alias_match}")
+                    tool_name = _alias_match
+                elif tool_name and tool_name[0].isupper() and tool_name.lower() != tool_name:
+                    # CC native tool names (Bash/Read/Edit/Write/Glob/Grep/WebFetch/WebSearch)
+                    _lower = tool_name.lower()
+                    _log(f"USE_TOOL lowering CC native: {tool_name} → {_lower}")
+                    tool_name = _lower
                 tool_args_raw = args.get("arguments", {})
                 _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
                 # Unwrap JSON string arguments (CC sometimes double/triple-encodes)

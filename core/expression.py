@@ -367,6 +367,19 @@ def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = Non
 
         key = expr
 
+        # ── Special virtual keys ──
+        # ${conv.relay}   → conv-wide default relay_id
+        # ${agent.relay}  → per-agent default relay_id (falls back to conv-wide)
+        if key in ("conv.relay", "agent.relay") and conversation_id:
+            try:
+                from core.relay_bindings import get_default
+                _agent = params.get("agent_name", "") if key == "agent.relay" else ""
+                _rid = get_default(conversation_id, _agent)
+                if _rid:
+                    return _return_val(_rid)
+            except Exception:
+                pass
+
         # ── Unified resolution: secrets cascade → params cascade ──
         # 1. Secrets: flow(n/a) → conv → user → global
         val, found = _cascade_secret(key, exact_scope=exact_scope)

@@ -356,6 +356,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         Also updates self._cc_catchup_idx so the same messages aren't sent twice
         (shared between initial, preempt, and inter-turn catch-up).
         """
+        # Sub-conversations (delegate tasks) are isolated by design —
+        # no multi-agent catch-up, and they don't exist in the store so
+        # load_agent_context raises ValueError.
+        if not conv_id or "::task::" in conv_id or "::delegate::" in conv_id:
+            return ""
         try:
             from core.conversation_store import ConversationStore
             store = ConversationStore.instance()

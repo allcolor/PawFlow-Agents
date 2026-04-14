@@ -288,6 +288,17 @@ class StreamEmitter(AgentEmitter):
         agent = self.agent
         _tid = self._task_id
         _ctx = self.ctx
+        # Tag thinking events with agent_delegate source in delegate_reply
+        # turns so the UI groups them under the private delegate frame.
+        _tm = (_ctx.get("_turn_mode") or {}) if isinstance(_ctx, dict) else {}
+        _delegate_src = None
+        if (_tm.get("type") == "delegate_reply"
+                and _tm.get("source_agent")):
+            _delegate_src = {
+                "type": "agent_delegate",
+                "from": agent_name or "",
+                "to": _tm["source_agent"],
+            }
 
         def on_thinking(text: str):
             if not agent._is_current_generation(gen_key, generation):
@@ -297,6 +308,8 @@ class StreamEmitter(AgentEmitter):
                     "text": text,
                     "agent_name": agent_name or "",
                 }
+                if _delegate_src:
+                    evt["source"] = _delegate_src
                 if _tid:
                     evt["task_id"] = _tid
                     evt["task_iteration"] = _ctx.get("_task_iteration", 0)

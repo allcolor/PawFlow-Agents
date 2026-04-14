@@ -720,6 +720,9 @@ function connectSSE(cid, onReady) {
     };
     if (data.parent_tc_id) tcExtra.parent_tc_id = data.parent_tc_id;
     const tcEl = addMsg('tool_call', data.tool, tcExtra);
+    // Tag owning agent so the `done` handler can scope its cleanup
+    // (otherwise agent A's done closes agent B's still-live tools).
+    if (tcEl) tcEl.dataset.agent = (tcAgent || '').toLowerCase();
     // Move into task block if this is a task event
     if (data.task_id && tcEl && !data.parent_tc_id) {
       const tb = _getTaskBlock(data.task_id, data.task_iteration, tcAgent);
@@ -985,14 +988,18 @@ function connectSSE(cid, onReady) {
     _cancelledAgents.delete(doneAgent.toLowerCase());  // allow new events for next turn
     // Finalize any open thinking block for this agent
     finalizeThinking(doneAgent);
-    // Close any pending tool calls (force stop = tool result never arrives)
+    // Close any pending tool calls owned by THIS agent only — other
+    // agents may still be running concurrently.
+    const _doneAgentKey = (doneAgent || '').toLowerCase();
     document.querySelectorAll('.tc-bullet.pending').forEach(bullet => {
+      const row = bullet.closest('[data-agent]') || bullet.closest('.msg');
+      const rowAgent = row && row.dataset ? (row.dataset.agent || '').toLowerCase() : '';
+      if (rowAgent && rowAgent !== _doneAgentKey) return;
       bullet.classList.remove('pending');
       bullet.classList.add('done');
-      // Remove BG/kill buttons (tool is no longer running)
-      const row = bullet.closest('.msg');
-      if (row) {
-        row.querySelectorAll('.tc-bg-btn, .tc-kl-btn').forEach(b => b.remove());
+      const msgRow = bullet.closest('.msg');
+      if (msgRow) {
+        msgRow.querySelectorAll('.tc-bg-btn, .tc-kl-btn').forEach(b => b.remove());
       }
     });
     trackAgentDone(doneAgent);

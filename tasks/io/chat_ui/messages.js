@@ -197,6 +197,11 @@ function addMsg(role, text, extra) {
       const tcId = (extra && extra.tc_id) || '';
       if (tcId) _inner.dataset.tcId = tcId;
       _inner.dataset.tool = toolName;
+      // Tag the agent that owns this tool so the `done` handler can
+      // scope its pending-bullet cleanup correctly.
+      const _ownerAgent = (extra && (extra.agent_name
+          || (extra.source && extra.source.from))) || '';
+      if (_ownerAgent) _inner.dataset.agent = String(_ownerAgent).toLowerCase();
       if (args && args.path) _inner.dataset.path = args.path;
       if (args && args.command) _inner.dataset.command = args.command.substring(0, 200);
       const isLive = extra && extra.live;

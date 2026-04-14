@@ -30,7 +30,7 @@ class ToolApprovalGate:
         # Memory (read)
         "recall", "semantic_recall",
         # Info / help
-        "pawflow_help", "list_secrets", "get_agent_results",
+        "pawflow_help", "list_secrets",
         # File read
         "read", "list_dir", "stat", "exists", "glob", "grep",
         # Display / media info

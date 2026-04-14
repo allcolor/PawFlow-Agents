@@ -46,7 +46,6 @@ from core.handlers import (  # noqa: F401
     ExecuteScriptHandler,
     FlowManagerHandler,
     ForgetHandler,
-    GetAgentResultsHandler,
     GetToolSchemaHandler,
     HTTPToolHandler,
     ImageGenerationHandler,
@@ -295,7 +294,6 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ListSecretsHandler())
     registry.register(ManageResourceHandler())
     registry.register(SpawnAgentsHandler())
-    registry.register(GetAgentResultsHandler())
     registry.register(ShowFileHandler())
     registry.register(ReadParentContextHandler())
 

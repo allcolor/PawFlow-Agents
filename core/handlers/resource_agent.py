@@ -1025,52 +1025,6 @@ class SpawnAgentsHandler(ToolHandler):
             logger.error("[bg-delegate] wake failed: %s", e)
 
 
-class GetAgentResultsHandler(ToolHandler):
-    """Retrieve results from previously spawned background agents."""
-
-    def __init__(self):
-        pass
-
-    @property
-    def name(self) -> str:
-        return "get_agent_results"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Retrieve results from sub-agents that were previously spawned in\n"
-            "the background using delegate with wait=false.\n\n"
-            "When you call delegate(wait=false), it returns immediately with a list\n"
-            "of task_ids. Use this tool to poll for their completion and collect\n"
-            "the responses.\n\n"
-            "Parameters:\n"
-            "  task_ids -- array of task ID strings returned by the delegate call.\n\n"
-            "Each result includes the agent name, status (running / done / error),\n"
-            "the agent's response text, token usage, and tools called.\n\n"
-            "NOTE: In the current implementation, background agent results are not\n"
-            "persisted -- prefer delegate with wait=true (the default) unless you\n"
-            "have a specific reason to run agents in the background."
-        )
-
-    @property
-    def parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "task_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of task IDs to check",
-                },
-            },
-            "required": ["task_ids"],
-        }
-
-    def execute(self, arguments: Dict[str, Any]) -> str:
-        return "Error: get_agent_results is not supported. Use delegate with wait=true (default)."
-
-
-
 class ShowFileHandler(ToolHandler):
     """Display a file in the chat UI viewer (images, PDFs, text, code)."""
 

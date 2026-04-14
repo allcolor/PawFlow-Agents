@@ -581,15 +581,18 @@ CRUD operations: create, update, delete, list, get, activate, deactivate
 Activation scopes a resource to the current conversation.
 
 ### delegate tool
-Delegate work to sub-agents in parallel:
+Fire-and-forget delegation to other agents. Returns IMMEDIATELY — you are
+not blocked. The target's reply arrives later as a private
+`agent_delegate(from, to)` message that wakes or preempts you:
 ```
 delegate(tasks=[
   {"agent": "analyst", "message": "Analyze this data"},
   {"agent": "writer", "message": "Write a report on..."}
-], wait=true)
+])
 ```
-Sub-agents run their own tool-use loops with their configured tools.
-Depth limit prevents infinite recursion (default: 1 level).
+Default `context="shared"` routes the message into the target's own
+conversation context. Use `context="isolated"` or `context="last:N"`
+only when you need a self-contained sub-agent with an empty workspace.
 
 ### show_file tool
 Display a file in the chat viewer:

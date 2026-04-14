@@ -58,7 +58,6 @@ from core.handlers.memory import (  # noqa: F401
 from core.handlers.resource_agent import (  # noqa: F401
     ManageResourceHandler,
     SpawnAgentsHandler,
-    GetAgentResultsHandler,
     ShowFileHandler,
 )
 from core.handlers.task_management import (  # noqa: F401

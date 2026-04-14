@@ -46,7 +46,7 @@ class AgentToolConfigMixin:
             DeletePlanHandler,
             CreateToolHandler, ExecuteScriptHandler,
             FlowManagerHandler,
-            ForgetHandler, GetAgentResultsHandler,
+            ForgetHandler,
             ImageGenerationHandler, ImageModelInfoHandler, VideoGenerationHandler, AudioGenerationHandler,
             LinkIdentityHandler, ManageResourceHandler,
             NotifyUserHandler,

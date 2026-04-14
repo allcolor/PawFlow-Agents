@@ -247,7 +247,6 @@ flow node, with the type `tool.<handler_name>`.
 | `tool.notify_user` | Send a notification to the user |
 | `tool.ask_user` | Ask the user a question and wait for a reply |
 | `tool.delegate` | Spawn or delegate work to another agent |
-| `tool.get_agent_results` | Retrieve results from a delegated agent |
 | `tool.show_file` | Display a file to the user |
 | `tool.manage_flow` | Manage flows (start, stop, status) |
 | `tool.store_secret` | Store a secret securely |

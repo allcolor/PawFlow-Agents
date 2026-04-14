@@ -98,11 +98,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         if client:
             self._wire_embed_fn(registry, client)
 
-        # Set up SubAgentExecutor for delegate/get_agent_results
+        # Set up SubAgentExecutor for delegate
         from core.agent_executor import SubAgentExecutor
-        from core.tool_registry import (
-            SpawnAgentsHandler, GetAgentResultsHandler,
-        )
+        from core.tool_registry import SpawnAgentsHandler
         # Create a resolver closure for per-agent LLM service routing
         _self = self
         def _client_resolver(svc_id, uid):

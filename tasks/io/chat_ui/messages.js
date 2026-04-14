@@ -197,8 +197,17 @@ function addMsg(role, text, extra) {
       const tcId = (extra && extra.tc_id) || '';
       if (tcId) _inner.dataset.tcId = tcId;
       _inner.dataset.tool = toolName;
-      _inner.innerHTML = timeHtml + '<span class="tc-bullet done">\u25cf</span> '
-          + escapeHtml(_toolCallSummary(toolName, args || {}));
+      if (args && args.path) _inner.dataset.path = args.path;
+      if (args && args.command) _inner.dataset.command = args.command.substring(0, 200);
+      const isLive = extra && extra.live;
+      const bulletClass = isLive ? 'pending' : 'done';
+      const bgBtn = (tcId && isLive) ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="Run in background">\u2192 BG</button>' : '';
+      const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="Kill">\u2718</button>' : '';
+      if (toolName === 'edit' && args && args.path) {
+        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
+      } else {
+        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
+      }
     } else if (role === 'tool_result') {
       const tcId = (extra && extra.tc_id) || '';
       if (tcId) {

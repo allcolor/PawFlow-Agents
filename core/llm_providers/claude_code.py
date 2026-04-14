@@ -630,6 +630,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # agent_delegate source so the UI groups it under the private
             # delegate block instead of the main chat.
             _tm = _agent_ctx.get("_turn_mode") or {}
+            if event_type in ("tool_call", "token"):
+                logger.info("[pub-debug] event=%s agent=%s turn_mode=%s has_src=%s",
+                            event_type, agent_name, _tm, "source" in data)
             if (_tm.get("type") == "delegate_reply"
                     and _tm.get("source_agent")
                     and "source" not in data):

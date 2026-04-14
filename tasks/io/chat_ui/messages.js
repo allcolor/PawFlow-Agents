@@ -182,7 +182,9 @@ function addMsg(role, text, extra) {
   if (_isDelegateMsg) {
     const _from = extra.source.from || '?';
     const _to = extra.source.to || '?';
-    const _key = 'delegate-shared::' + _from + '::' + _to;
+    // Bidirectional key: both A→B and B→A land in the same block.
+    const _pair = [_from, _to].map(s => s.toLowerCase()).sort();
+    const _key = 'delegate-shared::' + _pair[0] + '::' + _pair[1];
     let _existing = document.querySelector('[data-delegate-key="' + CSS.escape(_key) + '"]');
     const _inner = document.createElement('div');
     _inner.className = 'delegate-message msg-inner-' + role;

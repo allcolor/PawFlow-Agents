@@ -183,12 +183,9 @@ function addMsg(role, text, extra) {
     const _from = extra.source.from || '?';
     const _to = extra.source.to || '?';
     const _key = 'delegate-shared::' + _from + '::' + _to;
-    // Reuse an existing shared-delegate block for this (from→to) pair so
-    // all messages/tools land in the same frame instead of one block each.
     let _existing = document.querySelector('[data-delegate-key="' + CSS.escape(_key) + '"]');
-    // Build the inner fragment for this message
     const _inner = document.createElement('div');
-    _inner.className = 'delegate-message';
+    _inner.className = 'delegate-message msg-inner-' + role;
     if (role === 'tool_call' || role === 'tool') {
       const toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
       const toolArgs = (extra && extra.tool_args) || (extra && extra.arguments) || {};
@@ -203,7 +200,7 @@ function addMsg(role, text, extra) {
       const tcId = (extra && extra.tc_id) || '';
       if (tcId) {
         const tcEl = (_existing || document).querySelector('[data-tc-id="' + tcId + '"]');
-        if (tcEl) { _attachToolResult(tcEl, text || ''); return el; }
+        if (tcEl) { _attachToolResult(tcEl, text || ''); el.style.display = 'none'; return el; }
       }
       _inner.innerHTML = timeHtml + '<pre class="tool-result">' + escapeHtml((text || '').substring(0, 2000)) + '</pre>';
     } else {
@@ -211,7 +208,10 @@ function addMsg(role, text, extra) {
     }
     if (_existing) {
       const _body = _existing.querySelector('.delegate-body');
-      if (_body) { _body.appendChild(_inner); return el; }
+      if (_body) _body.appendChild(_inner);
+      el.style.display = 'none';
+      el._delegateInner = _inner;
+      return _inner;
     }
     const _arrow = '\u{1F500} <span class="delegate-src">'
         + escapeHtml(displayAgentName(_from)) + '</span> \u2192 '
@@ -230,6 +230,7 @@ function addMsg(role, text, extra) {
     _details.appendChild(_summary);
     _details.appendChild(_body);
     el.appendChild(_details);
+    el._delegateInner = _inner;
   } else if (role === 'assistant') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool_call' || role === 'tool') {

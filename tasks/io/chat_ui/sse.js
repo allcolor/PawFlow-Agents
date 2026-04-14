@@ -124,11 +124,21 @@ function connectSSE(cid, onReady) {
       const content = document.createElement('div');
       content.style.cssText = 'font-size:12px;color:#9ca3af;font-style:italic;white-space:pre-wrap;max-height:300px;overflow-y:auto;';
       details.appendChild(content);
-      if (data.task_id) {
+      // If this thinking belongs to a delegate-reply turn, place the
+      // block inside the shared delegate frame for (from→to).
+      let _placed = false;
+      const _dsrc = data.source || {};
+      if (_dsrc.type === 'agent_delegate' && _dsrc.from && _dsrc.to) {
+        const _dkey = 'delegate-shared::' + _dsrc.from + '::' + _dsrc.to;
+        const _dblock = document.querySelector('[data-delegate-key="' + CSS.escape(_dkey) + '"]');
+        const _dbody = _dblock && _dblock.querySelector('.delegate-body');
+        if (_dbody) { _dbody.appendChild(details); _placed = true; }
+      }
+      if (!_placed && data.task_id) {
         const tb = _getTaskBlock(data.task_id, data.task_iteration, agent);
-        if (tb) { tb.content.appendChild(details); scrollBottom(); }
-        else { document.getElementById('messages').appendChild(details); }
-      } else {
+        if (tb) { tb.content.appendChild(details); scrollBottom(); _placed = true; }
+      }
+      if (!_placed) {
         const _msgContainer = document.getElementById('messages');
         const _typingEl = document.getElementById('typing');
         if (_typingEl) _msgContainer.insertBefore(details, _typingEl);
@@ -175,6 +185,9 @@ function connectSSE(cid, onReady) {
     const src = data.source || {type: 'agent', name: agent};
     if (!s.el) {
       s.el = addMsg('assistant', '', {source: src, msg_id: s.msg_id});
+      // If this is a delegate reply, route updates into the inner node
+      // inside the delegate block instead of the outer wrapper.
+      if (s.el && s.el._delegateInner) s.el = s.el._delegateInner;
       // Tag with agent name and msg_id for done/meta lookup
       if (s.el) {
         s.el.dataset.agent = (agent || '').toLowerCase();

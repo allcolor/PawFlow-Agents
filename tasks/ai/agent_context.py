@@ -1223,15 +1223,17 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 import json as _json_ts
                 _ms = _json_ts.loads(_msg_source_raw) if isinstance(_msg_source_raw, str) else _msg_source_raw
                 if isinstance(_ms, dict) and _ms.get("type") == "agent_delegate":
-                    # kind="request" (B was just delegated to by A): B must
-                    # auto-tag its final reply agent_delegate(from=B, to=A).
-                    # kind="reply" (A receives B's answer): normal user turn
-                    # — A produces user-facing text, no auto-tag.
-                    if _ms.get("kind") != "reply":
-                        _turn_mode = {
-                            "type": "delegate_reply",
-                            "source_agent": _ms.get("from", ""),
-                        }
+                    # Either kind: this turn is part of an ongoing
+                    # delegate thread (A↔B). Tag outputs as agent_delegate
+                    # so SSE/persisted messages route to the shared
+                    # delegate block, not the main chat. The kind only
+                    # decides whether to auto-preempt the peer at end of
+                    # turn (request → yes, reply → no, see agent_core).
+                    _turn_mode = {
+                        "type": "delegate_reply",
+                        "source_agent": _ms.get("from", ""),
+                        "wake_kind": _ms.get("kind", "request"),
+                    }
         except Exception:
             pass
 

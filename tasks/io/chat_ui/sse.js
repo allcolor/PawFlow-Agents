@@ -129,7 +129,10 @@ function connectSSE(cid, onReady) {
       let _placed = false;
       const _dsrc = data.source || {};
       if (_dsrc.type === 'agent_delegate' && _dsrc.from && _dsrc.to) {
-        const _dkey = 'delegate-shared::' + _dsrc.from + '::' + _dsrc.to;
+        // MUST match messages.js bidirectional key: sorted pair so
+        // both A→B and B→A land in the same shared delegate block.
+        const _dpair = [_dsrc.from, _dsrc.to].map(s => String(s).toLowerCase()).sort();
+        const _dkey = 'delegate-shared::' + _dpair[0] + '::' + _dpair[1];
         const _dblock = document.querySelector('[data-delegate-key="' + CSS.escape(_dkey) + '"]');
         const _dbody = _dblock && _dblock.querySelector('.delegate-body');
         if (_dbody) { _dbody.appendChild(details); _placed = true; }

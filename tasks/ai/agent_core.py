@@ -1410,16 +1410,8 @@ class AgentCoreMixin:
                         "[delegate-reply-check] turn_mode=%s src=%s "
                         "reply_len=%d",
                         _tm_end, _src_agent, len(_reply_text))
-                    # Auto-preempt only if the wake was an actual request.
-                    # If we were woken by a reply, the peer is the one
-                    # waiting on a fresh question — re-preempting them
-                    # with our follow-up text would create a ping-pong.
-                    # The agent must explicitly call delegate() to
-                    # continue the thread instead.
-                    _wake_kind = _tm_end.get("wake_kind", "request")
                     if (_tm_end.get("type") == "delegate_reply"
-                            and _src_agent and _reply_text
-                            and _wake_kind != "reply"):
+                            and _src_agent and _reply_text):
                         try:
                             from core.handlers.resource_agent import SpawnAgentsHandler
                             from tasks.ai.agent_loop import AgentLoopTask

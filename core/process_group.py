@@ -94,8 +94,11 @@ class ProcessGroup:
     def load_from_ref(self, base_dir: str = ".") -> bool:
         """Load tasks and relations from the external flow_ref file.
 
-        Returns True if loading succeeded, False otherwise.
         Only applies to sub-flows (flow_ref is not None).
+        Raises FileNotFoundError / json.JSONDecodeError / ValueError on
+        bad path, malformed JSON, or version mismatch — the parent flow
+        must fail fast rather than silently synthesize an executeFlow
+        pointing at a broken / wrong-version sub-flow.
         """
         if not self.flow_ref:
             return False
@@ -105,29 +108,40 @@ class ProcessGroup:
         full_path = os.path.join(base_dir, path) if not os.path.isabs(path) else path
 
         if not os.path.exists(full_path):
-            return False
+            raise FileNotFoundError(
+                f"ProcessGroup '{self.id}': flow_ref path not found: {full_path}")
 
-        try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                flow_data = json.load(f)
+        with open(full_path, "r", encoding="utf-8") as f:
+            flow_data = json.load(f)
 
-            self.tasks = flow_data.get("tasks", {})
-            # Tag all tasks with group_id
-            for tid in self.tasks:
-                self.tasks[tid]["group_id"] = self.id
-            self.relations = flow_data.get("relations", [])
+        # Version pinning: if flow_ref declares a version, the referenced
+        # file MUST declare the same one. Breaking-change protection —
+        # without this, a parent flow silently runs against whatever the
+        # child file happens to contain at load time.
+        expected_version = self.flow_ref.get("version", "")
+        if expected_version:
+            actual_version = flow_data.get("version", "")
+            if actual_version != expected_version:
+                raise ValueError(
+                    f"ProcessGroup '{self.id}': flow_ref version mismatch for "
+                    f"'{path}' — expected '{expected_version}', "
+                    f"got '{actual_version or '(none)'}'.")
 
-            # Sync ports from entries/exits of the referenced flow
-            entries = flow_data.get("entries", [])
-            exits = flow_data.get("exits", [])
-            if entries:
-                self.input_ports = entries
-            if exits:
-                self.output_ports = exits
+        self.tasks = flow_data.get("tasks", {})
+        # Tag all tasks with group_id
+        for tid in self.tasks:
+            self.tasks[tid]["group_id"] = self.id
+        self.relations = flow_data.get("relations", [])
 
-            return True
-        except Exception:
-            return False
+        # Sync ports from entries/exits of the referenced flow
+        entries = flow_data.get("entries", [])
+        exits = flow_data.get("exits", [])
+        if entries:
+            self.input_ports = entries
+        if exits:
+            self.output_ports = exits
+
+        return True
 
     # -- Serialization --
 

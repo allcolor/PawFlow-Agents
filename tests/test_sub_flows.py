@@ -107,3 +107,56 @@ def test_execute_flow_missing_path_errors(tmp_path):
     from core import TaskError
     with pytest.raises(TaskError):
         task.execute(FlowFile(content=b""))
+
+
+def test_flow_ref_version_mismatch_raises(tmp_path):
+    """flow_ref.version must match the loaded child's version field."""
+    child_flow = _write_flow(tmp_path, "child", {
+        "id": "child", "name": "Child", "version": "2.0.0",
+        "tasks": {}, "relations": [],
+    })
+    parent_cfg = {
+        "id": "parent", "name": "Parent", "version": "1.0.0",
+        "tasks": {},
+        "groups": {"pg1": {
+            "name": "Wrapped",
+            "flow_ref": {"path": child_flow, "version": "1.0.0"},
+        }},
+        "relations": [],
+    }
+    with pytest.raises(ValueError, match="version mismatch"):
+        FlowParser.parse(parent_cfg)
+
+
+def test_flow_ref_version_match_ok(tmp_path):
+    """Matching versions load without error."""
+    child_flow = _write_flow(tmp_path, "child", {
+        "id": "child", "name": "Child", "version": "1.2.3",
+        "tasks": {}, "relations": [],
+    })
+    parent_cfg = {
+        "id": "parent", "name": "Parent", "version": "1.0.0",
+        "tasks": {},
+        "groups": {"pg1": {
+            "name": "Wrapped",
+            "flow_ref": {"path": child_flow, "version": "1.2.3"},
+        }},
+        "relations": [],
+    }
+    flow = FlowParser.parse(parent_cfg)
+    assert "pg1" in flow.tasks
+
+
+def test_flow_ref_missing_path_raises(tmp_path):
+    """A flow_ref pointing at a non-existent file must fail at parse."""
+    parent_cfg = {
+        "id": "parent", "name": "Parent", "version": "1.0.0",
+        "tasks": {},
+        "groups": {"pg1": {
+            "name": "Wrapped",
+            "flow_ref": {"path": str(tmp_path / "missing.json")},
+        }},
+        "relations": [],
+    }
+    with pytest.raises(FileNotFoundError):
+        FlowParser.parse(parent_cfg)

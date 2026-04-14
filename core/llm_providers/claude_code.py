@@ -626,6 +626,18 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             if _task_id:
                 data['task_id'] = _task_id
                 data['task_iteration'] = _agent_ctx.get("_task_iteration", 0)
+            # If this turn is a delegate reply, tag the event with
+            # agent_delegate source so the UI groups it under the private
+            # delegate block instead of the main chat.
+            _tm = _agent_ctx.get("_turn_mode") or {}
+            if (_tm.get("type") == "delegate_reply"
+                    and _tm.get("source_agent")
+                    and "source" not in data):
+                data["source"] = {
+                    "type": "agent_delegate",
+                    "from": agent_name or "",
+                    "to": _tm["source_agent"],
+                }
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(

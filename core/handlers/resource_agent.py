@@ -769,6 +769,35 @@ class SpawnAgentsHandler(ToolHandler):
         except Exception:
             return False
 
+    # Per-pair short-window dedup: LLMs sometimes call delegate twice
+    # in rapid succession with identical content (hallucinated retry,
+    # or mid-turn "just checking"). Skipping the duplicate prevents
+    # double blocks in the UI and a double wake/preempt of the target.
+    _SHARED_DEDUP_TTL_SEC = 30
+    _shared_dedup: Dict[str, float] = {}
+    _shared_dedup_lock = threading.Lock()
+
+    def _is_duplicate_shared_delegate(self, conv_id: str, from_agent: str,
+                                       to_agent: str, message: str) -> bool:
+        import hashlib as _h
+        import time as _t
+        _key = "|".join([
+            conv_id, from_agent, to_agent,
+            _h.sha1(message.encode("utf-8", errors="replace")).hexdigest(),
+        ])
+        now = _t.time()
+        with self._shared_dedup_lock:
+            # Garbage-collect old entries so the dict doesn't grow
+            # unboundedly over a long conversation.
+            _cutoff = now - self._SHARED_DEDUP_TTL_SEC
+            for _k in [k for k, ts in self._shared_dedup.items() if ts < _cutoff]:
+                self._shared_dedup.pop(_k, None)
+            last = self._shared_dedup.get(_key, 0.0)
+            if last and (now - last) < self._SHARED_DEDUP_TTL_SEC:
+                return True
+            self._shared_dedup[_key] = now
+        return False
+
     def _deliver_shared_delegate(self, from_agent: str, to_agent: str,
                                  message: str, user_id: str) -> Dict[str, str]:
         """Persist a private delegate message and trigger the target.
@@ -786,6 +815,14 @@ class SpawnAgentsHandler(ToolHandler):
         """
         import uuid as _uuid
         conv_id = self._conversation_id or ""
+        # Dedup: skip if the same (from, to, message) was just sent.
+        if conv_id and self._is_duplicate_shared_delegate(
+                conv_id, from_agent, to_agent, message):
+            logger.info(
+                "[delegate-shared] duplicate within %ds — skipped "
+                "(%s -> %s)",
+                self._SHARED_DEDUP_TTL_SEC, from_agent, to_agent)
+            return {"state": "duplicate (ignored)"}
         _msg_id = _uuid.uuid4().hex[:12]
         _src = {
             "type": "agent_delegate",

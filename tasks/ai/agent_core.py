@@ -1341,6 +1341,52 @@ class AgentCoreMixin:
                     logger.info("[agent:%s] publishing done (agent=%s)",
                                 conversation_id[:8], ctx.get("active_agent_name", ""))
                     emitter.on_done(result)
+                    # If this was a delegate-reply turn, wake/preempt the
+                    # caller so they can read the result. Without this, the
+                    # reply is persisted privately but the caller never
+                    # sees it until their next user message.
+                    _tm_end = ctx.get("_turn_mode") or {}
+                    _src_agent = _tm_end.get("source_agent") or ""
+                    if (_tm_end.get("type") == "delegate_reply"
+                            and _src_agent and response_content):
+                        try:
+                            from core.handlers.resource_agent import SpawnAgentsHandler
+                            from tasks.ai.agent_loop import AgentLoopTask
+                            import uuid as _uuid_dr
+                            _inst = AgentLoopTask._live_instance
+                            _self_name = ctx.get("active_agent_name", "") or ""
+                            _reply_src = {
+                                "type": "agent_delegate",
+                                "from": _self_name,
+                                "to": _src_agent,
+                            }
+                            _reply_mid = _uuid_dr.uuid4().hex[:12]
+                            _caller_key = (
+                                f"{conversation_id}:{_src_agent}"
+                                if _src_agent else conversation_id)
+                            _running = False
+                            if _inst:
+                                with _inst._active_contexts_lock:
+                                    _running = _caller_key in _inst._active_contexts
+                            if _inst and _running:
+                                logger.info(
+                                    "[delegate-reply] caller '%s' running — preempt",
+                                    _src_agent)
+                                SpawnAgentsHandler._preempt_caller(
+                                    _inst, conversation_id, _src_agent,
+                                    response_content, _reply_mid, _reply_src)
+                            elif _inst:
+                                logger.info(
+                                    "[delegate-reply] caller '%s' idle — wake",
+                                    _src_agent)
+                                SpawnAgentsHandler._wake_caller(
+                                    _inst, conversation_id, _src_agent,
+                                    user_id, response_content, _reply_mid,
+                                    source=_reply_src)
+                        except Exception as _dre:
+                            logger.error(
+                                "[delegate-reply] wake/preempt failed: %s", _dre,
+                                exc_info=True)
                 except Exception as _done_err:
                     logger.error("[agent:%s] CRITICAL: on_done failed: %s",
                                  conversation_id[:8], _done_err, exc_info=True)

@@ -297,7 +297,7 @@ class LLMConnectionService(BaseService):
                 "description": "Fallback model (used when primary fails)",
             },
             "timeout": {
-                "type": "integer", "default": 60,
+                "type": "integer", "default": 180,
                 "description": "Request timeout in seconds",
             },
             "max_retries": {

@@ -2307,7 +2307,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         except Exception as e:
             sys.stderr.write(f"[FSRelay] Connection error: {e}\n")
         finally:
-            _close_all_terminals()
+            # Guard: on early connect errors, _close_all_terminals may not
+            # be defined yet (its definition sits past the handshake).
+            _ct = locals().get('_close_all_terminals')
+            if _ct:
+                _ct()
             # Stop watchdog
             try:
                 _watchdog_stop.set()

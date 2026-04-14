@@ -489,16 +489,26 @@ class ClaudeCodeSessionMixin:
             logger.error("Failed to get/create tool relay: %s", e)
         return "", ""
 
-    def _setup_credentials(self, workdir: str, pool_index: int = -1):
+    # Proactively refresh OAuth tokens that have less than this many
+    # seconds of validity left, so we rarely hit mid-stream 'Not logged
+    # in' failures (refresh is quick, mid-turn death is catastrophic).
+    _OAUTH_REFRESH_MIN_TTL_SEC = 30 * 60
+
+    def _setup_credentials(self, workdir: str, pool_index: int = -1,
+                            exclude_indices=None):
         """Write .credentials.json in session workdir for Claude Code auth.
 
         If ANTHROPIC_API_KEY is set (via api_key config), skips OAuth
         credentials entirely — CC uses the API key directly.
 
         Otherwise tries credentials from the pool. If a credential is
-        expired, attempts refresh. If refresh fails, removes it from the
-        pool and tries the next. Only raises if NO valid credential can
-        be obtained.
+        expired OR will expire within _OAUTH_REFRESH_MIN_TTL_SEC, attempts
+        a proactive refresh. If refresh fails, removes it from the pool
+        and tries the next. exclude_indices skips pool slots that have
+        already failed during the current stream (set by the retry loop
+        after a mid-stream auth error).
+
+        Only raises if NO valid credential can be obtained.
         """
         from core.llm_client import LLMClientError
         import time as _time
@@ -520,15 +530,25 @@ class ClaudeCodeSessionMixin:
                 "Claude Code credentials not configured. "
                 "Use /cls to authenticate with your Claude subscription.")
 
+        _exclude = set(exclude_indices or ())
+
         # Build ordered list of indices to try
-        if 0 <= pool_index < len(pool):
-            indices = [pool_index] + [i for i in range(len(pool)) if i != pool_index]
+        if 0 <= pool_index < len(pool) and pool_index not in _exclude:
+            indices = [pool_index] + [
+                i for i in range(len(pool))
+                if i != pool_index and i not in _exclude]
         else:
             # Round-robin start, then try all others
             with ClaudeCodeSessionMixin._pool_lock:
                 start = ClaudeCodeSessionMixin._pool_counter % len(pool)
                 ClaudeCodeSessionMixin._pool_counter += 1
-            indices = [(start + i) % len(pool) for i in range(len(pool))]
+            indices = [
+                (start + i) % len(pool) for i in range(len(pool))
+                if (start + i) % len(pool) not in _exclude]
+        if not indices:
+            raise LLMClientError(
+                "All Claude Code credentials in the pool have already "
+                "failed during this stream. Use /cls to re-authenticate.")
 
         dead_indices = []
         for _pidx in indices:
@@ -541,11 +561,14 @@ class ClaudeCodeSessionMixin:
                 dead_indices.append(_pidx)
                 continue
 
-            # Check expiry — refresh if expired or near expiry (5min buffer)
+            # Proactive refresh: if the token is expired OR will expire
+            # inside _OAUTH_REFRESH_MIN_TTL_SEC, refresh now so a
+            # long-running agent turn doesn't hit 'Not logged in'
+            # half-way through.
             if expires_at:
                 _exp_s = int(expires_at) / 1000 if int(expires_at) > 1e12 else int(expires_at)
                 _remaining = _exp_s - _time.time()
-                if _remaining < 300 and refresh_token:
+                if _remaining < self._OAUTH_REFRESH_MIN_TTL_SEC and refresh_token:
                     logger.info("OAuth token [pool:%d] %s — attempting refresh", _pidx,
                                 "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
                     try:

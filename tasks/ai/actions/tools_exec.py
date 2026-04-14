@@ -258,27 +258,23 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
             # Persist tool_call + tool_result messages in conversation
             if _call_conv_id:
                 import uuid as _uuid
+                from core.llm_client import stamp_message
                 tc_id = _uuid.uuid4().hex[:12]
-                _now = time.time()
                 msgs = [
-                    {
+                    stamp_message({
                         "role": "assistant", "content": "",
-                        "msg_id": _uuid.uuid4().hex[:12],
-                        "timestamp": _now,
                         "source": source,
                         "tool_calls": [{
                             "id": tc_id,
                             "name": _call_tool_name,
                             "arguments": _call_tool_args,
                         }],
-                    },
-                    {
+                    }),
+                    stamp_message({
                         "role": "tool",
                         "content": result_text,
                         "tool_call_id": tc_id,
-                        "msg_id": _uuid.uuid4().hex[:12],
-                        "timestamp": _now,
-                    },
+                    }),
                 ]
                 try:
                     from core.conversation_writer import ConversationWriter

@@ -155,6 +155,7 @@ class LLMMessage:
     thinking: str = ""  # LLM thinking/reasoning output (part of context, visible in transcript)
     is_error: bool = False  # True = LLM error message (displayed as error in UI)
     timestamp: float = 0.0  # creation time (epoch seconds)
+    seq: int = 0  # process-global monotonic creation order — tiebreaker when ts collides
 
     def __post_init__(self):
         if not self.msg_id:
@@ -163,6 +164,48 @@ class LLMMessage:
         if not self.timestamp:
             import time
             self.timestamp = time.time()
+        if not self.seq:
+            self.seq = _next_msg_seq()
+
+
+# Process-global monotonic counter — the only true ordering source when
+# two messages are created within the same time.time() tick (Windows ~16ms
+# resolution makes collisions common during fast tool-use loops). Combined
+# with `timestamp`, the (ts, seq) pair gives a strict, deterministic order
+# rooted in CREATION time — independent of enqueue/persist races.
+import itertools as _itertools
+import threading as _threading
+_msg_seq_counter = _itertools.count(1)
+_msg_seq_lock = _threading.Lock()
+
+
+def _next_msg_seq() -> int:
+    with _msg_seq_lock:
+        return next(_msg_seq_counter)
+
+
+def stamp_message(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """Set ts + seq + msg_id on a message dict at CREATION time.
+
+    Use this at every site that builds a raw dict instead of going
+    through LLMMessage. Returns the same dict for chaining. Idempotent
+    only if all three fields are already set — otherwise mints fresh
+    values (creation order is decided by the FIRST stamp call).
+
+    Producer rule: stamp at the moment the message is conceptually
+    created, NOT at enqueue. Otherwise (ts, seq) ordering on disk
+    diverges from the real creation order — exactly the bug this
+    helper exists to prevent.
+    """
+    import time as _time
+    import uuid as _uuid
+    if not msg.get("ts") and not msg.get("timestamp"):
+        msg["ts"] = _time.time()
+    if not msg.get("seq"):
+        msg["seq"] = _next_msg_seq()
+    if not msg.get("msg_id"):
+        msg["msg_id"] = _uuid.uuid4().hex[:12]
+    return msg
 
     @property
     def text_content(self) -> str:

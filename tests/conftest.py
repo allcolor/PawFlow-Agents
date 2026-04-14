@@ -117,6 +117,8 @@ def _isolate_data_dir(tmp_path_factory):
 
     _orig_validate = _cs_mod.ConversationStore._validate_message
 
+    from core.llm_client import _next_msg_seq
+
     @staticmethod
     def _validate_with_fill(m):
         if m.get("role") != "system":
@@ -124,6 +126,8 @@ def _isolate_data_dir(tmp_path_factory):
                 m["msg_id"] = _uuid_fill.uuid4().hex[:12]
             if not m.get("ts") and not m.get("timestamp"):
                 m["ts"] = _time_fill.time()
+            if not m.get("seq"):
+                m["seq"] = _next_msg_seq()
         return _orig_validate(m)
 
     _cs_mod.ConversationStore._validate_message = _validate_with_fill

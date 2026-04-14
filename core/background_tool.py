@@ -247,14 +247,13 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
     try:
         from core.conversation_writer import ConversationWriter
         import uuid as _bg_uuid
-        tool_msg = {
+        from core.llm_client import stamp_message
+        tool_msg = stamp_message({
             "role": "tool",
             "content": _result_content[:500],
             "tool_call_id": tc_id,
-            "msg_id": _bg_uuid.uuid4().hex[:12],
-            "ts": time.time(),
             "source": {"type": "system", "name": "background"},
-        }
+        })
         ConversationWriter.for_conversation(conv_id).enqueue([tool_msg])
     except Exception as e:
         logger.error("[bg-tool] failed to write tool_result to transcript: %s", e)
@@ -282,13 +281,12 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
                     f"The earlier tool_call returned '[Running in background]' as placeholder. "
                     f"Here is the actual result:\n\n{_result_content}]"
                 )
-            msg = {
+            from core.llm_client import stamp_message
+            msg = stamp_message({
                 "role": "user",
                 "content": content,
-                "msg_id": _bg_uuid.uuid4().hex[:12],
-                "ts": time.time(),
                 "source": {"type": "system", "name": "background"},
-            }
+            })
             ConversationWriter.for_conversation(conv_id).enqueue([msg])
         except Exception as e:
             logger.error("[bg-tool] failed to inject CC system message: %s", e)

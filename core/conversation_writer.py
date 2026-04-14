@@ -19,6 +19,28 @@ logger = logging.getLogger(__name__)
 _IDLE_TIMEOUT = 300  # 5 minutes idle → writer thread exits
 
 
+def _require_ts_seq(m: Dict) -> None:
+    """Hard invariant: every persisted message MUST carry creation `ts`
+    AND `seq`, set at the moment the message was minted (LLMMessage.
+    __post_init__ or equivalent producer code path). The writer is
+    forbidden to invent these — defaulting them here would silently
+    cover a producer bug and corrupt the (ts, seq) ordering on disk.
+    Same rule as msg_id: minted once at creation, never substituted.
+    """
+    if not m.get("ts") and not m.get("timestamp"):
+        raise ValueError(
+            f"ConversationWriter: missing 'ts' on message — every "
+            f"message must have a CREATION timestamp set by its "
+            f"producer (no enqueue-time fallback). msg_id="
+            f"{m.get('msg_id')!r}, role={m.get('role')!r}")
+    if not m.get("seq"):
+        raise ValueError(
+            f"ConversationWriter: missing 'seq' on message — every "
+            f"message must have a CREATION seq set by its producer "
+            f"(no enqueue-time fallback). msg_id="
+            f"{m.get('msg_id')!r}, role={m.get('role')!r}")
+
+
 class ConversationWriter:
 
     _instances: Dict[str, 'ConversationWriter'] = {}
@@ -60,10 +82,8 @@ class ConversationWriter:
         Stamps each message with ts=now if not already present.
         sse_events: list of {"type": str, "data": dict} to publish AFTER write.
         """
-        _now = time.time()
         for m in messages:
-            if "ts" not in m and "timestamp" not in m:
-                m["ts"] = _now
+            _require_ts_seq(m)
         evt = threading.Event() if wait else None
         self._queue.put({
             "op": "append",
@@ -85,10 +105,8 @@ class ConversationWriter:
                             sse_events: List[Dict] = None,
                             wait: bool = False) -> Optional[threading.Event]:
         """Enqueue an agent_flush operation (transcript + all contexts atomically)."""
-        _now = time.time()
         for m in public_messages + private_messages:
-            if "ts" not in m and "timestamp" not in m:
-                m["ts"] = _now
+            _require_ts_seq(m)
         evt = threading.Event() if wait else None
         self._queue.put({
             "op": "agent_flush",

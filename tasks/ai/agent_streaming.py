@@ -85,15 +85,16 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
         # Persist in transcript (display-only — NOT in agent context)
         try:
             from core.conversation_writer import ConversationWriter
-            import time as _t
-            ConversationWriter.for_conversation(conversation_id).enqueue([{
-                "role": "assistant",
-                "content": narration,
-                "source": {**(source or {}), "narrator": True},
-                "msg_id": msg_id,
-                "display_only": True,
-                "timestamp": _t.time(),
-            }])
+            from core.llm_client import stamp_message
+            ConversationWriter.for_conversation(conversation_id).enqueue([
+                stamp_message({
+                    "role": "assistant",
+                    "content": narration,
+                    "source": {**(source or {}), "narrator": True},
+                    "msg_id": msg_id,
+                    "display_only": True,
+                })
+            ])
         except Exception as _pe:
             logging.getLogger(__name__).debug(f"[narrator] persist failed: {_pe}")
     return narration

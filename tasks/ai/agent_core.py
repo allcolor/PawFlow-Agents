@@ -265,6 +265,11 @@ class AgentCoreMixin:
                         "source": msg.source,
                         "msg_id": getattr(msg, "msg_id", None),
                         "tool_call_id": getattr(msg, "tool_call_id", None),
+                        # Carry CREATION ts + seq so order on disk reflects
+                        # when the message was minted, not when the writer
+                        # happened to dequeue it.
+                        "ts": getattr(msg, "timestamp", 0) or None,
+                        "seq": getattr(msg, "seq", 0) or None,
                     }
                     if msg.thinking:
                         _store_msg["thinking"] = msg.thinking

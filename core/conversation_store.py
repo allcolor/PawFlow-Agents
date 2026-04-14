@@ -467,7 +467,15 @@ class ConversationStore:
                 existing_ids.add(mid)
 
     def _read_ctx_file(self, path: Path) -> List[Dict]:
-        """Read all messages from a context JSONL file."""
+        """Read all messages from a context JSONL file, sorted by (ts, seq).
+
+        File order is producer-FIFO but multi-producer races (different
+        agents writing to the same conv, late tool_results arriving after
+        newer turns) can put messages on disk in non-creation order.
+        We sort by (ts, seq) here so the order reflects when each
+        message was MINTED, not when the writer happened to flush it —
+        matching what the user saw in the live SSE stream.
+        """
         if not path.exists():
             return []
         result = []
@@ -479,6 +487,10 @@ class ConversationStore:
                         result.append(json.loads(line))
                     except json.JSONDecodeError:
                         continue
+        result.sort(key=lambda m: (
+            m.get("ts") or m.get("timestamp") or 0.0,
+            m.get("seq") or 0,
+        ))
         return result
 
     def _write_ctx_file(self, path: Path, messages: List[Dict]):
@@ -636,7 +648,14 @@ class ConversationStore:
 
     @staticmethod
     def _validate_message(m: Dict):
-        """Every message MUST have msg_id and timestamp. No exceptions."""
+        """Every message MUST have msg_id, timestamp, and seq. No exceptions.
+
+        msg_id, ts, and seq are minted at message CREATION
+        (LLMMessage.__post_init__ or stamp_message helper). Any code path
+        that builds a raw message dict and tries to persist it without
+        these fields is a bug — fail loudly here rather than letting
+        the writer invent fallback values that corrupt creation order.
+        """
         role = m.get("role", "")
         if role in ("system",):
             return  # system prompts are ephemeral, no msg_id needed
@@ -647,6 +666,10 @@ class ConversationStore:
         if not m.get("ts") and not m.get("timestamp"):
             raise ValueError(
                 f"BUG: message without timestamp — role={role}, "
+                f"msg_id={m.get('msg_id')}")
+        if not m.get("seq"):
+            raise ValueError(
+                f"BUG: message without seq — role={role}, "
                 f"msg_id={m.get('msg_id')}")
 
     # ══════════════════════════════════════════════════════════════════
@@ -1103,6 +1126,12 @@ class ConversationStore:
                         content += cu
                 msg["trace"] = trace
                 msg["content"] = content
+        # Sort by (creation ts, creation seq) — see _read_ctx_file for
+        # rationale. Same invariant: order = creation, not file position.
+        msgs.sort(key=lambda m: (
+            m.get("timestamp") or m.get("ts") or 0.0,
+            m.get("seq") or 0,
+        ))
         return msgs
 
     def load(self, cid: str, user_id: str = "") -> Optional[List[Dict]]:

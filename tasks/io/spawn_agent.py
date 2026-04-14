@@ -149,13 +149,15 @@ class SpawnAgentTask(BaseTask):
                 import uuid as _uuid_sa
                 _sa_msg_id = _uuid_sa.uuid4().hex[:12]
                 from core.conversation_writer import ConversationWriter
-                ConversationWriter.for_conversation(conv_id).enqueue([{
-                    "role": "assistant",
-                    "content": result.response,
-                    "source": source,
-                    "msg_id": _sa_msg_id,
-                    "timestamp": time.time(),
-                }])
+                from core.llm_client import stamp_message
+                ConversationWriter.for_conversation(conv_id).enqueue([
+                    stamp_message({
+                        "role": "assistant",
+                        "content": result.response,
+                        "source": source,
+                        "msg_id": _sa_msg_id,
+                    })
+                ])
                 ConversationEventBus.instance().publish_event(conv_id, "done", {
                     "response": result.response,
                     "msg_id": _sa_msg_id,
@@ -201,18 +203,18 @@ class SpawnAgentTask(BaseTask):
         bus = ConversationEventBus.instance()
 
         from core.conversation_writer import ConversationWriter
-        import uuid as _spawn_uuid
-        ConversationWriter.for_conversation(conv_id).enqueue([{
-            "role": "user",
-            "content": message,
-            "msg_id": _spawn_uuid.uuid4().hex[:12],
-            "source": {
-                "type": "flow",
-                "name": self.config.get("_service_id", "flow"),
-                "target_agent": agent_name,
-            },
-            "timestamp": time.time(),
-        }])
+        from core.llm_client import stamp_message
+        ConversationWriter.for_conversation(conv_id).enqueue([
+            stamp_message({
+                "role": "user",
+                "content": message,
+                "source": {
+                    "type": "flow",
+                    "name": self.config.get("_service_id", "flow"),
+                    "target_agent": agent_name,
+                },
+            })
+        ])
 
         # Notify so the agentLoop picks it up at next checkpoint
         bus.publish_event(conv_id, "message_queued", {

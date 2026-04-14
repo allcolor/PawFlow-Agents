@@ -73,13 +73,15 @@ class PublishMessageTask(BaseTask):
         _pm_msg_id = _uuid_pm.uuid4().hex[:12]
         source = {"type": "agent", "name": agent_name}
         from core.conversation_writer import ConversationWriter
-        ConversationWriter.for_conversation(conv_id).enqueue([{
-            "role": role,
-            "content": text,
-            "source": source,
-            "msg_id": _pm_msg_id,
-            "timestamp": time.time(),
-        }])
+        from core.llm_client import stamp_message
+        ConversationWriter.for_conversation(conv_id).enqueue([
+            stamp_message({
+                "role": role,
+                "content": text,
+                "source": source,
+                "msg_id": _pm_msg_id,
+            })
+        ])
 
         # 2. Publish via SSE so the chat UI sees it in real-time
         from core.conversation_event_bus import ConversationEventBus

@@ -249,6 +249,33 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     f'[Replying to {_reply_agent}: "{_reply_preview}"]\n\n{user_text}'
                 )
 
+        # agent_delegate wake: the message was written by another agent,
+        # not the human user. Attribute it so the target agent replies
+        # as "to B from A" rather than treating it as a human instruction.
+        try:
+            _ms_raw = flowfile.get_attribute("message_source") or ""
+            if _ms_raw:
+                import json as _json_ms
+                _ms = (_json_ms.loads(_ms_raw)
+                       if isinstance(_ms_raw, str) else _ms_raw)
+                if (isinstance(_ms, dict)
+                        and _ms.get("type") == "agent_delegate"
+                        and _ms.get("from")):
+                    _from = _ms["from"]
+                    _kind = _ms.get("kind")
+                    if _kind == "reply":
+                        user_text = (
+                            f"Here is agent '{_from}''s reply to your "
+                            f"delegate:\n\n{user_text}"
+                        )
+                    else:
+                        user_text = (
+                            f"Here is a message from agent '{_from}':\n\n"
+                            f"{user_text}"
+                        )
+        except Exception:
+            pass
+
         # Sanitize user message content (strip invisible/malicious unicode)
         from core.sanitization import sanitize_unicode
         user_text = sanitize_unicode(user_text)

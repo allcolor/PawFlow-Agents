@@ -764,9 +764,14 @@ class ConversationStore:
                 _for_to = dict(_dm)
                 if _for_to.get("role") == "assistant":
                     _for_to["role"] = "user"
+                _kind = _src.get("kind")
+                if _kind == "reply":
+                    _attr = (f"Here is agent '{_from}''s reply to your "
+                             f"delegate:")
+                else:
+                    _attr = f"Here is a message from agent '{_from}':"
                 _for_to["content"] = self._prefix_content(
-                    _for_to.get("content", ""),
-                    f"Voici un message de l'agent '{_from}':")
+                    _for_to.get("content", ""), _attr)
                 self._append_ctx_file(cid, _to, [_for_to])
                 # Shared view: visible to everyone else in the conv.
                 _for_shared = dict(_dm)

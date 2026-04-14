@@ -62,7 +62,7 @@ class PawFlowHelpHandler(ToolHandler):
             return self._list_services()
         elif topic.startswith("service:"):
             return self._service_detail(topic[8:].strip())
-        elif topic == "flow_guide":
+        elif topic in ("flow_guide", "flows", "flow"):
             return self._flow_guide()
         elif topic == "expressions":
             return self._expressions_guide()

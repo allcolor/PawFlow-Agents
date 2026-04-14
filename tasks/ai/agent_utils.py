@@ -859,11 +859,25 @@ class AgentUtilsMixin:
     def _wire_embed_fn(
         self, registry: ToolRegistry, client: LLMClient,
     ) -> None:
-        """Wire embedding function into RememberHandler and SemanticRecallHandler."""
+        """Wire embedding function into RememberHandler and SemanticRecallHandler.
+
+        When no api_key is available (claude-code uses OAuth, not API key),
+        unregister semantic_recall so the agent doesn't see it as available
+        and try to call it just to get 'not configured' errors.
+        """
         from core.tool_registry import RememberHandler, SemanticRecallHandler
 
         if not client.api_key:
-            return  # No API key, can't embed
+            # No embedding provider → drop semantic_recall from this agent's
+            # toolset entirely.
+            _to_drop = [h for h in registry.list_tools()
+                        if isinstance(h, SemanticRecallHandler)]
+            for _h in _to_drop:
+                try:
+                    registry.unregister(_h.name)
+                except Exception:
+                    pass
+            return
 
         _api_key = client.api_key
         _base_url = client.base_url

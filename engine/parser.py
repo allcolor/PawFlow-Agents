@@ -107,6 +107,31 @@ class FlowParser:
             if pg.is_subflow:
                 pg.load_from_ref()
             flow.groups[group_id] = pg
+
+            # Runtime bridge: a ProcessGroup with a flow_ref is invoked by
+            # an executeFlow task at runtime. Synthesize that task now so
+            # the executor doesn't need to know about ProcessGroups.
+            if pg.is_subflow and pg.flow_ref:
+                _ef_params = {
+                    "flow_path": pg.flow_ref.get("path", ""),
+                    "parameter_mapping": group_config.get(
+                        "parameter_mapping", {}),
+                    "port_mapping": group_config.get("port_mapping", {}),
+                    "pass_attributes": group_config.get(
+                        "pass_attributes", True),
+                }
+                _ef_params = cls._resolve_config(_ef_params, flow_parameters)
+                try:
+                    _ef_cls = TaskFactory.get("executeFlow")
+                except Exception as _ef_err:
+                    raise FlowError(
+                        f"ProcessGroup '{group_id}' declares flow_ref but "
+                        f"the 'executeFlow' task is not registered: "
+                        f"{_ef_err}") from _ef_err
+                _ef_task = _ef_cls(_ef_params)
+                _ef_task._original_config = dict(_ef_params)
+                _ef_task._max_instances = 1
+                flow.add_task(group_id, _ef_task)
         
         # Parser les relations
         flow.relations = config.get('relations', [])

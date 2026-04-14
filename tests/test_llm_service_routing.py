@@ -244,12 +244,14 @@ class TestResolveAgentTask(unittest.TestCase):
             self.assertEqual(task.user_id, "alice")
 
     def test_resolve_without_llm_service(self):
+        """Without a conversation_id, delegation has no llm_service to
+        resolve and must raise — llm_service lives on the conv_agents link."""
         self.store.create("agent", "basic", "bob", {
             "prompt": "Basic assistant",
         })
         from core.agent_executor import resolve_agent_task
-        task = resolve_agent_task("basic", "hello", "bob")
-        self.assertEqual(task.llm_service, "")
+        with self.assertRaises(KeyError):
+            resolve_agent_task("basic", "hello", "bob")
 
 
 class TestAgentDefaultInDefaults(unittest.TestCase):

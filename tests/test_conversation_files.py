@@ -201,7 +201,7 @@ class TestCreateFileHandler(unittest.TestCase):
         h = CreateFileHandler()
         h.set_base_url("http://localhost:9090")
         result = h.execute({"filename": "test.py", "content": "print('hello')"})
-        assert "http://localhost:9090/files/" in result
+        assert "fs://filestore/" in result
         assert "file_id:" in result
 
     def test_guess_content_type(self):
@@ -250,6 +250,7 @@ class TestServeFileTask(unittest.TestCase):
         task = ServeFileTask({})
         ff = FlowFile(content=b"")
         ff.set_attribute("http.path.file_id", fid)
+        ff.set_attribute("http.auth.principal", "test_user")
         results = task.execute(ff)
 
         assert results[0].get_content() == b"a,b,c\n1,2,3"

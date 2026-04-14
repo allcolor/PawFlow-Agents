@@ -1143,7 +1143,10 @@ class TestContextActionsAsync(unittest.TestCase):
         assert data is not None
         assert data["ok"] is True
         ctx = store.load_context("ctx_repl1")
-        assert ctx == new_ctx
+        assert len(ctx) == len(new_ctx)
+        for got, exp in zip(ctx, new_ctx):
+            assert got["role"] == exp["role"]
+            assert got["content"] == exp["content"]
 
     def test_delete_context_message_async(self):
         """delete_context_message removes a message via async path."""

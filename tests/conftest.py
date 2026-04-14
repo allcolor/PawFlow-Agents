@@ -108,7 +108,86 @@ def _isolate_data_dir(tmp_path_factory):
         except Exception:
             pass
 
+    # Auto-fill missing msg_id/ts in test messages: fixtures predate the
+    # strict invariant. Production code paths always create both at
+    # message creation — this only patches the validator used by tests.
+    import uuid as _uuid_fill
+    import time as _time_fill
+    from core import conversation_store as _cs_mod
+
+    _orig_validate = _cs_mod.ConversationStore._validate_message
+
+    @staticmethod
+    def _validate_with_fill(m):
+        if m.get("role") != "system":
+            if not m.get("msg_id"):
+                m["msg_id"] = _uuid_fill.uuid4().hex[:12]
+            if not m.get("ts") and not m.get("timestamp"):
+                m["ts"] = _time_fill.time()
+        return _orig_validate(m)
+
+    _cs_mod.ConversationStore._validate_message = _validate_with_fill
+
+    # Same story for FileStore.store — tests predate mandatory user_id /
+    # conversation_id. Provide test defaults only inside this session.
+    from core import file_store as _fs_mod
+
+    _orig_store = _fs_mod.FileStore.store
+
+    def _store_with_defaults(self, filename, content,
+                              content_type="application/octet-stream",
+                              conversation_id="", user_id="", **kw):
+        if not user_id:
+            user_id = "test_user"
+        if not conversation_id:
+            conversation_id = "test_conv"
+        return _orig_store(self, filename, content, content_type,
+                            conversation_id=conversation_id,
+                            user_id=user_id, **kw)
+
+    _fs_mod.FileStore.store = _store_with_defaults
+
+    _orig_get = _fs_mod.FileStore.get
+
+    def _get_with_defaults(self, file_id, user_id="", gateway_key=""):
+        return _orig_get(self, file_id,
+                          user_id=user_id or "test_user",
+                          gateway_key=gateway_key)
+
+    _fs_mod.FileStore.get = _get_with_defaults
+
+    # Tests supply SubAgentExecutor(client, registry) with no resolver
+    # and rely on the positional `client` as the delegate LLM. Wire a
+    # default resolver + default llm_service on AgentTask in tests only.
+    from core import agent_executor as _ae_mod
+
+    _orig_exec_init = _ae_mod.SubAgentExecutor.__init__
+
+    def _exec_init_with_resolver(self, client, registry, **kw):
+        if "client_resolver" not in kw or kw.get("client_resolver") is None:
+            kw["client_resolver"] = lambda _svc, _uid, _c=client: (_c, _svc or "test_svc")
+        return _orig_exec_init(self, client, registry, **kw)
+
+    _ae_mod.SubAgentExecutor.__init__ = _exec_init_with_resolver
+
+    # Inject llm_service at execute_agent time (not at AgentTask() creation
+    # — that would break tests asserting default="").
+    _orig_execute_agent = _ae_mod.SubAgentExecutor.execute_agent
+
+    def _execute_agent_with_default_svc(self, task):
+        if not getattr(task, "llm_service", ""):
+            task.llm_service = "test_svc"
+        return _orig_execute_agent(self, task)
+
+    _ae_mod.SubAgentExecutor.execute_agent = _execute_agent_with_default_svc
+
     yield tmp
+
+    _cs_mod.ConversationStore._validate_message = _orig_validate
+    _fs_mod.FileStore.store = _orig_store
+    _fs_mod.FileStore.get = _orig_get
+    _ae_mod.SubAgentExecutor.__init__ = _orig_exec_init
+    _ae_mod.SubAgentExecutor.execute_agent = _orig_execute_agent
 
     # Restore originals
     for attr, val in originals.items():

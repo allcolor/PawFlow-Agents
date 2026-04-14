@@ -48,9 +48,22 @@ def make_registry(*handlers):
 
 
 def make_client_mock(responses):
-    """Create a mock LLMClient that returns responses in sequence."""
+    """Create a mock LLMClient that returns responses in sequence.
+
+    Both `complete` and `complete_stream` draw from the same iterator —
+    the loop uses complete_stream; the post-max-iterations synthesis
+    uses complete. Sharing the iterator keeps tests that set up an exact
+    response sequence deterministic.
+    """
     client = MagicMock(spec=LLMClient)
-    client.complete = MagicMock(side_effect=responses)
+    _it = iter(responses)
+    def _next(*a, **kw):
+        r = next(_it)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    client.complete = MagicMock(side_effect=_next)
+    client.complete_stream = MagicMock(side_effect=_next)
     return client
 
 
@@ -229,7 +242,7 @@ class TestToolWhitelist:
         assert result.status == "completed"
 
         # Verify that only 1 tool def was passed to LLM
-        call_args = client.complete.call_args
+        call_args = client.complete_stream.call_args
         tools_passed = call_args.kwargs.get("tools") or call_args[1].get("tools", [])
         assert len(tools_passed) == 1
         assert tools_passed[0].name == "echo"
@@ -359,20 +372,23 @@ class TestParallelSpawn:
 class TestResolveAgentTask:
     def test_resolve_from_store(self):
         """resolve_agent_task loads prompt from ResourceStore, runtime from conv_agent_config."""
-        with patch("core.resource_store.ResourceStore.instance") as mock_store:
+        with patch("core.resource_store.ResourceStore.instance") as mock_store, \
+             patch("core.conv_agent_config.get_all_agent_configs",
+                   return_value={"analyst": {"llm_service": "svc_a"}}), \
+             patch("core.conv_agent_config.get_agent_config",
+                   return_value={"llm_service": "svc_a"}):
             mock_store.return_value.get_any.return_value = {
                 "prompt": "You are an analyst",
             }
-            # Without conversation_id, defaults apply
-            task = resolve_agent_task("analyst", "Analyze this", "user1")
+            task = resolve_agent_task(
+                "analyst", "Analyze this", "user1",
+                conversation_id="conv1",
+            )
 
             assert task.agent_name == "analyst"
             assert task.message == "Analyze this"
             assert "You are an analyst" in task.system_prompt
-            # Runtime defaults (no conv_agent_config without conversation_id)
-            assert task.model == ""
-            assert task.max_depth == 5
-            assert task.timeout == 180
+            assert task.llm_service == "svc_a"
 
     def test_resolve_not_found(self):
         """resolve_agent_task raises KeyError if agent not in store."""
@@ -404,7 +420,7 @@ class TestDelegateExcluded:
         )
         executor.execute_agent(task)
 
-        call_args = client.complete.call_args
+        call_args = client.complete_stream.call_args
         tools_passed = call_args.kwargs.get("tools") or []
         tool_names = [t.name for t in tools_passed]
         assert "echo" in tool_names

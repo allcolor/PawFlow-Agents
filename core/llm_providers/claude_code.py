@@ -360,6 +360,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         """
         if not conv_id:
             return ""
+        # Internal sentinel (e.g. "_compact" summarizer session) — no
+        # real conversation to catch up from.
+        if conv_id.startswith("_"):
+            return ""
         # Sub-conv (delegate / task) → catch up from the parent conv so
         # the delegate sees messages arriving in the main chat while it
         # works. The sub-conv itself has no multi-agent dialog of its own.
@@ -757,8 +761,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     logger.error("[claude-code] turn_callback error: %s", e,
                                  exc_info=True)
             elif text or tc:
-                logger.warning("[claude-code] flush turn %d but NO turn_callback: text=%d, tc=%d",
-                               _turn_count, len(text), len(tc))
+                # Internal sentinel sessions (e.g. "_compact" summarizer)
+                # run without a turn_callback by design — they return the
+                # aggregated result in content_parts. Downgrade the noise.
+                _is_sentinel = conv_id.startswith("_") if conv_id else False
+                if _is_sentinel:
+                    logger.debug("[claude-code] flush turn %d (sentinel '%s'): text=%d, tc=%d",
+                                 _turn_count, conv_id, len(text), len(tc))
+                else:
+                    logger.warning("[claude-code] flush turn %d but NO turn_callback: text=%d, tc=%d",
+                                   _turn_count, len(text), len(tc))
                 # Tell webchat to finalize current streaming element
                 _pub("turn_complete", {
                     "agent_name": agent_name,

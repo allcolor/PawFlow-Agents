@@ -53,11 +53,25 @@ class GetToolSchemaHandler(ToolHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         name = arguments.get("tool_name", "")
+        # LLMs sometimes prefix the MCP namespace by mistake (they call
+        # use_tool(tool_name="mcp__pawflow__get_tool_schema") instead of
+        # calling get_tool_schema directly). Strip the prefix and — if
+        # the caller was trying to reach get_tool_schema or use_tool —
+        # point them at the direct tool.
+        _raw = name
+        if name.startswith("mcp__pawflow__"):
+            name = name[len("mcp__pawflow__"):]
+        if name in ("get_tool_schema", "use_tool"):
+            return json.dumps({
+                "error": (f"'{_raw}' is an MCP dispatcher — call "
+                          f"{name} directly (it's already exposed as "
+                          f"its own tool), don't go through use_tool."),
+            })
         handler = self._registry.get(name)
         if not handler:
             available = [h.name for h in self._registry.list_tools()
                          if h.name not in ("get_tool_schema", "use_tool")]
-            return json.dumps({"error": f"Unknown tool '{name}'",
+            return json.dumps({"error": f"Unknown tool '{_raw}'",
                                "available": available})
         return json.dumps({
             "name": handler.name,
@@ -122,6 +136,10 @@ class UseToolHandler(ToolHandler):
                 break
         if not isinstance(tool_args, dict):
             return f"Error: arguments for '{tool_name}' must be a JSON object, got {type(tool_args).__name__}"
+        # Strip the mcp__pawflow__ prefix if the LLM included it —
+        # inside use_tool, `tool_name` is the BARE PawFlow name.
+        if tool_name.startswith("mcp__pawflow__"):
+            tool_name = tool_name[len("mcp__pawflow__"):]
         if tool_name in ("get_tool_schema", "use_tool"):
             return (f"Error: '{tool_name}' is a meta-tool -- call it directly "
                     f"as a top-level tool call, not via use_tool.")

@@ -1108,37 +1108,59 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         if _is_auth:
                             if not _auth_retried:
                                 _auth_retried = True
-                                # Rotate to the NEXT pool credential (the
-                                # current one just failed — retrying with
-                                # the same token is pointless). Invalidate
-                                # the resumed session too so the retry
-                                # starts a fresh CC subprocess.
+                                # Step 1: force-refresh the current pool
+                                # credential. 'Not logged in' often just
+                                # means the access_token expired; the
+                                # refresh_token is usually still valid.
+                                # Only if refresh ALSO fails do we mark
+                                # the slot dead and rotate.
+                                _bad_idx = getattr(
+                                    self, '_current_pool_index', _resume_pool_idx)
+                                _refreshed = False
                                 try:
-                                    _bad_idx = getattr(
-                                        self, '_current_pool_index', _resume_pool_idx)
-                                    _tried = getattr(self, '_tried_pool_idx', set())
-                                    _tried = set(_tried) | {_bad_idx}
-                                    self._tried_pool_idx = _tried
+                                    if _bad_idx >= 0:
+                                        _refreshed = self._force_refresh_pool_entry(_bad_idx)
+                                except Exception as _rf_err:
                                     logger.warning(
-                                        "[claude-code] auth failure "
-                                        "('%s') — rotating OAuth pool "
-                                        "(tried=%s)",
-                                        _err_text[:100], sorted(_tried))
-                                    self._setup_credentials(
-                                        workdir, pool_index=-1,
-                                        exclude_indices=_tried)
-                                    if conv_id:
-                                        try:
-                                            ConversationStore.instance().set_extra(
-                                                conv_id,
-                                                f"claude_session:{agent_name or 'default'}",
-                                                "")
-                                        except Exception:
-                                            pass
+                                        "[claude-code] force-refresh pool[%s] "
+                                        "failed: %s", _bad_idx, _rf_err)
+                                # Always invalidate the CC session — the
+                                # old jsonl was bound to the dead token
+                                # and CC won't accept a new token on the
+                                # same --resume session.
+                                if conv_id:
+                                    try:
+                                        ConversationStore.instance().set_extra(
+                                            conv_id,
+                                            f"claude_session:{agent_name or 'default'}",
+                                            "")
+                                    except Exception:
+                                        pass
+                                try:
+                                    if _refreshed:
+                                        logger.warning(
+                                            "[claude-code] auth failure "
+                                            "('%s') — refreshed pool[%s], "
+                                            "retrying same slot",
+                                            _err_text[:100], _bad_idx)
+                                        self._setup_credentials(
+                                            workdir, pool_index=_bad_idx)
+                                    else:
+                                        _tried = getattr(self, '_tried_pool_idx', set())
+                                        _tried = set(_tried) | {_bad_idx}
+                                        self._tried_pool_idx = _tried
+                                        logger.warning(
+                                            "[claude-code] auth failure "
+                                            "('%s') — refresh failed, "
+                                            "rotating OAuth pool (tried=%s)",
+                                            _err_text[:100], sorted(_tried))
+                                        self._setup_credentials(
+                                            workdir, pool_index=-1,
+                                            exclude_indices=_tried)
                                 except Exception as _ref_err:
                                     raise LLMClientError(
-                                        f"Claude Code auth failed and pool "
-                                        f"rotation failed: {_ref_err}") from None
+                                        f"Claude Code auth failed and "
+                                        f"recovery failed: {_ref_err}") from None
                                 raise _CC401Retry()
                             raise LLMClientError(
                                 f"Claude Code auth failed (all pool "

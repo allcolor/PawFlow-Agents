@@ -218,6 +218,28 @@ def reset_credentials_pool(service_id: str = ""):
     _save_credentials_pool([], service_id)
 
 
+def _validate_oauth_token(access_token: str, refresh_token: str,
+                           expires_at) -> bool:
+    """Sanity check: never persist a token we can already see is broken.
+
+    - access_token + refresh_token must be non-empty strings
+    - expires_at must be a number in the future (handles both seconds
+      and milliseconds — Anthropic uses ms).
+    """
+    import time as _t
+    if not access_token or not isinstance(access_token, str):
+        return False
+    if not refresh_token or not isinstance(refresh_token, str):
+        return False
+    try:
+        _exp = int(expires_at)
+    except (TypeError, ValueError):
+        return False
+    # Accept both sec and ms. If value > 1e12, it's ms; otherwise sec.
+    _exp_s = _exp / 1000 if _exp > 1e12 else _exp
+    return _exp_s > _t.time()
+
+
 def _persist_tokens_to_service(access_token: str, refresh_token: str,
                                expires_at, service_id: str = "",
                                pool_index: int = -1):
@@ -225,7 +247,18 @@ def _persist_tokens_to_service(access_token: str, refresh_token: str,
 
     If pool_index >= 0, updates that specific slot. Otherwise finds
     the matching credential by access_token.
+
+    Refuses to persist a token that fails basic validation (empty
+    fields, expires_at in the past) — better to keep the old broken
+    token and let _setup_credentials drop the slot than to pollute
+    the pool with a token we already know is dead.
     """
+    if not _validate_oauth_token(access_token, refresh_token, expires_at):
+        logger.warning(
+            "[claude-code] refusing to persist invalid token "
+            "(access_token=%r, expires_at=%r) to pool[%s] — keeping old",
+            bool(access_token), expires_at, pool_index)
+        return
     sid = _find_cc_service_id(service_id)
     if not sid:
         return
@@ -314,6 +347,61 @@ class ClaudeCodeSessionMixin:
             "expires_at": cred.get("expires_at", 0),
             "pool_index": idx,
         }
+
+    def _force_refresh_pool_entry(self, pool_index: int) -> bool:
+        """Force-refresh the access_token for pool[pool_index] without
+        regard to its expiry. Used on mid-stream auth failures where the
+        access_token was rejected but the refresh_token may still be valid.
+
+        If the refresh fails OR returns an invalid token, REMOVES the
+        slot from the pool entirely — a credential whose refresh is
+        broken is dead to us and must not be re-attempted.
+
+        Returns True if the refresh succeeded and the pool slot was
+        updated with a validated token; False otherwise.
+        """
+        svc_id = getattr(self, '_agent_service', '') or ''
+        pool = _load_credentials_pool(svc_id)
+        if pool_index < 0 or pool_index >= len(pool):
+            return False
+        refresh_token = pool[pool_index].get("refresh_token", "")
+
+        def _drop_dead_slot(reason: str):
+            current = _load_credentials_pool(svc_id)
+            if 0 <= pool_index < len(current):
+                dead = current.pop(pool_index)
+                _save_credentials_pool(current, service_id=svc_id)
+                logger.warning(
+                    "[force-refresh] removed dead pool[%d] (reason: %s); "
+                    "remaining=%d", pool_index, reason, len(current))
+                return dead
+            return None
+
+        if not refresh_token:
+            _drop_dead_slot("no refresh_token")
+            return False
+        try:
+            tokens = self._refresh_oauth_token(refresh_token)
+        except Exception as e:
+            logger.warning("[force-refresh] pool[%d] refresh call failed: %s",
+                           pool_index, e)
+            _drop_dead_slot(f"refresh error: {e}")
+            return False
+        _new_at = tokens.get("access_token", "")
+        _new_rt = tokens.get("refresh_token", refresh_token)
+        _new_exp = int(tokens.get("expires_at", 0) or 0)
+        if not _validate_oauth_token(_new_at, _new_rt, _new_exp):
+            logger.warning(
+                "[force-refresh] pool[%d] returned invalid token "
+                "(access_token=%r, expires_at=%r)",
+                pool_index, bool(_new_at), _new_exp)
+            _drop_dead_slot("refresh returned invalid token")
+            return False
+        _persist_tokens_to_service(
+            _new_at, _new_rt, _new_exp,
+            service_id=svc_id, pool_index=pool_index)
+        logger.info("[force-refresh] pool[%d] access_token renewed", pool_index)
+        return True
 
     @staticmethod
     def _refresh_oauth_token(refresh_token: str) -> dict:

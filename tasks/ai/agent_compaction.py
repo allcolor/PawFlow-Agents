@@ -17,7 +17,6 @@ from core.llm_client import (
 )
 from core.tool_registry import ToolRegistry, create_default_registry
 from tasks.ai.agent_summarize import AgentSummarizeMixin
-from tasks.ai.agent_cc_context import AgentCCContextMixin
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +70,7 @@ def _select_recent_messages(
     return split
 
 
-class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
+class AgentCompactionMixin(AgentSummarizeMixin):
     """Methods extracted from AgentLoopTask."""
 
     # Max chars kept per tool result after compaction truncation

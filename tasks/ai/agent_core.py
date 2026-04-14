@@ -370,15 +370,13 @@ class AgentCoreMixin:
                     emitter.on_iteration_start(
                         iteration, current_round, ctx["max_iterations"],
                         max_rounds, tools_called, poll_silent)
-                    # Claude-code: skip per-iteration compaction.
-                    # If no active session, offload old messages to FileStore
-                    # (avoids "Prompt too long" — Claude reads history via MCP tool).
-                    # If active session, we'll send only the last user message anyway.
+                    # Claude-code: CC session and PawFlow ctx MUST stay
+                    # identical. On a new session we feed the full PawFlow
+                    # ctx (already compacted at load time if needed).
+                    # On resume, CC's jsonl is the authoritative continuation
+                    # — we don't re-send messages.
                     if ctx.get("_is_claude_code"):
-                        if ctx.get("_claude_has_session"):
-                            llm_context = list(messages)
-                        else:
-                            llm_context = self._prepare_cc_file_context(list(messages), user_id=user_id, conversation_id=conversation_id)
+                        llm_context = list(messages)
                     else:
                         _max_ctx = ctx.get("max_context_size", 64000)
                         _cpt = ctx.get("chars_per_token", 0)
@@ -789,8 +787,10 @@ class AgentCoreMixin:
                                 conversation_id, f"claude_session:{_agent_name}", "")
                             ctx["_claude_has_session"] = False
 
-                            # 4. Prepare for new CC session with compacted context
-                            llm_context = self._prepare_cc_file_context(messages, user_id=user_id, conversation_id=conversation_id)
+                            # 4. Prepare for new CC session — PawFlow ctx
+                            # was just compacted and saved; CC receives the
+                            # same compacted messages (no trimmed view).
+                            llm_context = list(messages)
                             logger.info("[agent:%s] PawFlow compact done, new CC session will start",
                                         conversation_id[:8])
                         except Exception as compact_err:
@@ -849,7 +849,7 @@ class AgentCoreMixin:
                             ctx["_claude_has_session"] = False
                             try:
                                 _check_budget(ctx, total_tokens_in, total_tokens_out)
-                                llm_context = self._prepare_cc_file_context(list(messages), user_id=user_id, conversation_id=conversation_id)
+                                llm_context = list(messages)
                                 response = _llm_call(llm_context)
                                 _resume_retried = True
                             except Exception as retry_err:
@@ -870,19 +870,31 @@ class AgentCoreMixin:
                               or "prompt_too_long" in err_str):
                             logger.warning(f"[agent:{conversation_id[:8]}] Context overflow, retrying...")
                             emitter.on_overflow_retry(iteration)
-                            if _is_claude_code:
-                                llm_context = self._prepare_cc_file_context(
-                                    list(messages), max_recent=20,
-                                    user_id=user_id, conversation_id=conversation_id)
-                            else:
-                                llm_context = self._compact(
-                                    llm_context, compact_client,
-                                    ctx.get("max_context_size", 64000), threshold=0.5,
-                                    conversation_id=conversation_id,
-                                    agent_name=ctx.get("active_agent_name") or "",
-                                    tool_defs=ctx.get("tool_defs"),
-                                    chars_per_token=ctx.get("chars_per_token", 0),
-                                    user_id=user_id)
+                            # Context too long: compact PawFlow ctx in
+                            # place (messages list is mutated + persisted)
+                            # and feed the compacted view to CC. CC ctx
+                            # and PawFlow ctx stay strictly identical.
+                            _agent_for_compact = ctx.get("active_agent_name") or ""
+                            _compacted = self._compact(
+                                list(messages), compact_client,
+                                ctx.get("max_context_size", 64000), threshold=0.5,
+                                conversation_id=conversation_id,
+                                agent_name=_agent_for_compact,
+                                tool_defs=ctx.get("tool_defs"),
+                                chars_per_token=ctx.get("chars_per_token", 0),
+                                user_id=user_id)
+                            messages[:] = _compacted
+                            if _is_claude_code and conversation_id and _agent_for_compact:
+                                try:
+                                    from core.conversation_store import ConversationStore
+                                    ConversationStore.instance().save_agent_context(
+                                        conversation_id, _agent_for_compact,
+                                        self._serialize_messages(messages))
+                                except Exception as _sv_err:
+                                    logger.warning(
+                                        "[agent:%s] save compacted ctx failed: %s",
+                                        conversation_id[:8], _sv_err)
+                            llm_context = list(messages)
                             try:
                                 _check_budget(ctx, total_tokens_in, total_tokens_out)
                                 response = _llm_call(llm_context)
@@ -917,7 +929,7 @@ class AgentCoreMixin:
                                     except Exception:
                                         pass
                                     ctx["_claude_has_session"] = False
-                                    llm_context = self._prepare_cc_file_context(list(messages), user_id=user_id, conversation_id=conversation_id)
+                                    llm_context = list(messages)
                                 time.sleep(5)
                                 try:
                                     _check_budget(ctx, total_tokens_in, total_tokens_out)
@@ -950,16 +962,6 @@ class AgentCoreMixin:
                                 ctx["_claude_has_session"] = True
                         except Exception:
                             pass
-                        # Check: if context was offloaded to file, did CC read it?
-                        _cc_fid = getattr(self, '_cc_context_file_id', '')
-                        if _cc_fid and iteration == 1 and response.tool_calls:
-                            _read_calls = [tc for tc in response.tool_calls
-                                           if tc.name in ("read", "mcp__pawflow__use_tool")]
-                            if not _read_calls:
-                                logger.warning(
-                                    "[cc-context] Claude Code did NOT read the history "
-                                    "file %s on first turn — context may be lost", _cc_fid)
-                            self._cc_context_file_id = ''  # check once
                     total_tokens_in += response.tokens_in
                     total_tokens_out += response.tokens_out
                     total_cache_read += getattr(response, 'cache_read_tokens', 0)

@@ -458,12 +458,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # Extract images BEFORE serialization (they'll be sent as content blocks)
         image_blocks = self._extract_images(messages)
 
-        system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
-
-        initial_text = self._build_stdin_with_system(system_prompt, user_text)
-        logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d",
-                     len(system_prompt), len(user_text), len(image_blocks), len(messages))
-
         user_id = getattr(self, '_user_id', "")
         conv_id = getattr(self, '_conversation_id', "")
         agent_name = getattr(self, '_agent_name', "")
@@ -480,6 +474,31 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     logger.info("Restored claude session: %s", session_id)
             except Exception:
                 pass
+
+        # Session-aware serialization:
+        # - New session (no session_id): feed the full PawFlow ctx ONCE.
+        # - Resume (session_id set): CC already has the history; send only
+        #   the new user message. The catch-up mechanism below injects
+        #   anything that arrived from other agents since last turn.
+        if session_id:
+            system_prompt = ""
+            last_user = ""
+            for _m in reversed(messages):
+                if _m.role == "user":
+                    _c = _m.content
+                    if isinstance(_c, list):
+                        last_user = _m.text_content
+                    else:
+                        last_user = _c or ""
+                    break
+            user_text = last_user
+        else:
+            system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
+
+        initial_text = self._build_stdin_with_system(system_prompt, user_text)
+        logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d session=%s",
+                     len(system_prompt), len(user_text), len(image_blocks), len(messages),
+                     "resume" if session_id else "new")
 
         logger.info("claude-code stream: conv_id='%s' user='%s' agent='%s' session='%s'",
                      conv_id, user_id, agent_name, session_id[:12] if session_id else "new")

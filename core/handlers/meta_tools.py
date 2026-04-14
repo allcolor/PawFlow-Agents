@@ -122,8 +122,30 @@ class UseToolHandler(ToolHandler):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        tool_name = arguments.get("tool_name", "")
-        tool_args = arguments.get("arguments", {})
+        # LLM key aliasing: smaller models routinely invent variants of
+        # the schema (name/params instead of tool_name/arguments,
+        # nesting under an extra 'arguments' wrapper, etc.). Accept the
+        # common ones so the call doesn't waste a turn on a cryptic
+        # 'unknown tool ' error and force a re-discovery loop.
+        if isinstance(arguments, dict):
+            # Some LLMs nest the real payload one level too deep:
+            # use_tool(arguments={"arguments": {...real...}})
+            # Detect: outer dict has only an 'arguments' key whose value
+            # is itself a dict containing the actual tool spec.
+            if (set(arguments.keys()) == {"arguments"}
+                    and isinstance(arguments["arguments"], dict)):
+                arguments = arguments["arguments"]
+        tool_name = (arguments.get("tool_name")
+                     or arguments.get("name")
+                     or arguments.get("tool")
+                     or "")
+        tool_args = arguments.get("arguments")
+        if tool_args is None:
+            tool_args = arguments.get("params")
+        if tool_args is None:
+            tool_args = arguments.get("input")
+        if tool_args is None:
+            tool_args = {}
         # LLM sometimes sends arguments as JSON string instead of dict
         # (can be double-encoded -- keep parsing until we get a dict)
         for _ in range(3):  # max 3 levels of JSON encoding
@@ -140,6 +162,12 @@ class UseToolHandler(ToolHandler):
         # inside use_tool, `tool_name` is the BARE PawFlow name.
         if tool_name.startswith("mcp__pawflow__"):
             tool_name = tool_name[len("mcp__pawflow__"):]
+        if not tool_name:
+            return (
+                "Error: missing 'tool_name' in use_tool arguments. "
+                "Expected: use_tool(tool_name='<name>', arguments={...}). "
+                "Got keys: " + str(sorted(arguments.keys()))
+            )
         if tool_name in ("get_tool_schema", "use_tool"):
             return (f"Error: '{tool_name}' is a meta-tool -- call it directly "
                     f"as a top-level tool call, not via use_tool.")

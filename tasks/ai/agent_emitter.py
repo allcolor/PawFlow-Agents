@@ -244,6 +244,16 @@ class StreamEmitter(AgentEmitter):
         bus = self.bus
         agent_name = self._agent_name
         source = self._agent_source()
+        # Override source when this turn is a delegate reply so the UI
+        # routes the live stream into the private delegate block.
+        _tm = (self.ctx.get("_turn_mode") or {}) if isinstance(self.ctx, dict) else {}
+        if (_tm.get("type") == "delegate_reply"
+                and _tm.get("source_agent")):
+            source = {
+                "type": "agent_delegate",
+                "from": agent_name or "",
+                "to": _tm["source_agent"],
+            }
         gen_key = self.gen_key
         generation = self.generation
         agent = self.agent

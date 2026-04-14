@@ -72,6 +72,10 @@ class AgentCoreMixin:
     _TOOL_OUTPUT_TRUSTED: set = {
         "get_tool_schema", "use_tool", "pawflow_help",
         "mcp__pawflow__get_tool_schema", "mcp__pawflow__use_tool",
+        # show_file's output is a structured UI directive (a JSON marker
+        # the webchat parses to open the viewer), not external untrusted
+        # data. Wrapping it would break the JSON.parse on the client.
+        "show_file",
     }
 
     @classmethod

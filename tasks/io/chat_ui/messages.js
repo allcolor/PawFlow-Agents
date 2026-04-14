@@ -691,6 +691,36 @@ function isImageFile(name) {
   return /\.(png|jpe?g|gif|svg|webp|bmp)$/i.test(name || '');
 }
 
+function isAudioFile(name) {
+  return /\.(mp3|wav|ogg|m4a|flac|opus)$/i.test(name || '');
+}
+
+function isVideoFile(name) {
+  return /\.(mp4|webm|mov|m4v)$/i.test(name || '');
+}
+
+function inlineAudioHtml(url, filename) {
+  // Native HTML5 player — browser handles authentication via cookie/header
+  // (same-origin /files/<id> URLs).
+  return '<div class="audio-wrapper" style="margin:6px 0;">'
+    + '<audio controls preload="metadata" src="' + url + '" '
+    + 'style="max-width:512px;border-radius:6px;"></audio>'
+    + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
+    + '\uD83D\uDD0A ' + escapeHtml(filename || 'audio')
+    + ' <a class="flink" href="#" onclick="event.preventDefault();openFileViewer(\'' + url + '\')" style="color:#6c5ce7;">open</a>'
+    + '</div></div>';
+}
+
+function inlineVideoHtml(url, filename) {
+  return '<div class="video-wrapper" style="margin:6px 0;">'
+    + '<video controls preload="metadata" src="' + url + '" '
+    + 'style="max-width:512px;max-height:512px;border-radius:8px;border:1px solid #0f3460;"></video>'
+    + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
+    + '\uD83C\uDFAC ' + escapeHtml(filename || 'video')
+    + ' <a class="flink" href="#" onclick="event.preventDefault();openFileViewer(\'' + url + '\')" style="color:#6c5ce7;">open</a>'
+    + '</div></div>';
+}
+
 // Batch image loading: collect pending images, check availability in one call,
 // then fetch only existing ones. Avoids 50+ sequential 404s blocking the page.
 let _pendingImages = [];  // [{imgId, url}]
@@ -775,8 +805,20 @@ function renderMarkdown(text) {
     if (text.includes('__show_file__')) {
       const parsed = JSON.parse(text);
       if (parsed && parsed.__show_file__) {
+        // Convert fs://filestore/<id>/<name> to /files/<id> for the
+        // native <img>/<audio>/<video> tags (which need a real HTTP URL,
+        // same-origin so the auth cookie applies).
+        let _httpUrl = parsed.url;
+        const _fsm = String(parsed.url || '').match(/^fs:\/\/filestore\/([a-f0-9]+)\//);
+        if (_fsm) _httpUrl = '/files/' + _fsm[1];
         if (isImageFile(parsed.filename)) {
-          return inlineImageHtml(parsed.url, parsed.filename, parsed.size_kb + ' KB');
+          return inlineImageHtml(_httpUrl, parsed.filename, parsed.size_kb + ' KB');
+        }
+        if (isAudioFile(parsed.filename)) {
+          return inlineAudioHtml(_httpUrl, parsed.filename);
+        }
+        if (isVideoFile(parsed.filename)) {
+          return inlineVideoHtml(_httpUrl, parsed.filename);
         }
         setTimeout(() => openFileViewer(parsed.url), 100);
         return '<span style="cursor:pointer;color:#6c5ce7;" onclick="openFileViewer(\'' + parsed.url + '\')">\uD83D\uDCC4 ' + parsed.filename + ' (' + parsed.size_kb + ' KB) \u2014 Click to view</span>';
@@ -806,6 +848,12 @@ function renderMarkdown(text) {
       if (isImageFile(label) || isImageFile(url)) {
         return inlineImageHtml(url, label, '');
       }
+      if (isAudioFile(label) || isAudioFile(url)) {
+        return inlineAudioHtml(url, label);
+      }
+      if (isVideoFile(label) || isVideoFile(url)) {
+        return inlineVideoHtml(url, label);
+      }
       return '<a class="flink" href="' + url + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + url + '\')">\uD83D\uDCC4 ' + label + '</a>';
     }
     return '<a href="' + url + '" target="_blank">' + label + '</a>';
@@ -815,17 +863,37 @@ function renderMarkdown(text) {
     if (isImageFile(fname)) {
       return pre + inlineImageHtml(url, fname, '');
     }
+    if (isAudioFile(fname)) {
+      return pre + inlineAudioHtml(url, fname);
+    }
+    if (isVideoFile(fname)) {
+      return pre + inlineVideoHtml(url, fname);
+    }
     return pre + '<a class="flink" href="' + url + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + url + '\')">\uD83D\uDCC4 ' + fname + '</a>';
   });
   text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  // fs:// URLs — clickable links to filesystem files
+  // fs:// URLs — clickable links to filesystem files. For media files
+  // stored in FileStore (`fs://filestore/<id>/<name>.png` etc.) render
+  // an inline player/image so generate_image / generate_audio /
+  // generate_video / screen results display directly in chat without
+  // an extra click.
   text = text.replace(/(fs:\/\/([^\s&<"']+))/g, function(_, url, rest) {
     const parts = rest.split('/');
     const service = parts[0];
     const fpath = parts.slice(1).join('/');
     const fname = parts[parts.length - 1] || fpath;
     const isDir = url.endsWith('/');
+    if (!isDir && service === 'filestore') {
+      const fidMatch = fpath.match(/^([a-f0-9]+)(?:\/|$)/);
+      const fid = fidMatch ? fidMatch[1] : '';
+      if (fid) {
+        const httpUrl = '/files/' + fid;
+        if (isImageFile(fname)) return inlineImageHtml(httpUrl, fname, '');
+        if (isAudioFile(fname)) return inlineAudioHtml(httpUrl, fname);
+        if (isVideoFile(fname)) return inlineVideoHtml(httpUrl, fname);
+      }
+    }
     const icon = isDir ? '\uD83D\uDCC1' : '\uD83D\uDCC4';
     return '<a class="flink" href="#" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();fetchFsFile(\'' + service + '\',\'' + fpath + '\')">'
       + icon + ' ' + fname + '</a>';

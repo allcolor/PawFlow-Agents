@@ -354,11 +354,11 @@ class TestContinuousExecutorParameters:
 
 
 # ============================================================================
-# ExecuteFlowTask — subflow parameter propagation (REMOVED: executeFlow deleted)
+# ExecuteFlowTask — subflow parameter propagation
 # ============================================================================
 
 
-class _TestSubflowParameterPropagation_REMOVED:
+class TestSubflowParameterPropagation:
 
     def _write_subflow(self, tmpdir, params=None, task_msg="sub: ${env}"):
         """Write a subflow JSON file and return its path."""
@@ -516,7 +516,7 @@ class TestParameterContextRegression:
 # P8.2 — Subflow validation
 # ============================================================================
 
-class _TestSubflowValidation_REMOVED:
+class TestSubflowValidation:
 
     def _write_subflow(self, tmpdir, params=None, task_msg="msg"):
         subflow = {
@@ -535,7 +535,7 @@ class _TestSubflowValidation_REMOVED:
         import logging
         subflow_path = self._write_subflow(
             str(tmp_path),
-            task_msg="${missing_param}",
+            task_msg="${flow.parameters.missing_param}",
         )
         flow_config = {
             "id": "parent", "name": "Parent", "parameters": {},

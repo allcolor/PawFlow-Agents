@@ -98,8 +98,14 @@ class FlowManagerHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": ["catalog", "deploy", "list", "list_all", "create",
-                             "start", "stop", "status", "update", "delete"],
-                    "description": "Action to perform",
+                             "start", "stop", "status", "update", "delete",
+                             "run"],
+                    "description": (
+                        "Action to perform. 'run' loads a template by FQN, "
+                        "executes it ONCE synchronously with the given "
+                        "parameters and optional input content, returns "
+                        "output FlowFiles' content/attributes — no "
+                        "deployment, no background instance."),
                 },
                 "flow_id": {
                     "type": "string",
@@ -123,7 +129,13 @@ class FlowManagerHandler(ToolHandler):
                 },
                 "parameters": {
                     "type": "object",
-                    "description": "Flow parameters to set on start",
+                    "description": "Flow parameters to set on start/run",
+                },
+                "input": {
+                    "type": "string",
+                    "description": (
+                        "Optional FlowFile content to feed into the flow "
+                        "(action='run' only). UTF-8 string."),
                 },
             },
             "required": ["action"],
@@ -164,6 +176,11 @@ class FlowManagerHandler(ToolHandler):
             return self._update_flow(flow_id, params)
         elif action == "delete":
             return self._delete_flow(flow_id)
+        elif action == "run":
+            template_id = arguments.get("template_id", "")
+            params = arguments.get("parameters", {})
+            input_text = arguments.get("input", "")
+            return self._run_template(template_id, params, input_text)
         return f"Error: unknown action '{action}'"
 
     def _get_deployment_registry(self):
@@ -266,6 +283,65 @@ class FlowManagerHandler(ToolHandler):
             )
         except Exception as e:
             return f"Error deploying template: {e}"
+
+    def _run_template(self, template_id: str, params: dict = None,
+                      input_text: str = "") -> str:
+        """Synchronously execute a flow once and return the outputs.
+
+        No deployment, no background instance. Loads the flow definition
+        from the repository (FQN), parses it with the given parameters,
+        feeds an optional input FlowFile, and runs it through
+        ContinuousFlowExecutor.run_batch(). Returns the output
+        FlowFiles' content + attributes.
+        """
+        if not template_id:
+            return ("Error: template_id is required (FQN like "
+                    "default.flow_name:1.0.0).")
+        from core.repository import ScopedRepository
+        flow_data = ScopedRepository.instance().get_flow(template_id, "global")
+        if flow_data is None:
+            return (f"Error: flow '{template_id}' not found in repository. "
+                    f"Use action 'catalog' to see available flows.")
+        try:
+            from engine import FlowParser
+            from engine.continuous_executor import ContinuousFlowExecutor
+            from core import FlowFile
+        except Exception as e:
+            return f"Error: failed to import flow engine: {e}"
+        # Apply caller-supplied parameter overrides on top of the flow's
+        # declared defaults before parsing — same merge order as the
+        # deployment path.
+        merged_params = dict(flow_data.get("parameters") or {})
+        merged_params.update(params or {})
+        flow_data = dict(flow_data)
+        flow_data["parameters"] = merged_params
+        try:
+            flow = FlowParser.parse(flow_data)
+        except Exception as e:
+            return f"Error: parse failed for '{template_id}': {e}"
+        ff = FlowFile(content=(input_text or "").encode("utf-8"))
+        try:
+            result = ContinuousFlowExecutor.run_batch(
+                flow, input_flowfiles=[ff], max_workers=1)
+        except Exception as e:
+            return f"Error: execution failed for '{template_id}': {e}"
+        outs = []
+        for _f in (getattr(result, "output_flowfiles", []) or []):
+            try:
+                _content = _f.get_content()
+                if isinstance(_content, bytes):
+                    _content = _content.decode("utf-8", errors="replace")
+            except Exception:
+                _content = ""
+            outs.append({
+                "attributes": dict(_f.attributes or {}),
+                "content": _content[:8000],
+            })
+        return json.dumps({
+            "template_id": template_id,
+            "success": bool(getattr(result, "success", False)),
+            "outputs": outs,
+        }, ensure_ascii=False, indent=2)
 
     def _list_flows(self, conversation_only: bool = True) -> str:
         dep_reg = self._get_deployment_registry()

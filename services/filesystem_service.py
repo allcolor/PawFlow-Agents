@@ -73,9 +73,16 @@ def _sync_relay_scripts(service, reg_info):
         result = service._request("update_scripts",
                                    scripts=bundle["scripts"],
                                    script_hash=bundle["hash"])
-        if isinstance(result, dict) and result.get("ok"):
-            logger.info("Relay scripts synced (hash=%s, %d files)",
-                         bundle["hash"], len(bundle["scripts"]))
+        # _request unwraps {"ok": True, "data": {...}} → returns the
+        # inner data dict, so check for its shape instead of "ok".
+        if isinstance(result, dict) and "updated" in result:
+            logger.info("Relay scripts synced (hash=%s, %d files, updated=%s)",
+                         bundle["hash"], len(bundle["scripts"]),
+                         result.get("updated"))
+            if result.get("needs_restart"):
+                logger.warning(
+                    "Relay script update requires container restart "
+                    "(pawflow_relay.py changed). Restart the relay.")
         else:
             logger.warning("Relay script sync rejected: %s", result)
     except Exception as e:

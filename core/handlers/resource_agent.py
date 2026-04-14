@@ -473,12 +473,56 @@ class SpawnAgentsHandler(ToolHandler):
             except Exception:
                 pass
 
+        # Per-pair de-duplication: if the same caller delegates to the
+        # same target while a previous delegate is still running, inject
+        # the new message into the running sub-agent's loop (preempt)
+        # rather than spawning a parallel one. Only unique (caller,
+        # target) pairs with no live delegate go through the spawn path.
+        from core.agent_executor import get_live_delegate
         agent_tasks = []
+        _injected_results = []
         for spec in tasks_spec:
             agent_name = spec.get("agent", "")
             message = spec.get("message", "")
             resume_id = spec.get("resume", "")
             task_id = resume_id or spec.get("id", uuid.uuid4().hex[:8])
+
+            # Preempt path: a delegate for (_src_agent, agent_name) is
+            # already running in this conversation — inject the message
+            # into its loop instead of spawning a second one.
+            if (not resume_id and self._conversation_id and _src_agent
+                    and agent_name):
+                _live = get_live_delegate(
+                    self._conversation_id, _src_agent, agent_name)
+                if _live:
+                    _live_client = _live.get("client")
+                    _live_tid = _live.get("task_id", "")
+                    _delivered = False
+                    if _live_client and hasattr(_live_client, "send_user_message"):
+                        try:
+                            _delivered = bool(
+                                _live_client.send_user_message(message))
+                        except Exception as _pe:
+                            logger.warning(
+                                "[delegate] preempt to live delegate %s failed: %s",
+                                _live_tid, _pe)
+                    _injected_results.append({
+                        "task_id": _live_tid,
+                        "agent": agent_name,
+                        "status": "injected" if _delivered else "injected_queued",
+                        "message": (
+                            f"A delegate for '{agent_name}' was already "
+                            f"running (task_id={_live_tid}) — your new "
+                            f"message was {'sent as preempt' if _delivered else 'queued'}. "
+                            f"You will receive a single follow-up result "
+                            f"when that delegate finishes."
+                        ),
+                    })
+                    logger.info(
+                        "[delegate] preempt: (%s→%s) live task %s, "
+                        "new message injected (delivered=%s)",
+                        _src_agent, agent_name, _live_tid, _delivered)
+                    continue
 
             try:
                 extra_skills = spec.get("skills") or []
@@ -513,6 +557,9 @@ class SpawnAgentsHandler(ToolHandler):
                 return f"Error: {e}"
 
         if not agent_tasks:
+            # Every spec was a preempt into an already-running delegate.
+            if _injected_results:
+                return json.dumps(_injected_results, ensure_ascii=False, indent=2)
             return "Error: no valid tasks to spawn."
 
         # Emit group start event so the UI can create a parent container
@@ -549,7 +596,7 @@ class SpawnAgentsHandler(ToolHandler):
 
         if not wait:
             ids = [r.task_id for r in results]
-            return json.dumps({
+            _reply = {
                 "status": "spawned",
                 "task_ids": ids,
                 "message": (
@@ -561,7 +608,10 @@ class SpawnAgentsHandler(ToolHandler):
                     f"(integrate into your work, or reply to the user). "
                     f"Track these task_ids: {ids}."
                 ),
-            })
+            }
+            if _injected_results:
+                _reply["injected"] = _injected_results
+            return json.dumps(_reply, ensure_ascii=False)
 
         # Format results
         _persist_map = {t.id: t.persist for t in agent_tasks}

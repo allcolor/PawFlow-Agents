@@ -54,6 +54,36 @@ def _clear_cancelled(task_id: str):
         _cancelled_tasks.discard(task_id)
 
 
+# Live delegate registry: one in-flight delegate per (parent_conv, caller, target).
+# A second delegate call for the same triple should INJECT its message into the
+# running sub-agent's loop instead of spawning a parallel one.
+#   value: {"task_id", "client", "task"}
+_live_delegates: Dict[tuple, dict] = {}
+_live_delegates_lock = Lock()
+
+
+def get_live_delegate(parent_conv: str, caller: str, target: str) -> Optional[dict]:
+    with _live_delegates_lock:
+        return _live_delegates.get((parent_conv, caller, target))
+
+
+def register_live_delegate(parent_conv: str, caller: str, target: str,
+                           task_id: str, client, task) -> None:
+    with _live_delegates_lock:
+        _live_delegates[(parent_conv, caller, target)] = {
+            "task_id": task_id, "client": client, "task": task,
+        }
+
+
+def unregister_live_delegate(parent_conv: str, caller: str, target: str,
+                             task_id: str = "") -> None:
+    """Remove entry unless another task has already taken over the slot."""
+    with _live_delegates_lock:
+        entry = _live_delegates.get((parent_conv, caller, target))
+        if entry and (not task_id or entry.get("task_id") == task_id):
+            _live_delegates.pop((parent_conv, caller, target), None)
+
+
 @dataclass
 class AgentTask:
     """A single sub-agent task to execute."""
@@ -497,6 +527,16 @@ class SubAgentExecutor:
             messages = self._build_initial_context(
                 task, sys_prompt, user_source)
 
+        # Register in the live-delegate registry so a second delegate
+        # call from the same caller to the same agent PREEMPTS this
+        # running sub-agent (via client.send_user_message) instead of
+        # spawning a parallel one.
+        if task.parent_conversation_id and task.source_agent and task.agent_name:
+            register_live_delegate(
+                task.parent_conversation_id,
+                task.source_agent, task.agent_name,
+                task.id, client, task)
+
         # Register in AgentLoopTask._active_contexts so the chat UI
         # active-agents panel surfaces this sub-agent. The key uses the
         # sub-conv id (parent::task::tid:agent) so it matches the
@@ -844,6 +884,15 @@ class SubAgentExecutor:
                     with _active_inst._active_contexts_lock:
                         _active_inst._active_contexts.pop(_active_ctx_key, None)
                         _active_inst._active_claude_client.pop(_active_ctx_key, None)
+                except Exception:
+                    pass
+            # Clear live-delegate slot so the next delegate call spawns fresh.
+            if task.parent_conversation_id and task.source_agent and task.agent_name:
+                try:
+                    unregister_live_delegate(
+                        task.parent_conversation_id,
+                        task.source_agent, task.agent_name,
+                        task.id)
                 except Exception:
                     pass
 

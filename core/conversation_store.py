@@ -755,11 +755,15 @@ class ConversationStore:
                     _for_from.get("content", ""),
                     f"[delegate {_from} → {_to}]:")
                 self._append_ctx_file(cid, _from, [_for_from])
-                # TO's ctx: message as-is (the private incoming request),
-                # but role=user so the target reads it as an instruction.
+                # TO's ctx: role=user so the target reads it as an
+                # instruction, AND prefix with [from <sender>] so TO can
+                # tell this came from another agent, not from the real user.
                 _for_to = dict(_dm)
                 if _for_to.get("role") == "assistant":
                     _for_to["role"] = "user"
+                _for_to["content"] = self._prefix_content(
+                    _for_to.get("content", ""),
+                    f"[from {_from}]:")
                 self._append_ctx_file(cid, _to, [_for_to])
 
             # 3. Append to shared context + transformed to other agents' contexts

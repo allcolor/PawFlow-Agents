@@ -146,6 +146,150 @@ class ImageGenerationHandler(ToolHandler):
             return f"Error generating image: {e}"
 
 
+class EditImageHandler(ToolHandler):
+    """Edit one or more existing images via the image generation service.
+
+    Calls the active image service's `edit_image(prompt, image_urls, ...)`
+    operation. Only models that declare an `edit_image` operation in
+    `pixazo_catalog.json` (e.g. nano-banana) support this — others will
+    return a clear error pointing the agent at a model that does.
+    """
+
+    _base_url: str = "http://localhost:9090"
+    _service_resolver = None  # () -> (service, error_msg)
+    _user_id: str = ""
+
+    @property
+    def name(self) -> str:
+        return "edit_image"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Edit one or more existing images per a text prompt. Pass the "
+            "source images as a list of URLs (HTTP or fs://filestore/<id>/<name>) "
+            "via `image_urls`. Output is saved to FileStore (default) or a "
+            "filesystem service (set destination + path). Use `generate_image` "
+            "for text-only generation; this tool requires existing inputs."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Edit instruction (e.g. 'make the sky stormy', 'add a red hat')",
+                },
+                "image_urls": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Source image URLs. HTTP/HTTPS and fs://filestore/<id>/<name> "
+                        "are accepted. Most edit-capable models take 1 source; some "
+                        "support multi-image fusion."),
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "Where to save the result: 'filestore' (default) or a filesystem service name (with `path`).",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File path when destination is a filesystem service.",
+                },
+                "output_format": {
+                    "type": "string",
+                    "description": "Output format: 'png' (default), 'jpeg', 'webp'.",
+                },
+                "num_images": {
+                    "type": "integer",
+                    "description": "Number of variants to produce (default 1).",
+                },
+            },
+            "required": ["prompt", "image_urls"],
+        }
+
+    def set_base_url(self, base_url: str):
+        self._base_url = base_url.rstrip("/")
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def set_service_resolver(self, resolver):
+        """Set a resolver: () -> (service, error_msg). Same shape as ImageGenerationHandler."""
+        self._service_resolver = resolver
+
+    def _resolve_filestore_url(self, url: str) -> str:
+        """Convert fs://filestore/<id>/<name> to an absolute /files/<id> URL.
+
+        Pixazo fetches the source image directly from the URL, so it
+        needs an HTTP one. FileStore-resident URLs become same-origin
+        absolute paths against the configured base_url.
+        """
+        if not url.startswith("fs://filestore/"):
+            return url
+        rest = url[len("fs://filestore/"):]
+        fid = rest.split("/", 1)[0]
+        if not fid:
+            return url
+        return f"{self._base_url}/files/{fid}"
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        import time as _time
+
+        if not self._service_resolver:
+            return "Error: no image service resolver configured"
+        service, error = self._service_resolver()
+        if not service:
+            return f"Error: {error or 'no image generation service available'}"
+
+        prompt = arguments.get("prompt", "")
+        if not prompt:
+            return "Error: no prompt provided"
+        image_urls = arguments.get("image_urls") or []
+        if isinstance(image_urls, str):
+            image_urls = [image_urls]
+        if not image_urls:
+            return "Error: image_urls is required (at least one source URL)"
+        # Resolve fs://filestore/... → absolute HTTP so Pixazo can fetch it
+        image_urls = [self._resolve_filestore_url(u) for u in image_urls]
+
+        destination = arguments.get("destination", "filestore")
+        if not hasattr(service, "edit_image"):
+            return ("Error: the active image service does not implement "
+                    "edit_image. Switch to a model with an edit_image "
+                    "operation (e.g. 'nano-banana').")
+
+        try:
+            edit_kwargs = {k: v for k, v in arguments.items()
+                           if k not in ("destination", "path", "image_urls")}
+            edit_kwargs["image_urls"] = image_urls
+            result = service.edit_image(**edit_kwargs)
+
+            ct = result["content_type"]
+            ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(
+                ct.split(";")[0].strip(), "png")
+            filename = arguments.get("path") or (
+                f"edited_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}")
+
+            from core.storage_resolver import StorageResolver
+            resolver = StorageResolver(
+                user_id=self._user_id,
+                conversation_id=getattr(self, "_conversation_id", "") or "")
+            write_result = resolver.write(destination, filename,
+                                          result["image_bytes"], ct)
+
+            if write_result.get("file_id"):
+                url = f"fs://filestore/{write_result['file_id']}/{filename}"
+                return f"Image edited: {url}\nfile_id: {write_result['file_id']}"
+            return (f"Image edited and saved to "
+                    f"{write_result.get('destination', destination)}: "
+                    f"{write_result.get('path', filename)}")
+        except Exception as e:
+            return f"Error editing image: {e}"
+
+
 class VideoGenerationHandler(ToolHandler):
     """Generate videos via a dynamically resolved video generation service.
 

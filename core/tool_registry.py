@@ -48,6 +48,7 @@ from core.handlers import (  # noqa: F401
     ForgetHandler,
     GetToolSchemaHandler,
     HTTPToolHandler,
+    EditImageHandler,
     ImageGenerationHandler,
     ImageModelInfoHandler,
     LinkIdentityHandler,
@@ -244,6 +245,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ScheduleContinuationHandler())
     registry.register(ScheduleRecheckHandler())
     registry.register(ImageGenerationHandler())
+    registry.register(EditImageHandler())
     registry.register(ImageModelInfoHandler())
     registry.register(VideoGenerationHandler())
     registry.register(AudioGenerationHandler())

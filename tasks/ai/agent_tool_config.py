@@ -47,7 +47,8 @@ class AgentToolConfigMixin:
             CreateToolHandler, ExecuteScriptHandler,
             FlowManagerHandler,
             ForgetHandler,
-            ImageGenerationHandler, ImageModelInfoHandler, VideoGenerationHandler, AudioGenerationHandler,
+            ImageGenerationHandler, EditImageHandler, ImageModelInfoHandler,
+            VideoGenerationHandler, AudioGenerationHandler,
             LinkIdentityHandler, ManageResourceHandler,
             NotifyUserHandler,
             RecallHandler, RememberHandler,
@@ -91,7 +92,8 @@ class AgentToolConfigMixin:
                     except Exception:
                         return None
                 h.set_fs_resolver(_fs_resolver)
-            elif isinstance(h, (ImageGenerationHandler, ImageModelInfoHandler)):
+            elif isinstance(h, (ImageGenerationHandler, EditImageHandler,
+                                ImageModelInfoHandler)):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
                 if user_id and hasattr(h, 'set_user_id'):

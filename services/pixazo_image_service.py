@@ -1,281 +1,109 @@
-"""Pixazo image generation service — supports all Pixazo image models.
+"""Pixazo image generation service — generic dispatcher over the Pixazo catalog.
 
-Implements BaseImageGenerationService for the Pixazo gateway API.
-Model selection via configurable endpoint or preset name.
-Supports both sync (SDXL) and async (Flux, Recraft, Nano Banana, etc.) models.
+Models and their operations (text_to_image, edit_image, ...) are declared
+in `data/repository/configs/pixazo_catalog.json`. This module contains
+ZERO model-specific code: every call resolves to (model, operation,
+convention) and the convention drives the request/poll behavior.
+
+Conventions:
+  - "sync"          — POST returns the image URL directly in the body.
+  - "legacy_poll"   — POST returns request_id; status is fetched by
+                      POSTing {request_id} to the model's poll_endpoint.
+  - "polling_url"   — POST returns an absolute polling_url; status is
+                      fetched by GETing that URL. Completion payload
+                      surfaces the URL under output.media_url[0].
 """
 
 import http.client
 import json
 import logging
+import os
 import ssl
 import time
+import urllib.error
 import urllib.request
+from typing import Any, Dict, Optional, Tuple
 
 from core import ServiceFactory, ServiceError
 from services.base_image_generation import BaseImageGenerationService
 
 logger = logging.getLogger(__name__)
 
-# Known Pixazo image models with their endpoints and response patterns
-# Format: {preset: {generate_endpoint, poll_endpoint, body_builder, response_parser}}
-PIXAZO_MODELS = {
-    "sdxl": {
-        "label": "SDXL (Stability AI)",
-        "endpoint": "/getImage/v1/getSDXLImage",
-        "mode": "sync",
-        "url_field": "imageUrl",
-        "params": {
-            "width": "256-1024 (default 1024)",
-            "height": "256-1024 (default 1024)",
-            "num_steps": "1-20 (default 20)",
-            "guidance_scale": "1-20 (default 5)",
-            "negative_prompt": "text to avoid",
-        },
-    },
-    "flux-dev": {
-        "label": "Flux Dev (Black Forest Labs)",
-        "endpoint": "/flux-dev/v1/dev/textToImage",
-        "poll_endpoint": "/flux-dev-polling/dev/getFluxDevStatus",
-        "mode": "async",
-        "id_field": "requestId",
-        "params": {
-            "image_size": "e.g. 'landscape_4_3', 'square_hd', 'portrait_4_3'",
-            "num_inference_steps": "1-50 (default 28)",
-            "guidance_scale": "1-20 (default 3.5)",
-            "output_format": "jpeg, png, webp",
-            "num_images": "1-4",
-        },
-    },
-    "nano-banana": {
-        "label": "Nano Banana (Google)",
-        "endpoint": "/nano-banana/v1/nano-banana/generateTextToImageRequest",
-        "poll_endpoint": "/nano-banana-polling/nano-banana/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-        "params": {
-            "aspect_ratio": "1:1, 4:3, 3:2, 16:9, 9:16, 21:9, 2:3, 3:4, 4:5, 5:4",
-            "output_format": "jpeg, png, webp",
-            "num_images": "1-4",
-        },
-    },
-    "recraft-v3": {
-        "label": "Recraft V3",
-        "endpoint": "/recraft/v3/generate",
-        "mode": "sync",
-        "url_field": "output",
-        "params": {
-            "style": "style preset (default 'Recraft V3 Raw')",
-            "size": "e.g. '1024x1024', '1365x1024', '1024x1365'",
-            "n": "1-6 images",
-            "negative_prompt": "text to avoid",
-        },
-    },
-    "recraft-v4": {
-        "label": "Recraft V4",
-        "endpoint": "/recraft/v4/generate",
-        "mode": "sync",
-        "url_field": "output",
-    },
-    "ideogram": {
-        "label": "Ideogram",
-        "endpoint": "/ideogram/v1/ideogram/generateTextToImageRequest",
-        "poll_endpoint": "/ideogram-polling/ideogram/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "gpt-image": {
-        "label": "GPT Image (OpenAI)",
-        "endpoint": "/gpt-image/v1/gpt-image/generateTextToImageRequest",
-        "poll_endpoint": "/gpt-image-polling/gpt-image/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "stable-diffusion": {
-        "label": "Stable Diffusion 3.5",
-        "endpoint": "/sd35/v1/sd35/generateTextToImageRequest",
-        "poll_endpoint": "/sd35-polling/sd35/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "dalle": {
-        "label": "DALL-E (OpenAI)",
-        "endpoint": "/dalle/v1/dalle/generateTextToImageRequest",
-        "poll_endpoint": "/dalle-polling/dalle/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "seedream": {
-        "label": "Seedream (BytePlus)",
-        "endpoint": "/seedream/v1/seedream/generateTextToImageRequest",
-        "poll_endpoint": "/seedream-polling/seedream/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "bria": {
-        "label": "Bria",
-        "endpoint": "/bria/v1/bria/generateTextToImageRequest",
-        "poll_endpoint": "/bria-polling/bria/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "grok": {
-        "label": "Grok (xAI)",
-        "endpoint": "/grok/v1/grok/generateTextToImageRequest",
-        "poll_endpoint": "/grok-polling/grok/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "hunyuan": {
-        "label": "Hunyuan (Tencent)",
-        "endpoint": "/hunyuan/v1/hunyuan/generateTextToImageRequest",
-        "poll_endpoint": "/hunyuan-polling/hunyuan/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "longcat-image": {
-        "label": "LongCat Image",
-        "endpoint": "/longcat-image/v1/longcat-image/generateTextToImageRequest",
-        "poll_endpoint": "/longcat-image-polling/longcat-image/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "luma-dream-machine": {
-        "label": "Luma Dream Machine (Luma AI)",
-        "endpoint": "/luma-dream-machine/v1/luma-dream-machine/generateTextToImageRequest",
-        "poll_endpoint": "/luma-dream-machine-polling/luma-dream-machine/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "minimax": {
-        "label": "Minimax (MiniMax)",
-        "endpoint": "/minimax/v1/minimax/generateTextToImageRequest",
-        "poll_endpoint": "/minimax-polling/minimax/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "pixelforge": {
-        "label": "Pixelforge (Pixazo)",
-        "endpoint": "/pixelforge/v1/pixelforge/generateTextToImageRequest",
-        "poll_endpoint": "/pixelforge-polling/pixelforge/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "qwen-image": {
-        "label": "Qwen Image (Alibaba)",
-        "endpoint": "/qwen-image/v1/qwen-image/generateTextToImageRequest",
-        "poll_endpoint": "/qwen-image-polling/qwen-image/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "reve-image": {
-        "label": "Reve Image",
-        "endpoint": "/reve-image/v1/reve-image/generateTextToImageRequest",
-        "poll_endpoint": "/reve-image-polling/reve-image/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "studio-ghibli": {
-        "label": "Studio Ghibli",
-        "endpoint": "/studio-ghibli/v1/studio-ghibli/generateTextToImageRequest",
-        "poll_endpoint": "/studio-ghibli-polling/studio-ghibli/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "z-image": {
-        "label": "Z Image",
-        "endpoint": "/z-image/v1/z-image/generateTextToImageRequest",
-        "poll_endpoint": "/z-image-polling/z-image/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "auraflow": {
-        "label": "Auraflow",
-        "endpoint": "/auraflow/v1/auraflow/generateTextToImageRequest",
-        "poll_endpoint": "/auraflow-polling/auraflow/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "p-image": {
-        "label": "P Image (Pruna AI)",
-        "endpoint": "/p-image/v1/p-image/generateTextToImageRequest",
-        "poll_endpoint": "/p-image-polling/p-image/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "firered-image-edit": {
-        "label": "FireRed Image Edit",
-        "endpoint": "/firered-image-edit/v1/firered-image-edit/generateTextToImageRequest",
-        "poll_endpoint": "/firered-image-edit-polling/firered-image-edit/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "wan": {
-        "label": "Wan (Alibaba)",
-        "endpoint": "/wan/v1/wan/generateTextToImageRequest",
-        "poll_endpoint": "/wan-polling/wan/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-    "kling": {
-        "label": "Kling (Kuaishou)",
-        "endpoint": "/kling/v1/kling/generateTextToImageRequest",
-        "poll_endpoint": "/kling-polling/kling/getStatus",
-        "mode": "async",
-        "id_field": "request_id",
-    },
-}
 
-# Build select options for schema
-_MODEL_OPTIONS = ["custom"] + sorted(PIXAZO_MODELS.keys())
+# ── Catalog loading ─────────────────────────────────────────────────────
+
+
+def _catalog_path() -> str:
+    """Locate the Pixazo catalog JSON in the repository."""
+    import core.paths as _p
+    return str(_p.REPOSITORY_DIR / "configs" / "pixazo_catalog.json")
+
+
+_CATALOG_CACHE: Optional[Dict[str, Any]] = None
+
+
+def _load_catalog() -> Dict[str, Any]:
+    """Read pixazo_catalog.json, cache for the process lifetime.
+
+    The file is small (<10KB) and changes only on deployment, so a
+    process-level cache is fine. Reset by clearing _CATALOG_CACHE.
+    """
+    global _CATALOG_CACHE
+    if _CATALOG_CACHE is not None:
+        return _CATALOG_CACHE
+    path = _catalog_path()
+    if not os.path.exists(path):
+        raise ServiceError(f"Pixazo catalog not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    models = data.get("models") or {}
+    if not models:
+        raise ServiceError(f"Pixazo catalog has no models: {path}")
+    _CATALOG_CACHE = models
+    return models
+
+
+def _model_options() -> list:
+    """Sorted list of known model ids — used to populate the select schema."""
+    return sorted(_load_catalog().keys())
+
+
+# ── Service ─────────────────────────────────────────────────────────────
+
+
+_GATEWAY = "gateway.pixazo.ai"
 
 
 class PixazoImageService(BaseImageGenerationService):
     TYPE = "pixazoImageGeneration"
-    VERSION = "2.0.0"
+    VERSION = "3.0.0"
     NAME = "Pixazo Image Generation"
-    DESCRIPTION = "Generate images via Pixazo API (SDXL, Flux, Recraft, Nano Banana, GPT Image, DALL-E, and more)"
+    DESCRIPTION = ("Generate or edit images via Pixazo API. Supports any "
+                   "model declared in pixazo_catalog.json with any operation "
+                   "(text_to_image, edit_image, ...).")
 
     def get_parameter_schema(self) -> dict:
+        try:
+            options = _model_options()
+        except Exception:
+            options = []
         return {
             "api_key": {
-                "type": "string",
-                "required": True,
-                "sensitive": True,
+                "type": "string", "required": True, "sensitive": True,
                 "description": "Pixazo API key (Ocp-Apim-Subscription-Key)",
             },
             "model": {
-                "type": "select",
-                "required": False,
-                "default": "sdxl",
-                "options": _MODEL_OPTIONS,
-                "description": "Pixazo model preset. Use 'custom' with custom_endpoint for unlisted models.",
-            },
-            "custom_endpoint": {
-                "type": "string",
-                "required": False,
-                "default": "",
-                "description": "Custom generate endpoint path (e.g. '/mymodel/v1/generate'). Only used when model='custom'.",
-                "show_when": {"model": ["custom"]},
-            },
-            "custom_poll_endpoint": {
-                "type": "string",
-                "required": False,
-                "default": "",
-                "description": "Custom polling endpoint (empty = sync mode). Only used when model='custom'.",
-                "show_when": {"model": ["custom"]},
+                "type": "select", "required": False, "default": "sdxl",
+                "options": options,
+                "description": "Pixazo model id (see pixazo_catalog.json).",
             },
             "poll_interval": {
-                "type": "integer",
-                "required": False,
-                "default": 5,
-                "description": "Polling interval in seconds (for async models)",
+                "type": "integer", "required": False, "default": 5,
+                "description": "Polling interval in seconds (for async models).",
             },
             "max_retries": {
-                "type": "integer",
-                "required": False,
-                "default": 5,
-                "description": "Max retries on 500 errors (cold start)",
+                "type": "integer", "required": False, "default": 5,
+                "description": "Max retries on 5xx errors (cold start).",
             },
         }
 
@@ -285,52 +113,66 @@ class PixazoImageService(BaseImageGenerationService):
         self.timeout = int(self.config.get("timeout", 600))
         self.poll_interval = int(self.config.get("poll_interval", 5))
         self.max_retries = int(self.config.get("max_retries", 5))
+        self._model_id = self.config.get("model", "sdxl")
 
-        model_key = self.config.get("model", "sdxl")
-        if model_key == "custom":
-            self._endpoint = self.config.get("custom_endpoint", "")
-            self._poll_endpoint = self.config.get("custom_poll_endpoint", "")
-            self._mode = "async" if self._poll_endpoint else "sync"
-            self._id_field = "request_id"
-            self._url_field = "output"
-        elif model_key in PIXAZO_MODELS:
-            m = PIXAZO_MODELS[model_key]
-            self._endpoint = m["endpoint"]
-            self._poll_endpoint = m.get("poll_endpoint", "")
-            self._mode = m["mode"]
-            self._id_field = m.get("id_field", "request_id")
-            self._url_field = m.get("url_field", "output")
-        else:
-            # Fallback: treat as SDXL
-            self._endpoint = PIXAZO_MODELS["sdxl"]["endpoint"]
-            self._poll_endpoint = ""
-            self._mode = "sync"
-            self._id_field = ""
-            self._url_field = "imageUrl"
+    # ── Catalog accessors ──────────────────────────────────────────────
+
+    def _model(self) -> Dict[str, Any]:
+        catalog = _load_catalog()
+        if self._model_id not in catalog:
+            raise ServiceError(
+                f"Unknown Pixazo model '{self._model_id}'. Known: "
+                f"{sorted(catalog.keys())}")
+        return catalog[self._model_id]
+
+    def _op(self, op_name: str) -> Dict[str, Any]:
+        m = self._model()
+        ops = m.get("operations") or {}
+        if op_name not in ops:
+            raise ServiceError(
+                f"Model '{self._model_id}' does not support operation "
+                f"'{op_name}'. Supported: {sorted(ops.keys())}.")
+        return ops[op_name]
 
     def get_model_info(self) -> dict:
-        """Return info about the active model and its specific parameters."""
-        model_key = self.config.get("model", "sdxl")
-        m = PIXAZO_MODELS.get(model_key, {})
+        """Surface model + operations metadata (used by `get_image_model_info` tool)."""
+        try:
+            catalog = _load_catalog()
+        except Exception as e:
+            return {"error": str(e)}
+        m = catalog.get(self._model_id, {})
+        ops = m.get("operations") or {}
         return {
-            "model": model_key,
-            "label": m.get("label", model_key),
-            "mode": self._mode,
-            "model_params": m.get("params", {}),
-            "all_models": {k: v.get("label", k) for k, v in PIXAZO_MODELS.items()},
+            "model": self._model_id,
+            "label": m.get("label", self._model_id),
+            "category": m.get("category", "image"),
+            "operations": {
+                name: {
+                    "convention": op.get("convention", ""),
+                    "params": op.get("params", {}),
+                    "input_field": op.get("input_field", ""),
+                }
+                for name, op in ops.items()
+            },
+            "all_models": {k: v.get("label", k) for k, v in catalog.items()},
         }
+
+    # ── Connection (lazy — Pixazo is a stateless HTTPS API) ─────────────
 
     def _create_connection(self):
         if not self.api_key:
             raise ServiceError("api_key is required for Pixazo service")
-        if not self._endpoint:
-            raise ServiceError("No endpoint configured (set model or custom_endpoint)")
+        # Validate the model/operation declaration upfront so config errors
+        # surface at service start rather than at first call.
+        self._model()
         return {"ready": True}
 
     def _close_connection(self):
         pass
 
-    def _make_headers(self, body_bytes):
+    # ── HTTP primitives ────────────────────────────────────────────────
+
+    def _make_headers(self, body_bytes: bytes) -> Dict[str, str]:
         return {
             "Content-Type": "application/json",
             "Cache-Control": "no-cache",
@@ -338,17 +180,15 @@ class PixazoImageService(BaseImageGenerationService):
             "Content-Length": str(len(body_bytes)),
         }
 
-    def _post(self, endpoint, body_dict) -> dict:
-        """POST to Pixazo gateway with retry on 500."""
+    def _post(self, endpoint: str, body_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """POST to Pixazo gateway with retry on 5xx."""
         json_body = json.dumps(body_dict).encode("utf-8")
         headers = self._make_headers(json_body)
         ctx = ssl.create_default_context()
         resp_body = ""
-
         for attempt in range(self.max_retries):
             conn = http.client.HTTPSConnection(
-                "gateway.pixazo.ai", timeout=self.timeout, context=ctx
-            )
+                _GATEWAY, timeout=self.timeout, context=ctx)
             conn.request("POST", endpoint, body=json_body, headers=headers)
             resp = conn.getresponse()
             resp_body = resp.read().decode("utf-8", errors="replace")
@@ -360,34 +200,63 @@ class PixazoImageService(BaseImageGenerationService):
                            attempt + 1, self.max_retries, resp.status,
                            resp_body[:200], delay)
             time.sleep(delay)
-
         if resp.status >= 400:
             raise ServiceError(f"Pixazo API error ({resp.status}): {resp_body[:300]}")
-
         return json.loads(resp_body) if resp_body.strip() else {}
 
-    def _download_image(self, url) -> tuple:
-        """Download image from URL. Returns (bytes, content_type)."""
-        req = urllib.request.Request(url, headers={"User-Agent": "PawFlow-Agent/1.0"})
-        with urllib.request.urlopen(req, timeout=60) as img_resp:
-            return img_resp.read(), img_resp.headers.get("Content-Type", "image/png")
+    def _get_url(self, url: str) -> Dict[str, Any]:
+        """GET an absolute Pixazo URL (used for `polling_url` follow-up)."""
+        req = urllib.request.Request(url, method="GET", headers={
+            "Cache-Control": "no-cache",
+            "Ocp-Apim-Subscription-Key": self.api_key,
+            "Accept": "application/json",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            raise ServiceError(f"Pixazo poll error ({e.code}): {body[:300]}")
+        return json.loads(body) if body.strip() else {}
 
-    def _extract_image_url(self, data) -> str:
-        """Extract image URL from response data, trying common fields."""
+    def _download_image(self, url: str) -> Tuple[bytes, str]:
+        """Fetch image bytes from a public CDN URL — no Pixazo auth needed."""
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "PawFlow-Agent/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read(), r.headers.get("Content-Type", "image/png")
+
+    # ── URL extraction ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_image_url(data: Any, url_field: str = "") -> str:
+        """Find an image URL inside a Pixazo response, trying every known shape.
+
+        Tries (in order): the operation's configured `url_field`,
+        common top-level fields, nested `output.media_url[0]` (new
+        polling_url convention), and `images[0].(url|image_url)`.
+        """
         if not isinstance(data, dict):
             return ""
-        # Try configured field first
-        val = data.get(self._url_field, "")
-        if val:
-            return val[0] if isinstance(val, list) else val
-        # Try common fields
+        if url_field:
+            v = data.get(url_field, "")
+            if v:
+                return v[0] if isinstance(v, list) else v
         for field in ("imageUrl", "output", "image_url", "url", "image"):
-            val = data.get(field, "")
-            if val:
-                return val[0] if isinstance(val, list) else val
-        # Check nested: images[0].url
-        images = data.get("images", [])
-        if images and isinstance(images, list):
+            v = data.get(field, "")
+            if v and not isinstance(v, dict):
+                return v[0] if isinstance(v, list) else v
+        # Nested: output.media_url[0] (nano-banana-pro / nano-banana-2)
+        out = data.get("output")
+        if isinstance(out, dict):
+            mu = out.get("media_url") or out.get("image_url") or out.get("url")
+            if isinstance(mu, list) and mu:
+                return mu[0]
+            if isinstance(mu, str) and mu:
+                return mu
+        # images[0]
+        images = data.get("images") or []
+        if isinstance(images, list) and images:
             first = images[0]
             if isinstance(first, dict):
                 return first.get("url", "") or first.get("image_url", "")
@@ -395,50 +264,105 @@ class PixazoImageService(BaseImageGenerationService):
                 return first
         return ""
 
-    def _poll_for_result(self, request_id) -> str:
-        """Poll async endpoint until image URL is available. No timeout — waits forever.
-        Cancel via agent interrupt (/stop) which raises AgentCancelled."""
+    # ── Polling ────────────────────────────────────────────────────────
+
+    def _poll(self, op: Dict[str, Any], request_id: str,
+              polling_url: str = "") -> str:
+        """Drive polling per the operation's convention until completion.
+
+        No timeout — waits forever. Cancellation is via the agent loop's
+        interrupt path (raises AgentCancelled), per the project rule
+        "no arbitrary timeouts".
+        """
+        url_field = op.get("url_field", "")
+        id_field = op.get("id_field", "request_id")
+        poll_endpoint = op.get("poll_endpoint", "")
+        use_url = bool(polling_url)
         start = time.time()
         while True:
             time.sleep(self.poll_interval)
-            data = self._post(self._poll_endpoint, {
-                self._id_field: request_id,
-                "request_id": request_id,
-                "requestId": request_id,
-            })
+            if use_url:
+                data = self._get_url(polling_url)
+            else:
+                data = self._post(poll_endpoint, {
+                    id_field: request_id,
+                    "request_id": request_id,
+                    "requestId": request_id,
+                })
             status = (data.get("status", "") or "").lower()
             elapsed = int(time.time() - start)
-            logger.info("[PIXAZO] Poll %s (%ds): status=%s, keys=%s",
-                        self._poll_endpoint, elapsed, status,
-                        list(data.keys()) if isinstance(data, dict) else type(data).__name__)
+            logger.info("[PIXAZO] Poll %s (%ds): status=%s",
+                        polling_url or poll_endpoint, elapsed, status)
             if status in ("completed", "done", "success", "ready"):
-                url = self._extract_image_url(data)
-                if url:
-                    return url
-                raise ServiceError(f"Pixazo completed but no image URL: {json.dumps(data)[:300]}")
+                u = self._extract_image_url(data, url_field=url_field)
+                if u:
+                    return u
+                raise ServiceError(
+                    f"Pixazo completed but no image URL: {json.dumps(data)[:300]}")
             if status in ("failed", "error"):
                 msg = data.get("message", "") or data.get("error", "") or str(data)[:200]
                 raise ServiceError(f"Pixazo generation failed: {msg}")
-            # Some models return images without a status field
+            # Some models omit status when ready
             if not status:
-                url = self._extract_image_url(data)
-                if url:
-                    logger.info("[PIXAZO] Got image URL without status field (%ds)", elapsed)
-                    return url
+                u = self._extract_image_url(data, url_field=url_field)
+                if u:
+                    return u
 
-    def generate(self, prompt="", negative_prompt="", width=1024, height=1024,
-                 steps=20, **kwargs) -> dict:
-        """Generate an image via Pixazo API.
+    # ── Generic operation dispatch ─────────────────────────────────────
 
-        Returns:
-            {"image_bytes": bytes, "content_type": str}
-        """
+    def _invoke(self, op_name: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Run one operation end-to-end: POST → (sync return | poll) → download."""
+        self.ensure_connected()
+        op = self._op(op_name)
+        endpoint = op.get("endpoint", "")
+        if not endpoint:
+            raise ServiceError(f"Operation '{op_name}' has no endpoint configured")
+        convention = op.get("convention", "sync")
+        url_field = op.get("url_field", "")
+        id_field = op.get("id_field", "request_id")
+
+        logger.info("[PIXAZO] %s/%s (%s) → POST %s",
+                    self._model_id, op_name, convention, endpoint)
+        data = self._post(endpoint, body)
+        logger.info("[PIXAZO] Response: %s", json.dumps(data)[:300])
+
+        if convention == "sync":
+            url = self._extract_image_url(data, url_field=url_field)
+            if not url:
+                raise ServiceError(
+                    f"No image URL in sync response: {json.dumps(data)[:300]}")
+        else:
+            # Resolve request_id from any known field name.
+            request_id = ""
+            for f in (id_field, "request_id", "requestId", "id", "taskId"):
+                v = data.get(f, "")
+                if v:
+                    request_id = v
+                    break
+            if not request_id:
+                # Some endpoints return the URL inline even on async — handle it.
+                url = self._extract_image_url(data, url_field=url_field)
+                if not url:
+                    raise ServiceError(
+                        f"No request_id and no URL in response: "
+                        f"{json.dumps(data)[:300]}")
+            else:
+                polling_url = data.get("polling_url", "") if convention == "polling_url" else ""
+                url = self._poll(op, request_id, polling_url=polling_url)
+
+        image_bytes, content_type = self._download_image(url)
+        return {"image_bytes": image_bytes, "content_type": content_type,
+                "source_url": url}
+
+    # ── Public ops ─────────────────────────────────────────────────────
+
+    def generate(self, prompt: str = "", negative_prompt: str = "",
+                 width: int = 1024, height: int = 1024, steps: int = 20,
+                 **kwargs) -> dict:
+        """Text-to-image — calls operation 'text_to_image' on the active model."""
         if not prompt:
             raise ServiceError("No prompt provided")
-        self.ensure_connected()
-
-        # Build request body — include all common fields, models ignore what they don't need
-        body = {"prompt": prompt}
+        body: Dict[str, Any] = {"prompt": prompt}
         if negative_prompt:
             body["negative_prompt"] = negative_prompt
         if width and height:
@@ -449,44 +373,40 @@ class PixazoImageService(BaseImageGenerationService):
             body["num_steps"] = max(1, min(50, int(steps)))
             body["num_inference_steps"] = body["num_steps"]
         body["guidance_scale"] = kwargs.get("guidance_scale", 5)
-        body["seed"] = kwargs.get("seed", int(time.time()) % 1000000)
+        body["seed"] = kwargs.get("seed", int(time.time()) % 1_000_000)
         body["num_images"] = 1
         body["output_format"] = kwargs.get("output_format", "png")
-        # Pass through any extra kwargs (aspect_ratio, style, output_format, etc.)
         for k, v in kwargs.items():
             if k not in body and k not in ("destination", "path", "service"):
                 body[k] = v
+        return self._invoke("text_to_image", body)
 
-        logger.info("[PIXAZO] %s request: prompt=%s..., endpoint=%s",
-                     self._mode, prompt[:80], self._endpoint)
+    def edit_image(self, prompt: str = "", image_urls=None, **kwargs) -> dict:
+        """Edit one or more source images per the prompt.
 
-        data = self._post(self._endpoint, body)
-        logger.info("[PIXAZO] Generate response: %s", json.dumps(data)[:300])
-
-        if self._mode == "sync":
-            # Sync: response contains the image URL directly
-            image_url = self._extract_image_url(data)
-            if not image_url:
-                raise ServiceError(f"No image URL in Pixazo response: {json.dumps(data)[:300]}")
-        else:
-            # Async: response contains a request ID, poll for result
-            request_id = ""
-            for field in (self._id_field, "request_id", "requestId", "id"):
-                request_id = data.get(field, "")
-                if request_id:
-                    break
-            if not request_id:
-                # Maybe it returned the URL directly anyway
-                image_url = self._extract_image_url(data)
-                if image_url:
-                    pass  # skip polling
-                else:
-                    raise ServiceError(f"No request ID in Pixazo response: {json.dumps(data)[:300]}")
-            else:
-                image_url = self._poll_for_result(request_id)
-
-        image_bytes, content_type = self._download_image(image_url)
-        return {"image_bytes": image_bytes, "content_type": content_type}
+        Calls operation 'edit_image' on the active model. The op's
+        `input_field` declares where the source URLs go in the body
+        (defaults to 'image_urls').
+        """
+        if not prompt:
+            raise ServiceError("No prompt provided")
+        if not image_urls:
+            raise ServiceError("edit_image requires at least one source URL "
+                               "in `image_urls`.")
+        if isinstance(image_urls, str):
+            image_urls = [image_urls]
+        op = self._op("edit_image")
+        input_field = op.get("input_field", "image_urls")
+        body: Dict[str, Any] = {
+            "prompt": prompt,
+            input_field: list(image_urls),
+            "num_images": int(kwargs.get("num_images", 1)),
+            "output_format": kwargs.get("output_format", "png"),
+        }
+        for k, v in kwargs.items():
+            if k not in body and k not in ("destination", "path", "service"):
+                body[k] = v
+        return self._invoke("edit_image", body)
 
 
 ServiceFactory.register(PixazoImageService)

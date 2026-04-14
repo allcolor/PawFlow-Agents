@@ -232,6 +232,7 @@ flow node, with the type `tool.<handler_name>`.
 | `tool.schedule_continuation` | Schedule a continuation for later |
 | `tool.local_files` | Manage local files on the filesystem |
 | `tool.generate_image` | Generate an image via an image model |
+| `tool.edit_image` | Edit one or more existing images via the image model (requires a model that declares an `edit_image` operation in `pixazo_catalog.json`, e.g. `nano-banana`). |
 | `tool.generate_video` | Generate a video via a video model |
 | `tool.generate_audio` | Generate audio via an audio model |
 | `tool.get_image_model_info` | Get info about available image models |

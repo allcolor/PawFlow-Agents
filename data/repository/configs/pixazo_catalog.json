@@ -1,0 +1,386 @@
+{
+  "_comment": "Pixazo model catalog. Each model declares one or more operations (text_to_image, edit_image, ...). Conventions: 'sync' = response carries the image URL directly; 'legacy_poll' = POST returns request_id, status is fetched by POSTing to poll_endpoint with the id; 'polling_url' = POST returns an absolute polling_url that we GET to fetch status (output.media_url[0]).",
+  "models": {
+    "sdxl": {
+      "label": "SDXL (Stable Diffusion XL)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/getImage/v1/getSDXLImage",
+          "convention": "sync",
+          "url_field": "imageUrl",
+          "params": {
+            "width": "256-1024 (default 1024)",
+            "height": "256-1024 (default 1024)",
+            "num_steps": "1-20 (default 20)",
+            "guidance_scale": "1-20 (default 5)",
+            "negative_prompt": "text to avoid"
+          }
+        }
+      }
+    },
+    "flux-dev": {
+      "label": "Flux Dev (Black Forest Labs)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/flux-dev/v1/dev/textToImage",
+          "poll_endpoint": "/flux-dev-polling/dev/getFluxDevStatus",
+          "convention": "legacy_poll",
+          "id_field": "requestId",
+          "params": {
+            "image_size": "e.g. 'landscape_4_3', 'square_hd', 'portrait_4_3'",
+            "num_inference_steps": "1-50 (default 28)",
+            "guidance_scale": "1-20 (default 3.5)",
+            "output_format": "jpeg, png, webp",
+            "num_images": "1-4"
+          }
+        }
+      }
+    },
+    "nano-banana": {
+      "label": "Nano Banana (Google) — original",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/nano-banana/v1/nano-banana/generateTextToImageRequest",
+          "poll_endpoint": "/nano-banana-polling/nano-banana/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id",
+          "params": {
+            "aspect_ratio": "1:1, 4:3, 3:2, 16:9, 9:16, 21:9, 2:3, 3:4, 4:5, 5:4",
+            "output_format": "jpeg, png, webp",
+            "num_images": "1-4"
+          }
+        },
+        "edit_image": {
+          "endpoint": "/nano-banana/v1/nano-banana/generateEditImageRequest",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "image_urls",
+          "params": {
+            "image_urls": "array of source image URLs",
+            "num_images": "1-4 (default 1)",
+            "output_format": "jpeg, png",
+            "sync_mode": "boolean (default false)"
+          }
+        }
+      }
+    },
+    "nano-banana-2": {
+      "label": "Nano Banana 2 (Google)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/nano-banana-2/v1/nano-banana-2/generate",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "params": {
+            "aspect_ratio": "1:1, 1:4, 2:3, 3:2, 4:3, 16:9, 9:16",
+            "resolution": "1K, 2K, 4K",
+            "output_format": "jpg, png",
+            "google_search": "boolean",
+            "image_search": "boolean",
+            "image_input": "array of image URLs (for image-conditioned gen)"
+          }
+        }
+      }
+    },
+    "nano-banana-pro": {
+      "label": "Nano Banana Pro (Google)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/nano-banana-pro-async/v1/nano-banana-pro-text-to-image",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "params": {
+            "aspect_ratio": "1:1, 4:3, 3:2, 16:9, 9:16, 21:9, 2:3, 3:4, 4:5, 5:4",
+            "output_format": "jpeg, png, webp",
+            "num_images": "1-4"
+          }
+        }
+      }
+    },
+    "recraft-v3": {
+      "label": "Recraft V3",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/recraft/v3/generate",
+          "convention": "sync",
+          "url_field": "output",
+          "params": {
+            "style": "style preset (default 'Recraft V3 Raw')",
+            "size": "e.g. '1024x1024', '1365x1024', '1024x1365'",
+            "n": "1-6 images",
+            "negative_prompt": "text to avoid"
+          }
+        }
+      }
+    },
+    "recraft-v4": {
+      "label": "Recraft V4",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/recraft/v4/generate",
+          "convention": "sync",
+          "url_field": "output"
+        }
+      }
+    },
+    "ideogram": {
+      "label": "Ideogram",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/ideogram/v1/ideogram/generateTextToImageRequest",
+          "poll_endpoint": "/ideogram-polling/ideogram/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "gpt-image": {
+      "label": "GPT Image (OpenAI)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/gpt-image/v1/gpt-image/generateTextToImageRequest",
+          "poll_endpoint": "/gpt-image-polling/gpt-image/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "stable-diffusion": {
+      "label": "Stable Diffusion 3.5",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/sd35/v1/sd35/generateTextToImageRequest",
+          "poll_endpoint": "/sd35-polling/sd35/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "dalle": {
+      "label": "DALL-E (OpenAI)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/dalle/v1/dalle/generateTextToImageRequest",
+          "poll_endpoint": "/dalle-polling/dalle/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "seedream": {
+      "label": "Seedream (BytePlus)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/seedream/v1/seedream/generateTextToImageRequest",
+          "poll_endpoint": "/seedream-polling/seedream/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "bria": {
+      "label": "Bria",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/bria/v1/bria/generateTextToImageRequest",
+          "poll_endpoint": "/bria-polling/bria/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "grok": {
+      "label": "Grok (xAI)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/grok/v1/grok/generateTextToImageRequest",
+          "poll_endpoint": "/grok-polling/grok/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "hunyuan": {
+      "label": "Hunyuan (Tencent)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/hunyuan/v1/hunyuan/generateTextToImageRequest",
+          "poll_endpoint": "/hunyuan-polling/hunyuan/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "longcat-image": {
+      "label": "LongCat Image",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/longcat-image/v1/longcat-image/generateTextToImageRequest",
+          "poll_endpoint": "/longcat-image-polling/longcat-image/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "luma-dream-machine": {
+      "label": "Luma Dream Machine (Luma AI)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/luma-dream-machine/v1/luma-dream-machine/generateTextToImageRequest",
+          "poll_endpoint": "/luma-dream-machine-polling/luma-dream-machine/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "minimax": {
+      "label": "Minimax (MiniMax)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/minimax/v1/minimax/generateTextToImageRequest",
+          "poll_endpoint": "/minimax-polling/minimax/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "pixelforge": {
+      "label": "Pixelforge (Pixazo)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/pixelforge/v1/pixelforge/generateTextToImageRequest",
+          "poll_endpoint": "/pixelforge-polling/pixelforge/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "qwen-image": {
+      "label": "Qwen Image (Alibaba)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/qwen-image/v1/qwen-image/generateTextToImageRequest",
+          "poll_endpoint": "/qwen-image-polling/qwen-image/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "reve-image": {
+      "label": "Reve Image",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/reve-image/v1/reve-image/generateTextToImageRequest",
+          "poll_endpoint": "/reve-image-polling/reve-image/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "studio-ghibli": {
+      "label": "Studio Ghibli",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/studio-ghibli/v1/studio-ghibli/generateTextToImageRequest",
+          "poll_endpoint": "/studio-ghibli-polling/studio-ghibli/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "z-image": {
+      "label": "Z Image",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/z-image/v1/z-image/generateTextToImageRequest",
+          "poll_endpoint": "/z-image-polling/z-image/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "auraflow": {
+      "label": "Auraflow",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/auraflow/v1/auraflow/generateTextToImageRequest",
+          "poll_endpoint": "/auraflow-polling/auraflow/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "p-image": {
+      "label": "P Image (Pruna AI)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/p-image/v1/p-image/generateTextToImageRequest",
+          "poll_endpoint": "/p-image-polling/p-image/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "firered-image-edit": {
+      "label": "FireRed Image Edit",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/firered-image-edit/v1/firered-image-edit/generateTextToImageRequest",
+          "poll_endpoint": "/firered-image-edit-polling/firered-image-edit/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan": {
+      "label": "Wan (Alibaba)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/wan/v1/wan/generateTextToImageRequest",
+          "poll_endpoint": "/wan-polling/wan/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling": {
+      "label": "Kling (Kuaishou)",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/kling/v1/kling/generateTextToImageRequest",
+          "poll_endpoint": "/kling-polling/kling/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    }
+  }
+}

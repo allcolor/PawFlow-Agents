@@ -182,16 +182,54 @@ function addMsg(role, text, extra) {
   if (_isDelegateMsg) {
     const _from = extra.source.from || '?';
     const _to = extra.source.to || '?';
+    const _key = 'delegate-shared::' + _from + '::' + _to;
+    // Reuse an existing shared-delegate block for this (from→to) pair so
+    // all messages/tools land in the same frame instead of one block each.
+    let _existing = document.querySelector('[data-delegate-key="' + CSS.escape(_key) + '"]');
+    // Build the inner fragment for this message
+    const _inner = document.createElement('div');
+    _inner.className = 'delegate-message';
+    if (role === 'tool_call' || role === 'tool') {
+      const toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
+      const toolArgs = (extra && extra.tool_args) || (extra && extra.arguments) || {};
+      let args = toolArgs;
+      if (typeof args === 'string') { try { args = JSON.parse(args); } catch(e) {} }
+      const tcId = (extra && extra.tc_id) || '';
+      if (tcId) _inner.dataset.tcId = tcId;
+      _inner.dataset.tool = toolName;
+      _inner.innerHTML = timeHtml + '<span class="tc-bullet done">\u25cf</span> '
+          + escapeHtml(_toolCallSummary(toolName, args || {}));
+    } else if (role === 'tool_result') {
+      const tcId = (extra && extra.tc_id) || '';
+      if (tcId) {
+        const tcEl = (_existing || document).querySelector('[data-tc-id="' + tcId + '"]');
+        if (tcEl) { _attachToolResult(tcEl, text || ''); return el; }
+      }
+      _inner.innerHTML = timeHtml + '<pre class="tool-result">' + escapeHtml((text || '').substring(0, 2000)) + '</pre>';
+    } else {
+      _inner.innerHTML = timeHtml + renderMarkdown(text);
+    }
+    if (_existing) {
+      const _body = _existing.querySelector('.delegate-body');
+      if (_body) { _body.appendChild(_inner); return el; }
+    }
     const _arrow = '\u{1F500} <span class="delegate-src">'
         + escapeHtml(displayAgentName(_from)) + '</span> \u2192 '
         + '<span class="delegate-dst">'
         + escapeHtml(displayAgentName(_to)) + '</span>';
     el.className = 'msg delegate-block delegate-shared';
-    el.innerHTML =
-        '<details open><summary class="delegate-header">'
-        + _arrow + timeHtml + '</summary>'
-        + '<div class="delegate-body">' + renderMarkdown(text) + '</div>'
-        + '</details>';
+    el.dataset.delegateKey = _key;
+    const _body = document.createElement('div');
+    _body.className = 'delegate-body';
+    _body.appendChild(_inner);
+    const _details = document.createElement('details');
+    _details.open = true;
+    const _summary = document.createElement('summary');
+    _summary.className = 'delegate-header';
+    _summary.innerHTML = _arrow + timeHtml;
+    _details.appendChild(_summary);
+    _details.appendChild(_body);
+    el.appendChild(_details);
   } else if (role === 'assistant') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool_call' || role === 'tool') {

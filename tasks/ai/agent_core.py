@@ -1359,6 +1359,7 @@ class AgentCoreMixin:
                                 "type": "agent_delegate",
                                 "from": _self_name,
                                 "to": _src_agent,
+                                "kind": "reply",
                             }
                             _reply_mid = _uuid_dr.uuid4().hex[:12]
                             _caller_key = (

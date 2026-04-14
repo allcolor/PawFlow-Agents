@@ -1198,10 +1198,15 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 import json as _json_ts
                 _ms = _json_ts.loads(_msg_source_raw) if isinstance(_msg_source_raw, str) else _msg_source_raw
                 if isinstance(_ms, dict) and _ms.get("type") == "agent_delegate":
-                    _turn_mode = {
-                        "type": "delegate_reply",
-                        "source_agent": _ms.get("from", ""),
-                    }
+                    # kind="request" (B was just delegated to by A): B must
+                    # auto-tag its final reply agent_delegate(from=B, to=A).
+                    # kind="reply" (A receives B's answer): normal user turn
+                    # — A produces user-facing text, no auto-tag.
+                    if _ms.get("kind") != "reply":
+                        _turn_mode = {
+                            "type": "delegate_reply",
+                            "source_agent": _ms.get("from", ""),
+                        }
         except Exception:
             pass
 

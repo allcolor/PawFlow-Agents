@@ -779,7 +779,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             len(attachments),
                             ", ".join(f"{a.get('filename','?')} ({a.get('mime_type','?')}, {len(a.get('data',''))//1024}KB)"
                                       for a in attachments))
-            user_content = self._build_user_content(user_text, attachments)
+            user_content = self._build_user_content(user_text, attachments, conversation_id)
             user_source = {"type": "user", "name": user_id}
             if _target_agent:
                 user_source["target_agent"] = _target_agent
@@ -1281,7 +1281,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
     # ── Context operation pause/resume ─────────────────────────────────
 
 
-    def _build_user_content(self, text: str, attachments: List[Dict]) -> Any:
+    def _build_user_content(self, text: str, attachments: List[Dict], conversation_id: str = "") -> Any:
         """Build user message content from text and optional attachments.
 
         If no attachments, returns plain str.

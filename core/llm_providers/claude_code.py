@@ -638,9 +638,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     "from": agent_name or "",
                     "to": _tm["source_agent"],
                 }
-            if event_type in ("tool_call", "token"):
-                logger.info("[pub-debug] event=%s agent=%s src=%s tm=%s",
-                            event_type, agent_name, data.get("source"), _tm)
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(

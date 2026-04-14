@@ -450,6 +450,52 @@ class SpawnAgentsHandler(ToolHandler):
         import uuid
 
         tasks_spec = arguments.get("tasks", [])
+        # Validate input shape upfront: tasks must be a list of dicts with
+        # 'agent' and 'message' keys. Malformed calls (single string,
+        # nested dict, bare dict) would crash deeper with cryptic errors.
+        if not isinstance(tasks_spec, list):
+            return (
+                "Error: 'tasks' must be a list of objects, got "
+                f"{type(tasks_spec).__name__}. "
+                "Expected: tasks=[{\"agent\": \"<name>\", "
+                "\"message\": \"<text>\"}, ...]"
+            )
+        _bad = []
+        for _i, _t in enumerate(tasks_spec):
+            if not isinstance(_t, dict):
+                _bad.append(f"tasks[{_i}] is {type(_t).__name__}")
+            elif not _t.get("agent") or not _t.get("message"):
+                _bad.append(f"tasks[{_i}] missing 'agent' or 'message'")
+        if _bad:
+            return (
+                "Error: malformed 'tasks' — " + "; ".join(_bad) + ". "
+                "Expected each task: {\"agent\": \"<existing-agent-name>\", "
+                "\"message\": \"<text>\", \"id\"?: \"<optional>\", "
+                "\"context\"?: \"shared\"|\"isolated\"|\"last:N\"}."
+            )
+        # Validate input shape upfront: tasks must be a list of dicts with
+        # 'agent' and 'message' keys. Malformed calls (single string,
+        # nested dict, bare dict) would crash deeper with cryptic errors.
+        if not isinstance(tasks_spec, list):
+            return (
+                "Error: 'tasks' must be a list of objects, got "
+                f"{type(tasks_spec).__name__}. "
+                "Expected: tasks=[{\"agent\": \"<name>\", "
+                "\"message\": \"<text>\"}, ...]"
+            )
+        _bad = []
+        for _i, _t in enumerate(tasks_spec):
+            if not isinstance(_t, dict):
+                _bad.append(f"tasks[{_i}] is {type(_t).__name__}")
+            elif not _t.get("agent") or not _t.get("message"):
+                _bad.append(f"tasks[{_i}] missing 'agent' or 'message'")
+        if _bad:
+            return (
+                "Error: malformed 'tasks' — " + "; ".join(_bad) + ". "
+                "Expected each task: {\"agent\": \"<existing-agent-name>\", "
+                "\"message\": \"<text>\", \"id\"?: \"<optional>\", "
+                "\"context\"?: \"shared\"|\"isolated\"|\"last:N\"}."
+            )
         # Delegate is ALWAYS async (fire-and-forget). Results come back
         # via the preempt (caller running) / wake (caller idle) path.
         # No more 'wait' param — concurrency is the whole point.

@@ -201,10 +201,9 @@ class AgentCoreMixin:
             # so ConversationStore.agent_flush routes it correctly
             # (transcript + from+to ctx only, NOT shared, NOT peers).
             _tm = ctx.get("_turn_mode") or {}
-            if (msg.role == "assistant"
-                    and _tm.get("type") == "delegate_reply"
+            if (_tm.get("type") == "delegate_reply"
                     and _tm.get("source_agent")
-                    and not msg.tool_calls):
+                    and msg.role in ("assistant", "tool")):
                 _self_name = ctx.get("active_agent_name", "") or ""
                 msg.source = {
                     "type": "agent_delegate",

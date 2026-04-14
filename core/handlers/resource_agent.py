@@ -1005,11 +1005,11 @@ class SpawnAgentsHandler(ToolHandler):
                 "message": text,
                 "conversation_id": conv_id,
                 "msg_id": msg_id,
-                "agent_name": caller_agent,
+                "target_agent": caller_agent,
             })
             ff = FlowFile(body.encode("utf-8"))
             ff.set_attribute("http.auth.principal", user_id)
-            ff.set_attribute("agent_name", caller_agent)
+            ff.set_attribute("target_agent", caller_agent)
             if source:
                 ff.set_attribute("message_source", json.dumps(source))
             # Run in a thread so we don't block the completion callback

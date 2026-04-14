@@ -243,6 +243,11 @@ class AgentCoreMixin:
                     "type": "agent_delegate",
                     "from": _self_name,
                     "to": _tm["source_agent"],
+                    # Mark as a REPLY so conversation_store renders the
+                    # right prefix in the target's ctx ("Here is agent
+                    # X's reply to your delegate:") instead of treating
+                    # it like a fresh inbound request.
+                    "kind": "reply",
                 }
             messages.append(msg)
             new_messages.append(msg)

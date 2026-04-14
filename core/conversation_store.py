@@ -773,14 +773,21 @@ class ConversationStore:
                 _for_to["content"] = self._prefix_content(
                     _for_to.get("content", ""), _attr)
                 self._append_ctx_file(cid, _to, [_for_to])
-                # Shared view: visible to everyone else in the conv.
-                _for_shared = dict(_dm)
-                if _for_shared.get("role") == "assistant":
-                    _for_shared["role"] = "user"
-                _for_shared["content"] = self._prefix_content(
-                    _for_shared.get("content", ""),
-                    f"[{_from} to agent {_to}]:")
-                _shared_delegate_extra.append(_for_shared)
+                # Shared view: only the OUTBOUND delegate (the request)
+                # is visible to everyone else in the conv. The REPLY
+                # (kind="reply") is a private answer back to the caller —
+                # it must NOT leak into the shared transcript / main
+                # chat. Otherwise the user sees Claude addressing qwen
+                # in their own feed, which is confusing and wrong: the
+                # reply is the caller's business.
+                if _kind != "reply":
+                    _for_shared = dict(_dm)
+                    if _for_shared.get("role") == "assistant":
+                        _for_shared["role"] = "user"
+                    _for_shared["content"] = self._prefix_content(
+                        _for_shared.get("content", ""),
+                        f"[{_from} to agent {_to}]:")
+                    _shared_delegate_extra.append(_for_shared)
 
             # 3. Append to shared context + transformed to other agents' contexts
             # Shared context = conversation only — NO tool results, NO context injections.

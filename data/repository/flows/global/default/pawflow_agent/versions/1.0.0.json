@@ -83,6 +83,11 @@
           },
           {
             "method": "GET",
+            "pattern": "/fs/{service_name}/{rest+}",
+            "relationship": "GET:/fs"
+          },
+          {
+            "method": "GET",
             "pattern": "/auth/login",
             "relationship": "GET:/auth/login",
             "public": true
@@ -172,6 +177,10 @@
       "type": "serveFile",
       "parameters": {}
     },
+    "serve_relay_file": {
+      "type": "serveRelayFile",
+      "parameters": {}
+    },
     "route_after_auth": {
       "type": "routeOnAttribute",
       "parameters": {
@@ -190,6 +199,11 @@
             "attribute": "http.path",
             "operator": "matches_regex",
             "value": "^/files/"
+          },
+          "fs": {
+            "attribute": "http.path",
+            "operator": "matches_regex",
+            "value": "^/fs/"
           },
           "chat_js": {
             "attribute": "http.path",
@@ -246,6 +260,11 @@
       "type": "GET:/files"
     },
     {
+      "from": "http_in",
+      "to": "validate_auth",
+      "type": "GET:/fs"
+    },
+    {
       "from": "validate_auth",
       "to": "route_after_auth",
       "type": "success"
@@ -274,6 +293,11 @@
       "from": "route_after_auth",
       "to": "serve_file",
       "type": "files"
+    },
+    {
+      "from": "route_after_auth",
+      "to": "serve_relay_file",
+      "type": "fs"
     },
     {
       "from": "http_in",
@@ -312,6 +336,11 @@
     },
     {
       "from": "serve_file",
+      "to": "send_response",
+      "type": "success"
+    },
+    {
+      "from": "serve_relay_file",
       "to": "send_response",
       "type": "success"
     },

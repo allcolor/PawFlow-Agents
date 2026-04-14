@@ -893,6 +893,16 @@ function renderMarkdown(text) {
         if (isAudioFile(fname)) return inlineAudioHtml(httpUrl, fname);
         if (isVideoFile(fname)) return inlineVideoHtml(httpUrl, fname);
       }
+    } else if (!isDir && (isImageFile(fname) || isAudioFile(fname) || isVideoFile(fname))) {
+      // Non-filestore service (a user relay) — proxy through the
+      // /fs/<service>/<path> route registered in pawflow_agent.json.
+      // Same-origin URL so the auth cookie applies and the browser
+      // can stream / cache like any normal HTTP media.
+      const httpUrl = '/fs/' + encodeURIComponent(service) + '/'
+          + fpath.split('/').map(encodeURIComponent).join('/');
+      if (isImageFile(fname)) return inlineImageHtml(httpUrl, fname, '');
+      if (isAudioFile(fname)) return inlineAudioHtml(httpUrl, fname);
+      if (isVideoFile(fname)) return inlineVideoHtml(httpUrl, fname);
     }
     const icon = isDir ? '\uD83D\uDCC1' : '\uD83D\uDCC4';
     return '<a class="flink" href="#" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();fetchFsFile(\'' + service + '\',\'' + fpath + '\')">'

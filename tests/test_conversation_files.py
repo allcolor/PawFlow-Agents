@@ -326,7 +326,7 @@ class TestAgentFlowStructure(unittest.TestCase):
 
         # Check relations
         froms = [r["from"] for r in data["relations"]]
-        assert froms.count("http_in") == 8  # 8 relations from http_in
+        assert froms.count("http_in") == 9  # api, sse, chat, files, fs, login, callback, logout, chat/js
 
     def test_flow_has_conversation_store(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"

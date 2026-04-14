@@ -331,6 +331,19 @@ def process(input_var_name):
 | `partition` | integer | No | - | Partition |
 | `headers` | json | No | {} | Kafka headers |
 
+#### 11.3.8. Serve Relay File Task (`serveRelayFile`)
+**Description**: Stream a file from a relay/filesystem service over HTTP, with the matching `Content-Type` set from the file extension. Used by the chat UI to inline-render media (images, audio, video) stored on the user's relay — `<img src="/fs/<service>/<path>">` works the same as `<img src="/files/<id>">` for FileStore. Auth: the user must be the HTTP session principal AND have access to the named service (resolution: conv > user > global scope).
+
+**Parameters**:
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `service_attribute` | string | No | `http.path.service_name` | FlowFile attribute that holds the service name extracted from the URL pattern. |
+| `path_attribute` | string | No | `http.path.rest` | FlowFile attribute that holds the file path relative to the service root. |
+
+**Wiring**: in `pawflow_agent` the route is `GET /fs/{service_name}/{rest+}` → `validate_auth` → `route_after_auth` (relationship `fs`) → `serveRelayFile` → `handleHTTPResponse`.
+
+**Status codes**: `400` missing service/path, `401` no auth principal, `403` permission denied on the service, `404` service or file not found, `502` relay read error, `200` on success.
+
 ### 11.4. Control Tasks
 
 #### 11.4.1. Execute Flow Task (`executeFlow`)

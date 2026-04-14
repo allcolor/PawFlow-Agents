@@ -560,7 +560,7 @@ class TestStreamingFlowStructure(unittest.TestCase):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         froms = [r["from"] for r in data["relations"]]
-        assert froms.count("http_in") == 8
+        assert froms.count("http_in") == 9
 
     def test_chat_ui_has_sse_path(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "pawflow_agent" / "versions" / "1.0.0.json"

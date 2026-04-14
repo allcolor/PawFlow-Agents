@@ -739,32 +739,43 @@ class ConversationStore:
             if all_agent:
                 self._append_ctx_file(cid, agent_name, all_agent)
 
-            # 2b. Route agent_delegate messages privately to (from, to).
-            #     agent_flush is called by the FROM agent — write to FROM's
-            #     ctx with [from→to] tag and to TO's ctx raw. Never touch
-            #     shared, never touch other agents.
+            # 2b. Route agent_delegate messages. They ARE visible to the
+            #     shared transcript and to other agents' contexts (so
+            #     everyone sees who delegated what), but each recipient
+            #     gets a prefix adapted to its perspective:
+            #       - FROM's ctx:     [delegate <from> → <to>]: ...
+            #       - TO's ctx:       Voici un message de l'agent '<from>': ...
+            #       - shared + others: [<from> to agent <to>]: ...
+            _shared_delegate_extra = []
             for _dm in _delegate_msgs:
                 _src = _dm.get("source") or {}
                 _from = _src.get("from", "") or agent_name
                 _to = _src.get("to", "")
                 if not _to:
                     continue
-                # FROM's own ctx: message prefixed with [from→to delegate]
+                # FROM's own ctx
                 _for_from = dict(_dm)
                 _for_from["content"] = self._prefix_content(
                     _for_from.get("content", ""),
                     f"[delegate {_from} → {_to}]:")
                 self._append_ctx_file(cid, _from, [_for_from])
-                # TO's ctx: role=user so the target reads it as an
-                # instruction, AND prefix with [from <sender>] so TO can
-                # tell this came from another agent, not from the real user.
+                # TO's ctx — role coerced to user so the target reads it
+                # as an inbound instruction, with an explicit attribution.
                 _for_to = dict(_dm)
                 if _for_to.get("role") == "assistant":
                     _for_to["role"] = "user"
                 _for_to["content"] = self._prefix_content(
                     _for_to.get("content", ""),
-                    f"[from {_from}]:")
+                    f"Voici un message de l'agent '{_from}':")
                 self._append_ctx_file(cid, _to, [_for_to])
+                # Shared view: visible to everyone else in the conv.
+                _for_shared = dict(_dm)
+                if _for_shared.get("role") == "assistant":
+                    _for_shared["role"] = "user"
+                _for_shared["content"] = self._prefix_content(
+                    _for_shared.get("content", ""),
+                    f"[{_from} to agent {_to}]:")
+                _shared_delegate_extra.append(_for_shared)
 
             # 3. Append to shared context + transformed to other agents' contexts
             # Shared context = conversation only — NO tool results, NO context injections.
@@ -786,15 +797,35 @@ class ConversationStore:
                         shared_msgs.append(m_copy)
                 else:
                     shared_msgs.append(m)
+            # Attach the prefixed delegate copies to the shared stream so
+            # every other agent sees the routing too.
+            if _shared_delegate_extra:
+                shared_msgs.extend(_shared_delegate_extra)
             if shared_msgs:
                 self._append_shared_ctx(cid, shared_msgs)
                 cache = self._load_cache(cid)
+                # Skip the delegate from/to from the "other agents"
+                # broadcast — they already received their tailored copy
+                # in step 2b.
+                _delegate_parties = {
+                    (m.get("source") or {}).get("from", "")
+                    for m in _delegate_msgs
+                } | {
+                    (m.get("source") or {}).get("to", "")
+                    for m in _delegate_msgs
+                }
                 for other in cache.get("agents", set()):
-                    if other and other != agent_name:
-                        # Only conversation messages — no tool plumbing
+                    if not other or other == agent_name:
+                        continue
+                    if other in _delegate_parties:
+                        # Already handled in step 2b with a private copy.
+                        transformed = [self._transform_for_other_agent(m, other)
+                                       for m in shared_msgs
+                                       if m not in _shared_delegate_extra]
+                    else:
                         transformed = [self._transform_for_other_agent(m, other)
                                        for m in shared_msgs]
-                        self._append_ctx_file(cid, other, transformed)
+                    self._append_ctx_file(cid, other, transformed)
 
         self._invalidate_ctx_cache(cid)
         self._reload_cache(cid)

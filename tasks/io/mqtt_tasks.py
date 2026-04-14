@@ -63,7 +63,8 @@ class PublishMQTTTask(BaseTask):
             raise TaskError("publishMQTT: topic is required")
 
         try:
-            client = mqtt.Client(client_id=self.client_id)
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                                 client_id=self.client_id)
             if self.username:
                 client.username_pw_set(self.username, self.password)
 
@@ -152,7 +153,8 @@ class ConsumeMQTTTask(BaseTask):
                 if len(results) >= self.max_messages:
                     done_event.set()
 
-            client = mqtt.Client(client_id=self.client_id)
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                                 client_id=self.client_id)
             if self.username:
                 client.username_pw_set(self.username, self.password)
 

@@ -407,7 +407,19 @@ class SpawnAgentsHandler(ToolHandler):
                             },
                             "context": {
                                 "type": "string",
-                                "description": "Context mode: 'isolated' (default), 'last:N' (last N messages), 'summary:N' (summary of N tokens), 'full' (entire parent context)",
+                                "description": (
+                                    "Context mode (default: 'shared'): "
+                                    "'shared' — target agent uses its existing "
+                                    "conversation context (no separate sub-agent, "
+                                    "just a private message delivered in the conv); "
+                                    "'isolated' — fresh empty sub-agent context "
+                                    "(spawns a separate sub-agent); "
+                                    "'last:N' — fresh sub-agent with last N "
+                                    "messages from the parent conv. "
+                                    "Agents that are themselves a delegate can "
+                                    "only use 'shared' — isolated/last are rejected "
+                                    "to prevent nested private sub-contexts."
+                                ),
                             },
                             "skills": {
                                 "type": "array",
@@ -524,6 +536,51 @@ class SpawnAgentsHandler(ToolHandler):
                         _src_agent, agent_name, _live_tid, _delivered)
                     continue
 
+            # Resolve context mode — default "shared" (new semantics:
+            # target agent uses its own conversation context, the
+            # delegate is just a private message in the conv; no
+            # sub-agent spawning).
+            context_mode = spec.get("context", "shared")
+
+            # A delegate agent can only use "shared" when it calls
+            # delegate itself — prevents nested private sub-contexts.
+            if context_mode != "shared" and self._is_caller_a_delegate():
+                return (
+                    f"Error: agent '{_src_agent}' is itself a delegate — "
+                    f"sub-delegates must use context='shared' (isolated and "
+                    f"last:N are reserved for top-level agents). Use "
+                    f"context='shared' or drop the parameter."
+                )
+
+            if context_mode == "shared":
+                # SHARED PATH: no sub-agent spawn. Persist a private
+                # delegate message routed (from, to), then trigger the
+                # target agent (preempt if running, wake if idle).
+                if agent_name.lower() in _self_names:
+                    return (
+                        f"Error: You ('{_src_agent}') cannot delegate to "
+                        f"yourself ('{agent_name}')."
+                    )
+                _deliver_info = self._deliver_shared_delegate(
+                    from_agent=_src_agent, to_agent=agent_name,
+                    message=message, user_id=user_id)
+                _injected_results.append({
+                    "task_id": task_id,
+                    "agent": agent_name,
+                    "status": "delivered",
+                    "mode": "shared",
+                    "message": (
+                        f"Delegate message delivered privately to '{agent_name}' "
+                        f"(shared context — they use their own conv context). "
+                        f"Target is {_deliver_info['state']}. You will receive "
+                        f"'[Delegate result for task_id={task_id}]' when they "
+                        f"reply — READ it and REACT."
+                    ),
+                })
+                continue
+
+            # ISOLATED / last:N / summary:N / full path — spawn a real
+            # sub-agent via SubAgentExecutor.
             try:
                 extra_skills = spec.get("skills") or []
                 task = resolve_agent_task(agent_name, message, user_id,
@@ -537,8 +594,6 @@ class SpawnAgentsHandler(ToolHandler):
                 # Resume implies persist (sub-conv must exist)
                 task.persist = bool(spec.get("persist", False)) or bool(resume_id)
 
-                # Resolve context mode
-                context_mode = spec.get("context", "isolated")
                 task.context_mode = context_mode
                 task.parent_conversation_id = self._conversation_id
 
@@ -678,6 +733,104 @@ class SpawnAgentsHandler(ToolHandler):
                                 f"\n{summary}"}]
 
         return []  # isolated
+
+    def _is_caller_a_delegate(self) -> bool:
+        """True if the currently-executing agent was itself triggered by a
+        shared delegate message. Sub-delegates are restricted to
+        context='shared' to prevent nested private sub-contexts.
+
+        Checks AgentLoopTask._active_contexts for the caller's ctx and
+        looks for a _turn_mode.type == 'delegate_reply'. Conservative:
+        if we can't determine, returns False (allow).
+        """
+        try:
+            _src = getattr(self._local, "source_agent", "") or ""
+            if not (self._conversation_id and _src):
+                return False
+            from tasks.ai.agent_loop import AgentLoopTask
+            inst = AgentLoopTask._live_instance
+            if not inst:
+                return False
+            key = f"{self._conversation_id}:{_src}"
+            with inst._active_contexts_lock:
+                ctx = inst._active_contexts.get(key)
+            if not ctx:
+                return False
+            tm = ctx.get("_turn_mode") or {}
+            return tm.get("type") == "delegate_reply"
+        except Exception:
+            return False
+
+    def _deliver_shared_delegate(self, from_agent: str, to_agent: str,
+                                 message: str, user_id: str) -> Dict[str, str]:
+        """Persist a private delegate message and trigger the target.
+
+        Routing (via ConversationStore.agent_flush):
+          - transcript
+          - from_agent's context (prefixed [delegate from→to])
+          - to_agent's context (raw, role=user)
+          - NOT shared, NOT other agents
+
+        Target trigger:
+          - running → preempt queue (stdin injection via send_user_message,
+            OR turn-boundary preempt if turn_mode mismatch)
+          - idle    → wake by spawning a new agent loop
+        """
+        import uuid as _uuid
+        conv_id = self._conversation_id or ""
+        _msg_id = _uuid.uuid4().hex[:12]
+        _src = {
+            "type": "agent_delegate",
+            "from": from_agent,
+            "to": to_agent,
+        }
+        _delegate_msg = {
+            "role": "user",
+            "content": message,
+            "msg_id": _msg_id,
+            "source": _src,
+            "timestamp": time.time(),
+        }
+        # Persist via ConversationWriter. agent_flush's new routing
+        # (see ConversationStore) extracts agent_delegate messages out
+        # of the shared-broadcast path and writes them only to from/to.
+        from core.conversation_writer import ConversationWriter
+        try:
+            ConversationWriter.for_conversation(conv_id).enqueue_agent_flush(
+                agent_name=from_agent,
+                public_messages=[_delegate_msg],
+                private_messages=[],
+                user_id=user_id,
+            )
+        except Exception as e:
+            logger.warning("[delegate-shared] persist failed: %s", e)
+
+        # Trigger the target. Same preempt/wake helpers used by the
+        # sub-agent result delivery path — they already know how to
+        # route to a specific agent within a conv.
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            inst = AgentLoopTask._live_instance
+            if inst:
+                key = f"{conv_id}:{to_agent}" if to_agent else conv_id
+                with inst._active_contexts_lock:
+                    running = key in inst._active_contexts
+                if running:
+                    logger.info(
+                        "[delegate-shared] target '%s' running — preempt",
+                        to_agent)
+                    self._preempt_caller(inst, conv_id, to_agent, message,
+                                         _msg_id, _src)
+                    return {"state": "running (preempted)"}
+                else:
+                    logger.info(
+                        "[delegate-shared] target '%s' idle — wake", to_agent)
+                    self._wake_caller(inst, conv_id, to_agent, user_id,
+                                      message, _msg_id)
+                    return {"state": "idle (waking)"}
+        except Exception as e:
+            logger.error("[delegate-shared] trigger failed: %s", e)
+        return {"state": "unknown (no AgentLoopTask instance)"}
 
     def _inject_bg_result(self, result, task, conv_id, user_id, source_agent):
         """Deliver a sub-agent's result back to the caller agent.

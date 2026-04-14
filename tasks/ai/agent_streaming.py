@@ -258,9 +258,43 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         logger.debug("[agent:%s] zombie cleanup failed: %s", conversation_id[:8], _ze)
                     _already_active = False
         if _already_active:
+            # Sticky-mode rule: only preempt the running turn if the
+            # incoming trigger matches its mode + source. Mismatches go
+            # to the queue so the current turn finishes with a coherent
+            # reply tag (you can't mix a user message into a
+            # delegate_reply turn, etc.).
+            _incoming_mode = {"type": "user", "source_agent": None}
+            try:
+                _raw_ms = flowfile.get_attribute("message_source") or ""
+                if _raw_ms:
+                    _ms = json.loads(_raw_ms) if isinstance(_raw_ms, str) else _raw_ms
+                    if isinstance(_ms, dict) and _ms.get("type") == "agent_delegate":
+                        _incoming_mode = {
+                            "type": "delegate_reply",
+                            "source_agent": _ms.get("from", ""),
+                        }
+            except Exception:
+                pass
             with self._active_contexts_lock:
                 _active_client = self._active_claude_client.get(_agent_key)
-            if _active_client and hasattr(_active_client, 'send_user_message') and _user_text:
+                _active_ctx = self._active_contexts.get(_agent_key) or {}
+            _running_mode = _active_ctx.get("_turn_mode") or {
+                "type": "user", "source_agent": None}
+            _modes_match = (
+                _incoming_mode.get("type") == _running_mode.get("type")
+                and _incoming_mode.get("source_agent") == _running_mode.get("source_agent")
+            )
+            if not _modes_match:
+                logger.info(
+                    "[agent:%s] mode mismatch (incoming=%s/%s, running=%s/%s) "
+                    "→ queuing for next turn",
+                    conversation_id[:8],
+                    _incoming_mode.get("type"),
+                    _incoming_mode.get("source_agent") or "-",
+                    _running_mode.get("type"),
+                    _running_mode.get("source_agent") or "-")
+            if (_active_client and hasattr(_active_client, 'send_user_message')
+                    and _user_text and _modes_match):
                 _attachments = _body.get("attachments", [])
                 if _active_client.send_user_message(_user_text, attachments=_attachments):
                     logger.debug("[agent:%s] preempted active CC session", conversation_id[:8])

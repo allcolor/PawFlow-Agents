@@ -198,18 +198,19 @@ class ClaudeCodePool:
         """
         host_ip = get_host_ip()
 
-        # Bind-mount session_dir to /workspace so CC sees a real directory
-        # (not a symlink — CC resolves symlinks via realpath, exposing
-        # /cc_sessions/... paths which break file references in tool calls).
-        _setup = subprocess.run(
-            docker_cmd() + ["exec", "--user", "root", container_name, "bash", "-c",
-                            f"mkdir -p /workspace && mount --bind {session_dir} /workspace && chown 1000:1000 /workspace"],
-            capture_output=True, timeout=5)
-        if _setup.returncode != 0:
-            logger.warning("Pool: bind mount failed: %s", _setup.stderr)
-
+        # Per-exec mount namespace via `unshare -m`: each docker exec gets
+        # its own private view of the filesystem, so the bind of
+        # session_dir → /workspace is visible ONLY to this CC subprocess.
+        # Concurrent agents in the same pool container each see their own
+        # /workspace pointing at their own session_dir — no collision on
+        # session.jsonl, .mcp.json, or .credentials.json.
+        #
+        # The wrapper runs as root (needed for mount + unshare -m with
+        # CAP_SYS_ADMIN) then drops privileges to uid 1000 via setpriv
+        # before exec'ing claude — Claude Code refuses to run as root.
         exec_args = [
             "-i",
+            "--user", "root",
             "-e", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "-e", "HOME=/workspace",
             "-e", "USER=pawflow",
@@ -223,11 +224,26 @@ class ClaudeCodePool:
         # Pass extra env vars (e.g. ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL)
         for k, v in (extra_env or {}).items():
             exec_args.extend(["-e", f"{k}={v}"])
+        # Build the in-namespace command:
+        #   mkdir -p /workspace
+        #   mount --bind <session_dir> /workspace      (private to this ns)
+        #   cd /workspace
+        #   exec setpriv --reuid=1000 --regid=1000 \
+        #        --clear-groups -- claude <args>
+        import shlex
+        _claude_quoted = " ".join(shlex.quote(str(a)) for a in claude_args)
+        _shell_script = (
+            f"mkdir -p /workspace && "
+            f"mount --bind {shlex.quote(session_dir)} /workspace && "
+            f"cd /workspace && "
+            f"exec setpriv --reuid=1000 --regid=1000 --clear-groups "
+            f"-- claude {_claude_quoted}"
+        )
         exec_args.extend([
-            "-w", "/workspace",
             container_name,
-            "claude",
-        ] + claude_args)
+            "unshare", "-m", "--",
+            "bash", "-c", _shell_script,
+        ])
 
         cmd = docker_cmd() + ["exec"] + exec_args
         logger.info("Pool exec: %s → %s", container_name,

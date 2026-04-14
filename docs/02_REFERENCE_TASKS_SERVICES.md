@@ -333,18 +333,22 @@ def process(input_var_name):
 
 ### 11.4. Control Tasks
 
-#### 11.4.1. Flow Call Task (`flow_call`)
-**Description**: Call another flow
+#### 11.4.1. Execute Flow Task (`executeFlow`)
+**Description**: Run an external flow as a sub-flow and pass the FlowFile through it.
 
 **Parameters**:
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `flow_id` | string | Yes | - | ID of the flow to call |
-| `flow_version` | string | No | latest | Flow version |
-| `input_mode` | select | No | single | Mode (single, batch) |
-| `variables` | json | No | {} | Variables to pass |
-| `wait_for_completion` | boolean | No | true | Wait for completion |
-| `output_mode` | select | No | collect | Mode (collect, stream) |
+| `flow_path` | string | Yes | - | Path to the sub-flow JSON file |
+| `parameter_mapping` | object | No | {} | `{<child_param>: "${<parent_expr>}"}` — resolves expressions in the parent's ParameterContext, then injects the result as the child's parameters. |
+| `port_mapping` | object | No | {} | `{input: {port_task_id: <id>}, output: {<output_port_id>: <relationship>}}` — routes the input FlowFile to a specific `inputPort` task and tags outputs with relationships from the matching `outputPort`. |
+| `pass_attributes` | boolean | No | true | Copy parent FlowFile attributes onto the sub-flow's outputs. |
+
+**Recursion guard**: each invocation pushes its `flow_path` onto a `_subflow_stack` attribute on the FlowFile. If the same path appears twice, or the stack exceeds `MAX_SUBFLOW_DEPTH` (10), execution aborts with a `TaskError` — cycles and unbounded recursion fail fast.
+
+**Synthesis from ProcessGroups**: a `ProcessGroup` with `flow_ref: {path, version}` is automatically synthesized into an `executeFlow` task by the parser (`engine/parser.py`). The parser also validates `flow_ref.version` against the loaded child's `version` field and checks that every `port_mapping.input.port_task_id` / `port_mapping.output` key exists in the child as the right port type — typos fail at parse, not at runtime.
+
+**Agent shortcut**: agents can invoke any deployed flow once and get the result inline via `manage_flow(action="run", template_id="<package>.<flow>:<version>", parameters={...}, input="...")` — no deployment, no background instance.
 
 #### 11.4.2. Sleep Task (`sleep`)
 **Description**: Pause execution

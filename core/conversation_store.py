@@ -77,6 +77,29 @@ class ConversationStore:
         safe = "".join(c for c in name if c.isalnum() or c in "-_.:@")
         return safe.replace(":", "__")
 
+    @staticmethod
+    def _canon_agent(name: str) -> str:
+        """Canonical form of an agent name — lowercase + stripped.
+
+        Agent identity is case-insensitive: 'Claude', 'claude', 'ClAuDe'
+        all refer to the same agent. Apply this at every storage/lookup
+        boundary so file paths, extras keys, and context caches never
+        end up with two entries for the same agent.
+        """
+        return (name or "").strip().lower()
+
+    @classmethod
+    def _canon_extra_key(cls, key: str) -> str:
+        """Lowercase the agent-name suffix on per-agent extras keys.
+
+        Keys like 'claude_session:<agent>' encode an agent name in the
+        suffix. Normalize the suffix only — leave other keys untouched.
+        """
+        for _prefix in ("claude_session:", "cc_session:"):
+            if key.startswith(_prefix):
+                return _prefix + cls._canon_agent(key[len(_prefix):])
+        return key
+
     def _conv_dir(self, cid: str, user_id: str = "") -> Path:
         """Directory for a conversation: {store_dir}/{user}/{conv_id}/"""
         if user_id:
@@ -107,7 +130,7 @@ class ConversationStore:
         return self._conv_dir(cid) / "shared.jsonl"
 
     def _agent_ctx_path(self, cid: str, agent: str) -> Path:
-        safe_agent = self._safe_name(agent) if agent else "_shared"
+        safe_agent = self._safe_name(self._canon_agent(agent)) if agent else "_shared"
         return self._conv_dir(cid) / safe_agent / "context.jsonl"
 
     def _extras_path(self, cid: str) -> Path:
@@ -682,6 +705,7 @@ class ConversationStore:
                     public_messages: List[Dict],
                     private_messages: List[Dict],
                     user_id: str = "", ttl: int = 0):
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
         now = time.time()
         lock = self._get_conv_lock(cid)
 
@@ -929,6 +953,7 @@ class ConversationStore:
         (caller falls back to shared via load_context).
         If agent_name is empty, loads from shared.jsonl directly.
         """
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
         with self._ctx_cache_lock:
             if cid in self._ctx_cache and agent_name in self._ctx_cache[cid]:
                 cached = self._ctx_cache[cid][agent_name]
@@ -949,6 +974,7 @@ class ConversationStore:
         Shared stores agent-neutral messages (all prefixed).
         This reverses prefixes for the agent's own messages.
         """
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
         raw = self._read_ctx_file(self._shared_ctx_path(cid))
         if not raw:
             return None
@@ -967,6 +993,7 @@ class ConversationStore:
         """Write agent context to {agent}/context.jsonl (full replace)."""
         if not self.exists(cid):
             return False
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
         clean = [m for m in context_messages if not m.get("display_only")]
         # Cross-file UUID invariant: the same logical message must carry
         # the same msg_id here as in the transcript — preserved by
@@ -986,6 +1013,7 @@ class ConversationStore:
         """Append messages to agent context file."""
         if not self.exists(cid):
             return False
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
         clean = [m for m in new_messages if not m.get("display_only")]
         if not clean:
             return True
@@ -997,6 +1025,7 @@ class ConversationStore:
         return True
 
     def delete_agent_context(self, cid: str, agent_name: str) -> bool:
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
         """Delete agent context file + directory."""
         if not self.exists(cid):
             return False
@@ -1281,13 +1310,13 @@ class ConversationStore:
 
     def get_extra_cached(self, cid: str, key: str, default: Any = None) -> Any:
         """Get extra from extras.json file."""
-        return self._read_extras(cid).get(key, default)
+        return self._read_extras(cid).get(self._canon_extra_key(key), default)
 
     def get_extra(self, cid: str, key: str, default: Any = None,
                   user_id: str = "") -> Any:
         if not self.exists(cid):
             return default
-        return self._read_extras(cid).get(key, default)
+        return self._read_extras(cid).get(self._canon_extra_key(key), default)
 
     def get_extras(self, cid: str, user_id: str = "") -> Optional[dict]:
         if not self.exists(cid):
@@ -1301,6 +1330,7 @@ class ConversationStore:
             with self._cache_lock:
                 self._cache.pop(cid, None)
             return False
+        key = self._canon_extra_key(key)
         lock = self._get_conv_lock(cid)
         with lock:
             data = self._read_extras(cid)

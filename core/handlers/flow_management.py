@@ -124,7 +124,17 @@ class FlowManagerHandler(ToolHandler):
                         "relations (array of {from, to, type} objects). "
                         "Do NOT nest tasks inside other tasks. "
                         "Do NOT put relations inside tasks. "
-                        "Services use 'parameters' not 'config'."
+                        "Services use 'parameters' not 'config'.\n\n"
+                        "Optional 'groups' key composes other flows as "
+                        "sub-flows. Each entry: {<group_id>: {name, "
+                        "flow_ref: {path, version}, parameter_mapping: "
+                        "{<child_param>: '${<parent_expr>}'}, "
+                        "port_mapping: {input: {port_task_id: <id>}, "
+                        "output: {<output_port_id>: <relationship>}}, "
+                        "pass_attributes: bool}}. Both flow_ref.version "
+                        "(must match the child's version exactly) and "
+                        "every port id are validated at parse time — "
+                        "typos fail fast with the valid candidates listed."
                     ),
                 },
                 "parameters": {

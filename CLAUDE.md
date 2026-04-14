@@ -19,6 +19,8 @@ that supports tool-use loops, multi-agent conversations, and streaming SSE.
 ## Key Conventions
 
 - All documentation and code comments MUST be in English
+- ALWAYS document new features, tools, tasks, services, and handlers — update the relevant file under `docs/` in the same change
+- ALWAYS write unit tests for new code — handlers, tasks, services, parsers; nothing ships without coverage
 - Zero backward compatibility — migration is one-shot, delete old code
 - No "anonymous" or "default" fallbacks — missing required params = ValueError
 - Every message MUST have UUID + timestamp at creation

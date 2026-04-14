@@ -843,6 +843,45 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         instances = DeploymentRegistry.get_instance().get_by_owner("user1")
         self.assertEqual(instances[0].parameters.get("greeting"), "bonjour")
 
+    def test_run_executes_template_synchronously(self):
+        """`run` parses the FQN, runs the flow once, returns outputs inline."""
+        from core.repository import ScopedRepository
+        from tasks import register_all_tasks
+        register_all_tasks()
+        # Tiny one-task flow that just passes the input through `log`,
+        # which does not modify the FlowFile content.
+        try:
+            ScopedRepository.instance().create_flow(
+                "default.runme:1.0.0", "global", {
+                    "id": "runme", "name": "RunMe",
+                    "tasks": {"t": {"type": "log",
+                                    "parameters": {"message": "hi"}}},
+                    "relations": [],
+                })
+        except ValueError:
+            pass
+        result = self.handler.execute({
+            "action": "run",
+            "template_id": "default.runme:1.0.0",
+            "input": "payload-xyz",
+        })
+        data = json.loads(result)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["template_id"], "default.runme:1.0.0")
+        self.assertGreaterEqual(len(data["outputs"]), 1)
+        self.assertEqual(data["outputs"][0]["content"], "payload-xyz")
+
+    def test_run_unknown_template(self):
+        result = self.handler.execute({
+            "action": "run",
+            "template_id": "default.nope:9.9.9",
+        })
+        self.assertIn("not found", result)
+
+    def test_run_missing_template_id(self):
+        result = self.handler.execute({"action": "run"})
+        self.assertIn("template_id is required", result)
+
     def test_deploy_unknown_template(self):
         result = self.handler.execute({
             "action": "deploy",

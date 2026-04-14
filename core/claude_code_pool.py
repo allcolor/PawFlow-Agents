@@ -397,10 +397,10 @@ class ClaudeCodePool:
     def _cleanup_orphans(self):
         """Kill + remove orphan pf-cc-pool containers from previous runs.
 
-        Without \`-a\` the previous version only saw RUNNING containers,
+        Without -a the previous version only saw RUNNING containers,
         so Exited pool containers piled up across restarts (seen with
-        hundreds after a few days). \`ps -a\` includes every state
-        (running, exited, created, dead) and \`rm -f\` stops+removes.
+        hundreds after a few days). ps -a includes every state
+        (running, exited, created, dead) and rm -f stops+removes.
         """
         try:
             result = subprocess.run(

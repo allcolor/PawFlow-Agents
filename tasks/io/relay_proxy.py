@@ -158,13 +158,12 @@ def _relay_proxy_handler(pending_req):
     threading.Thread(target=_run_fetch, daemon=True,
                       name=f"relay-proxy-{relay_id[:8]}").start()
 
-    # Wait for the first chunk (or error).
-    # 300s — large prompts (20k+ tokens) on a local llama-server can
-    # take 50-100s just for prompt processing before the first token.
-    if not _started.wait(timeout=300):
-        pending_req.complete(504, {"Content-Type": "application/json"},
-                             b'{"error":"Relay timeout (no first chunk in 300s)"}')
-        return
+    # Wait for the first chunk (or error). NO timeout — the only
+    # legitimate end conditions are the WS layer signalling _done
+    # (relay disconnect, fetch error) or a normal first chunk. Any
+    # arbitrary timeout here would silently break long prompt
+    # processing on slow LLM backends.
+    _started.wait()
     if _state["error"] and not _state["headers"]:
         pending_req.complete(502,
                              {"Content-Type": "application/json"},
@@ -187,11 +186,11 @@ def _relay_proxy_handler(pending_req):
                     yield c
                 return
             _queue_event.clear()
-            # Inter-chunk timeout: if the stream goes quiet for >5 min
-            # mid-generation, assume the backend hung.
-            _queue_event.wait(timeout=300)
-            if not _queue_event.is_set() and _done.is_set():
-                return
+            # No inter-chunk timeout. We block until either a new chunk
+            # arrives (event set by _on_chunk) or the relay signals end
+            # (_done set, which also wakes us via _queue_event.set()
+            # in the 'end' / error branches of _on_chunk / _run_fetch).
+            _queue_event.wait()
 
     pending_req.complete_stream(_state["status"], _state["headers"], _stream())
 

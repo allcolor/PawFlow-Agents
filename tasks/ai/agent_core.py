@@ -1347,12 +1347,24 @@ class AgentCoreMixin:
                     # sees it until their next user message.
                     _tm_end = ctx.get("_turn_mode") or {}
                     _src_agent = _tm_end.get("source_agent") or ""
+                    # claude-code's turn_callback persists text per turn and
+                    # returns response.content="" at the very end, so
+                    # response_content is empty. Fall back to the last
+                    # persisted assistant message's text for the wake body.
+                    _reply_text = response_content or ""
+                    if not _reply_text:
+                        for _m in reversed(messages):
+                            if (_m.role == "assistant"
+                                    and not getattr(_m, "tool_calls", None)
+                                    and _m.content):
+                                _reply_text = _m.content
+                                break
                     logger.info(
                         "[delegate-reply-check] turn_mode=%s src=%s "
-                        "response_len=%d",
-                        _tm_end, _src_agent, len(response_content or ""))
+                        "reply_len=%d",
+                        _tm_end, _src_agent, len(_reply_text))
                     if (_tm_end.get("type") == "delegate_reply"
-                            and _src_agent and response_content):
+                            and _src_agent and _reply_text):
                         try:
                             from core.handlers.resource_agent import SpawnAgentsHandler
                             from tasks.ai.agent_loop import AgentLoopTask
@@ -1379,7 +1391,7 @@ class AgentCoreMixin:
                                     _src_agent)
                                 SpawnAgentsHandler._preempt_caller(
                                     _inst, conversation_id, _src_agent,
-                                    response_content, _reply_mid, _reply_src)
+                                    _reply_text, _reply_mid, _reply_src)
                             elif _inst:
                                 logger.info(
                                     "[delegate-reply] caller '%s' idle — wake",

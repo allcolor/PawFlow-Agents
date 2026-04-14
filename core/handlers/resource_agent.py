@@ -337,13 +337,26 @@ class SpawnAgentsHandler(ToolHandler):
     @property
     def description(self) -> str:
         base = (
-            "Delegate tasks to one or more agents. "
-            "Each agent runs independently with its own LLM service and tools. "
-            "Waits for all results by default (wait=true). "
-            "Set wait=false to run in background. "
-            "Agents can use ask_parent to pause and ask you a question — "
-            "you'll get status=needs_input with the question. "
-            "Use resume with the task_id to continue the conversation."
+            "Delegate tasks to one or more agents — ASYNCHRONOUS / "
+            "fire-and-forget by default. The tool returns IMMEDIATELY with "
+            "a list of task_ids; YOU ARE NOT BLOCKED waiting for the "
+            "sub-agent to finish. Keep working on your own plan.\n\n"
+            "When a sub-agent finishes, you will receive a follow-up "
+            "message (as if the user wrote it) that says "
+            "\"[Delegate result for task_id=...]\" and contains the "
+            "sub-agent's response. You MUST read that message and react "
+            "to it — integrate the result into your work, or reply to "
+            "the user with what you learned. Do not ignore it.\n\n"
+            "Each sub-agent runs independently with its own LLM service, "
+            "tools, and an ISOLATED context (determined by the `context` "
+            "field per task). Sub-agent intermediate messages are private "
+            "to the sub-agent — you only see the final result message.\n\n"
+            "Sub-agents can use ask_parent to pause and ask a question — "
+            "you'll get status=needs_input in the result message; use "
+            "resume with the task_id to answer.\n\n"
+            "Set wait=true ONLY when you genuinely need to block until "
+            "the sub-agent finishes (rare — defeats concurrency). "
+            "Default (wait=false) is what you want 99% of the time."
         )
         if self._available_agents:
             lines = []
@@ -433,7 +446,12 @@ class SpawnAgentsHandler(ToolHandler):
         import uuid
 
         tasks_spec = arguments.get("tasks", [])
-        wait = arguments.get("wait", True)
+        # Delegate is ASYNC by default: the caller should never block on
+        # a sub-agent's work. The background completion callback delivers
+        # the result via preempt (if caller is still running) or wake
+        # (if caller went idle). Set wait=true explicitly only if you
+        # genuinely need a synchronous result (rare — breaks concurrency).
+        wait = bool(arguments.get("wait", False))
         user_id = self._user_id
 
         # Thread-safe source agent (each agent loop runs in its own thread)
@@ -534,7 +552,15 @@ class SpawnAgentsHandler(ToolHandler):
             return json.dumps({
                 "status": "spawned",
                 "task_ids": ids,
-                "message": f"Spawned {len(ids)} agents in background. Results will be injected into the conversation when ready.",
+                "message": (
+                    f"Spawned {len(ids)} sub-agent(s) in background. "
+                    f"You are NOT blocked — continue your own work. "
+                    f"When each sub-agent finishes you will receive a "
+                    f"message '[Delegate result for task_id=<id>]' "
+                    f"containing their response: READ IT and REACT "
+                    f"(integrate into your work, or reply to the user). "
+                    f"Track these task_ids: {ids}."
+                ),
             })
 
         # Format results
@@ -604,73 +630,213 @@ class SpawnAgentsHandler(ToolHandler):
         return []  # isolated
 
     def _inject_bg_result(self, result, task, conv_id, user_id, source_agent):
-        """Inject a background agent's result into the parent conversation.
+        """Deliver a sub-agent's result back to the caller agent.
 
-        Called from the thread pool when a wait=false task completes.
-        Follows the same pattern as plan step injection.
+        Private A↔B channel: only the caller (source_agent) sees this
+        message — NOT other agents linked to the conversation. The user
+        sees it in the transcript (user sees everything).
+
+        Delivery:
+          1. Full response persisted to FileStore (category="delegate_result")
+             so the caller can read it in full if needed.
+          2. A short "[Delegate result for task_id=X] — read file Y, react"
+             prompt-style user message is injected into the caller's
+             context only.
+          3. If the caller is currently running → preempt (append to
+             _pending_user_msgs so the current loop picks it up).
+             If the caller is idle → wake a new loop via agent_loop.
         """
         import uuid as _uuid
+        import time as _time
         try:
-            from core.conversation_event_bus import ConversationEventBus
-            bus = ConversationEventBus.instance()
+            # 1. Persist the full result to the FileStore — the caller
+            #    can `read` it if the short summary isn't enough.
+            _full_text_parts = [
+                f"# Delegate result\n",
+                f"task_id: {result.task_id}\n",
+                f"agent: {result.agent_name}\n",
+                f"status: {result.status}\n",
+                f"duration: {result.duration_ms/1000:.1f}s\n",
+                f"tokens_in: {result.tokens_in}, tokens_out: {result.tokens_out}\n",
+            ]
+            if result.model:
+                _full_text_parts.append(f"model: {result.model}\n")
+            if result.tools_called:
+                _full_text_parts.append(
+                    f"tools_called: {', '.join(result.tools_called)}\n")
+            _full_text_parts.append("\n---\n\n")
+            if result.response:
+                _full_text_parts.append(f"## Response\n\n{result.response}\n")
+            if result.error:
+                _full_text_parts.append(f"\n## Error\n\n{result.error}\n")
+            if result.question:
+                _full_text_parts.append(
+                    f"\n## Agent asks for input (ask_parent)\n\n{result.question}\n"
+                    f"\nUse `delegate` with resume=\"{result.task_id}\" to respond.\n")
+            _full_text = "".join(_full_text_parts)
 
-            # Build the result message
-            if result.status == "completed" and result.response:
-                _content = (
-                    f"[Background task completed] Agent '{result.agent_name}' "
-                    f"(task {result.task_id}) finished:\n\n{result.response}"
+            _file_id = ""
+            try:
+                from core.file_store import FileStore
+                _file_id = FileStore.instance().store(
+                    f"delegate_{result.task_id}.md",
+                    _full_text.encode("utf-8"),
+                    "text/markdown",
+                    user_id=user_id, conversation_id=conv_id,
+                    category="delegate_result")
+            except Exception as _fe:
+                logger.warning("[bg-delegate] FileStore persist failed: %s", _fe)
+
+            # 2. Build the short nudge shown in the caller's context.
+            #    Deliberately phrased as an imperative user message so the
+            #    LLM reacts (same pattern as plan/task injections).
+            if result.status == "needs_input" and result.question:
+                _summary = (
+                    f"[Delegate result for task_id={result.task_id}] "
+                    f"Sub-agent '{result.agent_name}' is asking for your input "
+                    f"(ask_parent). Question:\n\n{result.question}\n\n"
+                    f"You MUST read the full context in file "
+                    f"{_file_id or '<unavailable>'} and respond by calling "
+                    f"delegate(tasks=[{{agent:'{result.agent_name}', "
+                    f"resume:'{result.task_id}', message:'<your answer>'}}])."
                 )
             elif result.error:
-                _content = (
-                    f"[Background task failed] Agent '{result.agent_name}' "
-                    f"(task {result.task_id}): {result.error}"
-                )
-            elif result.question:
-                _content = (
-                    f"[Background agent needs input] Agent '{result.agent_name}' "
-                    f"(task {result.task_id}) asks:\n\n{result.question}\n\n"
-                    f"Use delegate with resume=\"{result.task_id}\" to respond."
+                _summary = (
+                    f"[Delegate result for task_id={result.task_id}] "
+                    f"Sub-agent '{result.agent_name}' FAILED: {result.error[:300]}.\n"
+                    f"Full trace in file {_file_id or '<unavailable>'}. "
+                    f"Read it and decide how to react (retry, fallback, tell the user)."
                 )
             else:
-                _content = (
-                    f"[Background task completed] Agent '{result.agent_name}' "
-                    f"(task {result.task_id}) finished with status: {result.status}"
-                )
+                # Cap inline preview so the context isn't flooded.
+                _preview = (result.response or "")[:800]
+                _more = (len(result.response or "") > 800)
+                _summary = (
+                    f"[Delegate result for task_id={result.task_id}] "
+                    f"Sub-agent '{result.agent_name}' finished.\n\n"
+                    f"{_preview}{'…' if _more else ''}\n\n"
+                    f"{'Full response in file ' + _file_id + ' — read it with `read` if you need more.' if _file_id and _more else ''}\n"
+                    f"READ this result and REACT: integrate it into your work, "
+                    f"or reply to the user with what you learned. Do not ignore it."
+                ).rstrip()
 
             _msg_id = _uuid.uuid4().hex[:12]
 
-            # Publish SSE event so the frontend renders the message
-            bus.publish_event(conv_id, "new_message", {
-                "role": "user",
-                "content": _content,
-                "msg_id": _msg_id,
-                "source": {
-                    "type": "system",
-                    "name": f"bg:{result.agent_name}",
-                    "task_id": result.task_id,
-                },
-            })
+            # 3. Deliver to the caller: preempt if running, wake if idle.
+            self._deliver_to_caller(
+                conv_id=conv_id, caller_agent=source_agent,
+                user_id=user_id, text=_summary, msg_id=_msg_id,
+                task_id=result.task_id, delegate_agent=result.agent_name,
+                file_id=_file_id,
+            )
+        except Exception as e:
+            logger.exception("[bg-delegate] Failed to deliver result for task %s: %s",
+                             result.task_id, e)
 
-            # Trigger agent loop processing (same as plan step injection)
-            body = json.dumps({
-                "message": _content,
-                "conversation_id": conv_id,
-                "msg_id": _msg_id,
+    def _deliver_to_caller(self, conv_id, caller_agent, user_id, text, msg_id,
+                           task_id, delegate_agent, file_id):
+        """Route the delegate result to the caller — preempt-or-wake.
+
+        A delegate is a private A↔B channel: this nudge goes ONLY into
+        caller_agent's context (not shared, not other agents). The user
+        sees it via the transcript (display_only publish).
+        """
+        import time as _time
+        from core.conversation_event_bus import ConversationEventBus
+
+        _source = {
+            "type": "user",
+            "name": "system",
+            "target_agent": caller_agent,
+            "delegate": {
+                "task_id": task_id,
+                "agent": delegate_agent,
+                "file_id": file_id,
+            },
+        }
+
+        # Publish a display_only event so the user sees it in the chat.
+        try:
+            ConversationEventBus.instance().publish_event(conv_id, "new_message", {
+                "role": "user",
+                "content": text,
+                "msg_id": msg_id,
+                "display_only": True,
+                "source": _source,
             })
+        except Exception:
+            pass
+
+        # Check caller state via AgentLoopTask._active_contexts.
+        from tasks.ai.agent_loop import AgentLoopTask
+        inst = AgentLoopTask._live_instance
+        if not inst:
+            logger.warning(
+                "[bg-delegate] no AgentLoopTask instance — cannot deliver "
+                "result for task %s to caller %s", task_id, caller_agent)
+            return
+
+        _key = f"{conv_id}:{caller_agent}" if caller_agent else conv_id
+        with inst._active_contexts_lock:
+            _is_running = _key in inst._active_contexts
+
+        if _is_running:
+            # Preempt path: append to the caller's pending queue so the
+            # active loop injects it on its next turn boundary.
+            logger.info(
+                "[bg-delegate] caller '%s' is running — preempting with "
+                "result for task %s", caller_agent, task_id)
+            self._preempt_caller(inst, conv_id, caller_agent, text, msg_id, _source)
+        else:
+            # Wake path: no active loop → spawn a fresh stream so the
+            # caller reads + reacts to the result.
+            logger.info(
+                "[bg-delegate] caller '%s' is idle — waking with result "
+                "for task %s", caller_agent, task_id)
+            self._wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id)
+
+    @staticmethod
+    def _preempt_caller(inst, conv_id, caller_agent, text, msg_id, source):
+        """Append the result to the caller's pending queue (running loop
+        will pick it up on its next iteration)."""
+        try:
             from core import FlowFile
+            _ff = FlowFile(text.encode("utf-8"))
+            _ff.set_attribute("conversation_id", conv_id)
+            _ff.set_attribute("msg_id", msg_id)
+            _ff.set_attribute("agent_name", caller_agent)
+            _ff.set_attribute("message_source", json.dumps(source))
+            _qk = f"{conv_id}:{caller_agent}" if caller_agent else conv_id
+            inst._pending_user_msgs.setdefault(_qk, []).append(_ff)
+        except Exception as e:
+            logger.error("[bg-delegate] preempt failed: %s", e)
+
+    @staticmethod
+    def _wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id):
+        """Wake an idle caller by running a fresh agent loop with the
+        result as the user input."""
+        try:
+            from core import FlowFile
+            body = json.dumps({
+                "message": text,
+                "conversation_id": conv_id,
+                "msg_id": msg_id,
+                "agent_name": caller_agent,
+            })
             ff = FlowFile(body.encode("utf-8"))
             ff.set_attribute("http.auth.principal", user_id)
-            from tasks.ai.agent_loop import AgentLoopTask
-            inst = AgentLoopTask._live_instance
-            if inst:
-                inst._execute_streaming(ff)
-                logger.info("[bg-delegate] Injected result for task %s agent '%s' into %s",
-                            result.task_id, result.agent_name, conv_id[:8])
-            else:
-                logger.warning("[bg-delegate] No AgentLoopTask instance to inject result")
+            ff.set_attribute("agent_name", caller_agent)
+            # Run in a thread so we don't block the completion callback
+            # (which is running on the SubAgentExecutor's pool).
+            import threading as _th
+            _th.Thread(
+                target=inst._execute_streaming,
+                args=(ff,),
+                daemon=True,
+                name=f"wake-{caller_agent}",
+            ).start()
         except Exception as e:
-            logger.error("[bg-delegate] Failed to inject result for task %s: %s",
-                         result.task_id, e)
+            logger.error("[bg-delegate] wake failed: %s", e)
 
 
 class GetAgentResultsHandler(ToolHandler):

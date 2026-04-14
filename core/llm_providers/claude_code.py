@@ -351,20 +351,27 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     def _build_catchup_context(self, conv_id: str, agent_name: str) -> str:
         """Build catch-up text from messages other agents sent since our last turn.
 
-        Reads agent's context.jsonl, finds messages after the last known index
+        Reads the PARENT conversation's context for this agent (sub-agents
+        included — a delegate still sees new activity in the main chat
+        while it works). Finds messages after the last known index
         (tracked in self._cc_catchup_idx). Returns formatted text block or "".
         Also updates self._cc_catchup_idx so the same messages aren't sent twice
         (shared between initial, preempt, and inter-turn catch-up).
         """
-        # Sub-conversations (delegate tasks) are isolated by design —
-        # no multi-agent catch-up, and they don't exist in the store so
-        # load_agent_context raises ValueError.
-        if not conv_id or "::task::" in conv_id or "::delegate::" in conv_id:
+        if not conv_id:
             return ""
+        # Sub-conv (delegate / task) → catch up from the parent conv so
+        # the delegate sees messages arriving in the main chat while it
+        # works. The sub-conv itself has no multi-agent dialog of its own.
+        _lookup_cid = conv_id
+        for _sep in ("::delegate::", "::task::"):
+            if _sep in _lookup_cid:
+                _lookup_cid = _lookup_cid.split(_sep, 1)[0]
+                break
         try:
             from core.conversation_store import ConversationStore
             store = ConversationStore.instance()
-            ctx_data = store.load_agent_context(conv_id, agent_name)
+            ctx_data = store.load_agent_context(_lookup_cid, agent_name)
             if not ctx_data:
                 return ""
 

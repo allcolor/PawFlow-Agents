@@ -427,11 +427,7 @@ class SpawnAgentsHandler(ToolHandler):
                             },
                             "persist": {
                                 "type": "boolean",
-                                "description": "Keep the sub-agent's conversation context after completion (default: false). Use true for long research tasks or agents you'll call again — they'll resume where they left off.",
-                            },
-                            "resume": {
-                                "type": "string",
-                                "description": "Resume a paused agent by providing the task_id from a previous needs_input result. The message field becomes the response to the agent's question.",
+                                "description": "Only for context='isolated' or 'last:N': keep the sub-agent's sub-conversation after completion for later resume. Ignored in context='shared' (the target uses the main conv, nothing separate to persist).",
                             },
                         },
                         "required": ["agent", "message"],
@@ -488,14 +484,12 @@ class SpawnAgentsHandler(ToolHandler):
         for spec in tasks_spec:
             agent_name = spec.get("agent", "")
             message = spec.get("message", "")
-            resume_id = spec.get("resume", "")
-            task_id = resume_id or spec.get("id", uuid.uuid4().hex[:8])
+            task_id = spec.get("id", uuid.uuid4().hex[:8])
 
             # Preempt path: a delegate for (_src_agent, agent_name) is
             # already running in this conversation — inject the message
             # into its loop instead of spawning a second one.
-            if (not resume_id and self._conversation_id and _src_agent
-                    and agent_name):
+            if (self._conversation_id and _src_agent and agent_name):
                 _live = get_live_delegate(
                     self._conversation_id, _src_agent, agent_name)
                 if _live:
@@ -583,8 +577,7 @@ class SpawnAgentsHandler(ToolHandler):
                 task.source_agent_nickname = _src_nickname
                 task.source_llm_service = _src_svc
                 task.delegate_tc_id = _delegate_tc_id
-                # Resume implies persist (sub-conv must exist)
-                task.persist = bool(spec.get("persist", False)) or bool(resume_id)
+                task.persist = bool(spec.get("persist", False))
 
                 task.context_mode = context_mode
                 task.parent_conversation_id = self._conversation_id
@@ -794,7 +787,7 @@ class SpawnAgentsHandler(ToolHandler):
                     logger.info(
                         "[delegate-shared] target '%s' idle — wake", to_agent)
                     self._wake_caller(inst, conv_id, to_agent, user_id,
-                                      message, _msg_id)
+                                      message, _msg_id, source=_src)
                     return {"state": "idle (waking)"}
         except Exception as e:
             logger.error("[delegate-shared] trigger failed: %s", e)
@@ -842,8 +835,9 @@ class SpawnAgentsHandler(ToolHandler):
                 _full_text_parts.append(f"\n## Error\n\n{result.error}\n")
             if result.question:
                 _full_text_parts.append(
-                    f"\n## Agent asks for input (ask_parent)\n\n{result.question}\n"
-                    f"\nUse `delegate` with resume=\"{result.task_id}\" to respond.\n")
+                    f"\n## Agent needs input\n\n{result.question}\n"
+                    f"\nReply by calling delegate("
+                    f"agent='{result.agent_name}', message='<your answer>').\n")
             _full_text = "".join(_full_text_parts)
 
             _file_id = ""
@@ -864,12 +858,11 @@ class SpawnAgentsHandler(ToolHandler):
             if result.status == "needs_input" and result.question:
                 _summary = (
                     f"[Delegate result for task_id={result.task_id}] "
-                    f"Sub-agent '{result.agent_name}' is asking for your input "
-                    f"(ask_parent). Question:\n\n{result.question}\n\n"
-                    f"You MUST read the full context in file "
-                    f"{_file_id or '<unavailable>'} and respond by calling "
-                    f"delegate(tasks=[{{agent:'{result.agent_name}', "
-                    f"resume:'{result.task_id}', message:'<your answer>'}}])."
+                    f"Sub-agent '{result.agent_name}' needs your input. "
+                    f"Question:\n\n{result.question}\n\n"
+                    f"Full context in file {_file_id or '<unavailable>'}. "
+                    f"Reply by calling delegate("
+                    f"agent='{result.agent_name}', message='<your answer>')."
                 )
             elif result.error:
                 _summary = (
@@ -983,9 +976,12 @@ class SpawnAgentsHandler(ToolHandler):
             logger.error("[bg-delegate] preempt failed: %s", e)
 
     @staticmethod
-    def _wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id):
+    def _wake_caller(inst, conv_id, caller_agent, user_id, text, msg_id,
+                     source=None):
         """Wake an idle caller by running a fresh agent loop with the
-        result as the user input."""
+        result as the user input. `source` (if given) identifies the
+        trigger so the agent loop can set ctx._turn_mode accordingly
+        (e.g. agent_delegate → delegate_reply mode auto-tags the flush)."""
         try:
             from core import FlowFile
             body = json.dumps({
@@ -997,6 +993,8 @@ class SpawnAgentsHandler(ToolHandler):
             ff = FlowFile(body.encode("utf-8"))
             ff.set_attribute("http.auth.principal", user_id)
             ff.set_attribute("agent_name", caller_agent)
+            if source:
+                ff.set_attribute("message_source", json.dumps(source))
             # Run in a thread so we don't block the completion callback
             # (which is running on the SubAgentExecutor's pool).
             import threading as _th

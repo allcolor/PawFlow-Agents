@@ -767,6 +767,21 @@ class SpawnAgentsHandler(ToolHandler):
         except Exception as e:
             logger.warning("[delegate-shared] persist failed: %s", e)
 
+        # Publish a live SSE event so the webchat renders the delegate
+        # block in real time (without waiting for a full history reload).
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                conv_id, "new_message", {
+                    "role": _delegate_msg["role"],
+                    "content": message,
+                    "msg_id": _msg_id,
+                    "source": _src,
+                    "ts": _delegate_msg["timestamp"],
+                })
+        except Exception:
+            pass
+
         # Trigger the target. Same preempt/wake helpers used by the
         # sub-agent result delivery path — they already know how to
         # route to a specific agent within a conv.

@@ -173,7 +173,26 @@ function addMsg(role, text, extra) {
     }
   }
 
-  if (role === 'assistant') {
+  // agent_delegate source = private channel between two agents.
+  // Render as a compact delegate block regardless of the underlying
+  // message role (delegate request is user-role to ingest into target,
+  // delegate reply is assistant-role from the target).
+  const _isDelegateMsg = extra && extra.source
+      && (extra.source.type === 'agent_delegate');
+  if (_isDelegateMsg) {
+    const _from = extra.source.from || '?';
+    const _to = extra.source.to || '?';
+    const _arrow = '\u{1F500} <span class="delegate-src">'
+        + escapeHtml(displayAgentName(_from)) + '</span> \u2192 '
+        + '<span class="delegate-dst">'
+        + escapeHtml(displayAgentName(_to)) + '</span>';
+    el.className = 'msg delegate-block delegate-shared';
+    el.innerHTML =
+        '<details open><summary class="delegate-header">'
+        + _arrow + timeHtml + '</summary>'
+        + '<div class="delegate-body">' + renderMarkdown(text) + '</div>'
+        + '</details>';
+  } else if (role === 'assistant') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool_call' || role === 'tool') {
     const toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';

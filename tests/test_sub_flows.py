@@ -147,6 +147,54 @@ def test_flow_ref_version_match_ok(tmp_path):
     assert "pg1" in flow.tasks
 
 
+def test_port_mapping_input_unknown_raises(tmp_path):
+    """port_mapping.input.port_task_id must point at an actual inputPort."""
+    child_flow = _write_flow(tmp_path, "child", {
+        "id": "child", "name": "Child", "version": "1.0.0",
+        "tasks": {
+            "in":  {"type": "inputPort",  "parameters": {"port_name": "main"}},
+            "out": {"type": "outputPort", "parameters": {"port_name": "done"}},
+        },
+        "relations": [{"from": "in", "to": "out", "type": "success"}],
+    })
+    parent_cfg = {
+        "id": "parent", "name": "Parent", "version": "1.0.0",
+        "tasks": {},
+        "groups": {"pg1": {
+            "name": "Wrapped",
+            "flow_ref": {"path": child_flow},
+            "port_mapping": {"input": {"port_task_id": "doesnotexist"}},
+        }},
+        "relations": [],
+    }
+    with pytest.raises(Exception, match="port_mapping.input"):
+        FlowParser.parse(parent_cfg)
+
+
+def test_port_mapping_output_unknown_raises(tmp_path):
+    """port_mapping.output keys must point at actual outputPort tasks."""
+    child_flow = _write_flow(tmp_path, "child", {
+        "id": "child", "name": "Child", "version": "1.0.0",
+        "tasks": {
+            "in":  {"type": "inputPort",  "parameters": {"port_name": "main"}},
+            "out": {"type": "outputPort", "parameters": {"port_name": "done"}},
+        },
+        "relations": [{"from": "in", "to": "out", "type": "success"}],
+    })
+    parent_cfg = {
+        "id": "parent", "name": "Parent", "version": "1.0.0",
+        "tasks": {},
+        "groups": {"pg1": {
+            "name": "Wrapped",
+            "flow_ref": {"path": child_flow},
+            "port_mapping": {"output": {"in": "success"}},  # 'in' is inputPort
+        }},
+        "relations": [],
+    }
+    with pytest.raises(Exception, match="port_mapping.output"):
+        FlowParser.parse(parent_cfg)
+
+
 def test_flow_ref_missing_path_raises(tmp_path):
     """A flow_ref pointing at a non-existent file must fail at parse."""
     parent_cfg = {

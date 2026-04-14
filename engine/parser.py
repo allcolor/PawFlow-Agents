@@ -112,11 +112,44 @@ class FlowParser:
             # an executeFlow task at runtime. Synthesize that task now so
             # the executor doesn't need to know about ProcessGroups.
             if pg.is_subflow and pg.flow_ref:
+                _port_mapping = group_config.get("port_mapping", {}) or {}
+                # Validate port_mapping against the loaded sub-flow's tasks
+                # at parse time. Without this, a typo in port_task_id /
+                # an output port_id stays silent until the flow runs and
+                # produces FlowFiles with no relationship → routing dead-
+                # end. Fail fast with both the bad name and the valid
+                # candidates.
+                _input_port = (_port_mapping.get("input") or {}).get("port_task_id", "")
+                if _input_port:
+                    _t = pg.tasks.get(_input_port, {})
+                    if _t.get("type") != "inputPort":
+                        _candidates = [tid for tid, td in pg.tasks.items()
+                                       if td.get("type") == "inputPort"]
+                        raise FlowError(
+                            f"ProcessGroup '{group_id}': port_mapping.input."
+                            f"port_task_id='{_input_port}' is not an inputPort "
+                            f"of sub-flow '{pg.flow_ref.get('path', '')}'. "
+                            f"Available inputPorts: {_candidates}.")
+                _out_map = _port_mapping.get("output") or {}
+                if _out_map:
+                    _bad = []
+                    for _out_id in _out_map:
+                        _t = pg.tasks.get(_out_id, {})
+                        if _t.get("type") != "outputPort":
+                            _bad.append(_out_id)
+                    if _bad:
+                        _candidates = [tid for tid, td in pg.tasks.items()
+                                       if td.get("type") == "outputPort"]
+                        raise FlowError(
+                            f"ProcessGroup '{group_id}': port_mapping.output "
+                            f"refers to non-outputPort task(s) {_bad} in "
+                            f"sub-flow '{pg.flow_ref.get('path', '')}'. "
+                            f"Available outputPorts: {_candidates}.")
                 _ef_params = {
                     "flow_path": pg.flow_ref.get("path", ""),
                     "parameter_mapping": group_config.get(
                         "parameter_mapping", {}),
-                    "port_mapping": group_config.get("port_mapping", {}),
+                    "port_mapping": _port_mapping,
                     "pass_attributes": group_config.get(
                         "pass_attributes", True),
                 }

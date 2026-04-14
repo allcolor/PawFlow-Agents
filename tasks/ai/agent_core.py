@@ -1347,6 +1347,10 @@ class AgentCoreMixin:
                     # sees it until their next user message.
                     _tm_end = ctx.get("_turn_mode") or {}
                     _src_agent = _tm_end.get("source_agent") or ""
+                    logger.info(
+                        "[delegate-reply-check] turn_mode=%s src=%s "
+                        "response_len=%d",
+                        _tm_end, _src_agent, len(response_content or ""))
                     if (_tm_end.get("type") == "delegate_reply"
                             and _src_agent and response_content):
                         try:

@@ -318,10 +318,16 @@ class ConversationStore:
         ALL messages are prefixed — shared belongs to no agent.
         - Agent messages: role→user, content prefixed [Agent X]: or [Agent X in Task Y]:
         - User messages: content prefixed [User to agent X]:
+        - Agent_delegate messages: SHOULD NEVER REACH HERE (filtered upstream
+          in agent_flush). If we're called on one, return as-is rather
+          than mislabel it.
         """
         m = dict(msg)
         src = m.get("source") or {}
         src_type = src.get("type", "")
+
+        if src_type == "agent_delegate":
+            return m  # private channel — caller must not broadcast
 
         if src_type == "agent":
             agent_name = src.get("name")
@@ -348,10 +354,15 @@ class ConversationStore:
         - Other agent messages: role→user, content prefixed [Agent X]:
         - User messages to receiving_agent: unchanged
         - User messages to other agent: content prefixed [User to agent X]:
+        - Agent_delegate messages: SHOULD NEVER REACH HERE — private A↔B
+          channel, filtered upstream. Returned as-is as a safety net.
         """
         m = dict(msg)
         src = m.get("source") or {}
         src_type = src.get("type", "")
+
+        if src_type == "agent_delegate":
+            return m  # private channel — should not be broadcast
 
         if src_type == "agent":
             agent_name = src.get("name")
@@ -715,10 +726,41 @@ class ConversationStore:
             ctx_public = [m for m in public_messages if not m.get("display_only")]
             ctx_private = [m for m in private_messages if not m.get("display_only")]
 
-            # 2. Append to agent context file
+            # Split out agent_delegate messages — private A↔B channel,
+            # bypasses shared + other agents entirely. They still go to
+            # the from/to contexts with appropriate tagging.
+            _delegate_msgs = [m for m in ctx_public
+                              if (m.get("source") or {}).get("type") == "agent_delegate"]
+            ctx_public = [m for m in ctx_public
+                          if (m.get("source") or {}).get("type") != "agent_delegate"]
+
+            # 2. Append to agent context file (the flushing agent's own ctx)
             all_agent = ctx_public + ctx_private
             if all_agent:
                 self._append_ctx_file(cid, agent_name, all_agent)
+
+            # 2b. Route agent_delegate messages privately to (from, to).
+            #     agent_flush is called by the FROM agent — write to FROM's
+            #     ctx with [from→to] tag and to TO's ctx raw. Never touch
+            #     shared, never touch other agents.
+            for _dm in _delegate_msgs:
+                _src = _dm.get("source") or {}
+                _from = _src.get("from", "") or agent_name
+                _to = _src.get("to", "")
+                if not _to:
+                    continue
+                # FROM's own ctx: message prefixed with [from→to delegate]
+                _for_from = dict(_dm)
+                _for_from["content"] = self._prefix_content(
+                    _for_from.get("content", ""),
+                    f"[delegate {_from} → {_to}]:")
+                self._append_ctx_file(cid, _from, [_for_from])
+                # TO's ctx: message as-is (the private incoming request),
+                # but role=user so the target reads it as an instruction.
+                _for_to = dict(_dm)
+                if _for_to.get("role") == "assistant":
+                    _for_to["role"] = "user"
+                self._append_ctx_file(cid, _to, [_for_to])
 
             # 3. Append to shared context + transformed to other agents' contexts
             # Shared context = conversation only — NO tool results, NO context injections.

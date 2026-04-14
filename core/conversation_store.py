@@ -1166,8 +1166,11 @@ class ConversationStore:
                 if _lines_collected >= need:
                     break
 
-            # If we still have a remainder from the very start of file
-            if remainder:
+            # Only parse remainder if we actually reached the start of
+            # file — otherwise it's a partial line cut by chunk boundary
+            # (mid-UTF-8-char, mid-JSON), which would raise
+            # UnicodeDecodeError (not JSONDecodeError) on parse.
+            if remainder and pos == 0:
                 raw = remainder.strip()
                 if raw:
                     try:
@@ -1177,7 +1180,7 @@ class ConversationStore:
                             raw_lines.append(line)
                             if t == "msg":
                                 msg_count += 1
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, UnicodeDecodeError):
                         pass
 
             # raw_lines is in reverse order (newest first) — reverse to chronological

@@ -195,6 +195,22 @@ class AgentCoreMixin:
                 # After this message, generate a NEW msg_id for the next one
                 import uuid as _uuid_append
                 emitter._current_msg_id = _uuid_append.uuid4().hex[:12]
+            # Auto-tag: if this turn was triggered by an agent_delegate
+            # message, the assistant's reply routes privately back to
+            # the delegator only. Re-stamp the source as agent_delegate
+            # so ConversationStore.agent_flush routes it correctly
+            # (transcript + from+to ctx only, NOT shared, NOT peers).
+            _tm = ctx.get("_turn_mode") or {}
+            if (msg.role == "assistant"
+                    and _tm.get("type") == "delegate_reply"
+                    and _tm.get("source_agent")
+                    and not msg.tool_calls):
+                _self_name = ctx.get("active_agent_name", "") or ""
+                msg.source = {
+                    "type": "agent_delegate",
+                    "from": _self_name,
+                    "to": _tm["source_agent"],
+                }
             messages.append(msg)
             new_messages.append(msg)
             # Persist via conversation writer + publish SSE (single source of truth)

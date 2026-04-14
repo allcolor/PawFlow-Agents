@@ -1187,9 +1187,28 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             except Exception:
                 pass
 
+        # Turn mode — set once per turn at the trigger site. When the
+        # trigger is an agent_delegate message, the agent must auto-tag
+        # its final assistant flush as agent_delegate(from=self, to=caller)
+        # so the reply routes privately back to the delegator only.
+        _turn_mode = {"type": "user", "source_agent": None}
+        try:
+            _msg_source_raw = flowfile.get_attribute("message_source") or ""
+            if _msg_source_raw:
+                import json as _json_ts
+                _ms = _json_ts.loads(_msg_source_raw) if isinstance(_msg_source_raw, str) else _msg_source_raw
+                if isinstance(_ms, dict) and _ms.get("type") == "agent_delegate":
+                    _turn_mode = {
+                        "type": "delegate_reply",
+                        "source_agent": _ms.get("from", ""),
+                    }
+        except Exception:
+            pass
+
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
             "messages": messages, "model": model_name,
+            "_turn_mode": _turn_mode,
             "_identity_suffix": _identity_suffix,
             "temperature": temperature, "max_tokens": max_tokens,
             "max_iterations": max_iterations,

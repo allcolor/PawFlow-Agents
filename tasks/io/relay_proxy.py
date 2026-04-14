@@ -158,10 +158,12 @@ def _relay_proxy_handler(pending_req):
     threading.Thread(target=_run_fetch, daemon=True,
                       name=f"relay-proxy-{relay_id[:8]}").start()
 
-    # Wait for the first chunk (or error)
-    if not _started.wait(timeout=60):
+    # Wait for the first chunk (or error).
+    # 300s — large prompts (20k+ tokens) on a local llama-server can
+    # take 50-100s just for prompt processing before the first token.
+    if not _started.wait(timeout=300):
         pending_req.complete(504, {"Content-Type": "application/json"},
-                             b'{"error":"Relay timeout"}')
+                             b'{"error":"Relay timeout (no first chunk in 300s)"}')
         return
     if _state["error"] and not _state["headers"]:
         pending_req.complete(502,
@@ -185,7 +187,9 @@ def _relay_proxy_handler(pending_req):
                     yield c
                 return
             _queue_event.clear()
-            _queue_event.wait(timeout=60)
+            # Inter-chunk timeout: if the stream goes quiet for >5 min
+            # mid-generation, assume the backend hung.
+            _queue_event.wait(timeout=300)
             if not _queue_event.is_set() and _done.is_set():
                 return
 

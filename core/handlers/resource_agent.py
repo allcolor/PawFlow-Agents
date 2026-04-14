@@ -860,9 +860,10 @@ class SpawnAgentsHandler(ToolHandler):
                     f"[Delegate result for task_id={result.task_id}] "
                     f"Sub-agent '{result.agent_name}' needs your input. "
                     f"Question:\n\n{result.question}\n\n"
-                    f"Full context in file {_file_id or '<unavailable>'}. "
-                    f"Reply by calling delegate("
-                    f"agent='{result.agent_name}', message='<your answer>')."
+                    f"You MUST read the full context in file "
+                    f"{_file_id or '<unavailable>'} and reply by calling "
+                    f"delegate(agent='{result.agent_name}', "
+                    f"message='<your answer>')."
                 )
             elif result.error:
                 _summary = (

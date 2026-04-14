@@ -344,27 +344,10 @@ class SubAgentExecutor:
         # Build tool definitions (filtered if agent specifies a whitelist)
         tool_defs, tool_handlers = self._build_tools(task.tools)
 
-        # Inject ask_parent tool for sub-agents (enables ping-pong dialog)
-        if task.source_agent:
-            tool_defs.append(LLMToolDefinition(
-                name="ask_parent",
-                description=(
-                    "Ask the parent agent a question and wait for their response. "
-                    "Use this when you need clarification, a decision, or additional "
-                    "input from the agent that spawned you. Your execution will pause "
-                    "until the parent responds. The parent may choose not to respond."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                            "description": "The question or request for the parent agent",
-                        },
-                    },
-                    "required": ["question"],
-                },
-            ))
+        # ask_parent has been removed. Delegate is bidirectional — a
+        # sub-agent that needs to talk back to its caller just calls
+        # delegate(caller_agent, "…") itself (it's a first-class agent
+        # in the conv). preempt/wake handles the delivery.
 
         # Set parent conversation ID on read_parent_context tool
         for h in self._registry.list_tools():
@@ -750,35 +733,6 @@ class SubAgentExecutor:
                     if _is_cancelled(task.id):
                         result.error = "Cancelled by user"
                         result.status = "cancelled"
-                        break
-
-                    # Intercept ask_parent — break loop, return question to parent
-                    if tc.name == "ask_parent":
-                        _question = (tc.arguments or {}).get("question", "")
-                        result.question = _question
-                        result.status = "needs_input"
-                        # Force persist so the sub-conv survives for resume
-                        task.persist = True
-                        # Add the ask_parent call + a synthetic tool result to messages
-                        # so the LLM context is coherent on resume
-                        messages.append(LLMMessage(
-                            role="assistant", content="",
-                            tool_calls=[tc], source=agent_source,
-                        ))
-                        messages.append(LLMMessage(
-                            role="tool",
-                            content="[Waiting for parent agent response...]",
-                            tool_call_id=tc.id,
-                        ))
-                        self._emit("sub_agent_tool", {
-                            "agent_name": task.agent_name,
-                            "task_id": task.id,
-                            "tool": "ask_parent",
-                            "arguments": {"question": _question[:200]},
-                            "tc_id": tc.id,
-                            "iteration": result.iterations,
-                            "delegate_tc_id": task.delegate_tc_id,
-                        })
                         break
 
                     result.tools_called.append(tc.name)

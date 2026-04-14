@@ -337,26 +337,26 @@ class SpawnAgentsHandler(ToolHandler):
     @property
     def description(self) -> str:
         base = (
-            "Delegate tasks to one or more agents — ASYNCHRONOUS / "
-            "fire-and-forget by default. The tool returns IMMEDIATELY with "
-            "a list of task_ids; YOU ARE NOT BLOCKED waiting for the "
-            "sub-agent to finish. Keep working on your own plan.\n\n"
-            "When a sub-agent finishes, you will receive a follow-up "
-            "message (as if the user wrote it) that says "
-            "\"[Delegate result for task_id=...]\" and contains the "
-            "sub-agent's response. You MUST read that message and react "
-            "to it — integrate the result into your work, or reply to "
-            "the user with what you learned. Do not ignore it.\n\n"
-            "Each sub-agent runs independently with its own LLM service, "
-            "tools, and an ISOLATED context (determined by the `context` "
-            "field per task). Sub-agent intermediate messages are private "
-            "to the sub-agent — you only see the final result message.\n\n"
-            "Sub-agents can use ask_parent to pause and ask a question — "
-            "you'll get status=needs_input in the result message; use "
-            "resume with the task_id to answer.\n\n"
-            "Set wait=true ONLY when you genuinely need to block until "
-            "the sub-agent finishes (rare — defeats concurrency). "
-            "Default (wait=false) is what you want 99% of the time."
+            "Send a private message to another agent in this conversation. "
+            "Always ASYNCHRONOUS — returns IMMEDIATELY, YOU ARE NOT BLOCKED.\n\n"
+            "Default context='shared': the target agent uses its own "
+            "conversation context to read your message and reply. You will "
+            "receive their answer as a private '[Delegate result …]' "
+            "message that YOU MUST READ and REACT TO (integrate, reply to "
+            "the user, or delegate again).\n\n"
+            "context='isolated' / 'last:N': spawns a separate sub-agent "
+            "with an empty (or sliced) context — use this ONLY when you "
+            "genuinely need a fresh workspace (a self-contained research "
+            "task). Agents that are themselves running as a delegate can "
+            "ONLY use context='shared' (nested private sub-contexts are "
+            "forbidden).\n\n"
+            "Delegate is bidirectional: an agent called via delegate can "
+            "call delegate(caller, …) to reply or ask a follow-up. There "
+            "is no separate ask_parent tool — just delegate back.\n\n"
+            "Delegates are de-duplicated per (caller, target) pair: if "
+            "you call delegate again for a target that's still working on "
+            "your previous request, the new message is injected into "
+            "their running loop instead of spawning a second one."
         )
         if self._available_agents:
             lines = []
@@ -439,10 +439,6 @@ class SpawnAgentsHandler(ToolHandler):
                     },
                     "description": "List of tasks to spawn",
                 },
-                "wait": {
-                    "type": "boolean",
-                    "description": "Wait for all results (default: true).",
-                },
             },
             "required": ["tasks"],
         }
@@ -458,12 +454,9 @@ class SpawnAgentsHandler(ToolHandler):
         import uuid
 
         tasks_spec = arguments.get("tasks", [])
-        # Delegate is ASYNC by default: the caller should never block on
-        # a sub-agent's work. The background completion callback delivers
-        # the result via preempt (if caller is still running) or wake
-        # (if caller went idle). Set wait=true explicitly only if you
-        # genuinely need a synchronous result (rare — breaks concurrency).
-        wait = bool(arguments.get("wait", False))
+        # Delegate is ALWAYS async (fire-and-forget). Results come back
+        # via the preempt (caller running) / wake (caller idle) path.
+        # No more 'wait' param — concurrency is the whole point.
         user_id = self._user_id
 
         # Thread-safe source agent (each agent loop runs in its own thread)
@@ -637,59 +630,35 @@ class SpawnAgentsHandler(ToolHandler):
             on_event=self._on_event,
         )
 
-        # Background completion callback: inject result into parent conv
-        _bg_callback = None
-        if not wait and self._conversation_id:
-            _conv_id = self._conversation_id
-            _uid = user_id
-            _src = _src_agent
-            def _bg_callback(result, task):
-                self._inject_bg_result(result, task, _conv_id, _uid, _src)
+        # Always async. Background completion callback ships the
+        # isolated/last:N sub-agent's result back to the caller via
+        # preempt/wake.
+        _conv_id = self._conversation_id
+        _uid = user_id
+        _src = _src_agent
+        def _bg_callback(result, task):
+            self._inject_bg_result(result, task, _conv_id, _uid, _src)
 
-        results = executor.spawn(agent_tasks, wait=wait,
+        results = executor.spawn(agent_tasks, wait=False,
                                  on_bg_complete=_bg_callback)
 
-        if not wait:
-            ids = [r.task_id for r in results]
-            _reply = {
-                "status": "spawned",
-                "task_ids": ids,
-                "message": (
-                    f"Spawned {len(ids)} sub-agent(s) in background. "
-                    f"You are NOT blocked — continue your own work. "
-                    f"When each sub-agent finishes you will receive a "
-                    f"message '[Delegate result for task_id=<id>]' "
-                    f"containing their response: READ IT and REACT "
-                    f"(integrate into your work, or reply to the user). "
-                    f"Track these task_ids: {ids}."
-                ),
-            }
-            if _injected_results:
-                _reply["injected"] = _injected_results
-            return json.dumps(_reply, ensure_ascii=False)
-
-        # Format results
-        _persist_map = {t.id: t.persist for t in agent_tasks}
-        output = []
-        for r in results:
-            entry = {
-                "task_id": r.task_id,
-                "agent": r.agent_name,
-                "status": r.status,
-            }
-            if r.response:
-                entry["response"] = r.response
-            if r.error:
-                entry["error"] = r.error
-            entry["tokens"] = {"in": r.tokens_in, "out": r.tokens_out}
-            entry["tools_called"] = r.tools_called
-            if _persist_map.get(r.task_id):
-                entry["persisted"] = True
-            if r.question:
-                entry["question"] = r.question
-            output.append(entry)
-
-        return json.dumps(output, ensure_ascii=False, indent=2)
+        ids = [r.task_id for r in results]
+        _reply = {
+            "status": "spawned",
+            "task_ids": ids,
+            "message": (
+                f"Spawned {len(ids)} isolated sub-agent(s) in background. "
+                f"You are NOT blocked — continue your own work. "
+                f"When each sub-agent finishes you will receive a "
+                f"message '[Delegate result for task_id=<id>]' "
+                f"containing their response: READ IT and REACT "
+                f"(integrate into your work, or reply to the user). "
+                f"Track these task_ids: {ids}."
+            ),
+        }
+        if _injected_results:
+            _reply["injected"] = _injected_results
+        return json.dumps(_reply, ensure_ascii=False)
 
     def _resolve_context(self, mode: str, conversation_id: str,
                          user_id: str) -> list:

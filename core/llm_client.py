@@ -108,10 +108,23 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
 
     Also resolves tool aliases (shell → bash, etc.) so display is correct.
     """
-    if name in ("mcp__pawflow__use_tool", "use_tool") and isinstance(arguments, dict):
-        tool_name = arguments.get("tool_name", name)
-        tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
-        return tool_name, arguments.get("arguments", arguments)
+    if name in ("mcp__pawflow__use_tool", "use_tool"):
+        # Arguments may arrive as a JSON string (some LLMs serialize it).
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (ValueError, TypeError):
+                pass
+        if isinstance(arguments, dict):
+            tool_name = arguments.get("tool_name", name)
+            tool_name = _TOOL_ALIASES.get(tool_name, tool_name)
+            inner = arguments.get("arguments", arguments)
+            if isinstance(inner, str):
+                try:
+                    inner = json.loads(inner)
+                except (ValueError, TypeError):
+                    pass
+            return tool_name, inner
     if name in ("mcp__pawflow__get_tool_schema", "get_tool_schema"):
         return "get_tool_schema", arguments
     return name, arguments

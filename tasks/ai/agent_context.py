@@ -249,33 +249,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     f'[Replying to {_reply_agent}: "{_reply_preview}"]\n\n{user_text}'
                 )
 
-        # agent_delegate wake: the message was written by another agent,
-        # not the human user. Attribute it so the target agent replies
-        # as "to B from A" rather than treating it as a human instruction.
-        try:
-            _ms_raw = flowfile.get_attribute("message_source") or ""
-            if _ms_raw:
-                import json as _json_ms
-                _ms = (_json_ms.loads(_ms_raw)
-                       if isinstance(_ms_raw, str) else _ms_raw)
-                if (isinstance(_ms, dict)
-                        and _ms.get("type") == "agent_delegate"
-                        and _ms.get("from")):
-                    _from = _ms["from"]
-                    _kind = _ms.get("kind")
-                    if _kind == "reply":
-                        user_text = (
-                            f"Here is agent '{_from}''s reply to your "
-                            f"delegate:\n\n{user_text}"
-                        )
-                    else:
-                        user_text = (
-                            f"Here is a message from agent '{_from}':\n\n"
-                            f"{user_text}"
-                        )
-        except Exception:
-            pass
-
         # Sanitize user message content (strip invisible/malicious unicode)
         from core.sanitization import sanitize_unicode
         user_text = sanitize_unicode(user_text)
@@ -800,7 +773,34 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             except Exception as _cp_err:
                 logger.warning(f"[context] cancel checkpoint check failed: {_cp_err}")
 
-        if user_text.strip() or attachments:
+        # Detect agent_delegate wake — used below for source tagging and
+        # to avoid double-persistence (agent_flush already wrote the
+        # delegate message to this agent's ctx privately).
+        _ms_src = None
+        try:
+            _ms_raw2 = flowfile.get_attribute("message_source") or ""
+            if _ms_raw2:
+                import json as _json_msrc
+                _ms_parsed = (_json_msrc.loads(_ms_raw2)
+                              if isinstance(_ms_raw2, str) else _ms_raw2)
+                if (isinstance(_ms_parsed, dict)
+                        and _ms_parsed.get("type") == "agent_delegate"):
+                    _ms_src = _ms_parsed
+        except Exception:
+            pass
+
+        # agent_delegate wakes: the delegator's agent_flush already wrote
+        # this message into our ctx (prefixed). Don't re-inject via the
+        # FlowFile body — that would:
+        #   1. duplicate the content in our own ctx,
+        #   2. trigger a second persistence with a fresh msg_id, and
+        #   3. worst of all, leak the private prefix into shared/transcript
+        #      because agent_flush only routes privately when the SOURCE is
+        #      agent_delegate (and we'd need to coordinate that precisely).
+        # Simplest contract: our ctx is authoritative on load. Skip.
+        _skip_user_inject = bool(_ms_src)
+
+        if (user_text.strip() or attachments) and not _skip_user_inject:
             if attachments:
                 logger.info("User message has %d attachment(s): %s",
                             len(attachments),

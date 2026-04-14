@@ -338,6 +338,32 @@ def action_search(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     return matches[:500]
 
 
+_GREP_SKIP_DIRS = {
+    "__pycache__", ".git", ".hg", ".svn", "node_modules",
+    ".venv", "venv", ".tox", ".mypy_cache", ".pytest_cache",
+    ".ruff_cache", "dist", "build", ".next", ".cache",
+}
+_GREP_SKIP_EXT = {
+    ".pyc", ".pyo", ".pyd", ".so", ".dylib", ".dll", ".exe",
+    ".bin", ".o", ".a", ".class", ".jar", ".war",
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".pdf",
+    ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
+    ".mp3", ".mp4", ".avi", ".mov", ".wav", ".ogg",
+    ".woff", ".woff2", ".ttf", ".eot",
+    ".coverage", ".lock",
+}
+
+
+def _grep_is_binary(fpath: Path) -> bool:
+    """Sniff the first 4KB for NUL bytes — ripgrep's binary detection rule."""
+    try:
+        with open(fpath, "rb") as f:
+            chunk = f.read(4096)
+        return b"\x00" in chunk
+    except OSError:
+        return True
+
+
 def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     regex = req.get("regex", "")
     recursive = req.get("recursive", True)
@@ -346,39 +372,40 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     compiled = re.compile(regex, re.IGNORECASE)
     p = Path(path)
     results = []
-    if p.is_file():
-        # Single file — search it directly
+
+    def _scan_file(fpath: Path, display_name: str):
+        if fpath.suffix.lower() in _GREP_SKIP_EXT:
+            return
+        if _grep_is_binary(fpath):
+            return
         try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-            for i, line in enumerate(text.splitlines(), 1):
-                if compiled.search(line):
-                    results.append({
-                        "path": p.name,
-                        "line_number": i,
-                        "line": line[:500],
-                    })
-                    if len(results) >= 200:
-                        return results
+            text = fpath.read_text(encoding="utf-8", errors="replace")
         except Exception:
-            pass
+            return
+        for i, line in enumerate(text.splitlines(), 1):
+            if compiled.search(line):
+                results.append({
+                    "path": display_name,
+                    "line_number": i,
+                    "line": line[:500],
+                })
+                if len(results) >= 200:
+                    return
+
+    if p.is_file():
+        _scan_file(p, p.name)
         return results
+
     glob_pattern = "**/*" if recursive else "*"
     for fpath in p.glob(glob_pattern):
         if not fpath.is_file():
             continue
-        try:
-            text = fpath.read_text(encoding="utf-8", errors="replace")
-            for i, line in enumerate(text.splitlines(), 1):
-                if compiled.search(line):
-                    results.append({
-                        "path": str(fpath.relative_to(p)).replace("\\", "/"),
-                        "line_number": i,
-                        "line": line[:500],
-                    })
-                    if len(results) >= 200:
-                        return results
-        except Exception:
+        # Skip any path whose parents include an ignored dir.
+        if any(part in _GREP_SKIP_DIRS for part in fpath.parts):
             continue
+        _scan_file(fpath, str(fpath.relative_to(p)).replace("\\", "/"))
+        if len(results) >= 200:
+            break
     return results
 
 

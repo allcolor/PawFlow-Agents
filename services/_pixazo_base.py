@@ -40,15 +40,43 @@ logger = logging.getLogger(__name__)
 
 _GATEWAY = "gateway.pixazo.ai"
 
-# Cloudflare in front of gateway.pixazo.ai blocks the Python default
-# `User-Agent: Python-urllib/3.x` with a 403 challenge page on the
-# polling URLs (/v2/requests/status/...). The official Pixazo doc uses
-# curl on the same endpoint without issue:
-#     curl -H "Ocp-Apim-Subscription-Key: ..." \
-#          https://gateway.pixazo.ai/v2/requests/status/<id>
-# Sending the curl UA gets us the same allowance — Cloudflare's
-# bot-detection layer treats `curl/*` as developer traffic, not bot.
-_BROWSER_UA = "curl/8.4.0"
+# Cloudflare in front of gateway.pixazo.ai serves a JS challenge to any
+# client whose TLS fingerprint doesn't look like a real browser. UA
+# spoofing alone (curl/*, Chrome/*) doesn't get past it — the gate
+# inspects JA3 too. We use cloudscraper which adapts requests' TLS to
+# match Chrome and solves the challenge transparently.
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+_scraper_lock = None
+_scraper_singleton = None
+
+
+def _scraper():
+    """Lazy singleton — cloudscraper.create_scraper() is heavy."""
+    global _scraper_lock, _scraper_singleton
+    if _scraper_singleton is not None:
+        return _scraper_singleton
+    import threading
+    if _scraper_lock is None:
+        _scraper_lock = threading.Lock()
+    with _scraper_lock:
+        if _scraper_singleton is not None:
+            return _scraper_singleton
+        try:
+            import cloudscraper
+        except ImportError as e:
+            raise ServiceError(
+                "Pixazo gateway is behind Cloudflare; install cloudscraper: "
+                "pip install cloudscraper"
+            ) from e
+        _scraper_singleton = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False})
+    return _scraper_singleton
 
 
 def _catalog_path() -> str:
@@ -326,24 +354,28 @@ class _PixazoBaseService(BaseService):
 
     def _post(self, endpoint: str, body: Dict[str, Any],
               *, multipart: bool = False) -> Dict[str, Any]:
-        """POST to Pixazo gateway with retry on 5xx."""
+        """POST to Pixazo gateway via cloudscraper (Cloudflare-aware)."""
         if multipart:
             body_bytes, boundary = self._encode_multipart(body)
             headers = self._make_headers(body_bytes, multipart_boundary=boundary)
+            # cloudscraper sets its own Content-Length / boundary handling
+            headers.pop("Content-Length", None)
+            data = body_bytes
         else:
             body_bytes = json.dumps(body).encode("utf-8")
             headers = self._make_headers(body_bytes)
-        ctx = ssl.create_default_context()
+            headers.pop("Content-Length", None)
+            data = body_bytes
+
+        url = f"https://{_GATEWAY}{endpoint}"
+        scraper = _scraper()
         resp_body = ""
         resp_status = 0
         for attempt in range(self.max_retries):
-            conn = http.client.HTTPSConnection(
-                _GATEWAY, timeout=self.timeout, context=ctx)
-            conn.request("POST", endpoint, body=body_bytes, headers=headers)
-            resp = conn.getresponse()
-            resp_body = resp.read().decode("utf-8", errors="replace")
-            resp_status = resp.status
-            conn.close()
+            r = scraper.post(url, data=data, headers=headers,
+                              timeout=self.timeout)
+            resp_status = r.status_code
+            resp_body = r.text or ""
             if resp_status < 500:
                 break
             delay = [3, 5, 8, 10][min(attempt, 3)]
@@ -356,33 +388,36 @@ class _PixazoBaseService(BaseService):
         return json.loads(resp_body) if resp_body.strip() else {}
 
     def _get_url(self, url: str) -> Dict[str, Any]:
-        """GET an absolute Pixazo URL (used for `polling_url` follow-up)."""
-        req = urllib.request.Request(url, method="GET", headers={
+        """GET an absolute Pixazo URL via cloudscraper (Cloudflare-aware)."""
+        scraper = _scraper()
+        r = scraper.get(url, headers={
             "Cache-Control": "no-cache",
             "Ocp-Apim-Subscription-Key": self.api_key,
             "Accept": "application/json",
-            # Cloudflare in front of /v2/requests/status/... rejects the
-            # default Python UA with a 403 challenge page.
             "User-Agent": _BROWSER_UA,
-        })
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = resp.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise ServiceError(f"Pixazo poll error ({e.code}): {body[:300]}")
+        }, timeout=self.timeout)
+        if r.status_code >= 400:
+            raise ServiceError(
+                f"Pixazo poll error ({r.status_code}): {(r.text or '')[:300]}")
+        body = r.text or ""
         return json.loads(body) if body.strip() else {}
 
     def _download_media(self, url: str,
                         *, default_mime: str = "application/octet-stream"
                         ) -> Tuple[bytes, str]:
-        """Fetch bytes from a public CDN URL — no Pixazo auth needed."""
-        # Use a real-browser UA — some Pixazo CDNs sit behind the same
-        # Cloudflare gate as the polling endpoint.
-        req = urllib.request.Request(
-            url, headers={"User-Agent": _BROWSER_UA})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            return r.read(), r.headers.get("Content-Type", default_mime)
+        """Fetch bytes from a public CDN URL via cloudscraper.
+
+        Pixazo's public CDN (pub-*.r2.dev) is not Cloudflare-gated,
+        but other media URLs returned by the gateway sometimes are —
+        going through cloudscraper costs nothing and works for both.
+        """
+        scraper = _scraper()
+        r = scraper.get(url, headers={"User-Agent": _BROWSER_UA}, timeout=120)
+        if r.status_code >= 400:
+            raise ServiceError(
+                f"Pixazo media download error ({r.status_code}): "
+                f"{(r.text or '')[:200]}")
+        return r.content, r.headers.get("Content-Type", default_mime)
 
     # ── Polling ────────────────────────────────────────────────────────
 

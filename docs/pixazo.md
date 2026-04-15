@@ -23,6 +23,71 @@ GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
 
 ---
 
+## Pricing Summary
+
+> Prices in USD. $0 = free tier. Prices may vary by resolution/duration.
+
+| Model | Type | Spec | Price (USD) |
+|-------|------|------|-------------|
+| ElevenLabs | TTS | per 1000 chars | $0.10 |
+| Fashn | Virtual Try-On | per image | $0.075 |
+| FireRed | Image Edit | per image | $0.016 |
+| Flux 1 Schnell | Text to Image | all res | Free |
+| Flux Dev | Text/Image to Image | all res | $0.025 |
+| Flux Pro | Text to Image | all res | $0.03 |
+| Flux Pro 1.1 | Text to Image | all res | $0.08 |
+| Flux 2 Pro | Text to Image | all res | $0.06 |
+| Flux 2 Klein | Text to Image | 512px | $0.0003 |
+| Flux 2 Klein | Text to Image | 2048px | $0.0028 |
+| Flux Fill Dev | Inpainting | all res | $0.04 |
+| GPT Image 1.5 | Text to Image | - | not listed |
+| Hunyuan 3.0 | Text to Image | varies | $0.11-0.40 |
+| Hunyuan 3D | 3D Generation | - | $0.20 |
+| Ideogram v2/Turbo | Text to Image | - | see page |
+| Kling O3 | Text/Image to Image | 1-2K | $0.028 |
+| Kling O3 | Text/Image to Image | 4K | $0.056 |
+| Kling 3.0 | Text/Image to Video | 1s (no audio) | $0.168 |
+| Kling 3.0 | Text/Image to Video | 1s (audio) | $0.252 |
+| Kling v1.6 | Text/Image to Video | 1s | $0.07 |
+| Kling Avatar v2 | AI Avatar | 1s | $0.115 |
+| Kling O1 | Ref Image to Video | per gen | $0.90 |
+| Lyria 3 Pro | Music Generation | per gen | $0.08 |
+| Lyria 2 | Music Generation | per gen | $0.06 |
+| Nano Banana Pro | Generate Image | 1-2K | $0.15 |
+| Nano Banana Pro | Generate Image | 4K | $0.30 |
+| Nano Banana 2 | Edit Image | 1K | $0.067 |
+| Nano Banana Std | Text to Image | per gen | $0.06-0.16 |
+| P Image | Upscale/Edit | 1-4MP | $0.005 |
+| P Image | Upscale/Edit | 4-8MP | $0.01 |
+| P Video | Video Gen | 720p/1s | $0.02 |
+| P Video | Video Gen | 1080p/1s | $0.04 |
+| Pika | Video Gen | - | coming soon |
+| Recraft V4 Pro | Text to Image | per gen | $0.04-0.25 |
+| Recraft V3 | Image to Image | per gen | $0.04-0.25 |
+| Reve Image | Image Edit | per gen | $0.06 |
+| Runway Gen-4.5 | Video Gen | 1s | $0.12 |
+| Seedance 2.0 Fast | Text/Ref/Edit Video | 1s | $0.24 |
+| Seedance 2.0 | Text/Ref/Edit Video | 1s | $0.29 |
+| Seedance 1.0 Pro | Image/Text to Video | per gen | $0.20 |
+| Seedream 5 | Text/Image to Image | per gen | $0.035 |
+| Seedream 4.5 | Text/Image to Image | per gen | $0.20 |
+| Sora 2 Pro | Image to Video | 720p/4s | $1.50 |
+| Sora 2 Pro | Image to Video | 720p/8s | $3.00 |
+| Sora 2 Pro | Image to Video | 1080p/4s | $2.50 |
+| Sora 2 Pro | Image to Video | 1080p/8s | $5.00 |
+| Studio Ghibli | Image Gen | varies | $0.01-0.04 |
+| Veo 3.1 Fast | Video Gen | 1s (audio) | $0.15 |
+| Veo 3.1 Fast | Video Gen | 1s (no audio) | $0.10 |
+| Veo 3.1 | Video Gen | 1s | $1.80-3.60 |
+| Wan 2.7 | Text/Edit Image | per gen | $0.03 |
+| Wan 2.7 Pro | Text/Edit Image | per gen | $0.075 |
+| Wan 2.6 | Image/Text to Video | 5s | $0.75 |
+| Wan 2.6 | Image/Text to Video | 10s | $1.50 |
+| Wan 2.5 | All operations | per gen | $0.05 |
+
+---
+
+
 ## Quick Endpoint Reference
 
 | Model | API ID | Operation | Method |
@@ -7154,5 +7219,2489 @@ Content-Type	application/json
 Cache-Control	no-cache
 Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
 ```
+
+---
+
+
+## Additional Models
+
+### Recraft V4 Pro API, Recraft V3 API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/recraft
+
+
+by Recraft
+
+Recraft V4 Pro API. The API is designed for design professionals, marketers, and creative teams requiring production-quality image generation with reliable, repeatable outputs.
+
+Models Version
+Recraft V4 Pro
+Recraft V4 Normal
+Recraft v3
+Text To Image
+Text To Image
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### Recraft V4 Pro Text To Image API Documentation
+https://gateway.pixazo.ai/recraft
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text to Image V4 - Pro - Recraft
+**Request Code**
+```
+POST https://gateway.pixazo.ai/recraft/v4-pro/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: your-subscription-key
+{
+"prompt": "a red cat"
+}
+```
+**Output**
+// When n=1 (default), output is a string:
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/a-red-cat-1773760417132-0.webp"
+}
+// When n>1, output is an array:
+{
+"output": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/a-red-cat-1773760417132-0.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/a-red-cat-1773760417132-1.webp"
+]
+}
+```
+Request Parameters - Text to Image V4 - Pro
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | The text query that instructs the AI model on what kind of image to generate. |
+| size | string | No | 2048x2048 | Image dimensions or aspect ratio. See documentation for supported values. |
+| n | integer | No | 1 | Number of images to generate. Minimum: 1, Maximum: 6. |
+| controls | object | No | — | Additional generation controls. |
+Minimum Request
+```
+{
+"prompt": "a red cat"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "A detailed architectural rendering of a modern glass building surrounded by lush gardens, golden hour lighting, ultra detailed, professional photography",
+"size": "2560x1664",
+"n": 6,
+"controls": {}
+}
+```
+**Response**
+// Single image (n=1, default):
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-0.webp"
+}
+// Multiple images (n>1):
+{
+"output": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-0.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-1.webp"
+]
+}
+```
+Response Fields - Text to Image V4 - Pro
+| Field | Type | Description |
+| output | string or array | URL(s) to the generated image(s). Returns a string when n=1, or an array of strings when n>1. Each URL points to a .webp image hosted on Cloudflare R2. |
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+**Response Handling**
+
+Common status codes for Text to Image V4 - Pro.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+400 Bad Request
+```
+{
+"error": "Missing required field: prompt",
+"status": 400
+}
+```
+502 Bad Gateway
+```
+{
+"error": "Failed to reach upstream API",
+"status": 502
+}
+```
+Notes
+
+Recraft V4 Pro does not support the style, style_id, or negative_prompt parameters. Passing any of these parameters will result in a 400 Bad Request error — they are not silently ignored. Use the exact prompt text for best results. Image generation typically takes 30–50 seconds for single images. Multiple images or higher resolutions may take longer. The output field returns a string URL when n=1, and an array of string URLs when n>1. Generated images are in .webp format. Supported image dimensions include: 2048x2048, 3072x1536, 1536x3072, 2560x1664, 1664x2560, 2432x1792, 1792x2432, 2304x1792, 1792x2304, 1664x2688, 2560x1792, 1792x2560, 2688x1536, 1536x2688, and aspect ratios: 1:1, 2:1, 1:2, 3:2, 2:3, 4:3, 3:4, 5:4, 4:5, 6:10, 14:10, 10:14, 16:9, 9:16.
+
+**Recraft V4 Pro Text To Image API Pricing**
+10% OFF
+Limited time discount on API pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.25 |
+| All Resolution | $0.04 |
+#### 2. Recraft V4 Normal
+#### Recraft V4 Normal Text To Image API Documentation
+https://gateway.pixazo.ai/recraft
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text to Image V4 - Normal - Recraft
+**Request Code**
+```
+POST https://gateway.pixazo.ai/recraft/v4/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: <your-subscription-key>
+{
+"prompt": "a red cat"
+}
+```
+**Output**
+// When n=1 (default), output is a string:
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/a-red-cat-1773760447344-0.webp"
+}
+// When n>1, output is an array:
+{
+"output": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/a-red-cat-1773760447344-0.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/a-red-cat-1773760447344-1.webp"
+]
+}
+```
+Request Parameters - Text to Image V4 - Normal
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | The text query that instructs the AI model on what kind of image to generate. |
+| size | string | No | 1024x1024 | Image dimensions or aspect ratio. See Sizes section below. |
+| n | integer | No | 1 | Number of images to generate. Default: 1 (minimum: 1, maximum: 6). |
+| controls | object | No | — | Additional generation controls. |
+Minimum Request
+```
+{
+"prompt": "a red cat"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "Picture a sleek, futuristic car racing through a neon-lit cityscape, its engine humming efficiently as it blurs past digital billboards. The driver skillfully navigates the glowing streets, aiming for victory in this high-tech, adrenaline-fueled race of tomorrow.",
+"size": "1536x768",
+"n": 6,
+}
+```
+**Response**
+// Single image (n=1, default):
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-0.webp"
+}
+// Multiple images (n>1):
+{
+"output": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-0.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-1.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-2.webp"
+]
+}
+```
+Response Fields - Text to Image V4 - Normal
+| Field | Type | Description |
+| output | string or array | URL(s) to the generated image(s). Returns a string for single image, array for multiple images. |
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+**Response Handling**
+
+Common status codes for Text to Image V4 - Normal.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+400 Bad Request
+```
+{
+"error": "Missing required field: prompt",
+"status": 400
+}
+```
+502 Bad Gateway
+```
+{
+"error": "Failed to reach upstream API",
+"status": 502
+}
+```
+Notes
+
+Recraft V4 does not support the style, style_id, or negative_prompt parameters. Passing any of these parameters will result in a 400 Bad Request error — they are not silently ignored.
+
+Image generation typically completes in 15–25 seconds. For high-resolution outputs or multiple images, processing may take slightly longer.
+
+The output field returns a string URL when n=1, and an array of string URLs when n>1. Generated images are in .webp format.
+
+**Recraft V4 Normal Text To Image API Pricing**
+10% OFF
+Limited time discount on API pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.25 |
+| All Resolution | $0.04 |
+#### 3. Recraft v3
+#### Recraft v3 Image to Image API Documentation
+https://gateway.pixazo.ai/recraft
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image to Image V3 - Recraft
+**Request Code**
+```
+POST https://gateway.pixazo.ai/recraft/v3/image-to-image
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key:
+{
+"image": "https://example.com/source.png",
+"prompt": "winter landscape",
+"strength": 0.5
+}
+```
+**Output**
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/winter-landscape-1773764135991-0.webp"
+}
+```
+Request Parameters - Image to Image V3
+| Field | Type | Required | Default | Description |
+| image | string (URL) | Yes | — | URL of the source image (PNG/JPG/WEBP). Max 5MB, max 16MP, max 4096px on any side. |
+| prompt | string | Yes | — | The text query that instructs the AI model on what kind of transformation to apply. |
+| strength | decimal | Yes | — | Transformation strength. 0 = no change, 1 = full transformation. (minimum: 0, maximum: 1). |
+| style | string | No | Recraft V3 Raw | Style preset name. See Styles section below. |
+| style_id | string | No | — | UUID of a custom style created via the Recraft platform. Mutually exclusive with style. |
+| n | integer | No | 1 | Number of images to generate. Default: 1 (minimum: 1, maximum: 6). |
+| negative_prompt | string | No | — | Text describing what to avoid in the generated image. |
+Minimum Request
+```
+{
+"image": "https://example.com/source.png",
+"prompt": "winter landscape",
+"strength": 0.5
+}
+```
+Full Request (all options)
+```
+{
+"image": "https://example.com/source.png",
+"prompt": "winter landscape with snow-covered mountains, frozen lake, northern lights in the sky",
+"strength": 0.85,
+"style": "Photorealism",
+"n": 4,
+"negative_prompt": "dark, blurry, low quality"
+}
+```
+**Response**
+When n=1 (default) — output is a string:
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/winter-landscape-1773764135991-0.webp"
+}
+```
+When n>1 (e.g., n=4) — output is an array:
+```
+{
+"output": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/winter-landscape-1773764135991-0.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/winter-landscape-1773764135991-1.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/winter-landscape-1773764135991-2.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/winter-landscape-1773764135991-3.webp"
+]
+}
+```
+Response Fields - Image to Image V3
+| Field | Type | Description |
+| output | string or array of strings | URL(s) of the generated image(s). Returns a single string if n=1, or an array of strings if n>1. |
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+**Response Handling**
+
+Common status codes for Image to Image V3.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Common Error Responses
+400 Bad Request
+```
+{
+"error": "Missing required field: prompt",
+"status": 400
+}
+```
+502 Bad Gateway
+```
+{
+"error": "Failed to reach upstream API",
+"status": 502
+}
+```
+Notes & Tips
+
+Usage guidelines and important details for Recraft V3 Image-to-Image API.
+
+Image must be under 5MB and 16MP with max 4096px on any side.
+Response time typically 15–25 seconds depending on complexity and load.
+Style presets are case-sensitive. Use exact names from the Style list in the documentation.
+Up to 6 images can be generated per request using the n parameter.
+When n=1 (default), the output field is a plain string URL. When n>1, the output field is an array of string URLs. Handle both types in your client code.
+Generated images are returned in .webp format and hosted on Cloudflare R2 storage.
+**Recraft v3 Image to Image API Pricing**
+10% OFF
+Limited time discount on API pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.25 |
+| All Resolution | $0.04 |
+#### Recraft v3 Text To Image API Documentation
+https://gateway.pixazo.ai/recraft
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text to Image V3 - Recraft
+**Request Code**
+```
+POST https://gateway.pixazo.ai/recraft/v3/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: <your-subscription-key>
+{
+"prompt": "a red cat"
+}
+```
+**Output**
+// When n=1 (default), output is a string:
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/a-red-cat-1773760470488-0.webp"
+}
+// When n>1, output is an array:
+{
+"output": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/a-red-cat-1773760470488-0.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/a-red-cat-1773760470488-1.webp"
+]
+}
+```
+Request Parameters - Text to Image V3
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | The text query that instructs the AI model on what kind of image to generate. |
+| style | string | No | Recraft V3 Raw | Style preset name. See Styles section below. |
+| style_id | string | No | — | UUID of a custom style created via the Recraft platform. Mutually exclusive with style. |
+| size | string | No | 1024x1024 | Image dimensions. Default: 1024x1024. See Sizes section below. |
+| n | integer | No | 1 | Number of images to generate. Default: 1 (minimum: 1, maximum: 6). |
+| negative_prompt | string | No | — | Text describing what to avoid in the generated image. |
+| controls | object | No | — | Additional generation controls. |
+Minimum Request
+```
+{
+"prompt": "a red cat"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "red point siamese cat sitting on a windowsill, natural light, shot on Canon EOS R5",
+"style": "Photorealism",
+"size": "1280x1024",
+"n": 4,
+"negative_prompt": "dark, blurry, low quality"
+}
+```
+**Response**
+// Single image (n=1, default):
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-0.webp"
+}
+// Multiple images (n>1):
+{
+"output": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-0.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-1.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-2.webp",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/recraft/generated-image-3.webp"
+]
+}
+```
+Response Fields - Text to Image V3
+| Field | Type | Description |
+| output | array/string | Array of image URLs if n>1, or single URL string if n=1. Each URL points to a generated image. |
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+**Response Handling**
+
+Common status codes for Text to Image V3.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses - Text to Image V3
+400 Bad Request
+```
+{
+"error": "Missing required field: prompt",
+"status": 400
+}
+```
+502 Bad Gateway
+```
+{
+"error": "Failed to reach upstream API",
+"status": 502
+}
+```
+Notes & Tips - Text to Image V3
+
+Usage considerations for Recraft V3.
+
+Generated images are rendered at 1MP resolution regardless of specified size.
+Style names are case-sensitive and must match exactly from the supported presets.
+Processing time is typically 10–15 seconds for single images. Multiple images or complex prompts may take slightly longer.
+Multiple images (n>1) may be generated asynchronously with slight time delays between outputs.
+The output field returns a string URL when n=1, and an array of string URLs when n>1.
+Generated images are in .webp format and hosted on Cloudflare R2.
+**Recraft v3 Text To Image API Pricing**
+10% OFF
+Limited time discount on API pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.25 |
+| All Resolution | $0.04 |
+
+---
+
+### Nano Banana 2 API, Nano Banana Pro API, Nano Banana API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/nano-banana
+
+
+by Google
+
+Nano Banana 2 API, developers can access both standard and pro variants for text-to-image generation and image-to-image editing. The API combines Google's advanced AI research with practical image generation features, offering reliable quality for applications ranging from creative tools to automated content production.
+
+Models Version
+Nano Banana 2
+Nano Banana Pro
+Nano Banana Standard
+Edit Image
+Edit Image
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### Nano Banana 2 Edit Image API Documentation
+https://gateway.pixazo.ai/nano-banana-2/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image Request - Nano Banana 2
+**Request Code**
+```
+POST https://gateway.pixazo.ai/nano-banana-2/v1/nano-banana-2/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"prompt": "Photorealistic DSLR portrait of a man wearing a black cap, standing in a lush green park with trees and soft sunlight, natural lighting, realistic skin texture, shallow depth of field, ultra-detailed, no stylization.",
+"aspect_ratio": "1:1"
+}
+```
+**Output**
+```
+{
+"request_id": "nano-banana-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of the image to generate |
+| image_input | No | array of URIs | Input images to transform or use as reference (up to 14 images) |
+| aspect_ratio | No | string | Aspect ratio: "match_input_image", "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9" |
+| resolution | No | string | Resolution: "1K", "2K", "4K". Higher resolutions take longer |
+| google_search | No | boolean | Use Google Web Search grounding for real-time information |
+| image_search | No | boolean | Use Google Image Search grounding for visual context |
+| output_format | No | string | Output format: "jpg", "png" |
+| webhook | No | string | Webhook URL for async notifications when generation completes |
+| webhook_events_filter | No | array | Event types to receive (e.g. ["completed"]) |
+**Example Request**
+```
+{
+"prompt": "APhotorealistic DSLR portrait of a man wearing a black cap, standing in a lush green park with trees and soft sunlight, natural lighting, realistic skin texture, shallow depth of field, ultra-detailed, no stylization.",
+"image_input": ["https://example.com/reference-image.jpg"],
+"aspect_ratio": "1:1",
+"resolution": "4K",
+"google_search": false,
+"image_search": false,
+"output_format": "png",
+"webhook": "https://your-webhook.com/callback",
+"webhook_events_filter": ["completed"]
+}
+```
+**Response**
+```
+{
+"request_id": "nano-banana-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_API_KEY
+```
+Image Status - Nano Banana 2
+**Request Code**
+```
+POST https://gateway.pixazo.ai/nano-banana-2/v1/nano-banana-2/prediction
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"prediction_id": "abc123def456"
+}
+```
+**Output**
+```
+{
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/nano-banana-2/XXXXXXXXXXXXXXXXXXXX.jpg",
+"success": true,
+"request_id": "a5qrhzedyxrmw0cwkr2vg774y0",
+"status": "succeeded",
+"input": {
+"aspect_ratio": "1:1",
+"prompt": "Photorealistic DSLR portrait of a man wearing a black cap, standing in a lush green park with trees and soft sunlight, natural lighting, realistic skin texture, shallow depth of field, ultra-detailed, no stylization"
+},
+"created_at": "2026-02-27T07:35:06.487Z"
+}
+```
+Request Parameters - Image Status
+| Parameter | Required | Type | Description |
+| prediction_id | Yes | string | The prediction ID returned from the generate endpoint |
+**Example Request**
+```
+{
+"prediction_id": "abc123def456"
+}
+```
+**Response**
+```
+{
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/nano-banana-2/XXXXXXXXXXXXXXXXXXXX.jpg",
+"success": true,
+"request_id": "a5qrhzedyxrmw0cwkr2vg774y0",
+"status": "succeeded",
+"input": {
+"aspect_ratio": "1:1",
+"prompt": "Photorealistic DSLR portrait of a man wearing a black cap, standing in a lush green park with trees and soft sunlight, natural lighting, realistic skin texture, shallow depth of field, ultra-detailed, no stylization"
+},
+"created_at": "2026-02-27T07:35:06.487Z"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_API_KEY
+```
+**Response Handling**
+
+Common status codes for Image Status.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'nano-banana-2' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "nano-banana-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "nano-banana-2",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/nano-banana-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+Response (Completed)
+```
+{
+"request_id": "nano-banana-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "nano-banana-2",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/nano-banana-2_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Nano Banana 2 Edit Image API Pricing**
+| Resolution | Price (USD) |
+| 1K | $0.067 |
+| 2K | $0.101 |
+| 4K | $0.151 |
+#### 2. Nano Banana Pro
+#### Nano Banana Pro Generate Image API Documentation
+https://gateway.pixazo.ai/nano-banana-pro-770/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - Nano Banana Pro API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "make a photo of the man driving the car down the california coastline",
+"image_urls": [
+"https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input.png",
+"https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input-2.png"
+]
+}
+```
+**Output**
+```
+{
+"request_id": "nano-banana-pro-770_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-pro-770_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The prompt describing the desired image edit or transformation. Clearly specify what should be changed, added, or preserved in the input images. |
+| image_urls | Yes | array<string> | List of HTTPS URLs of images used for image-to-image generation or editing. Images must be publicly accessible. |
+| num_images | No | integer | Number of images to generate. |
+| aspect_ratio | No | string | Aspect ratio of the generated image. Possible values: auto, 21:9, 16:9, 3:2, 4:3, 5:4, 1:1, 4:5, 3:4, 2:3, 9:16. |
+| output_format | No | string | Output image format. Possible values: jpeg, png, webp. |
+| resolution | No | string | Resolution of the generated image. Possible values: 1K, 2K, 4K. |
+| sync_mode | No | boolean | If true, the generated image is returned as a data URI and not stored in request history. |
+| limit_generations | No | boolean | Experimental parameter that limits the number of generations per prompt round to 1. When set to true, any instructions in the prompt requesting multiple images are ignored. |
+| enable_web_search | No | boolean | Enables web search during image generation, allowing the model to use up-to-date information from the web. |
+**Example Request**
+```
+{
+"prompt": "make a photo of the man driving the car down the california coastline",
+"image_urls": [
+"https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input.png",
+"https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input-2.png"
+]
+}
+```
+**Response**
+```
+{
+"request_id": "nano-banana-pro-770_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-pro-770_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'nano-banana-pro-770' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "nano-banana-pro-770_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "nano-banana-pro-770",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/nano-banana-pro-770_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+Response (Completed)
+```
+{
+"request_id": "nano-banana-pro-770_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "nano-banana-pro-770",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/nano-banana-pro-770_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Nano Banana Pro Generate Image API Pricing**
+| Resolution | Price (USD) |
+| 1K | $0.15 |
+| 2K | $0.15 |
+| 4K | $0.3 |
+#### Nano Banana Pro Image To Image(Batch) API Documentation
+https://gateway.pixazo.ai/nano-banana-pro-async/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image to Image(Edit Image) - Nano Banana Pro Async API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/nano-banana-pro-async/v1/nano-banana-pro-image-to-image
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Convert tree flower to yellow saffron",
+"image_urls": ["https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png"]
+}
+```
+**Output**
+```
+{
+"request_id": "nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image to Image(Edit Image)
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of the desired transformation (required) |
+| image_urls | Yes | string[] | Array of input image URLs (1-5 images required) |
+| num_images | No | integer | Number of image variations to generate (1-10) |
+| aspect_ratio | No | string | Output image aspect ratio (see options below) |
+| resolution | No | string | Output image resolution: "1K", "2K", or "4K" |
+| enable_web_search | No | boolean | Enable Google Search grounding for more accurate results |
+| sync_mode | No | boolean | Return base64 data URIs instead of R2 URLs |
+| webhook | No | string | Webhook URL for automatic completion notifications |
+**Example Request**
+```
+{
+"prompt": "Transform into cyberpunk style with neon lights and holographic effects",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png"
+],
+"num_images": 3,
+"aspect_ratio": "16:9",
+"resolution": "1K",
+"enable_web_search": true,
+"sync_mode": false,
+"webhook": "https://your-domain.com/api/webhook/gemini"
+}
+```
+**Response**
+```
+{
+"request_id": "nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'nano-banana-pro-async-api' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "nano-banana-pro-async-api",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+Response (Completed)
+```
+{
+"request_id": "nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "nano-banana-pro-async-api",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/nano-banana-pro-async-api_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Nano Banana Pro Image To Image(Batch) API Pricing**
+| Resolution | Price (USD) |
+| 1K | $0.08 |
+| 2K | $0.08 |
+| 4K | $0.12 |
+#### Nano Banana Pro Text To Image(Batch) API Documentation
+https://gateway.pixazo.ai/nano-banana-pro-async/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text to Image - Nano Banana Pro Async API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/nano-banana-pro-async/v1/nano-banana-pro-text-to-image
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A cute robot"
+}
+```
+**Output**
+```
+{
+"request_id": "nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Text to Image
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of the desired image (required) |
+| num_images | No | integer | Number of image variations to generate (1-10) |
+| aspect_ratio | No | string | Image aspect ratio (see options below) |
+| resolution | No | string | Image resolution: "1K", "2K", or "4K" |
+| enable_web_search | No | boolean | Enable Google Search grounding for more accurate results |
+| sync_mode | No | boolean | Return base64 data URIs instead of R2 URLs |
+| webhook | No | string | Webhook URL for automatic completion notifications |
+**Example Request**
+```
+{
+"prompt": "A futuristic city on Mars with flying cars and neon lights at sunset",
+"num_images": 4,
+"aspect_ratio": "16:9",
+"resolution": "4K",
+"enable_web_search": true,
+"sync_mode": false,
+"webhook": "https://your-domain.com/api/webhook/gemini"
+}
+```
+**Response**
+```
+{
+"request_id": "nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'nano-banana-pro-async-api' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "nano-banana-pro-async-api",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+Response (Completed)
+```
+{
+"request_id": "nano-banana-pro-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "nano-banana-pro-async-api",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/nano-banana-pro-async-api_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Nano Banana Pro Text To Image(Batch) API Pricing**
+| Resolution | Price (USD) |
+| 1K | $0.08 |
+| 2K | $0.08 |
+| 4K | $0.12 |
+#### 3. Nano Banana Standard
+#### Nano Banana Standard Edit Image API Documentation
+https://gateway.pixazo.ai/nano-banana/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Edit Image Request - Nano Banana API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/nano-banana/v1/nano-banana/generateEditImageRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Add a sunset background to the beach photo",
+"image_urls": [
+"https://example.com/image1.jpg",
+"https://example.com/image2.jpg"
+],
+"num_images": 1,
+"output_format": "jpeg",
+"sync_mode": false
+}
+```
+**Output**
+```
+{
+"request_id": "nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Edit Image Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The prompt for image editing. Google's state-of-the-art image editing model that modifies existing images based on text descriptions |
+| image_urls | Yes | array<string> | List of URLs of input images for editing. The images will be edited according to the provided prompt |
+| num_images | Optional | integer | The number of edited images to generate |
+| output_format | Optional | string | The format of the generated images. Values: "jpeg", "png" |
+| sync_mode | Optional | boolean | When true, edited images will be returned as data URIs instead of URLs |
+**Example Request**
+```
+{
+"prompt": "Add a sunset background to the beach photo",
+"image_urls": [
+"https://example.com/image1.jpg",
+"https://example.com/image2.jpg"
+],
+"num_images": 1,
+"output_format": "jpeg",
+"sync_mode": false
+}
+```
+**Response**
+```
+{
+"request_id": "nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'nano-banana' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "nano-banana",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+Response (Completed)
+```
+{
+"request_id": "nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "nano-banana",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/nano-banana_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Nano Banana Standard Edit Image API Pricing**
+| Resolution | Price (USD) |
+| Per generation | $0.06 |
+| Per generation | $0.1188 |
+| Per generation | $0.1608 |
+| Per generation | $0.1236 |
+| Per generation | $0.1236 |
+| Per generation | $0.0834 |
+| Per generation | $0.0714 |
+| Per generation | $0.0888 |
+| Per generation | $0.0888 |
+| Per generation | $0.1188 |
+#### Nano Banana Standard Text To Image API Documentation
+https://gateway.pixazo.ai/nano-banana/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text To Image Request - Nano Banana API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/nano-banana/v1/nano-banana/generateTextToImageRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "An action shot of a black lab swimming in an inground suburban swimming pool. The camera is placed meticulously on the water line, dividing the image in half, revealing both the dogs head above water holding a tennis ball in it's mouth, and it's paws paddling underwater.",
+"num_images": 1,
+"limit_generations": false,
+"output_format": "jpeg",
+"aspect_ratio": "16:9",
+"sync_mode": false
+}
+```
+**Output**
+```
+{
+"request_id": "nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Text To Image Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The prompt for image generation. Google's state-of-the-art image generation model that generates high-quality images based on text descriptions |
+| num_images | No | integer | The number of images to generate |
+| limit_generations | No | boolean | Experimental parameter to limit the number of generations from each round of prompting to 1. Set to True to disregard any instructions in the prompt regarding the number of images to generate |
+| output_format | No | string | The format of the generated images. Values: "jpeg", "png", "webp" |
+| aspect_ratio | No | string | Aspect ratio for generated images. Values: "21:9", "1:1", "4:3", "3:2", "2:3", "5:4", "4:5", "3:4", "16:9", "9:16" |
+| sync_mode | No | boolean | If True, the media will be returned as a data URI and the output data won't be available in the request history |
+**Example Request**
+```
+{
+"prompt": "An action shot of a black lab swimming in an inground suburban swimming pool. The camera is placed meticulously on the water line, dividing the image in half, revealing both the dogs head above water holding a tennis ball in it's mouth, and it's paws paddling underwater.",
+"num_images": 1,
+"limit_generations": false,
+"output_format": "jpeg",
+"aspect_ratio": "16:9",
+"sync_mode": false
+}
+```
+**Response**
+```
+{
+"request_id": "nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'nano-banana' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "nano-banana",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+Response (Completed)
+```
+{
+"request_id": "nano-banana_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "nano-banana",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/nano-banana_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Nano Banana Standard Text To Image API Pricing**
+| Resolution | Price (USD) |
+| Per generation | $0.06 |
+| Per generation | $0.1188 |
+| Per generation | $0.1608 |
+| Per generation | $0.1236 |
+| Per generation | $0.1236 |
+| Per generation | $0.0834 |
+| Per generation | $0.0714 |
+| Per generation | $0.0888 |
+| Per generation | $0.0888 |
+| Per generation | $0.1188 |
+#### Nano Banana Standard Image To Image Edit(Batch) API Documentation
+https://gateway.pixazo.ai/nano-banana-async/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image to Image(Edit Image) - Nano Banana Async API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/nano-banana-async/v1/nano-banana-image-to-image
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Convert to watercolor",
+"image_urls": ["https://example.com/image.jpg"]
+}
+```
+**Output**
+```
+{
+"request_id": "nano-banana-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image to Image(Edit Image)
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of the desired transformation (required) |
+| image_urls | Yes | string[] | Array of input image URLs (1-3 images, required) |
+| num_images | No | integer | Number of image variations to generate (1-10) |
+| aspect_ratio | No | string | Image aspect ratio (see options below) |
+| output_format | No | string | Output format: "jpeg", "png", or "webp" |
+| resolution | No | string | Image resolution: "1K" or "2K" |
+| enable_web_search | No | boolean | Enable Google Search grounding for more accurate results |
+| sync_mode | No | boolean | Return base64 data URIs instead of R2 URLs |
+| webhook | No | string | Webhook URL for automatic completion notifications |
+**Example Request**
+```
+{
+"prompt": "Transform into a detailed watercolor painting with soft brush strokes and vibrant colors",
+"image_urls": [
+"https://example.com/image1.jpg",
+"https://example.com/image2.jpg",
+"https://example.com/image3.jpg"
+],
+"num_images": 1,
+"aspect_ratio": "21:9",
+"output_format": "png",
+"resolution": "2K",
+"enable_web_search": true,
+"sync_mode": false,
+"webhook": "https://your-domain.com/api/webhook/gemini"
+}
+```
+**Response**
+```
+{
+"request_id": "nano-banana-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/nano-banana-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'nano-banana-async-api' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "nano-banana-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "nano-banana-async-api",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/nano-banana-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+Response (Completed)
+```
+{
+"request_id": "nano-banana-async-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "nano-banana-async-api",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/nano-banana-async-api_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Nano Banana Standard Image To Image Edit(Batch) API Pricing**
+| Resolution | Price (USD) |
+| 1K | $0.03 |
+| 2K | $0.05 |
+
+---
+
+### Reve Image 1.0 API - AI Image Generation & Editing APIs
+**Page:** https://www.pixazo.ai/models/reve-image
+
+
+by Reve
+
+Reve Image 1.0 API, developers can implement comprehensive image manipulation features that go beyond simple generation. The API supports image editing workflows where users can modify and remix existing visuals, making it ideal for creative tools and content transformation applications.
+
+Models Version
+Reve Image Generation
+Image Edit
+Image Remix
+Image Edit
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+Image Remix
+#### Reve Image Generation Image Edit API Documentation
+https://gateway.pixazo.ai/reve-image/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image Edit - Reve Image generation API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/reve-image/v1/reve-edit/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"image": "https://example.com/photo.jpg",
+"prompt": "Add \"HELLO WORLD\" text in the middle of this image in a modern font, white text"
+}
+```
+**Output**
+```
+{
+"request_id": "reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image Edit
+| Parameter | Required | Type | Description |
+| image | Yes | string | Input image URL to edit. Must be publicly accessible (HTTPS recommended). |
+| prompt | Yes | string | Text instruction describing the edit you want to apply. Be specific and clear. |
+| version | No | string | Model version. Valid values: latest, reve-edit@20250915. |
+| webhook | No | string | Callback URL for completion notification. POST request sent with results when complete. |
+| webhook_events_filter | No | array | Events that trigger webhook. Valid values: ["*"] (all), ["completed"] (success/failure only). |
+**Example Request**
+```
+{
+"image": "https://example.com/photo.jpg",
+"prompt": "Add \"HELLO WORLD\" text in the middle of this image in a modern font, white text"
+}
+```
+**Response**
+```
+{
+"request_id": "reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+```
+POST https://gateway.pixazo.ai/reve-image/v1/reve-edit/prediction
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prediction_id": "xyz789abc123def456ghi789jkl012mno"
+}
+```
+**Output**
+```
+{
+"success": true,
+"id": "xyz789abc123...",
+"status": "succeeded",
+"output": "https://.../reve-edit/xyz789abc123_output_0.png"
+}
+```
+Example Response (In Progress)
+```
+{
+"success": true,
+"id": "xyz789abc123def456ghi789jkl012mno",
+"model": "reve/edit",
+"status": "processing",
+"input": {
+"image": "https://example.com/photo.jpg",
+"prompt": "Add \"HELLO\" text in the middle",
+"version": "latest"
+},
+"created_at": "2025-10-23T14:30:00.000Z"
+}
+```
+Example Response (Completed)
+```
+{
+"success": true,
+"id": "xyz789abc123def456ghi789jkl012mno",
+"model": "reve/edit",
+"status": "succeeded",
+"input": {
+"image": "https://example.com/photo.jpg",
+"prompt": "Add \"HELLO\" text in the middle",
+"version": "latest"
+},
+"output": "https://.../reve-edit/xyz789abc123def456ghi789jkl012mno_output_0.png",
+"created_at": "2025-10-23T14:30:00.000Z"
+}
+```
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'reve-image-generation' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "reve-image-generation",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+Response (Completed)
+```
+{
+"request_id": "reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "reve-image-generation",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/reve-image-generation_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Reve Image Generation Image Edit API Pricing**
+| Resolution | Price (USD) |
+| All Resolution | $0.06 |
+#### Reve Image Generation Image Remix API Documentation
+https://gateway.pixazo.ai/reve-image/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image Remix - Reve Image generation API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/reve-image/v1/reve-remix/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A beautiful sunset over mountains with vibrant colors",
+"reference_images": [
+"https://example.com/city-photo.jpg"
+],
+"aspect_ratio": "16:9"
+}
+```
+**Output**
+```
+{
+"request_id": "reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image Remix
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description for the remixing task. Be specific and descriptive for best results. |
+| reference_images | No | array | Array of 1-4 image URLs to use as references. Must be publicly accessible (HTTPS recommended). |
+| aspect_ratio | No | string | Output aspect ratio. Valid values: `16:9`, `9:16`, `3:2`, `2:3`, `4:3`, `3:4`, `1:1`. |
+| version | No | string | Model version. Valid values: `latest`, `reve-remix@20250915`. |
+| webhook | No | string | Callback URL for completion notification. POST request sent with results when complete. |
+| webhook_events_filter | No | array | Events that trigger webhook. Valid values: `["*"]` (all), `["completed"]` (success/failure only). |
+**Example Request**
+```
+{
+"prompt": "A beautiful sunset over mountains with vibrant colors",
+"reference_images": [
+"https://example.com/city-photo.jpg"
+],
+"aspect_ratio": "16:9"
+}
+```
+**Response**
+```
+{
+"request_id": "reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'reve-image-generation' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "reve-image-generation",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+Response (Completed)
+```
+{
+"request_id": "reve-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "reve-image-generation",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/reve-image-generation_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Reve Image Generation Image Remix API Pricing**
+| Resolution | Price (USD) |
+| All Resolution | $0.06 |
+
+---
+
+### Studio Ghibli API - AI Anime Image Generation API
+**Page:** https://www.pixazo.ai/models/studio-ghibli
+
+
+by Ghibli
+
+Studio Ghibli API, developers can transform text prompts and images into lush, hand-painted-looking scenes with soft lighting, vibrant colors, and the whimsical charm that defines Ghibli animation. The API supports both text-to-image and image-to-image workflows, making it ideal for creative projects, social media content, and applications seeking a distinctive anime art style.
+
+Models Version
+Studio Ghibli v1
+Text To Image
+Text To Image
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### Studio Ghibli v1 Text To Image API Documentation
+https://gateway.pixazo.ai/studio-ghibli/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Image Request - Studio Ghibli API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/studio-ghibli/v1/studio-ghibli/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A peaceful village in the mountains at sunset, Studio Ghibli style"
+}
+```
+**Output**
+```
+{
+"request_id": "studio-ghibli_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/studio-ghibli_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Image Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of the image you want to generate. Be specific and descriptive for best results. |
+| negative_prompt | No | string | What to exclude from the image (e.g., "people, modern buildings, text, watermark"). Helps refine output quality. |
+| image | No | string | Image URL for img2img or inpainting mode. Must be publicly accessible (HTTPS recommended). |
+| mask | No | string | Mask URL for inpainting mode. White areas = regenerate, black areas = preserve. Requires `image` parameter. |
+| aspect_ratio | No | string | Output aspect ratio. Valid values: `1:1`, `16:9`, `21:9`, `3:2`, `2:3`, `4:5`, `5:4`, `3:4`, `4:3`, `9:16`, `9:21`. Cannot be used with `width`/`height`. |
+| width | No | integer | Custom output width in pixels (256-2048). Use instead of `aspect_ratio` for precise sizing. |
+| height | No | integer | Custom output height in pixels (256-2048). Use instead of `aspect_ratio` for precise sizing. |
+| output_format | No | string | Output image format. Valid values: `webp` (smallest), `jpg`, `png`. |
+| output_quality | No | integer | Output quality (0-100). Higher = better quality but larger file size. |
+| num_outputs | No | integer | Number of image variations to generate (1-4). Each variation is unique. |
+| webhook | No | string | Callback URL for completion notification. POST request sent with generation results when complete. |
+| webhook_events_filter | No | array | Events that trigger webhook. Valid values: `["*"]` (all), `["completed"]` (success/failure only), `["start", "output", "completed"]`. |
+**Example Request**
+```
+{
+"prompt": "A peaceful village in the mountains at sunset, Studio Ghibli style",
+"negative_prompt": "people, modern buildings, cars, text, watermark, realistic photo",
+"aspect_ratio": "16:9",
+"output_format": "png",
+"output_quality": 95
+}
+```
+**Response**
+```
+{
+"request_id": "studio-ghibli_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/studio-ghibli_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+**Error Responses**
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance. Required: $0.01"
+}
+// 400 — Model not found
+{
+"error": "Model not found",
+"message": "Model 'studio-ghibli' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```
+{
+"request_id": "studio-ghibli_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "studio-ghibli",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+```
+cURL Example
+```
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/studio-ghibli_019d42ce-946d-7739-f812-6875c434cb790"
+```
+Response (Completed)
+```
+{
+"request_id": "studio-ghibli_019d42ce-946d-7739-f812-6875c434cb790",
+"status": "COMPLETED",
+"model_id": "studio-ghibli",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/studio-ghibli_019d42ce-946d-7739-f812-6875c434cb790/output.png"
+],
+"media_type": "image/png"
+},
+"created_at": "2026-03-31T07:32:03.749Z",
+"updated_at": "2026-03-31T07:32:20.000Z",
+"completed_at": "2026-03-31T07:32:20.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type (image/png) |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+**Studio Ghibli v1 Text To Image API Pricing**
+| Resolution | Price (USD) |
+| Per generation | $0.015 |
+| Per generation | $0.0297 |
+| Per generation | $0.0402 |
+| Per generation | $0.0309 |
+| Per generation | $0.0309 |
+| Per generation | $0.0208 |
+| Per generation | $0.0179 |
+| Per generation | $0.0222 |
+| Per generation | $0.0222 |
+| Per generation | $0.0297 |
+| Per generation | $0.039 |
 
 ---

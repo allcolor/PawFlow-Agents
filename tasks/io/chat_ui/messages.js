@@ -701,6 +701,68 @@ function isImageFile(name) {
  * (img/audio/video tags) for each one found, concatenated. Used to
  * surface media above the collapsed <details> tool-result block so the
  * user sees the image/video/audio directly without opening anything. */
+/** When a tool result contains media URLs (fs://filestore/<id>/<name>.ext,
+ * fs://<relay>/<path>/<name>.ext, or /files/<id>/<name>.ext), append a
+ * standalone message block to the chat containing ONLY the rendered
+ * media. This is the "new conversation block" behavior — user sees the
+ * image/audio/video right in the conversation flow, independent of the
+ * (usually collapsed) tool-result details.
+ *
+ * Idempotent: dedups by URL via data-media-url on the container div, so
+ * if the same tool_result fires twice (reconnect / replay) we don't
+ * double up.
+ */
+function appendMediaBlocksFromText(text) {
+  if (!text) return;
+  const container = document.getElementById('messages');
+  if (!container) return;
+  const urlRe = /(fs:\/\/[^\s<"'`]+|https?:\/\/[^\s<"'`]*\/files\/[a-f0-9]+\/[^\s<"'`]+|\/files\/[a-f0-9]+\/[^\s<"'`]+)/g;
+  const seen = new Set();
+  let m;
+  while ((m = urlRe.exec(text)) !== null) {
+    const url = m[0];
+    if (seen.has(url)) continue;
+    seen.add(url);
+    // Resolve filename + HTTP URL (same logic as _extractInlineMedia)
+    let fname = '';
+    let httpUrl = url;
+    const fsMatch = url.match(/^fs:\/\/([^/]+)\/(.+)$/);
+    if (fsMatch) {
+      const service = fsMatch[1];
+      const fpath = fsMatch[2];
+      fname = fpath.split('/').pop() || fpath;
+      if (service === 'filestore') {
+        const fidMatch = fpath.match(/^([a-f0-9]+)(?:\/|$)/);
+        httpUrl = fidMatch ? '/files/' + fidMatch[1] + '/' + encodeURIComponent(fname) : '';
+      } else {
+        httpUrl = '/fs/' + encodeURIComponent(service) + '/'
+          + fpath.split('/').map(encodeURIComponent).join('/');
+      }
+    } else {
+      const fm = url.match(/\/files\/[a-f0-9]+\/([^?#]+)/);
+      fname = fm ? fm[1] : '';
+    }
+    if (!httpUrl || !fname) continue;
+    let inner = '';
+    if (isImageFile(fname)) inner = inlineImageHtml(httpUrl, fname, '');
+    else if (isAudioFile(fname)) inner = inlineAudioHtml(httpUrl, fname);
+    else if (isVideoFile(fname)) inner = inlineVideoHtml(httpUrl, fname);
+    else continue;
+    // Dedup across event replays
+    if (container.querySelector('[data-media-url="' + CSS.escape(url) + '"]')) continue;
+    const block = document.createElement('div');
+    block.className = 'msg tool-media';
+    block.setAttribute('data-media-url', url);
+    block.style.cssText = 'padding:6px 8px;margin:4px 0;';
+    block.innerHTML = inner;
+    container.appendChild(block);
+  }
+  if (typeof scrollBottom === 'function') scrollBottom();
+  else if (typeof isNearBottom === 'function' && isNearBottom()) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
 function _extractInlineMedia(text) {
   if (!text) return '';
   const urlRe = /(fs:\/\/[^\s<"'`]+|https?:\/\/[^\s<"'`]*\/files\/[a-f0-9]+\/[^\s<"'`]+|\/files\/[a-f0-9]+\/[^\s<"'`]+)/g;

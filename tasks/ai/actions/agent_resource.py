@@ -53,12 +53,14 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             rs.create("agent", agent, user_id, agent_data,
                       conversation_id=conv_id)
             from core.conv_agent_config import add_agent_to_conv
-            add_agent_to_conv(conv_id, agent, llm_service=llm_service)
+            add_agent_to_conv(conv_id, agent,
+                             llm_service=llm_service, definition=agent)
         else:
             rs.create("agent", agent, user_id, agent_data)
             if conv_id:
                 from core.conv_agent_config import add_agent_to_conv
-                add_agent_to_conv(conv_id, agent, llm_service=llm_service)
+                add_agent_to_conv(conv_id, agent,
+                                 llm_service=llm_service, definition=agent)
         flowfile.set_content(json.dumps({
             "result": f"Agent '{agent}' created (scope: {scope})."
         }).encode())

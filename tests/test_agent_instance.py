@@ -52,34 +52,19 @@ class TestAddAgentToConv:
             assert stored["definition"] == "researcher"
             assert stored["params"]["name"] == "Alice"
 
-    def test_add_legacy_no_definition(self):
-        """When definition is omitted, instance_name is used."""
-        mock_store, _stored = self._make_store_mock()
-        with patch("core.conversation_store.ConversationStore.instance",
-                   return_value=mock_store):
-            cfg = add_agent_to_conv("conv1", "claude", llm_service="svc")
-            assert cfg["definition"] == "claude"
-            assert cfg["params"] == {}
+    def test_add_requires_definition(self):
+        with pytest.raises(ValueError, match="definition is required"):
+            add_agent_to_conv("conv1", "Alice",
+                             llm_service="svc", definition="")
 
     def test_add_requires_llm_service(self):
         with pytest.raises(ValueError, match="llm_service is required"):
-            add_agent_to_conv("conv1", "Alice", llm_service="")
+            add_agent_to_conv("conv1", "Alice",
+                             llm_service="", definition="researcher")
 
 
 class TestGetAgentConfig:
-    def test_backward_compat_no_definition_field(self):
-        """Legacy conv_agents entries without 'definition' get it from instance name."""
-        with patch("core.conversation_store.ConversationStore.instance") as cs:
-            cs.return_value.get_extra.return_value = {
-                "claude": {"llm_service": "claude_svc"},  # no definition field
-            }
-            cfg = get_agent_config("conv1", "claude")
-            assert cfg["definition"] == "claude"  # backward compat
-            assert cfg["params"] == {}  # default
-            assert cfg["llm_service"] == "claude_svc"
-
-    def test_new_format_with_definition(self):
-        """New entries with definition + params are returned correctly."""
+    def test_returns_full_config(self):
         with patch("core.conversation_store.ConversationStore.instance") as cs:
             cs.return_value.get_extra.return_value = {
                 "Alice": {
@@ -91,6 +76,10 @@ class TestGetAgentConfig:
             cfg = get_agent_config("conv1", "Alice")
             assert cfg["definition"] == "researcher"
             assert cfg["params"] == {"name": "Alice"}
+            assert cfg["llm_service"] == "svc"
+            # Defaults applied for missing fields
+            assert cfg["tools"] == []
+            assert cfg["max_depth"] == 1000
 
 
 class TestGetDefinitionName:
@@ -100,13 +89,6 @@ class TestGetDefinitionName:
                 "Alice": {"definition": "researcher", "llm_service": "svc"},
             }
             assert get_definition_name("conv1", "Alice") == "researcher"
-
-    def test_returns_instance_name_for_legacy(self):
-        with patch("core.conversation_store.ConversationStore.instance") as cs:
-            cs.return_value.get_extra.return_value = {
-                "claude": {"llm_service": "svc"},
-            }
-            assert get_definition_name("conv1", "claude") == "claude"
 
 
 # --------------- flatten_agent_params ---------------

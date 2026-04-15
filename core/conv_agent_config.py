@@ -11,9 +11,6 @@ names and params (e.g. two "researcher" agents: Alice and Bob).
 
 Stored in ConversationStore extras under "conv_agents".
 
-Backward compatibility: entries without a "definition" field are legacy —
-the instance name is treated as the definition name.
-
 Usage:
     from core.conv_agent_config import get_agent_config, set_agent_config
 
@@ -52,11 +49,6 @@ def get_agent_config(conv_id: str, agent_name: str) -> Dict[str, Any]:
 
     Returns config dict with all fields guaranteed present (defaults applied).
     Returns defaults if agent not found (graceful fallback).
-
-    Backward compat: if the stored entry has no "definition" field, the
-    instance name is used as the definition name (legacy format where
-    instance_name == definition_name).
-
     Agent-name lookup is case-insensitive.
     """
     configs = get_all_agent_configs(conv_id)
@@ -70,9 +62,6 @@ def get_agent_config(conv_id: str, agent_name: str) -> Dict[str, Any]:
     raw = raw or {}
     result = dict(AGENT_CONFIG_DEFAULTS)
     result.update(raw)
-    # Backward compat: legacy entries have no "definition" field
-    if not result["definition"]:
-        result["definition"] = agent_name
     return result
 
 
@@ -99,7 +88,7 @@ def remove_agent_config(conv_id: str, agent_name: str) -> None:
 
 def add_agent_to_conv(conv_id: str, instance_name: str,
                       llm_service: str,
-                      definition: str = "",
+                      definition: str,
                       params: Optional[Dict[str, Any]] = None,
                       model: str = "",
                       tools: Optional[List[str]] = None,
@@ -108,16 +97,18 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
     """Add an agent instance to a conversation.
 
     instance_name: the key in conv_agents (chosen by user, unique per conv).
-    definition: the repository .md template name. If empty, defaults to
-                instance_name (legacy behavior: name == definition).
+    definition: the repository .md template name (required).
     params: dict of values injected into the definition prompt as ${agent.key}.
     llm_service is required — an agent without an LLM service cannot run.
     """
     if not llm_service:
         raise ValueError(
             f"llm_service is required when adding agent '{instance_name}' to conversation")
+    if not definition:
+        raise ValueError(
+            f"definition is required when adding agent '{instance_name}' to conversation")
     config = {
-        "definition": definition or instance_name,
+        "definition": definition,
         "params": params or {},
         "llm_service": llm_service,
         "model": model,
@@ -130,10 +121,7 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
 
 
 def get_definition_name(conv_id: str, instance_name: str) -> str:
-    """Get the repository definition name for an agent instance.
-
-    Returns instance_name itself for legacy entries without a definition field.
-    """
+    """Get the repository definition name for an agent instance."""
     cfg = get_agent_config(conv_id, instance_name)
     return cfg["definition"]
 

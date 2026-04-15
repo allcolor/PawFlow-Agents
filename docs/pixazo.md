@@ -1,7 +1,7 @@
 # Pixazo API — Complete Model Reference
 
 > Auto-generated from [pixazo.ai/models](https://www.pixazo.ai/models) on 2026-04-15.
-> 22 models, ~138 API endpoints.
+> 57 models, ~198 API endpoints.
 
 ## Common API Patterns
 
@@ -41,6 +41,8 @@ GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
 | Flux 2 Klein | Text to Image | 2048px | $0.0028 |
 | Flux Fill Dev | Inpainting | all res | $0.04 |
 | GPT Image 1.5 | Text to Image | - | not listed |
+| Hailuo v2.3 | Image/Text to Video | 6s | $0.35 |
+| Hailuo v2.3 | Image/Text to Video | 10s | $0.60 |
 | Hunyuan 3.0 | Text to Image | varies | $0.11-0.40 |
 | Hunyuan 3D | 3D Generation | - | $0.20 |
 | Ideogram v2 | Text to Image | all res | $0.20 |
@@ -52,6 +54,7 @@ GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
 | Ideogram Turbo | Edit Image | all res | $0.20 |
 | Ideogram Turbo | Remix Image | all res | $0.20 |
 | Kling O3 | Text/Image to Image | 1-2K | $0.028 |
+| Luma Ray 2 Flash | Image to Video | per second | $0.04 |
 | Kling O3 | Text/Image to Image | 4K | $0.056 |
 | Kling 3.0 | Text/Image to Video | 1s (no audio) | $0.168 |
 | Kling 3.0 | Text/Image to Video | 1s (audio) | $0.252 |
@@ -59,6 +62,9 @@ GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
 | Kling Avatar v2 | AI Avatar | 1s | $0.115 |
 | Kling O1 | Ref Image to Video | per gen | $0.90 |
 | Lyria 3 Pro | Music Generation | per gen | $0.08 |
+| VibeVoice | Text to Speech | 480p | $0.75 |
+| VibeVoice | Text to Speech | 580p | $1.00 |
+| VibeVoice | Text to Speech | 720p | $1.25 |
 | Lyria 2 | Music Generation | per gen | $0.06 |
 | Nano Banana Pro | Generate Image | 1-2K | $0.15 |
 | Nano Banana Pro | Generate Image | 4K | $0.30 |
@@ -91,6 +97,51 @@ GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
 | Wan 2.6 | Image/Text to Video | 5s | $0.75 |
 | Wan 2.6 | Image/Text to Video | 10s | $1.50 |
 | Wan 2.5 | All operations | per gen | $0.05 |
+| Ace Step 1.5 XL | Music Gen | per gen | $0.015 |
+| Auraflow v0.3 | Text to Image | all res | $0.001 |
+| Bria RMBG 2.0 | BG Removal | all res | $0.018 |
+| Chatterbox | TTS | all res | $0.03 |
+| Crystal Upscaler | Image Upscale | per gen | $0.07-0.45 |
+| DALL-E | Image Gen | - | coming soon |
+| GenFlare 2.0 | Image to Video | per gen | not listed |
+| Grok Imagine | Text to Image | all res | $0.018 |
+| Grok Imagine | Text to Video | 480p/1s | $0.05 |
+| Grok Imagine | Text to Video | 720p/1s | $0.07 |
+| Higgsfield DoP | Video Gen | per gen | $0.15-0.37 |
+| Hyper3D Rodin | 3D Gen | per gen | $0.40 |
+| IDM VTON | Virtual Try-On | all res | $0.05 |
+| Kandinsky 5 Pro | Image to Video | 512p/1s | $0.04 |
+| Kandinsky 5 Pro | Image to Video | 1024p/1s | $0.12 |
+| LongCat Image | Text to Image | per gen | $0.13 |
+| LTX Video | Text to Image | all res | $0.09 |
+| LTX Video | Video Gen | 1080p/1s | $0.06 |
+| LTX Video | Video Gen | 1440p/1s | $0.12 |
+| LTX Video | Video Gen | 2160p/1s | $0.24 |
+| Lucy Edit | Video Edit | all res | $0.20 |
+| MiniMax | Music Gen | per 1K chars | $0.10 |
+| MiniMax | Voice Design | per 1K chars | $0.03 |
+| MiniMax | Image Gen | all res | $0.02 |
+| Mochi v1 | Video Gen | per gen | $0.40 |
+| OmniHuman 1.5 | Lipsync | per second | $0.16 |
+| Pixelforge | Image Gen | all res | $0.04 |
+| PixVerse | Video Gen | 360p/1s | $0.025-0.035 |
+| PixVerse | Video Gen | 720p/1s | $0.045-0.06 |
+| PixVerse | Video Gen | 1080p/1s | $0.09-0.115 |
+| Qwen Image Max | Image Gen/Edit | all res | $0.04-0.055 |
+| SDXL | Image Gen | all res | Free |
+| SeedVR Upscale | Image/Video Upscale | per gen | Free-$0.001 |
+| Stable Diffusion 3.5 | Text to Image | all res | $0.20 |
+| Stable Diffusion | Legacy models | all res | Free |
+| Topaz | Video Upscale | per gen | not listed |
+| Tracks | Music Gen | per gen | not listed |
+| Trellis 3D | 3D Gen | all res | $0.35 |
+| Tripo3D v2.5 | 3D Gen | per gen | not listed |
+| VEED Fabric | Video Gen | per gen | not listed |
+| VEED | BG Removal | per gen | not listed |
+| Vidu | Video Gen | per gen | not listed |
+| XTTS v2 | Voice Clone TTS | per gen | not listed |
+| Z-Image Turbo | Text to Image | all res | $0.008 |
+| Z-Image Base | Text to Image | all res | $0.01 |
 
 ---
 
@@ -196,6 +247,66 @@ GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
 | ideogram turbo | `ideogramV_2_Turbo` | `describe` | POST |
 | ideogram turbo | `ideogramV_2_Turbo` | `edit` | POST |
 | ideogram turbo | `ideogramV_2_Turbo` | `remix` | POST |
+| hailuo | `minimax-hailuo-ai` | `imageToVideo` | POST |
+| hailuo | `minimax-hailuo-ai` | `generate` | POST |
+| luma | `luma-dream-machine-ray-2-flash-image-to-video` | `luma-dream-machine-ray-2-flash-image-to-video-request` | POST |
+| vibevoice | `vibevoice` | `vibevoice/generateRequest` | POST |
+| vibevoice | `vibevoice-realtime-0-5b-135` | `vibevoice-realtime-0-5b-request` | POST |
+| ace-step | `ace-step-xl` | `submitMusicGenerationRequest` | POST |
+| ace-step | `ace-step` | `generate` | POST |
+| auraflow | `auraflow-v0-3-512` | `auraflow-v0-3-request` | POST |
+| bria | `bria-rmbg-2-0-682` | `bria-rmbg-2-0-request` | POST |
+| chatterbox | `chatterbox-text-to-speech` | `chatterbox-text-to-speech-request` | POST |
+| crystal-upscaler | `upscaler` | `crystal-upscaler/generate` | POST |
+| genflare | `baidu-genflare-2-0-api` | `generateImageToVideo2-5Request` | POST |
+| grok-imagine | `grok-imagine-api-641` | `grok-imagine-api-request` | POST |
+| grok-imagine | `grok-imagine-video` | `grok-imagine-video-request` | POST |
+| higgsfield | `ai-model-api` | `generateSoul` | POST |
+| higgsfield | `ai-model-api` | `generateImageToVideoRequest` | POST |
+| hyper3d | `hyper3d-rodin-259` | `hyper3d-rodin-request` | POST |
+| idm-vton | `idm-vton-api` | `r-idm-vton` | POST |
+| kandinsky | `kandinsky-5-0-pro-953` | `kandinsky-5-0-pro-request` | POST |
+| longcat-image | `longcat-image-498` | `longcat-image-request` | POST |
+| ltx | `lightricks` | `ltx/generate` | POST |
+| ltx | `ltx-2-19b-api-513` | `ltx-2-19b-api-request` | POST |
+| ltx | `ltx-2-video-api-581` | `ltx-2-video-api-request` | POST |
+| lucy-edit | `decart-lucy-edit-video-fast-142` | `decart-lucy-edit-video-fast-request` | POST |
+| minimax | `minimax-hailuo-ai-music` | `getAudio` | POST |
+| minimax | `minimax-hailuo-ai-music` | `getAudioResult` | POST |
+| minimax | `image-generation` | `i2i` | POST |
+| minimax | `image-generation` | `t2i` | POST |
+| mochi | `mochi-v1-clone` | `generate` | POST |
+| omnihuman | `bytedance-omnihuman-v1-5-290` | `bytedance-omnihuman-v1-5-request` | POST |
+| pixelforge | `pixelforge-image` | `qwen_image_gen/serve_image` | POST |
+| pixelforge | `pixelforge-relighting-api` | `relighting/generate` | POST |
+| pixverse | `pixverse-v6-image-to-video` | various | POST |
+| pixverse | `pixverse` | various | POST |
+| pixverse | `pixverse-i2v` | `pixverse-i2v-request` | POST |
+| qwen-image | `qwen-image-max-edit` | `qwen-image-max-edit-request` | POST |
+| qwen-image | `qwen-image-max` | `qwen-image-max-request` | POST |
+| qwen-image | `qwen-image` | `generateMultimodeTextToImageEditRequest` | POST |
+| qwen-image | `qwen-image-edit-plus` | `qwen-image-edit-plus-lora/generate` | POST |
+| qwen-image | `qwen-image-edit-plus-trainer` | `qwen-image-edit-plus-trainer/generate` | POST |
+| qwen-image | `qwen-image-layered` | `qwen-image-layered-request` | POST |
+| sdxl | `sdxlTurbo` | `getData` | POST |
+| sdxl | `getImage` | `getSDXLImage` | POST |
+| sdxl | `sdxl_lightning` | `getSDXLImage` | POST |
+| seedvr | `seedvr-upscale` | `upscale-image/generate` | POST |
+| seedvr | `seedvr-upscale` | `upscale-video/generate` | POST |
+| stable-diffusion | `sd3-5` | `r-sd-3-5-large` | POST |
+| stable-diffusion | `sd3` | `getData` | POST |
+| stable-diffusion | `inpainting` | `getImage` | POST |
+| topaz | `topaz-upscale-video-753` | `topaz-upscale-video-request` | POST |
+| tracks | `tracks` | `generate` | POST |
+| trellis3d | `trellis-2-image-to-3d` | `trellis-2-image-to-3d-request` | POST |
+| tripo3d | `tripo3d-v2-5-413` | `tripo3d-v2-5-request` | POST |
+| veed | `veed-fabric-1-0-api-130` | various | POST |
+| veed | `veed-video-background-remover-541` | `veed-video-background-remover-request` | POST |
+| vidu | `vidu` | `vidu-request` | POST |
+| vidu | `vidu-q2-reference-to-video-pro-api-454` | `vidu-q2-reference-to-video-pro-api-request` | POST |
+| xtts | `voice-clone` | `xtts-v2/generate` | POST |
+| z-image | `z-image-turbo-834` | `z-image-turbo-request` | POST |
+| z-image | `z-image-base` | `z-image-base-request` | POST |
 
 ---
 
@@ -2895,6 +3006,170 @@ Content-Type	application/json
 Cache-Control	no-cache
 Ocp-Apim-Subscription-Key	Your subscription key
 ```
+
+---
+
+### Hailuo 2.3 API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/hailuo
+
+> by MiniMax. Generate videos from text descriptions or images with support for various styles and durations.
+
+#### 1. Hailuo v2.3 — Image To Video
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/minimax-hailuo-ai/v1/imageToVideo
+```
+
+**Headers:**
+```
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+```
+
+**Request Body:**
+```json
+{
+  "prompt": "Man walked into winter cave with polar bear",
+  "first_frame_image": "https://example.com/image.jpg",
+  "duration": 6,
+  "resolution": "768P",
+  "prompt_optimizer": true,
+  "fast_pretreatment": false,
+  "aigc_watermark": false
+}
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| prompt | Yes | string | Video description, max 2000 chars. Supports 15+ camera movement instructions |
+| first_frame_image | Yes | string | Image URL for starting frame. JPG/JPEG/PNG/WebP, <20MB, short side >300px, aspect ratio 2:5 to 5:2 |
+| prompt_optimizer | No | boolean | Default: true. Auto-optimizes prompt for better quality |
+| fast_pretreatment | No | boolean | Default: false. Shortens optimization time (MiniMax-Hailuo-2.3-Fast only) |
+| duration | No | integer | Default: 6. Video duration: 6 or 10 seconds |
+| resolution | No | string | Default: "768P". Options: "768P", "1080P" |
+| callback_url | No | string | Webhook URL for status updates |
+| aigc_watermark | No | boolean | Default: false. Add AIGC watermark |
+
+**Response:**
+```json
+{
+  "request_id": "minimax-hailuo-ai_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "status": "QUEUED",
+  "polling_url": "https://gateway.pixazo.ai/v2/requests/status/{request_id}"
+}
+```
+
+**Pricing:**
+
+| Resolution | Duration | Price (USD) |
+|------------|----------|-------------|
+| All | 6s | $0.35 |
+| All | 10s | $0.60 |
+
+---
+
+#### 2. Hailuo v2.3 — Text To Video
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/minimax-hailuo-ai/v1/generate
+```
+
+**Headers:**
+```
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+```
+
+**Request Body:**
+```json
+{
+  "prompt": "A high-energy scene of a bear leaping into a river to catch a fish...",
+  "duration": 6,
+  "resolution": "768P",
+  "prompt_optimizer": true,
+  "fast_pretreatment": false,
+  "aigc_watermark": false
+}
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| prompt | Yes | string | Scene description for video generation |
+| duration | No | number | Duration in seconds |
+| resolution | No | string | Video resolution |
+| prompt_optimizer | No | boolean | Auto-refines prompt for better quality |
+| fast_pretreatment | No | boolean | Enable fast pretreatment |
+| callback_url | No | string | Webhook URL for notifications |
+| aigc_watermark | No | boolean | Add AIGC watermark |
+
+**Response:** Same async pattern — `request_id` + `polling_url`
+
+**Pricing:** Same as Image To Video ($0.35/6s, $0.60/10s)
+
+---
+
+### Luma Dream Machine 1.5 API, Ray 2 Flash API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/luma
+
+> by Luma AI. Generate videos from text prompts or images with exceptional visual quality and temporal consistency.
+
+#### Luma Dream Machine Ray 2 Flash — Image To Video
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/luma-dream-machine-ray-2-flash-image-to-video/v1/luma-dream-machine-ray-2-flash-image-to-video-request
+```
+
+**Headers:**
+```
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+```
+
+**Request Body:**
+```json
+{
+  "prompt": "Create a magical timelapse transition...",
+  "image_url": "https://example.com/image.jpg",
+  "end_image_url": "",
+  "aspect_ratio": "16:9",
+  "loop": false,
+  "resolution": "540p",
+  "duration": "5s"
+}
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Default | Description |
+|-----------|----------|------|---------|-------------|
+| prompt | Yes | string | — | Detailed text description guiding the video transformation |
+| image_url | Yes | string | — | Publicly accessible URL of starting image (JPEG, PNG, WebP) |
+| end_image_url | No | string | "" | URL of ending image for transitions |
+| aspect_ratio | No | string | "16:9" | Options: "16:9", "9:16", "4:3", "3:4", "21:9", "9:21" |
+| loop | No | boolean | false | Seamless loop for background animations |
+| resolution | No | string | "540p" | Options: "540p", "720p", "1080p" |
+| duration | No | string | "5s" | Options: "5s", "9s" |
+
+**Response:**
+```json
+{
+  "request_id": "luma-dream-machine-ray-2-flash-image-to-video_019dxxxx-xxxx",
+  "status": "QUEUED",
+  "polling_url": "https://gateway.pixazo.ai/v2/requests/status/{request_id}"
+}
+```
+
+**Pricing:** $0.04 per second of output video
 
 ---
 
@@ -7445,6 +7720,120 @@ Ocp-Apim-Subscription-Key	Your API subscription key
 
 ---
 
+### VibeVoice API - AI Text to Speech APIs
+**Page:** https://www.pixazo.ai/models/vibevoice
+
+> by Microsoft. Convert text into realistic speech with multiple voice options and speaking styles. Supports multi-speaker dialogues and voice cloning.
+
+#### 1. VibeVoice v1 — Text To Speech
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/vibevoice/v1/vibevoice/generateRequest
+```
+
+**Headers:**
+```
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+```
+
+**Request Body:**
+```json
+{
+  "script": "Speaker 0: Hello, this is a test of the VibeVoice API.",
+  "speakers": [
+    {
+      "preset": "Alice [EN]"
+    }
+  ]
+}
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Default | Description |
+|-----------|----------|------|---------|-------------|
+| script | Yes | string | — | Text to convert. Use `Speaker X:` prefix for multi-speaker dialogues |
+| speakers | No | array | [] | Speaker configs. Each has `preset` or `audio_url` |
+| speakers[].preset | No | string | Alice [EN] | Voice preset: `Alice [EN]`, `Carter [EN]`, `Frank [EN]`, `Mary [EN]` (Background Music), `Maya [EN]`, `Anchen [ZH]` (Background Music), `Bowen [ZH]`, `Xinran [ZH]` |
+| speakers[].audio_url | No | string | — | URL to voice sample for voice cloning (overrides preset) |
+| seed | No | integer | — | Random seed for reproducible generation |
+| cfg_scale | No | float | 1.3 | Guidance scale (1.0–2.0). Higher = more text-faithful |
+
+**Response:**
+```json
+{
+  "request_id": "vibevoice_019dxxxx-xxxx",
+  "status": "QUEUED",
+  "polling_url": "https://gateway.pixazo.ai/v2/requests/status/{request_id}"
+}
+```
+
+**Multi-speaker example:**
+```json
+{
+  "script": "Speaker 0: VibeVoice is now available on Pixazo.\nSpeaker 1: That's right, and it supports up to four speakers!",
+  "speakers": [
+    { "preset": "Frank [EN]" },
+    { "preset": "Carter [EN]" }
+  ],
+  "cfg_scale": 1.3,
+  "seed": 42
+}
+```
+
+**Pricing:**
+
+| Resolution | Price (USD) |
+|------------|-------------|
+| 480p | $0.75 |
+| 580p | $1.00 |
+| 720p | $1.25 |
+
+---
+
+#### 2. VibeVoice v1 — Realtime TTS
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/vibevoice-realtime-0-5b-135/v1/vibevoice-realtime-0-5b-request
+```
+
+**Headers:**
+```
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+```
+
+**Request Body:**
+```json
+{
+  "script": "Speaker 0: Hello, this is Frank.\nSpeaker 1: And I am Carter.",
+  "speakers": [
+    { "preset": "Frank [EN]" },
+    { "preset": "Carter [EN]" }
+  ]
+}
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Default | Description |
+|-----------|----------|------|---------|-------------|
+| script | Yes | string | — | Dialogue script with `Speaker X:` labels |
+| speakers | Yes | array | — | Array of speaker configs with `preset` field |
+| speakers[].preset | Yes | string | — | Voice preset (e.g., "Frank [EN]", "Carter [EN]") |
+| cfg_scale | No | number | 1.3 | Guidance scale |
+
+**Response:** Same async pattern — `request_id` + `polling_url`
+
+**Pricing:** Not yet listed
+
+---
+
 ## Virtual Try-On
 
 ### Fashn Virtual Try On API - AI Virtual Try-On APIs
@@ -10135,5 +10524,11253 @@ Tip: Use X-Webhook-URL header to get a callback instead of polling.
 | Per generation | $0.0222 |
 | Per generation | $0.0297 |
 | Per generation | $0.039 |
+
+---
+
+
+
+## Additional Models
+
+
+### Category: Image Generation
+
+### Auraflow API - AI 3D Model Generation APIs
+**Page:** https://www.pixazo.ai/models/auraflow
+
+
+by Auraflow
+
+Auraflow API, developers can integrate Auraflow's capabilities to create detailed 3D models, objects, and scenes without manual modeling. The API supports various output formats and provides consistent, production-ready 3D content for games, AR/VR applications, and digital experiences.
+
+Auraflow v0.3
+Generate Image
+
+
+Generate Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Auraflow v0.3 Generate Image API Documentation
+`https://gateway.pixazo.ai/auraflow-v0-3-512/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+AuraFlow v0.3 generate request - AuraFlow v0.3
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/auraflow-v0-3-512/v1/auraflow-v0-3-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Close-up portrait of a majestic iguana with vibrant blue-green scales, piercing amber eyes, and orange spiky crest. Intricate textures and details visible on scaly skin. Wrapped in dark hood, giving regal appearance. Dramatic lighting against black background. Hyper-realistic, high-resolution image showcasing the reptiles expressive features and coloration.",
+"num_images": 1,
+"guidance_scale": 3.5,
+"num_inference_steps": 50,
+"expand_prompt": true
+}
+```
+
+**Output**
+```json
+{
+"request_id": "auraflow-v0-3-512_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/auraflow-v0-3-512_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - AuraFlow v0.3 generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | A detailed textual description of the desired image. Be specific about subjects, lighting, style, colors, textures, and composition. |
+| num_images | No | integer | Number of images to generate in a single request. |
+| guidance_scale | No | number | Controls how closely the generated image adheres to the prompt. Higher values increase prompt fidelity but may reduce creativity. |
+| num_inference_steps | No | integer | Number of denoising steps during image generation. Higher values improve detail and quality but increase processing time. |
+| expand_prompt | No | boolean | If enabled, the system will automatically enrich your prompt with additional contextually relevant details to enhance image quality. |
+
+**Example Request**
+```json
+{
+"prompt": "Close-up portrait of a majestic iguana with vibrant blue-green scales, piercing amber eyes, and orange spiky crest. Intricate textures and details visible on scaly skin. Wrapped in dark hood, giving regal appearance. Dramatic lighting against black background. Hyper-realistic, high-resolution image showcasing the reptiles expressive features and coloration.",
+"num_images": 1,
+"guidance_scale": 3.5,
+"num_inference_steps": 50,
+"expand_prompt": true
+}
+```
+
+**Response**
+```json
+{
+"request_id": "auraflow-v0-3-512_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/auraflow-v0-3-512_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'auraflow-v0-3-512' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "auraflow-v0-3-512_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "auraflow-v0-3-512",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/auraflow-v0-3-512_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "auraflow-v0-3-512_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "auraflow-v0-3-512",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/auraflow-v0-3-512_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Auraflow v0.3 Generate Image API Pricing
+100% OFF
+Limited time discount on API pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.001 |
+API 
+---
+### Grok Imagine API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/grok-imagine
+
+
+by xAI
+
+Grok Imagine API, developers can access Grok's image generation to create visuals with distinctive artistic qualities. The API provides text-to-image generation with xAI's approach to AI, suitable for creative projects seeking an alternative to mainstream image generators.
+
+Grok v1
+Grok Imagine Video t2v
+Generate Image
+
+
+Generate Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Grok v1 Generate Image API Documentation
+`https://gateway.pixazo.ai/grok-imagine-api-641/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Grok Imagine API generate request - Grok Imagine API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/grok-imagine-api-641/v1/grok-imagine-api-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Abstract human silhouette, golden particles ready to burst outward representing joy, data visualization style, emotional expression through particles, artistic scientific",
+"num_images": 1,
+"aspect_ratio": "1:1",
+"output_format": "jpeg"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "grok-imagine-api-641_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/grok-imagine-api-641_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Grok Imagine API generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | A detailed text description of the desired image or animation. Include style, mood, composition, and visual elements for optimal results. |
+| num_images | No | integer | The number of images to generate in a single request. Supports batch generation. |
+| aspect_ratio | No | string | The aspect ratio of the generated image. Common values include "1:1", "16:9", "9:16", "4:3", "3:2". |
+| output_format | No | string | The file format of the output image. Supported values: "jpeg", "png", "webp". |
+
+**Example Request**
+```json
+{
+"prompt": "Abstract human silhouette, golden particles ready to burst outward representing joy, data visualization style, emotional expression through particles, artistic scientific",
+"num_images": 1,
+"aspect_ratio": "1:1",
+"output_format": "jpeg"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "grok-imagine-api-641_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/grok-imagine-api-641_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'grok-imagine-api-641' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "grok-imagine-api-641_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "grok-imagine-api-641",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/grok-imagine-api-641_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "grok-imagine-api-641_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "grok-imagine-api-641",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/grok-imagine-api-641_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Grok v1 Generate Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.018 |
+2. Grok Imagine Video t2v
+
+#### Grok Imagine Video t2v Text To Video API Documentation
+`https://gateway.pixazo.ai/grok-imagine-video/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Grok Imagine Video generate request - Grok Imagine Video
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/grok-imagine-video/v1/grok-imagine-video-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A golden sunset timelapse over a coastal city, waves crashing against the pier, seagulls flying, warm cinematic lighting, aerial drone perspective",
+"duration": 6,
+"aspect_ratio": "16:9",
+"resolution": "720p"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "grok-imagine-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/grok-imagine-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Grok Imagine Video generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | A detailed text description of the desired video scene, including motion, lighting, perspective, and mood |
+| duration | integer | Yes | — | Length of the generated video in seconds (minimum 3, maximum 10) |
+| aspect_ratio | string | Yes | — | Video aspect ratio; supported values: "16:9", "9:16", "1:1" |
+| resolution | string | Yes | — | Output video resolution; supported values: "720p", "1080p" |
+Minimum Request
+```json
+{
+"prompt": "A golden sunset timelapse over a coastal city, waves crashing against the pier, seagulls flying, warm cinematic lighting, aerial drone perspective",
+"duration": 6,
+"aspect_ratio": "16:9",
+"resolution": "720p"
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "A golden sunset timelapse over a coastal city, waves crashing against the pier, seagulls flying, warm cinematic lighting, aerial drone perspective",
+"duration": 6,
+"aspect_ratio": "16:9",
+"resolution": "720p"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "grok-imagine-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/grok-imagine-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Grok Imagine Video generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'grok-imagine-video' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "grok-imagine-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "grok-imagine-video",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/grok-imagine-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "grok-imagine-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "grok-imagine-video",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/grok-imagine-video_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Grok Imagine Video t2v Text To Video API Pricing
+| Resolution | Price (USD) |
+| 480p | $0.05 per_second |
+| 720p | $0.07 per_second |
+API 
+---
+### Kandinsky 5 Pro API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/kandinsky
+
+
+by Kandinsky
+
+Kandinsky 5 Pro API, developers can leverage Kandinsky's image-to-video capabilities to bring still images to life with realistic movement and dynamic visual storytelling. The API is designed for content creators, marketers, and developers who need reliable AI video generation with professional-grade output.
+
+Kandinsky v5 Pro
+Image To Video
+
+
+Image To Video
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Kandinsky v5 Pro Image To Video API Documentation
+`https://gateway.pixazo.ai/kandinsky-5-0-pro-953/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Kandinsky 5.0 Pro generate request - Kandinsky 5.0 Pro API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/kandinsky-5-0-pro-953/v1/kandinsky-5-0-pro-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "The white dragon warrior stands still, eyes full of determination and strength. The camera slowly moves closer or circles around the warrior, highlighting the powerful presence and heroic spirit of the character.",
+"image_url": "https://storage.googleapis.com/falserverless/model_tests/wan/dragon-warrior.jpg"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "kandinsky-5-0-pro-953_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kandinsky-5-0-pro-953_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Kandinsky 5.0 Pro generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | A detailed textual description of the desired motion, camera movement, and emotional tone for the generated video. |
+| image_url | string | Yes | — | Publicly accessible URL of the input image to animate. Must be reachable by the server. |
+| resolution | string | No | 512P | Output video resolution preset. Choose from "256P", "512P", or "1024P". Higher resolutions yield more detail but take longer to generate. |
+| duration | string | No | 5s | Total duration of the generated video. Accepts values like "3s", "5s", "10s". |
+| num_inference_steps | integer | No | 28 | Number of denoising steps during video generation. Higher values improve quality at the cost of longer processing. Range: 20–50. |
+| acceleration | string | No | regular | Optimization setting for generation speed vs. quality. Options: "regular", "fast", "ultra_fast". |
+Minimum Request
+```json
+{
+"prompt": "The white dragon warrior stands still, eyes full of determination and strength. The camera slowly moves closer or circles around the warrior, highlighting the powerful presence and heroic spirit of the character.",
+"image_url": "https://storage.googleapis.com/falserverless/model_tests/wan/dragon-warrior.jpg"
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "The white dragon warrior stands still, eyes full of determination and strength. The camera slowly moves closer or circles around the warrior, highlighting the powerful presence and heroic spirit of the character.",
+"image_url": "https://storage.googleapis.com/falserverless/model_tests/wan/dragon-warrior.jpg",
+"resolution": "512P",
+"duration": "5s",
+"num_inference_steps": 28,
+"acceleration": "regular"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "kandinsky-5-0-pro-953_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kandinsky-5-0-pro-953_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Kandinsky 5.0 Pro generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'kandinsky-5-0-pro-953' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "kandinsky-5-0-pro-953_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "kandinsky-5-0-pro-953",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/kandinsky-5-0-pro-953_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "kandinsky-5-0-pro-953_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "kandinsky-5-0-pro-953",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/kandinsky-5-0-pro-953_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Kandinsky v5 Pro Image To Video API Pricing
+| Resolution | Price (USD) |
+| 512P | $0.04 per second |
+| 1024P | $0.12 per second |
+API 
+---
+### LongCat Image API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/longcat-image
+
+
+by LongCat
+
+LongCat Image API, developers can generate detailed images for various applications including illustrations, concept art, and marketing visuals. The API offers reliable performance and supports standard image generation workflows with customizable parameters.
+
+LongCat v1
+Text To Image
+
+
+Text To Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### LongCat v1 Text To Image API Documentation
+`https://gateway.pixazo.ai/longcat-image-498/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+LongCat-Image generate request - LongCat-Image
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/longcat-image-498/v1/longcat-image-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A lioness crouching in the tall dry grass of the Serengeti during golden hour, intense gaze, telephoto lens with shallow depth of field",
+"image_size": "landscape_4_3",
+"num_inference_steps": 28,
+"guidance_scale": 4.5,
+"num_images": 1,
+"enable_safety_checker": true,
+"output_format": "png",
+"acceleration": "regular"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "longcat-image-498_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/longcat-image-498_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - LongCat-Image generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | Detailed textual description of the desired image content. Be specific for best results. |
+| image_size | Yes | string | Aspect ratio and resolution preset. Supported values: `landscape_4_3`, `portrait_3_4`, `square_1_1`, `ultra_wide_16_9`, `ultra_portrait_9_16`. |
+| num_inference_steps | No | integer | Number of denoising steps during image generation. Higher values increase quality but slow generation. |
+| guidance_scale | No | number | Controls how closely the generated image follows the prompt. Higher values increase prompt fidelity but may reduce diversity. |
+| num_images | No | integer | Number of images to generate per request. |
+| enable_safety_checker | No | boolean | Enables content safety filtering to block inappropriate outputs. |
+| output_format | No | string | File format of generated images. Supported values: `png`, `jpeg`, `webp`. |
+| acceleration | No | string | Rendering optimization mode. Values: `regular`, `high_performance`. Use `high_performance` for faster generation with potential quality trade-offs. |
+
+**Example Request**
+```json
+{
+"prompt": "A lioness crouching in the tall dry grass of the Serengeti during golden hour, intense gaze, telephoto lens with shallow depth of field",
+"image_size": "landscape_4_3",
+"num_inference_steps": 28,
+"guidance_scale": 4.5,
+"num_images": 1,
+"enable_safety_checker": true,
+"output_format": "png",
+"acceleration": "regular"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "longcat-image-498_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/longcat-image-498_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'longcat-image-498' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "longcat-image-498_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "longcat-image-498",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/longcat-image-498_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "longcat-image-498_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "longcat-image-498",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/longcat-image-498_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+LongCat v1 Text To Image API Pricing
+| Resolution | Price (USD) |
+| Per Generation | $0.13 |
+API 
+---
+### Pixelforge API - AI Image Generation & Relighting APIs
+**Page:** https://www.pixazo.ai/models/pixelforge
+
+
+by Pixazo
+
+Pixelforge API, developers can generate new images and transform the lighting of existing photos for product photography, real estate, and creative applications. The API's relighting feature is particularly valuable for e-commerce and professional photography workflows.
+
+PixelForge v1
+Generate Image
+Image Relighting
+
+
+Generate Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+Image Relighting
+
+#### PixelForge v1 Generate Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/pixelforge-image/v1/qwen_image_gen/serve_image
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: your-subscription-key-here
+
+{
+"prompt": "A futuristic city skyline at sunset with flying cars and neon signs",
+"image_urls": [
+"https://example.com/reference-image.jpg"
+]
+}
+```
+
+**Output**
+```json
+{
+"url": "https://cdn.pixazo.ai/images/abc123.jpg"
+}
+```
+Request Parameters - Generate Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | The text prompt describing the image you want to generate. You can provide detailed and creative descriptions to guide the image generation process. |
+| image_urls | Yes | array | Minimum should be one image, maximum three |
+
+**Example Request**
+```json
+{
+"prompt": "A futuristic city skyline at sunset with flying cars and neon signs",
+"image_urls": [
+"https://example.com/reference-image.jpg"
+]
+}
+```
+
+**Response**
+```json
+{
+"url": "https://cdn.pixazo.ai/images/abc123.jpg"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key for authentication |
+
+**Response Handling**
+
+Common status codes for Generate Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+PixelForge v1 Generate Image API Pricing
+
+No data available
+
+
+#### PixelForge v1 Image Relighting API Documentation
+`https://gateway.pixazo.ai/pixelforge-relighting-api/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Image Edit Request - Pixelforge Relighting API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/pixelforge-relighting-api/v1/relighting/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Professional studio lighting with soft shadows",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+]
+}
+```
+
+**Output**
+```json
+{
+"request_id": "pixelforge-relighting-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixelforge-relighting-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image Edit Request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | Text description of desired lighting effect. Max 800 characters. |
+| image_urls | array | Yes | — | Array of reference image URLs (1-10 images). Must be publicly accessible. Supports JPEG, PNG, WEBP. |
+| image_size | string/object | No | "square_hd" | Output size. Options: "square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9" or custom {"width": 1280, "height": 720} |
+| num_inference_steps | integer | No | 50 | Number of inference steps. Range: 1-150. Higher = better quality but slower. |
+| guidance_scale | number | No | 4 | How closely to follow the prompt. Range: 1-20. |
+| num_images | integer | No | 1 | Number of images to generate. Range: 1-4. |
+| enable_safety_checker | boolean | No | true | Enable content safety filtering. |
+| output_format | string | No | "png" | Output format: "jpeg" or "png". |
+| negative_prompt | string | No | " " | Elements to exclude from generation. |
+| acceleration | string | No | "regular" | Speed optimization: "none" or "regular". |
+| loras | array | No | [] | Array of LoRA weights to apply (max 3). Each object has "path" (string, required) and "scale" (number, 0.0-2.0, default 1.0). |
+| webhook | string | No | — | Webhook URL for async notifications. |
+| webhook_events_filter | array | No | ["*"] | Event types: ["start"], ["complete"], ["*"]. |
+Minimum Request
+```json
+{
+"prompt": "Professional lighting",
+"image_urls": [
+"https://example.com/photo.jpg"
+]
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "Professional studio lighting with soft shadows",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+],
+"image_size": "square_hd",
+"num_inference_steps": 50,
+"guidance_scale": 4,
+"num_images": 1,
+"enable_safety_checker": true,
+"output_format": "png",
+"negative_prompt": " ",
+"acceleration": "regular",
+"loras": [
+{
+"path": "https://.../files/lighting-lora.safetensors",
+"scale": 1.0
+}
+```
+],
+"webhook": "https://your-domain.com/webhook",
+"webhook_events_filter": [
+"*"
+]
+}
+
+**Response**
+```json
+{
+"request_id": "pixelforge-relighting-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixelforge-relighting-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Image Edit Request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'pixelforge-relighting-api' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "pixelforge-relighting-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "pixelforge-relighting-api",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/pixelforge-relighting-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "pixelforge-relighting-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "pixelforge-relighting-api",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/pixelforge-relighting-api_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+PixelForge v1 Image Relighting API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.04 |
+API 
+---
+### Qwen Image 2 Pro API, Qwen Image Edit API, Qwen Image API - AI Image Generation & Editing APIs
+**Page:** https://www.pixazo.ai/models/qwen-image
+
+
+by Alibaba
+
+Qwen Image 2 Pro API, developers can access text-to-image generation, image editing, layered image creation, and LoRA training features. The API represents Alibaba's advanced AI research applied to visual content creation, suitable for both consumer applications and enterprise workflows.
+
+Qwen Image Max Edit
+Qwen Image Max t2i
+Qwen Image Edit
+Qwen Image
+Qwen LoRA v1
+Image Max Edit
+
+
+Image Max Edit
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Qwen Image Max Edit Image Max Edit API Documentation
+`https://gateway.pixazo.ai/qwen-image-max-edit/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Qwen Image Max Edit generate request - Qwen Image Max Edit
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/qwen-image-max-edit/v1/qwen-image-max-edit-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Transform the background into a serene mountain landscape with snow-capped peaks and a clear blue sky",
+"image_urls": [
+"https://imagesai.appypie.com/7686410/JUEOHp2Y3FDjmXwOQJVy_017731476841749.png"
+]
+}
+```
+
+**Output**
+```json
+{
+"request_id": "qwen-image-max-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-max-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Qwen Image Max Edit generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | Detailed text description of the desired image edit. Specifies what changes to apply to the input image. |
+| negative_prompt | string | No | — | Describes unwanted elements or artifacts to avoid in the output. Improves output quality by exclusion. |
+| enable_prompt_expansion | boolean | No | true | Enables AI-driven expansion of the prompt for richer, more detailed interpretations. |
+| enable_safety_checker | boolean | No | true | Activates content safety filtering to block inappropriate or harmful outputs. |
+| num_images | integer | No | 1 | Number of edited images to generate. Must be between 1 and 4. |
+| output_format | string | No | png | Output image format. Supported values: png, jpeg, webp. |
+| image_urls | array of strings | Yes | — | Array of one or more public HTTP URLs pointing to the source images to be edited. Only the first URL is processed if multiple are provided. |
+Minimum Request
+```json
+{
+"prompt": "Transform the background into a serene mountain landscape with snow-capped peaks and a clear blue sky",
+"image_urls": [
+"https://imagesai.appypie.com/7686410/JUEOHp2Y3FDjmXwOQJVy_017731476841749.png"
+]
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "Transform the background into a serene mountain landscape with snow-capped peaks and a clear blue sky",
+"negative_prompt": "low resolution, error, worst quality, low quality, deformed",
+"enable_prompt_expansion": true,
+"enable_safety_checker": true,
+"num_images": 1,
+"output_format": "png",
+"image_urls": [
+"https://imagesai.appypie.com/7686410/JUEOHp2Y3FDjmXwOQJVy_017731476841749.png"
+]
+}
+```
+
+**Response**
+```json
+{
+"request_id": "qwen-image-max-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-max-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Qwen Image Max Edit generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Notes & Tips
+Poll the results endpoint every 2–3 seconds until status is COMPLETED or FAILED
+Implement exponential backoff for retry logic on 500 or 429 responses
+Use clear, specific prompts that describe the desired change in context, lighting, or environment
+Avoid overly vague prompts like “make it better”; specify elements such as “replace sky with sunset”
+Validate image URLs are publicly accessible and use HTTPS before submission
+Limit num_images to 1 unless multiple variations are required to
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'qwen-image-max-edit' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "qwen-image-max-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "qwen-image-max-edit",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/qwen-image-max-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "qwen-image-max-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "qwen-image-max-edit",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/qwen-image-max-edit_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Qwen Image Max Edit Image Max Edit API Pricing
+
+No data available
+
+2. Qwen Image Max t2i
+
+#### Qwen Image Max t2i Image Max T2I API Documentation
+`https://gateway.pixazo.ai/qwen-image-max/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Qwen Image Max generate request - Qwen Image Max
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/qwen-image-max/v1/qwen-image-max-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A majestic white tiger resting on a mossy rock beside a waterfall in a tropical rainforest, photorealistic"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "qwen-image-max_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-max_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Qwen Image Max generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | A detailed text description of the desired image. Be specific about subjects, styles, lighting, and composition. |
+| negative_prompt | string | No | — | A description of elements to avoid in the generated image. Helps refine output quality by excluding unwanted features. |
+| image_size | string | No | square_hd | The resolution and aspect ratio of the output image. Supported values: square_hd, portrait_hd, landscape_hd. |
+| enable_prompt_expansion | boolean | No | true | Enables AI-driven enhancement of the prompt for richer, more detailed generation. |
+| enable_safety_checker | boolean | No | true | Activates content filtering to block inappropriate or harmful outputs. |
+| num_images | integer | No | 1 | Number of images to generate in a single request. Maximum value is 4. |
+| output_format | string | No | png | The file format of the generated image. Supported values: png, jpeg, webp. |
+Minimum Request
+```json
+{
+"prompt": "A majestic white tiger resting on a mossy rock beside a waterfall in a tropical rainforest, photorealistic"
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "A majestic white tiger resting on a mossy rock beside a waterfall in a tropical rainforest, photorealistic",
+"negative_prompt": "low resolution, error, worst quality, low quality, deformed",
+"image_size": "square_hd",
+"enable_prompt_expansion": true,
+"enable_safety_checker": true,
+"num_images": 1,
+"output_format": "png"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "qwen-image-max_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-max_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Qwen Image Max generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'qwen-image-max' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "qwen-image-max_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "qwen-image-max",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/qwen-image-max_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "qwen-image-max_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "qwen-image-max",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/qwen-image-max_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Qwen Image Max t2i Image Max T2I API Pricing
+
+No data available
+
+3. Qwen Image Edit
+
+#### Qwen Image Edit Image Edit API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/qwen-image/v1/generateMultimodeTextToImageEditRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"model": "qwen-image-edit",
+"input": {
+"messages": [
+{
+"role": "user",
+"content": [
+{
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/manwithbear.jpg"
+},
+{
+"text": "Change the person to a walking position, bending over to hold the bears front paws."
+}
+```
+]
+}
+]
+},
+"parameters": {
+"negative_prompt": "",
+"watermark": false
+}
+}
+
+**Output**
+```json
+{
+"status_code": 200,
+"request_id": "3daccb10-10ca-9399-8b6a-xxxxxx",
+"output": {
+"choices": [
+{
+"message": {
+"content": [
+{
+"image": "https://pub-...png"
+}
+```
+]
+}
+}
+]
+}
+}
+Request Parameters - Image Edit(Img2Img)
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| model | Yes | string | Model to use. Available value: "qwen-image-edit" (Qwen image editing model). |
+| input.messages | Yes | array | Array of message objects containing the image editing request. Must contain at least one user message. |
+| input.messages[].role | Yes | string | Role of the message sender. Must be "user" for image editing requests. |
+| input.messages[].content | Yes | array | Array of content objects containing both the input image and editing instructions. |
+| input.messages[].content[].image | Yes | string | Input image for editing. Can be a publicly accessible HTTP/HTTPS URL or Base64-encoded image data in format data:{MIME_type};base64,{base64_data}. |
+| input.messages[].content[].text | Yes | string | Text instructions describing the desired edits. Supports complex editing tasks including text editing, color adjustment, style transfer, and object manipulation. |
+| parameters.negative_prompt | No | string | Negative prompt to specify what should not appear in the edited image. Default: "" (empty string). |
+| parameters.watermark | No | boolean | Whether to add a watermark to the edited image. Default: false. |
+
+**Example Request**
+```json
+{
+"model": "qwen-image-edit",
+"input": {
+"messages": [
+{
+"role": "user",
+"content": [
+{
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/manwithbear.jpg"
+},
+{
+"text": "Change the person to a walking position, bending over to hold the bear's front paws."
+}
+```
+]
+}
+]
+},
+"parameters": {
+"negative_prompt": "",
+"watermark": false
+}
+}
+
+**Response**
+```json
+{
+"status_code": 200,
+"request_id": "3daccb10-10ca-9399-8b6a-xxxxxx",
+"code": "",
+"message": "",
+"output": {
+"text": null,
+"finish_reason": null,
+"choices": [
+{
+"finish_reason": "stop",
+"message": {
+"role": "assistant",
+"content": [
+{
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/qwen-image-edit/qwen-image-edit-3daccb10-10ca-9399-8b6a-xxxxxx-1703123456789.png"
+}
+```
+]
+}
+}
+]
+},
+"usage": {
+"input_tokens": 0,
+"output_tokens": 0,
+"width": 1248,
+"image_count": 1,
+"height": 832
+}
+}
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Image Edit(Img2Img).
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Qwen Image Edit Image Edit API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.045 |
+4. Qwen Image
+
+#### Qwen Image Text To Image API Documentation
+`https://gateway.pixazo.ai/qwen-image/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Text To Image Request - Qwen Image API
+
+**Request Code**
+POST /generateMultimodeTextToImageRequest HTTP/1.1
+Host: gateway.pixazo.ai
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+```json
+{
+"model": "qwen-image",
+"input": {
+"messages": [
+{
+"role": "user",
+"content": [
+{
+"text": "A serene lake at sunset, with mountains reflected in the water and a lone canoe on the shore."
+}
+```
+]
+}
+]
+},
+"parameters": {
+"size": "1328*1328"
+}
+}
+
+**Output**
+```json
+{
+"images": [
+{
+"file_name": "nano-banana-pro-edit-output.png",
+"content_type": "image/png",
+"url": "[RESPONSE_URL]"
+}
+```
+],
+"description": ""
+}
+Request Parameters - Text To Image Request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| model | string | Yes | — | Model to use. Available value: "qwen-image" (Qwen text-to-image generation model). |
+| input.messages | array | Yes | — | Array of message objects containing the generation request. Must contain at least one user message. |
+| input.messages[].role | string | Yes | — | Role of the message sender. Must be "user" for text-to-image generation requests. |
+| input.messages[].content | array | Yes | — | Array of content objects containing the text prompt for image generation. |
+| input.messages[].content[].text | string | Yes | — | Text prompt describing the image to generate. Supports complex descriptions, multi-line layouts, and fine-grained details. Excels at Chinese and English text rendering. |
+| parameters.negative_prompt | string | No | "" | Negative prompt to specify what should not appear in the generated image. |
+| parameters.prompt_extend | boolean | No | true | Whether to extend and enhance the input prompt automatically. |
+| parameters.watermark | boolean | No | true | Whether to add a watermark to the generated image. |
+| parameters.size | string | No | 1328*1328 | Output image dimensions in format "WIDTHxHEIGHT". Available sizes: "1328*1328", "1024*1024", "768*768", "512*512". |
+Minimum Request
+```json
+{
+"model": "qwen-image",
+"input": {
+"messages": [
+{
+"role": "user",
+"content": [
+{
+"text": "A serene lake at sunset, with mountains reflected in the water and a lone canoe on the shore."
+}
+```
+]
+}
+]
+},
+"parameters": {
+"size": "1328*1328"
+}
+}
+Full Request (all options)
+```json
+{
+"model": "qwen-image",
+"input": {
+"messages": [
+{
+"role": "user",
+"content": [
+{
+"text": "A serene lake at sunset, with mountains reflected in the water and a lone canoe on the shore."
+}
+```
+]
+}
+]
+},
+"parameters": {
+"negative_prompt": "",
+"prompt_extend": true,
+"watermark": true,
+"size": "1328*1328"
+}
+}
+
+**Response**
+```json
+{
+"images": [
+{
+"file_name": "nano-banana-pro-edit-output.png",
+"content_type": "image/png",
+"url": "[RESPONSE_URL]"
+}
+```
+],
+"description": ""
+}
+Response Fields - Text To Image Request
+| Field | Type | Description |
+| --- | --- | --- |
+| images | array | Array of generated image objects. |
+| images[].file_name | string | Name of the generated image file. |
+| images[].content_type | string | MIME type of the image, typically "image/png". |
+| images[].url | string | URL where the generated image can be downloaded. |
+| description | string | Optional descriptive text about the generated image, currently always empty. |
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Text To Image Request.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Qwen Image Text To Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.045 |
+5. Qwen LoRA v1
+
+#### Qwen LoRA v1 Generate (LoRA) API Documentation
+`https://gateway.pixazo.ai/qwen-image-edit-plus/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Generate Image Edit Request - Qwen Image Edit Plus Lora API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/qwen-image-edit-plus/v1/qwen-image-edit-plus-lora/generate
+Content-Type: application/json
+
+{
+"prompt": "Close shot of a woman standing next to this car on this highway",
+"image_urls": [
+"https://example.com/reference1.png",
+"https://example.com/reference2.png",
+"https://example.com/reference3.png"
+]
+}
+```
+
+**Output**
+```json
+{
+"request_id": "qwen-image-edit-plus-lora_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-edit-plus-lora_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Image Edit Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | Text prompt describing the desired image edit or generation |
+| image_urls | Yes | array | Array of reference image URLs (1-10 images) |
+| image_size | No | string or object | Output image size (see Image Size Options below) |
+| num_inference_steps | No | number | Number of inference steps (higher = better quality, slower) |
+| seed | No | number | Random seed for reproducibility |
+| guidance_scale | No | number | CFG (Classifier Free Guidance) scale (1-20) |
+| num_images | No | number | Number of images to generate (1-4) |
+| output_format | No | string | Output format: "png" or "jpeg" |
+| negative_prompt | No | string | What to avoid in the generated image |
+| acceleration | No | string | Acceleration level: "none" or "regular" |
+| enable_safety_checker | No | boolean | Enable NSFW content safety checker |
+| webhook | No | string | Webhook URL for async notifications |
+| webhook_events_filter | No | array | Event types to receive: ["start"], ["complete"], ["*"] |
+
+**Example Request**
+```json
+{
+"prompt": "Close shot of a woman standing next to this car on this highway",
+"image_urls": [
+"https://example.com/reference1.png",
+"https://example.com/reference2.png",
+"https://example.com/reference3.png"
+],
+"image_size": "square_hd",
+"num_inference_steps": 50,
+"guidance_scale": 4,
+"num_images": 1,
+"output_format": "png",
+"negative_prompt": " ",
+"acceleration": "regular",
+"enable_safety_checker": true
+}
+```
+
+**Response**
+```json
+{
+"request_id": "qwen-image-edit-plus-lora_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-edit-plus-lora_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'qwen-image-edit-plus-lora' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "qwen-image-edit-plus-lora_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "qwen-image-edit-plus-lora",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/qwen-image-edit-plus-lora_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "qwen-image-edit-plus-lora_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "qwen-image-edit-plus-lora",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/qwen-image-edit-plus-lora_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Qwen LoRA v1 Generate (LoRA) API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.055 |
+
+#### Qwen LoRA v1 Training API Documentation
+`https://gateway.pixazo.ai/qwen-image-edit-plus-trainer/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Training Request - Qwen Image Edit Plus Trainer API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/qwen-image-edit-plus-trainer/v1/qwen-image-edit-plus-trainer/generate
+Content-Type: application/json
+Ocp-Apim-Subscription-Key: your-subscription-key
+
+{
+"image_data_url": "https://example.com/lighting-training.zip",
+"steps": 1000
+}
+```
+
+**Output**
+```json
+{
+"request_id": "qwen-image-edit-plus-trainer_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-edit-plus-trainer_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Training Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| image_data_url | Yes | string | URL to ZIP archive containing training image pairs |
+| learning_rate | No | number | Learning rate for LoRA parameters (0.0-1.0) |
+| steps | No | number | Number of training steps (1-10000) |
+| default_caption | No | string | Default caption when caption files are missing |
+| reference_image_count | No | number | Number of reference images per entry (1-10) |
+| webhook | No | string | Webhook URL for training completion notifications |
+| webhook_events_filter | No | array | Event types to receive ("*" for all) |
+
+**Example Request**
+```json
+{
+"image_data_url": "https://example.com/lighting-training.zip",
+"learning_rate": 0.0002,
+"steps": 2000,
+"default_caption": "professional cinematic lighting with dramatic shadows",
+"reference_image_count": 2,
+"webhook": "https://your-domain.com/training-complete"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "qwen-image-edit-plus-trainer_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-edit-plus-trainer_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Ocp-Apim-Subscription-Key | Your subscription key |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'qwen-image-edit-plus-trainer' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "qwen-image-edit-plus-trainer_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "qwen-image-edit-plus-trainer",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/qwen-image-edit-plus-trainer_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "qwen-image-edit-plus-trainer_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "qwen-image-edit-plus-trainer",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/qwen-image-edit-plus-trainer_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Qwen LoRA v1 Training API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.04 |
+
+#### Qwen LoRA v1 Layered Image API Documentation
+`https://gateway.pixazo.ai/qwen-image-layered/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Qwen Image Layered generate request - Qwen Image Layered API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/qwen-image-layered/v1/qwen-image-layered-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/car_race.jpeg",
+"num_inference_steps": 28,
+"guidance_scale": 5.0,
+"num_images": 1,
+"enable_safety_checker": true,
+"output_format": "png",
+"acceleration": "regular"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "qwen-image-layered_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-layered_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Qwen Image Layered generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| image_url | Yes | string | Publicly accessible URL of the input image to be decomposed into layers. Must be reachable by the server. |
+| num_inference_steps | No | integer | Number of denoising steps during the decomposition process. Higher values yield finer details at the cost of processing time. |
+| guidance_scale | No | number | Controls the strength of the decomposition guidance. Higher values enforce stronger adherence to input structure. |
+| num_images | No | integer | Number of layer sets to generate (currently supports only 1). |
+| enable_safety_checker | No | boolean | Enables content safety filtering to block potentially harmful or inappropriate outputs. |
+| output_format | No | string | Output format for the generated layers. Only "png" is currently supported to preserve transparency. |
+| acceleration | No | string | Processing mode. Use "regular" for standard quality, "fast" for quicker but lower resolution outputs. |
+
+**Example Request**
+```json
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/car_race.jpeg",
+"num_inference_steps": 28,
+"guidance_scale": 5.0,
+"num_images": 1,
+"enable_safety_checker": true,
+"output_format": "png",
+"acceleration": "regular"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "qwen-image-layered_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/qwen-image-layered_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'qwen-image-layered' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "qwen-image-layered_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "qwen-image-layered",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/qwen-image-layered_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "qwen-image-layered_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "qwen-image-layered",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/qwen-image-layered_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Qwen LoRA v1 Layered Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.05 |
+API 
+---
+### SDXL 1.0 API, SDXL Turbo, 1.0 Lightning (Free) API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/sdxl
+
+
+by Stability AI
+
+SDXL 1.0 API, developers can access SDXL variants including Lightning and Turbo for different speed and quality tradeoffs. The API supports the widely-adopted SDXL ecosystem, ensuring compatibility with existing workflows and fine-tuned models.
+
+SDXL Turbo
+SDXL Base 1.0 - FREE
+SDXL Lightning
+Generate Image
+
+
+Generate Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### SDXL Turbo Generate Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/sdxlTurbo/v2/getData
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Create a detailed illustration of a sparrow perched on a branch. The bird should be depicted with its distinctive brown and gray feathers, a small beak, and bright, curious eyes. Surround the sparrow with a vibrant background of spring leaves and soft sunlight filtering through the trees, capturing the essence of a tranquil morning in nature.",
+"height": 768,
+"width": 768,
+"num_inference_steps": 50,
+"guidance_scale": 7.5,
+"seed": 42
+}
+```
+
+**Output**
+```json
+{
+"output": "https://d3re0c8wemxg38.cloudfront.net/output_mme/8891449d-7bbd-4150-9a56-86ff51378640.jpeg",
+"status": "complete",
+"message": "In progress"
+}
+```
+Request Parameters - SDXL Turbo Get Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | The text query that instructs the AI model on what kind of content to generate. In this case, "Create a detailed illustration of a sparrow perched on a branch..." |
+| height | No | integer | The height in pixels of the generated image. Default: 768 |
+| width | No | integer | The width in pixels of the generated image. Default: 768 |
+| num_inference_steps | Yes | integer | The number of diffusion steps; higher values can improve quality but take longer. Minimum: 1, Maximum: 50 |
+| guidance_scale | Yes | float | Determines the adherence to the prompt; higher values encourage better alignment with the prompt. Minimum: 0, Maximum: 15 |
+| seed | No | integer | A seed for random number generation to ensure reproducibility of the results. Default is usually set by the system if not specified |
+
+**Example Request**
+```json
+{
+"prompt": "Create a detailed illustration of a sparrow perched on a branch. The bird should be depicted with its distinctive brown and gray feathers, a small beak, and bright, curious eyes. Surround the sparrow with a vibrant background of spring leaves and soft sunlight filtering through the trees, capturing the essence of a tranquil morning in nature.",
+"height": 768,
+"width": 768,
+"num_inference_steps": 50,
+"guidance_scale": 7.5,
+"seed": 42
+}
+```
+
+**Response**
+```json
+{
+"output": "https://d3re0c8wemxg38.cloudfront.net/output_mme/8891449d-7bbd-4150-9a56-86ff51378640.jpeg",
+"status": "complete",
+"message": "In progress"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for SDXL Turbo Get Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+SDXL Turbo Generate Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0 |
+2. SDXL Base 1.0
+
+#### SDXL Base 1.0 Generate Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/getImage/v1/getSDXLImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negative_prompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance_scale": 5,
+"seed": 40
+}
+```
+
+**Output**
+```json
+{
+"imageUrl": ""
+}
+```
+Request Parameters - Get Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | String | The main instruction for the image generation |
+| negative_prompt | No | String | A prompt to specify what should be avoided in the image |
+| height | No | Integer | The height of the output image (e.g., 1024) |
+| width | No | Integer | The width of the output image (e.g., 1024) |
+| num_steps | No | Integer | The number of steps for the generation process (e.g., 20) |
+| guidance_scale | No | Integer | The guidance scale for the generation (e.g., 5) |
+| seed | No | Integer | The seed value for random number generation to ensure reproducibility |
+
+**Example Request**
+```json
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negative_prompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance_scale": 5,
+"seed": 40
+}
+```
+
+**Response**
+```json
+{
+"imageUrl": ""
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Get Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+SDXL Base 1.0 Generate Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0 |
+3. SDXL Lightning
+
+#### SDXL Lightning Generate Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/sdxl_lightning/getImage/v1/getSDXLImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negativePrompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance": 5,
+"seed": 42
+}
+```
+
+**Output**
+```json
+{
+"imageUrl": ""
+}
+```
+Request Parameters - Get Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | String | The main instruction for the image generation |
+| negativePrompt | No | String | A prompt to specify what should be avoided in the image |
+| height | No | Integer | The height of the output image (e.g., 1024) |
+| width | No | Integer | The width of the output image (e.g., 1024) |
+| num_steps | No | Integer | The number of steps for the generation process (e.g., 20) |
+| guidance | No | Integer | The guidance scale for the generation (e.g., 5) |
+| seed | No | Integer | The seed value for random number generation to ensure reproducibility |
+
+**Example Request**
+```json
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negativePrompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance": 5,
+"seed": 42
+}
+```
+
+**Response**
+```json
+{
+"imageUrl": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/sdxl_lightning/prompt-355182775-1724841428119-422172.png"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Get Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+SDXL Lightning Generate Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0 |
+API 
+---
+### Stable Diffusion 3.5 API, Stable Diffusion 3.0, 1.5, 1.0 Turbo, 1.0 Video (Free) API - AI Image & Video Generation APIs
+**Page:** https://www.pixazo.ai/models/stable-diffusion
+
+
+by Stability AI
+
+Stable Diffusion 3.5 API, developers can access multiple Stable Diffusion versions including 3.0, 3.5, and specialized models for inpainting and video generation. The API provides the flexibility and control that made Stable Diffusion the standard for AI image generation in production applications.
+
+Stable Diffusion v3.5
+Stable Diffusion v3
+Stable Diffusion XL v1.0 - FREE
+Stable Diffusion XL Lightning
+Stable Diffusion Inpainting - FREE
+Text To Image
+
+
+Text To Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Stable Diffusion v3.5 Text To Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/sd3-5/v1/r-sd-3-5-large
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: your-subscription-key
+
+{
+"prompt": "~*~aesthetic~*~ #boho #fashion, full-body 30-something woman laying on microfloral grass, candid pose, overlay reads Stable Diffusion 3.5, cheerful cursive typography font",
+"aspect_ratio": "1:1",
+"cfg": 4.5,
+"steps": 40,
+"output_format": "webp",
+"output_quality": 90,
+"prompt_strength": 0.85
+}
+```
+
+**Output**
+```json
+{
+"id": "j8qc0mvk8drmy0cxe4wvcy8ajw",
+"status": "succeeded",
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/sd-3-5-large/prompt-1775721091831-439186.webp"
+}
+```
+Request Parameters - Get Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | The text prompt describing the desired image |
+| aspect_ratio | Yes | string | Aspect ratio of the output image (e.g., "1:1", "16:9") |
+| cfg | Yes | number | Classifier-Free Guidance scale, controls prompt adherence (1.0-20.0) |
+| steps | Yes | number | Number of inference steps (20-100) |
+| output_format | Yes | string | Output format: "webp", "jpg", "png", "jpeg" |
+| output_quality | Yes | number | Quality level for compressed formats (1-100) |
+| prompt_strength | Yes | number | Strength of prompt influence (0.0-1.0) |
+
+**Example Request**
+```json
+{
+"prompt": "~*~aesthetic~*~ #boho #fashion, full-body 30-something woman laying on microfloral grass, candid pose, overlay reads Stable Diffusion 3.5, cheerful cursive typography font",
+"aspect_ratio": "1:1",
+"cfg": 4.5,
+"steps": 40,
+"output_format": "webp",
+"output_quality": 90,
+"prompt_strength": 0.85
+}
+```
+
+**Response**
+```json
+{
+"id": "j8qc0mvk8drmy0cxe4wvcy8ajw",
+"status": "succeeded",
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/sd-3-5-large/prompt-1775721091831-439186.webp"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | your-subscription-key |
+
+**Response Handling**
+
+Common status codes for Get Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Stable Diffusion v3.5 Text To Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.2 |
+2. Stable Diffusion v3
+
+#### Stable Diffusion v3 Text To Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/sd3/v1/getData
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Picture a sleek, futuristic car racing through a neon-lit cityscape, its engine humming efficiently as it blurs past digital billboards. The driver skillfully navigates the glowing streets, aiming for victory in this high-tech, adrenaline-fueled race of tomorrow.",
+"negativePrompt": "dark, blurry",
+"steps": 28,
+"cfg": 4.0,
+"aspect_ratio": "3:2",
+"output_format": "jpg",
+"output_quality": 90,
+"prompt_strength": 0.85
+}
+```
+
+**Output**
+```json
+{
+"output": "https://example.com/image.jpg"
+}
+```
+Request Parameters - Get Data
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | The text query that instructs the AI model on what kind of content to generate. In this case, "womens street skateboarding final in Paris Olympics 2024." |
+| negativePrompt | No | string | Negative prompts do not really work in SD3. Using a negative prompt will change your output in unpredictable ways. |
+| steps | No | integer | The number of steps for the transformation process. Default: 28, (minimum: 1, maximum: 28) |
+| cfg | No | decimal | The guidance scale tells the model how similar the output should be to the prompt. Default: 3.5, (minimum: 0, maximum: 20) |
+| aspect_ratio | No | string | The aspect ratio of your output image. This value is ignored if you are using an input image. Default: "1:1" |
+| output_format | No | string | Format of the output images. Default: "webp" |
+| output_quality | No | integer | Quality of the output images, from 0 to 100. 100 is best quality, 0 is lowest quality. Default: 90, (minimum: 0, maximum: 100) |
+| prompt_strength | No | decimal | Prompt strength (or denoising strength) when using image to image. 1.0 corresponds to full destruction of information in image. Default: 0.85, (minimum: 0, maximum: 1) |
+
+**Example Request**
+```json
+{
+"prompt": "Picture a sleek, futuristic car racing through a neon-lit cityscape, its engine humming efficiently as it blurs past digital billboards. The driver skillfully navigates the glowing streets, aiming for victory in this high-tech, adrenaline-fueled race of tomorrow.",
+"negativePrompt": "dark, blurry",
+"steps": 28,
+"cfg": 4.0,
+"aspect_ratio": "3:2",
+"output_format": "jpg",
+"output_quality": 90,
+"prompt_strength": 0.85
+}
+```
+
+**Response**
+```json
+{
+"output": "https://example.com/image.jpg"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Get Data.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Stable Diffusion v3 Text To Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.2 |
+3. Stable Diffusion XL v1.0
+
+#### Stable Diffusion XL v1.0 Text To Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/getImage/v1/getSDXLImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negative_prompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance_scale": 5,
+"seed": 40
+}
+```
+
+**Output**
+```json
+{
+"imageUrl": ""
+}
+```
+Request Parameters - Get Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | String | The main instruction for the image generation |
+| negative_prompt | No | String | A prompt to specify what should be avoided in the image |
+| height | No | Integer | The height of the output image (e.g., 1024) |
+| width | No | Integer | The width of the output image (e.g., 1024) |
+| num_steps | No | Integer | The number of steps for the generation process (e.g., 20) |
+| guidance_scale | No | Integer | The guidance scale for the generation (e.g., 5) |
+| seed | No | Integer | The seed value for random number generation to ensure reproducibility |
+
+**Example Request**
+```json
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negative_prompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance_scale": 5,
+"seed": 40
+}
+```
+
+**Response**
+```json
+{
+"imageUrl": ""
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Get Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Stable Diffusion XL v1.0 Text To Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0 |
+4. Stable Diffusion XL Lightning
+
+#### Stable Diffusion XL Lightning Text To Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/sdxl_lightning/getImage/v1/getSDXLImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negativePrompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance": 5,
+"seed": 42
+}
+```
+
+**Output**
+```json
+{
+"imageUrl": ""
+}
+```
+Request Parameters - Get Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | String | The main instruction for the image generation |
+| negativePrompt | No | String | A prompt to specify what should be avoided in the image |
+| height | No | Integer | The height of the output image (e.g., 1024) |
+| width | No | Integer | The width of the output image (e.g., 1024) |
+| num_steps | No | Integer | The number of steps for the generation process (e.g., 20) |
+| guidance | No | Integer | The guidance scale for the generation (e.g., 5) |
+| seed | No | Integer | The seed value for random number generation to ensure reproducibility |
+
+**Example Request**
+```json
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negativePrompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance": 5,
+"seed": 42
+}
+```
+
+**Response**
+```json
+{
+"imageUrl": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/sdxl_lightning/prompt-355182775-1724841428119-422172.png"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Get Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Stable Diffusion XL Lightning Text To Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0 |
+
+#### Stable Diffusion XL Lightning Text To Image(Stream) API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/sdxl_lightning/getImage/v1/getSDXLImageStream
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negativePrompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance": 5,
+"seed": 42
+}
+```
+
+**Output**
+```json
+{
+"imageUrl": "https://example.com/image.jpg"
+}
+```
+Request Parameters - Get Image Stream
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | String | The main instruction for the image generation |
+| negativePrompt | No | String | A prompt to specify what should be avoided in the image |
+| height | No | Integer | The height of the output image (e.g., 1024) |
+| width | No | Integer | The width of the output image (e.g., 1024) |
+| num_steps | No | Integer | The number of steps for the generation process (e.g., 20) |
+| guidance | No | Integer | The guidance scale for the generation (e.g., 5) |
+| seed | No | Integer | The seed value for random number generation to ensure reproducibility |
+
+**Example Request**
+```json
+{
+"prompt": "High-resolution, realistic image of a sparrow bird perched on a blooming cherry blossom branch during springtime. The sparrow feathers should be finely detailed with natural colors, including shades of brown and white. The background should be soft-focused with a clear blue sky, creating a serene and peaceful atmosphere.",
+"negativePrompt": "Low-quality, blurry image, with any other birds or animals. Avoid abstract or cartoonish styles, dark or gloomy atmosphere, unnecessary objects or distractions in the background, harsh lighting, and unnatural colors.",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance": 5,
+"seed": 42
+}
+```
+
+**Response**
+```json
+{
+"imageUrl": "https://example.com/image.jpg"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Get Image Stream.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Stable Diffusion XL Lightning Text To Image(Stream) API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0 |
+5. Stable Diffusion Inpainting
+
+#### Stable Diffusion Inpainting Inpaint Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/inpainting/v1/getImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Change to a lion",
+"imageUrl": "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog.png",
+"maskUrl": "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog-mask.png",
+"negative_prompt": "watermark",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance": 5,
+"seed": 42
+}
+```
+
+**Output**
+```json
+{
+"imageUrl": ""
+}
+```
+Request Parameters - Get Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | String | The main instruction for the image transformation |
+| imageUrl | No | URL | The URL of the initial image to be transformed |
+| maskUrl | No | URL | The URL of the mask image |
+| negativePrompt | No | String | A prompt to specify what should be avoided in the image |
+| height | No | Integer | The height of the output image (e.g., 1024) |
+| width | No | Integer | The width of the output image (e.g., 1024) |
+| num_steps | No | Integer | The number of steps for the transformation process (e.g., 20) |
+| guidance | No | Integer | The guidance scale for the transformation (e.g., 5) |
+| seed | No | Integer | The seed value for random number generation to ensure reproducibility |
+
+**Example Request**
+```json
+{
+"prompt": "Change to a lion",
+"imageUrl": "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog.png",
+"maskUrl": "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog-mask.png",
+"negative_prompt": "watermark",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance": 5,
+"seed": 42
+}
+```
+
+**Response**
+```json
+{
+"imageUrl": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/sdxl_lightning/prompt-355182775-1724841428119-422172.png"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Get Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Stable Diffusion Inpainting Inpaint Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0 |
+
+#### Stable Diffusion Inpainting Inpaint Image(Stream) API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/inpainting/v1/getImageStream
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Change to a lion"
+}
+```
+
+**Output**
+```json
+{
+"imageUrl": ""
+}
+```
+Request Parameters - Get Image Stream
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | String | The main instruction for the image transformation |
+| imageUrl | No | URL | The URL of the initial image to be transformed |
+| maskUrl | No | URL | The URL of the mask image |
+| negativePrompt | No | String | A prompt to specify what should be avoided in the image |
+| height | No | Integer | The height of the output image (e.g., 1024) |
+| width | No | Integer | The width of the output image (e.g., 1024) |
+| num_steps | No | Integer | The number of steps for the transformation process (e.g., 20) |
+| guidance | No | Integer | The guidance scale for the transformation (e.g., 5) |
+| seed | No | Integer | The seed value for random number generation to ensure reproducibility |
+
+**Example Request**
+```json
+{
+"prompt": "Change to a lion",
+"imageUrl": "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog.png",
+"maskUrl": "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog-mask.png",
+"negativePrompt": "watermark",
+"height": 1024,
+"width": 1024,
+"num_steps": 20,
+"guidance": 5,
+"seed": 42
+}
+```
+
+**Response**
+```json
+{
+"imageUrl": "https://example.com/generated-image-12345.png"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Get Image Stream.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Stable Diffusion Inpainting Inpaint Image(Stream) API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0 |
+API 
+---
+### Z-Image Turbo API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/z-image
+
+
+by Z-Image
+
+Z-Image Turbo API, developers can generate images with reduced latency for interactive applications and high-volume workflows. The API balances speed and quality, suitable for real-time creative tools and production environments where generation time is critical.
+
+Z-Image Turbo
+Z-Image Base
+Text To Image
+
+
+Text To Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Z-Image Turbo Text To Image API Documentation
+`https://gateway.pixazo.ai/z-image-turbo-834/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Generate Request - Z-Image Turbo API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/z-image-turbo-834/v1/z-image-turbo-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A hyper-realistic close-up of an Omo Valley tribal elder, adorned with white chalk patterns and a headdress of dried flowers, seed pods, and bottle caps. Razor-sharp skin texture with every pore and wrinkle visible. A warm firelight glows in the elder's soulful eyes against a blurred, smoky hut interior, captured in a Leica M6 / Kodak Portra 400 film aesthetic.",
+"image_size": "landscape_4_3",
+"num_inference_steps": 8,
+"num_images": 1,
+"enable_safety_checker": true,
+"output_format": "png",
+"acceleration": "none"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "z-image-turbo-834_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/z-image-turbo-834_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | A detailed textual description of the desired image. Be specific about subjects, styles, lighting, and composition for optimal results. |
+| image_size | Yes | string | The aspect ratio and resolution of the output image. Supported values: `portrait_3_4`, `landscape_4_3`, `square_1_1`, `portrait_9_16`, `landscape_16_9`. |
+| num_inference_steps | Optional | integer | Number of denoising steps during image generation. Lower values speed up generation but may reduce quality. Valid range: 1–50. |
+| num_images | Optional | integer | Number of images to generate per request. Maximum allowed value is 4. |
+| enable_safety_checker | Optional | boolean | Enables or disables content safety filtering. When enabled, potentially harmful or explicit content is blocked. |
+| output_format | Optional | string | File format of the generated image. Supported formats: `png`, `jpeg`, `webp`. |
+| acceleration | Optional | string | Specifies hardware acceleration mode. Currently only `none` is supported. |
+
+**Example Request**
+```json
+{
+"prompt": "A hyper-realistic close-up of an Omo Valley tribal elder, adorned with white chalk patterns and a headdress of dried flowers, seed pods, and bottle caps. Razor-sharp skin texture with every pore and wrinkle visible. A warm firelight glows in the elder's soulful eyes against a blurred, smoky hut interior, captured in a Leica M6 / Kodak Portra 400 film aesthetic.",
+"image_size": "landscape_4_3",
+"num_inference_steps": 8,
+"num_images": 1,
+"enable_safety_checker": true,
+"output_format": "png",
+"acceleration": "none"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "z-image-turbo-834_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/z-image-turbo-834_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'z-image-turbo-834' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "z-image-turbo-834_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "z-image-turbo-834",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/z-image-turbo-834_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "z-image-turbo-834_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "z-image-turbo-834",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/z-image-turbo-834_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Z-Image Turbo Text To Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.008 |
+2. Z-Image Base
+
+#### Z-Image Base Text To Image API Documentation
+`https://gateway.pixazo.ai/z-image-base/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Z-Image base generate request - Z-Image base
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/z-image-base/v1/z-image-base-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Grandmother knitting by a window, an empty chair by her",
+"image_size": "landscape_4_3"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "z-image-base_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/z-image-base_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Z-Image base generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | Text description describing the desired image. Be specific for best results. |
+| image_size | string | Yes | — | Aspect ratio of output image. Supported values: landscape_4_3, portrait_3_4, square_1_1, landscape_16_9, portrait_9_16. |
+| num_inference_steps | integer | No | 28 | Number of denoising steps. Higher values improve quality but increase processing time. Range: 10–100. |
+| guidance_scale | number | No | 4 | Controls how closely the model follows the prompt. Higher values increase prompt adherence. Range: 1–20. |
+| num_images | integer | No | 1 | Number of images to generate per request. Range: 1–4. |
+| enable_safety_checker | boolean | No | true | Enables content safety filtering to block inappropriate outputs. |
+| output_format | string | No | png | Output image format. Supported values: png, jpeg, webp. |
+| acceleration | string | No | regular | Optimization mode. Supported values: regular, fast, ultra_fast. |
+Minimum Request
+```json
+{
+"prompt": "Grandmother knitting by a window, an empty chair by her",
+"image_size": "landscape_4_3"
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "Grandmother knitting by a window, an empty chair by her",
+"image_size": "landscape_4_3",
+"num_inference_steps": 28,
+"guidance_scale": 4,
+"num_images": 1,
+"enable_safety_checker": true,
+"output_format": "png",
+"acceleration": "regular"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "z-image-base_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/z-image-base_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Z-Image base generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'z-image-base' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "z-image-base_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "z-image-base",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/z-image-base_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "z-image-base_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "z-image-base",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/z-image-base_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Z-Image Base Text To Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.01 |
+API 
+---
+
+### Category: Video Generation
+
+### GenFlare 2.0 API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/genflare
+
+
+by Baidu
+
+GenFlare 2.0 API, developers can bring images to life with realistic motion, creating engaging video content without traditional video production. The API excels at image-to-video transformation, adding natural movement and animation to still photographs for social media, marketing, and creative applications.
+
+Genflare v2
+Image To Video
+
+
+Image To Video
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Genflare v2 Image To Video API Documentation
+`https://gateway.pixazo.ai/baidu-genflare-2-0-api/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Image To Video - Baidu GenFlare 2.0 APIs
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/baidu-genflare-2-0-api/v1/generateImageToVideo2-5Request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"img_url": "https://example.com/images/cat.png",
+"prompt": "A cat running on the grass",
+"resolution": "480P",
+"duration": 5,
+"audio": false,
+"prompt_extend": true,
+"watermark": false
+}
+```
+
+**Output**
+```json
+{
+"request_id": "baidu-genflare-2-0-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/baidu-genflare-2-0-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Image To Video
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| img_url | Yes | string | URL to the first-frame image. Supports public URLs, Base64 encoding, or local file paths. |
+| prompt | No | string | Text description of the video to generate. Supports English and Chinese. |
+| negative_prompt | No | string | Default: null. Elements to exclude from the video. |
+| audio_url | No | string | URL to custom audio file (overrides audio parameter). Takes priority over `audio` setting. |
+| resolution | No | string | Default: "480P". Available resolutions: "480P", "720P", "1080P". Internally converted to size format. |
+| duration | No | integer | Default: 5. Video length in seconds. Available values: 5, 10 |
+| audio | No | boolean | Default: false. Audio behavior: false (silent), true (auto-generate audio) |
+| prompt_extend | No | boolean | Default: true. Enable intelligent prompt rewriting |
+| watermark | No | boolean | Default: false. Add watermark to video |
+| seed | No | integer | Random seed for reproducible results |
+
+**Example Request**
+```json
+{
+"img_url": "https://example.com/images/cat.png",
+"prompt": "A cat running on the grass",
+"resolution": "480P",
+"duration": 5,
+"audio": false,
+"prompt_extend": true,
+"watermark": false
+}
+```
+
+**Response**
+```json
+{
+"request_id": "baidu-genflare-2-0-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/baidu-genflare-2-0-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'baidu-genflare-2-0-api' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "baidu-genflare-2-0-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "baidu-genflare-2-0-api",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/baidu-genflare-2-0-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "baidu-genflare-2-0-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "baidu-genflare-2-0-api",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/baidu-genflare-2-0-api_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Genflare v2 Image To Video API Pricing
+
+No data available
+
+API 
+---
+### Higgsfield API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/higgsfield
+
+
+by Higgsfield
+
+Higgsfield API, developers can transform images into videos and generate motion content from text prompts. The API is designed for social media creators, marketers, and developers who need quick, high-quality video generation without complex production pipelines.
+
+Higgsfield v1
+Generate Image
+Image to Video
+
+
+Generate Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+Image to Video
+
+#### Higgsfield v1 Generate Image API Documentation
+`https://gateway.pixazo.ai/ai-model-api/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Generate Soul Request - AI Model API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/ai-model-api/v1/generateSoul
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Woman on rooftop",
+"soul_style_id": "a5f63c3b-70eb-4979-af5e-98c7ee1e18e8",
+"width_and_height": "1536x1152",
+"image_reference_type": "image_url",
+"image_reference_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Soul Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| webhook_url | No | string (URI) | The URL endpoint where callback requests will be sent. Must be a valid, accessible URI that can receive POST requests. If provided, `webhook_secret` is also required. |
+Example: https://your-domain.com/webhook
+| webhook_secret | No | string | Secret key used for verifying callback authenticity. Use this to validate that callbacks are genuinely from Higgsfield. Required if `webhook_url` is provided. |
+| --- | --- | --- | --- |
+Example: webhook_secret_abc123
+| prompt | Yes | string | Text description for image generation. Describes the desired image content, style, and visual characteristics. Be descriptive for better results. |
+Example: A serene mountain landscape at sunset with golden light
+| width_and_height | Yes | enum string | Desired width and height of output image. Available options: 1152x2048, 2048x1152, 2048x1536, 1536x2048, 1344x2016, 2016x1344, 960x1696, 1536x1536, 1536x1152, 1696x960, 1152x1536, 1088x1632, 1632x1088. |
+Example: 1152x2048
+| enhance_prompt | No | boolean | Whether to automatically enhance and refine the provided prompt. When true, the system will optimize your prompt for better image generation results. |
+Example: true
+| style_id | No | string (UUID) | Chosen preset for soul image generation. If null then General soul style is applied. Use /getTextToImageGetSoulStyles to get available style IDs. |
+Example: 464ea177-8d40-4940-8d9d-b438bab269c7. Get some other style using the API: https://endpoints.appypie.com/api-details#api=ai-model-api-polling&operation=soul-styles
+| style_strength | No | number | Strength of the style application. Range from 0.0 (minimal style) to 1.0 (maximum style) with 0.01 step precision. Higher values create more pronounced artistic effects. |
+Example: 0.8
+| quality | No | enum string | Output image quality. Available options: 720p, 1080p. Higher quality takes longer to generate but produces better results. |
+Example: 1080p
+| seed | No | integer | null | Seed for reproducibility. If null then random seed is applied. Must be between 1 and 1,000,000. Using the same seed with identical parameters will produce similar results. |
+Example: 500000
+| custom_reference_id | No | string (UUID) | null | The ID of a character that has already been created. Use this to generate images in a specific character's style. |
+Example: 3c90c3cc-0d44-4b50-8888-8dd25736052a
+| custom_reference_strength | No | number | Strength of the custom reference application. Range from 0.0 (minimal effect) to 1.0 (maximum effect) with 0.01 step precision. |
+Example: 0.9
+| image_reference_type | No | string | Type of the image reference. Must be image_url. Required if image_reference_image_url is provided. |
+| --- | --- | --- | --- |
+Example: image_url
+| image_reference_image_url | No | string (URI) | URL of an image to be used as a source for image generation. Must be a valid URI with length between 1-2083 characters. Required if image_reference_type is provided. |
+| --- | --- | --- | --- |
+Example: https://example.com/reference-image.jpg
+| batch_size | No | enum integer | Number of images to generate in a single batch. Available options: 1, 4. Higher batch sizes take longer but can be more cost-effective. |
+Example: 4
+
+**Example Request**
+```json
+{
+"prompt": "Woman on rooftop",
+"soul_style_id": "a5f63c3b-70eb-4979-af5e-98c7ee1e18e8",
+"width_and_height": "1536x1152",
+"image_reference_type": "image_url",
+"image_reference_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'ai-model-api' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "ai-model-api",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "ai-model-api",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/ai-model-api_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Higgsfield v1 Generate Image API Pricing
+| Resolution | Price (USD) |
+| Per generation | $0.15 |
+| Per generation | $0.19 |
+| Per generation | $0.25 |
+| Per generation | $0.37 |
+
+#### Higgsfield v1 Image to Video API Documentation
+`https://gateway.pixazo.ai/ai-model-api/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Image To Video Request - AI Model API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/ai-model-api/v1/generateImageToVideoRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"model": "dop-lite",
+"prompt": "A serene lake with gentle ripples, birds flying overhead, cinematic lighting",
+"seed": 123456,
+"motions_id": "[MOTION_ID]",
+"motions_strength": 0.7,
+"input_images": ["https://example.com/images/lake-scene.jpg"],
+"enhance_prompt": true
+}
+```
+
+**Output**
+```json
+{
+"request_id": "ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image To Video Request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| webhook_url | string (URI) | No | — | The URL endpoint where callback requests will be sent. Must be a valid, accessible URI that can receive POST requests. If provided, webhook_secret is also required. Example: https://your-domain.com/webhook |
+| webhook_secret | string | No | — | Secret key used for verifying callback authenticity. Use this to validate that callbacks are genuinely from Higgsfield. Required if webhook_url is provided. Example: webhook_secret_abc123 |
+| --- | --- | --- | --- | --- |
+| model | enum string | Yes | — | The image-to-video model to use for generation. Available options: dop-lite, dop-preview, dop-turbo. Each model offers different quality and speed trade-offs. Example: dop-lite |
+| prompt | string | Yes | — | Text description/prompt for video generation. Describes the desired video content, style, and motion. Be descriptive for better results. Example: A peaceful sunset over mountains with clouds moving slowly |
+| seed | integer | Yes | — | Random seed for reproducible results. Must be between 1 and 1,000,000. Using the same seed with identical parameters will produce similar results. Example: 500000 |
+| motions_id | string (UUID) | Yes | — | Unique identifier for the motion preset. This ID corresponds to predefined motion effects available in the system. You can get motion_id using the API: https://endpoints.appypie.com/api-details#api=ai-model-api-polling&operation=motions |
+| motions_strength | number (0-1) | Yes | — | Intensity of the motion effect application. Range from 0.0 (minimal effect) to 1.0 (maximum effect) with 0.01 step precision. Higher values create more pronounced motion. Example: 0.75 |
+| input_images | array of strings | Yes | — | Array of image URLs for video generation. Each URL must be a publicly accessible link pointing to a valid image file. Supported formats include JPEG, PNG, WebP. Must contain exactly 1 element for standard generation. Example: ["https://example.com/image1.jpg"] |
+| input_images_end | array of strings | No | null | Array of end frame image URLs for Start & End Frame functionality. Each URL must be a publicly accessible link pointing to a valid image file. Supported formats include JPEG, PNG, WebP. Minimum length: 1 element. Enables advanced frame interpolation between start and end images. Example: ["https://example.com/end-frame.jpg"] |
+| enhance_prompt | boolean | Yes | — | Whether to automatically enhance and refine the provided prompt. When true, the system will optimize your prompt for better video generation results. Example: true |
+| check_nsfw | boolean | No | true | Whether to perform NSFW (Not Safe For Work) content detection. When true, the system will check for inappropriate content and may reject the request if detected. |
+Minimum Request
+```json
+{
+"model": "dop-lite",
+"prompt": "A serene lake with gentle ripples, birds flying overhead, cinematic lighting",
+"seed": 123456,
+"motions_id": "[MOTION_ID]",
+"motions_strength": 0.7,
+"input_images": ["https://example.com/images/lake-scene.jpg"],
+"enhance_prompt": true
+}
+```
+Full Request (all options)
+```json
+{
+"webhook_url": "https://your-domain.com/webhook/callback",
+"webhook_secret": "your-webhook-secret-key",
+"model": "dop-lite",
+"prompt": "A serene lake with gentle ripples, birds flying overhead, cinematic lighting",
+"seed": 123456,
+"motions_id": "[MOTION_ID]",
+"motions_strength": 0.7,
+"input_images": ["https://example.com/images/lake-scene.jpg"],
+"input_images_end": ["https://example.com/images/lake-end-frame.jpg"],
+"enhance_prompt": true,
+"check_nsfw": true
+}
+```
+
+**Response**
+```json
+{
+"request_id": "ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Image To Video Request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'ai-model-api' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "ai-model-api",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "ai-model-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "ai-model-api",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/ai-model-api_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Higgsfield v1 Image to Video API Pricing
+| Resolution | Duration | Price (USD) |
+| dop-lite | 5s | $0.135 |
+| dop-preview | 5s | $0.573 |
+| dop-turbo | 5s | $0.416 |
+API 
+---
+### LTX 2.3 API, LTX 2 Pro API, LTX 2.0 API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/ltx
+
+
+by Lightricks
+
+LTX 2.3 API, users can access LTX-Video and LTX-2 variants for generating high-quality video content from text and images. The API is designed for creators and businesses needing production-ready video output with smooth motion and visual coherence.
+
+LTX v2 Pro
+LTX v2 19B
+LTX v2
+Text To Video
+
+
+Text To Video
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### LTX v2 Pro Text To Video API Documentation
+`https://gateway.pixazo.ai/lightricks/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+LTX V2 Video Generate - LTX V2 Pro
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/lightricks/v1/ltx/generate HTTP/1.1
+
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A cinematic drone shot of a futuristic city at night with flying cars and neon lights",
+"duration": 10,
+"resolution": "1080p",
+"generate_audio": true
+}
+```
+
+**Output**
+```json
+{
+"request_id": "lightricks-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/lightricks-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - LTX V2 Video Generate
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | Text description of the video you want to generate. Be specific and descriptive for best results. |
+| image | string | No | — | Image URL for image-to-video mode. Must be publicly accessible (HTTPS recommended). |
+| duration | integer | No | 6 | Video duration in seconds. Valid values: 6, 8, 10 |
+| resolution | string | No | 1080p | Output resolution. Valid values: 1080p, 1440p, 2160p |
+| generate_audio | boolean | No | true | Generate audio for the video (audio is preview quality) |
+| webhook | string | No | — | Callback URL for completion notification. |
+| webhook_events_filter | array | No | ["*"] | Events that trigger webhook. Valid values: ["*"] (all), ["completed"] (success/failure only) |
+Minimum Request
+```json
+{
+"prompt": "A serene mountain landscape at sunset with clouds moving slowly across the sky"
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "A cinematic drone shot of a futuristic city at night with flying cars and neon lights",
+"image": "https://example.com/input-photo.jpg",
+"duration": 10,
+"resolution": "2160p",
+"generate_audio": true,
+"webhook": "https://yourdomain.com/webhook",
+"webhook_events_filter": [
+"*"
+]
+}
+```
+
+**Response**
+```json
+{
+"request_id": "lightricks-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/lightricks-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for LTX V2 Video Generate.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'lightricks-video' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "lightricks-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "lightricks-video",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/lightricks-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "lightricks-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "lightricks-video",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/lightricks-video_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+LTX v2 Pro Text To Video API Pricing
+
+No data available
+
+2. LTX v2 19B
+
+#### LTX v2 19B Image To Video API Documentation
+`https://gateway.pixazo.ai/ltx-2-19b-api-513/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### LTX-2 19B API generate request - LTX-2 19B API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/ltx-2-19b-api-513/v1/ltx-2-19b-api-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A golden retriever running through a sunlit forest, tail wagging, leaves blowing in the wind",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/nano-banana.jpeg",
+"num_frames": 121,
+"video_size": "auto",
+"generate_audio": true,
+"use_multiscale": true,
+"fps": 25,
+"acceleration": "none",
+"camera_lora": "none",
+"camera_lora_scale": 1,
+"negative_prompt": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts.",
+"enable_safety_checker": true,
+"video_output_type": "X264 (.mp4)",
+"video_quality": "high",
+"video_write_mode": "balanced"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "ltx-2-19b-api-513_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ltx-2-19b-api-513_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - LTX-2 19B API generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | Text description guiding video generation, including actions, style, and context. |
+| image_url | Yes | string | Publicly accessible URL of the input image to animate. Must be reachable by the server. |
+| num_frames | No | integer | Total number of frames to generate in the output video. Higher values produce smoother animations. |
+| video_size | No | string | Resolution of the output video. Use "auto" to derive from input image dimensions, or specify "512x512", "768x768", etc. |
+| generate_audio | No | boolean | Whether to generate synchronized audio based on the prompt. If enabled, audio will be embedded in the video. |
+| use_multiscale | No | boolean | Enables multi-scale motion generation for more natural and detailed motion across different spatial scales. |
+| fps | No | integer | Frames per second for the output video. Higher values result in smoother motion. |
+| acceleration | No | string | Hardware acceleration mode. Use "none" for CPU-only, or "cuda" for GPU acceleration if supported. |
+| camera_lora | No | string | Camera motion control via LoRA adapter. Use "none" for no camera motion, or specify a trained LoRA model name. |
+| camera_lora_scale | No | number | Strength of the camera motion LoRA effect (0.0 to 2.0). Values above 1.0 amplify motion. |
+| negative_prompt | No | string | Description of undesired elements to exclude from the output (e.g., artifacts, distortions). Enhances output quality. |
+| enable_safety_checker | No | boolean | Enables content safety filtering to block potentially inappropriate or harmful outputs. |
+| video_output_type | No | string | Format of the output video file. Supports "X264 (.mp4)", "H265 (.mp4)", or "WebM". |
+| video_quality | No | string | Output video quality level. Values: "low", "balanced", "high". Higher quality increases file size and processing time. |
+| video_write_mode | No | string | Strategy for writing video frames. Options: "fast", "balanced", "high-quality". Influences rendering consistency and file integrity. |
+
+**Example Request**
+```json
+{
+"prompt": "A golden retriever running through a sunlit forest, tail wagging, leaves blowing in the wind",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/nano-banana.jpeg",
+"num_frames": 121,
+"video_size": "auto",
+"generate_audio": true,
+"use_multiscale": true,
+"fps": 25,
+"acceleration": "none",
+"camera_lora": "none",
+"camera_lora_scale": 1,
+"negative_prompt": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, wrong gaze direction, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts.",
+"enable_safety_checker": true,
+"video_output_type": "X264 (.mp4)",
+"video_quality": "high",
+"video_write_mode": "balanced"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "ltx-2-19b-api-513_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ltx-2-19b-api-513_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'ltx-2-19b-api-513' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "ltx-2-19b-api-513_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "ltx-2-19b-api-513",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/ltx-2-19b-api-513_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "ltx-2-19b-api-513_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "ltx-2-19b-api-513",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/ltx-2-19b-api-513_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+LTX v2 19B Image To Video API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.0896 |
+3. LTX v2
+
+#### LTX v2 Image To Video API Documentation
+`https://gateway.pixazo.ai/ltx-2-video-api-581/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### LTX-2 Video API generate request - LTX-2 Video API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/ltx-2-video-api-581/v1/ltx-2-video-api-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"image_url": "https://storage.googleapis.com/falserverless/example_inputs/ltxv-2-i2v-input.jpg",
+"prompt": "A woman stands still amid a busy neon-lit street at night. The camera slowly dollies in toward her face as people blur past, their motion emphasizing her calm presence. City lights flicker and reflections shift across her denim jacket."
+}
+```
+
+**Output**
+```json
+{
+"request_id": "ltx-2-video-api-581_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ltx-2-video-api-581_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - LTX-2 Video API generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| image_url | string | Yes | — | Publicly accessible URL to the input image (JPEG/PNG). Must be reachable by the service. |
+| prompt | string | Yes | — | Detailed textual description of the desired motion, camera movement, and visual context for the generated video. |
+| duration | integer | No | 6 | Duration of the generated video in seconds. Accepted values: 6, 8, 10. |
+| resolution | string | No | 1080p | Output video resolution. Accepted values: "720p", "1080p", "2160p". |
+| fps | integer | No | 25 | Frames per second of the output video. Accepted values: 24, 25, 30. |
+| generate_audio | boolean | No | false | Whether to generate synchronized audio that matches the video motion and mood. |
+Minimum Request
+```json
+{
+"image_url": "https://storage.googleapis.com/falserverless/example_inputs/ltxv-2-i2v-input.jpg",
+"prompt": "A woman stands still amid a busy neon-lit street at night. The camera slowly dollies in toward her face as people blur past, their motion emphasizing her calm presence. City lights flicker and reflections shift across her denim jacket."
+}
+```
+Full Request (all options)
+```json
+{
+"image_url": "https://storage.googleapis.com/falserverless/example_inputs/ltxv-2-i2v-input.jpg",
+"prompt": "A woman stands still amid a busy neon-lit street at night. The camera slowly dollies in toward her face as people blur past, their motion emphasizing her calm presence. City lights flicker and reflections shift across her denim jacket.",
+"duration": 6,
+"resolution": "1080p",
+"fps": 25,
+"generate_audio": true
+}
+```
+
+**Response**
+```json
+{
+"request_id": "ltx-2-video-api-581_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ltx-2-video-api-581_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for LTX-2 Video API generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'ltx-2-video-api-581' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "ltx-2-video-api-581_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "ltx-2-video-api-581",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/ltx-2-video-api-581_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "ltx-2-video-api-581_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "ltx-2-video-api-581",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/ltx-2-video-api-581_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+LTX v2 Image To Video API Pricing
+| Resolution | Duration | Price (USD) |
+| 1080p | 1s | $0.06 per second |
+| 1440p | 1s | $0.12 per second |
+| 2160p | 1s | $0.24 per second |
+API 
+---
+### Lucy Edit API - AI Video Editing APIs
+**Page:** https://www.pixazo.ai/models/lucy-edit
+
+
+by Decart
+
+Lucy Edit API, developers can implement intelligent video editing features that understand context and intent. The API supports fast video modifications, making it ideal for content creators needing quick turnaround on video edits.
+
+Lucy Edit Fast
+Edit Video(Fast)
+
+
+Edit Video(Fast)
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Lucy Edit Fast Edit Video(Fast) API Documentation
+`https://gateway.pixazo.ai/decart-lucy-edit-video-fast-142/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Generate Request - Decart Lucy Edit video fast API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/decart-lucy-edit-video-fast-142/v1/decart-lucy-edit-video-fast-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Change her blue coat to a formal brown jacket",
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/byteplus-videos/1764230857730-80dck2zr09t.mp4",
+"enhance_prompt": true
+}
+```
+
+**Output**
+```json
+{
+"request_id": "decart-lucy-edit-video-fast-142_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/decart-lucy-edit-video-fast-142_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | A natural language instruction describing the desired modification (e.g., “Change her blue coat to a formal brown jacket”). Be specific about object location, color, style, or context for best results. |
+| video_url | Yes | string | A publicly accessible HTTPS URL pointing to the source video file. Supported formats include MP4, MOV, and AVI. The video must be reachable without authentication. |
+| enhance_prompt | No | boolean | Enables semantic enhancement of the input prompt using AI to improve clarity and editing accuracy. Recommended for ambiguous or brief prompts. |
+
+**Example Request**
+```json
+{
+"prompt": "Change her blue coat to a formal brown jacket",
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/byteplus-videos/1764230857730-80dck2zr09t.mp4",
+"enhance_prompt": true
+}
+```
+
+**Response**
+```json
+{
+"request_id": "decart-lucy-edit-video-fast-142_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/decart-lucy-edit-video-fast-142_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'decart-lucy-edit-video-fast-142' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "decart-lucy-edit-video-fast-142_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "decart-lucy-edit-video-fast-142",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/decart-lucy-edit-video-fast-142_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "decart-lucy-edit-video-fast-142_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "decart-lucy-edit-video-fast-142",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/decart-lucy-edit-video-fast-142_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Lucy Edit Fast Edit Video(Fast) API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.2 |
+API 
+---
+### Mochi 1.0 API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/mochi
+
+
+by Mochi
+
+Mochi 1.0 API, developers can generate videos from text descriptions with high visual fidelity and temporal coherence. The API is optimized for creating engaging video content suitable for social media, marketing, and creative storytelling applications.
+
+Mochi v1
+Text To Video
+
+
+Text To Video
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Mochi v1 Text To Video API Documentation
+`https://gateway.pixazo.ai/68a5784c0828c041ba519ca6/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Video Request Submit - Mochi-v1 API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/mochi-v1-clone/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Create a serene video scene of a sparrow bird flying through a lush green forest under a bright blue sky.",
+"seed": 445
+}
+```
+
+**Output**
+```json
+{
+"request_id": "68a5784c0828c041ba519ca6_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/68a5784c0828c041ba519ca6_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Video Request Submit
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | The instruction or description for the video scene to be generated. |
+| seed | No | int | A random seed to ensure reproducibility of results. Must be between 1 and 4,294,967,296. |
+
+**Example Request**
+```json
+{
+"prompt": "Create a serene video scene of a sparrow bird flying through a lush green forest under a bright blue sky.",
+"seed": 445
+}
+```
+
+**Response**
+```json
+{
+"request_id": "68a5784c0828c041ba519ca6_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/68a5784c0828c041ba519ca6_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+Retrieving Video Status and URL
+
+After submitting your request, use this endpoint to check status and retrieve results.
+
+Endpoint
+
+```http
+POST https://gateway.pixazo.ai/mochi-v1-polling-clone/getStatus
+
+Request Body
+{
+"requestId": "ed9afcxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/mochi-v1-polling-clone/getStatus
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"requestId": "ed9afcxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Response**
+```json
+{
+"status": "completed",
+"video_url": ""
+}
+```
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model '68a5784c0828c041ba519ca6' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "68a5784c0828c041ba519ca6_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "68a5784c0828c041ba519ca6",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/68a5784c0828c041ba519ca6_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "68a5784c0828c041ba519ca6_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "68a5784c0828c041ba519ca6",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/68a5784c0828c041ba519ca6_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Mochi v1 Text To Video API Pricing
+| Resolution | Price (USD) |
+| Per generation | $0.4 |
+API 
+---
+### PixVerse V6 API, PixVerse V5.6 API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/pixverse
+
+
+by Pixverse
+
+PixVerse V6 API, developers can generate videos from text and images with focus on visual appeal and motion quality. The API is optimized for social media and marketing use cases, producing videos that capture attention and drive engagement across digital platforms.
+
+View in Playground
+Pixverse v6
+Pixverse v5.6
+Image To Video
+
+
+Image To Video
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Pixverse v6 Image To Video API Documentation
+`https://gateway.pixazo.ai/pixverse-v6-image-to-video/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+PixVerse V6 Image to Video generate request - PixVerse V6 Image to Video
+
+**Request Code**
+POST /pixverse-v6-image-to-video-request HTTP/1.1
+Host: gateway.pixazo.ai
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+```json
+{
+"prompt": "A gentle snowfall begins around the snow-covered tree, with soft flakes drifting down while the branches sway slightly in the winter breeze. The camera slowly orbits the tree, cinematic, peaceful winter atmosphere.",
+"resolution": "720p",
+"duration": 5,
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "pixverse-v6-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixverse-v6-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - PixVerse V6 Image to Video generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | A detailed text description of the desired video motion and atmosphere. Include camera movement, lighting, and mood. |
+| resolution | string | No | 720p | Output video resolution. Supported values: `360p`, `480p`, `720p`, `1080p`. |
+| duration | integer | No | 5 | Duration of the generated video in seconds. Must be between 1 and 15 inclusive. |
+| negative_prompt | string | No | — | Describes undesired elements to exclude from the output. Helps refine quality and avoid artifacts. |
+| image_url | string | Yes | — | Publicly accessible URL of the input image. Must be a valid HTTP/HTTPS link to a JPEG, PNG, or WebP image. |
+| style | string | No | — | The style of the generated video. Supported values: anime, 3d_animation, clay, comic, cyberpunk |
+| seed | integer | No | — | Random seed for reproducible generation. Same seed + same prompt = same output |
+| generate_audio_switch | boolean | No | false | Enable audio generation (BGM, SFX, dialogue). Increases cost per second |
+| generate_multi_clip_switch | boolean | No | false | Enable multi-clip generation with dynamic camera changes |
+| thinking_type | string | No | auto | Prompt optimization mode. Supported values: enabled (optimize), disabled (turn off), auto (model decision) |
+Minimum Request
+```json
+{
+"prompt": "A gentle snowfall begins around the snow-covered tree, with soft flakes drifting down while the branches sway slightly in the winter breeze. The camera slowly orbits the tree, cinematic, peaceful winter atmosphere.",
+"resolution": "720p",
+"duration": 5,
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "A gentle snowfall begins around the snow-covered tree, with soft flakes drifting down while the branches sway slightly in the winter breeze. The camera slowly orbits the tree, cinematic, peaceful winter atmosphere.",
+"resolution": "720p",
+"duration": 5,
+"negative_prompt": "blurry, low quality, low resolution, pixelated, noisy, grainy, out of focus, poorly lit, poorly exposed, poorly composed, poorly framed, poorly cropped, poorly color corrected, poorly color graded",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "pixverse-v6-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixverse-v6-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for PixVerse V6 Image to Video generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'pixverse-v6-image-to-video' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "pixverse-v6-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "pixverse-v6-image-to-video",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/pixverse-v6-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "pixverse-v6-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "pixverse-v6-image-to-video",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/pixverse-v6-image-to-video_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Pixverse v6 Image To Video API Pricing
+| Resolution | Price (USD) |
+| 360p | $0.025 per second |
+| 360p | $0.035 per second |
+| 540p | $0.035 per second |
+| 540p | $0.045 per second |
+| 720p | $0.045 per second |
+| 720p | $0.06 per second |
+| 1080p | $0.09 per second |
+| 1080p | $0.115 per second |
+2. Pixverse v5.6
+
+#### Pixverse v5.6 Text To Video API Documentation
+`https://gateway.pixazo.ai/pixverse/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Pixverse generate request - Pixverse
+
+**Request Code**
+POST /pixverse-request HTTP/1.1
+Host: gateway.pixazo.ai
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+```json
+{
+"prompt": "A golden sunset timelapse over a coastal city, waves crashing against the pier, seagulls flying, warm cinematic lighting, aerial drone perspective",
+"aspect_ratio": "16:9",
+"resolution": "720p",
+"duration": 5
+}
+```
+
+**Output**
+```json
+{
+"request_id": "pixverse_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixverse_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Pixverse generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | Detailed text description of the desired video scene, including motion, lighting, and style |
+| aspect_ratio | string | Yes | — | Aspect ratio of the output video. Supported values: "16:9", "9:16", "1:1", "4:3", "3:4" |
+| resolution | string | Yes | — | Output video resolution. Supported values: "720p", "1080p", "2160p" |
+| duration | integer | Yes | — | Duration of the video in seconds. Supported values: 3, 5, 7, 10 |
+| negative_prompt | string | No | — | Descriptions of elements to avoid in the generated video. Helps refine output quality |
+Minimum Request
+```json
+{
+"prompt": "A golden sunset timelapse over a coastal city, waves crashing against the pier, seagulls flying, warm cinematic lighting, aerial drone perspective",
+"aspect_ratio": "16:9",
+"resolution": "720p",
+"duration": 5
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "A golden sunset timelapse over a coastal city, waves crashing against the pier, seagulls flying, warm cinematic lighting, aerial drone perspective",
+"aspect_ratio": "16:9",
+"resolution": "720p",
+"duration": 5,
+"negative_prompt": "blurry, low quality, low resolution, pixelated, noisy, grainy, out of focus, poorly lit, poorly exposed, poorly composed, poorly framed, poorly cropped, poorly color corrected, poorly color graded"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "pixverse_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixverse_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Pixverse generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'pixverse' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "pixverse_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "pixverse",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/pixverse_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "pixverse_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "pixverse",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/pixverse_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Pixverse v5.6 Text To Video API Pricing
+
+No data available
+
+
+#### Pixverse v5.6 Image To Video API Documentation
+`https://gateway.pixazo.ai/pixverse-i2v/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Pixverse i2v generate request - Pixverse i2v
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/pixverse-i2v/v1/pixverse-i2v-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A fierce dragon breathing fire across a stormy night sky, lightning flashing in the background, cinematic dark fantasy",
+"resolution": "720p",
+"duration": "5",
+"image_url": "https://imagesai.appypie.com/7686410/ZU2sxXLmgRF6dgSktn9o_017731475651251.png"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "pixverse-i2v_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixverse-i2v_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Pixverse i2v generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | Text description describing the desired video motion and scene. Be detailed for best results. |
+| resolution | string | Yes | — | Target video resolution. Supported values: "720p", "1080p". |
+| duration | string | Yes | — | Duration of the generated video in seconds. Supported values: "5", "10". |
+| negative_prompt | string | No | — | Describes undesired elements to exclude from the video. Helps refine output quality. |
+| image_url | string | Yes | — | Publicly accessible URL of the input image to animate. Must be a valid HTTP/HTTPS link. |
+Minimum Request
+```json
+{
+"prompt": "A fierce dragon breathing fire across a stormy night sky, lightning flashing in the background, cinematic dark fantasy",
+"resolution": "720p",
+"duration": "5",
+"image_url": "https://imagesai.appypie.com/7686410/ZU2sxXLmgRF6dgSktn9o_017731475651251.png"
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "A fierce dragon breathing fire across a stormy night sky, lightning flashing in the background, cinematic dark fantasy",
+"resolution": "720p",
+"duration": "5",
+"negative_prompt": "blurry, low quality, low resolution, pixelated, noisy, grainy",
+"image_url": "https://imagesai.appypie.com/7686410/ZU2sxXLmgRF6dgSktn9o_017731475651251.png"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "pixverse-i2v_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixverse-i2v_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Pixverse i2v generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'pixverse-i2v' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "pixverse-i2v_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "pixverse-i2v",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/pixverse-i2v_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "pixverse-i2v_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "pixverse-i2v",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/pixverse-i2v_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Pixverse v5.6 Image To Video API Pricing
+
+No data available
+
+API 
+---
+### Topaz API - AI Video Enhancement APIs
+**Page:** https://www.pixazo.ai/models/topaz
+
+
+by Topaz
+
+Topaz API, developers can upscale videos to higher resolutions suitable for broadcast, cinema, and large-format displays. The API leverages Topaz's industry-recognized enhancement algorithms to restore old footage, improve user-generated content, and prepare videos for demanding production workflows where visual quality is critical.
+
+Topaz Video Upscaler
+Upscale Video
+
+
+Upscale Video
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Topaz Video Upscaler Upscale Video API Documentation
+`https://gateway.pixazo.ai/topaz-upscale-video-753/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Topaz Upscale Video generate request - Topaz Upscale Video
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/topaz-upscale-video-753/v1/topaz-upscale-video-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/kandinsky-5-0-pro-953/ijNirwcnwvZ0VLVPIylDF_output.mp4",
+"upscale_factor": 2
+}
+```
+
+**Output**
+```json
+{
+"request_id": "topaz-upscale-video-753_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/topaz-upscale-video-753_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Topaz Upscale Video generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| video_url | string | Yes | — | Publicly accessible URL of the source video file to be upscaled. Must be reachable by the API server. |
+| upscale_factor | integer | Yes | — | Multiplier for resolution enhancement. Supported values: 2 or 4. A factor of 2 doubles width and height (e.g., 720p → 1440p). A factor of 4 quadruples resolution (e.g., 720p → 2880p). |
+Minimum Request
+```json
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/kandinsky-5-0-pro-953/ijNirwcnwvZ0VLVPIylDF_output.mp4",
+"upscale_factor": 2
+}
+```
+Full Request (all options)
+```json
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/kandinsky-5-0-pro-953/ijNirwcnwvZ0VLVPIylDF_output.mp4",
+"upscale_factor": 2
+}
+```
+
+**Response**
+```json
+{
+"request_id": "topaz-upscale-video-753_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/topaz-upscale-video-753_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Topaz Upscale Video generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'topaz-upscale-video-753' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "topaz-upscale-video-753_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "topaz-upscale-video-753",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/topaz-upscale-video-753_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "topaz-upscale-video-753_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "topaz-upscale-video-753",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/topaz-upscale-video-753_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Topaz Video Upscaler Upscale Video API Pricing
+
+No data available
+
+API 
+---
+### VEED Fabric 1.0 API, Veed API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/veed
+
+
+by Veed
+
+VEED Fabric 1.0 API, developers can implement advanced video processing features that automatically improve video quality and remove backgrounds without green screens. The API is designed for content creators and video platforms needing automated video enhancement at scale.
+
+Veed Fabric v1.0
+Veed v1
+Fabric Generation
+
+
+Fabric Generation
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Veed Fabric v1.0 Fabric Generation API Documentation
+`https://gateway.pixazo.ai/veed-fabric-1-0-api-130/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+VEED Fabric 1.0 API generate request - VEED Fabric 1.0
+
+**Request Code**
+POST /veed-fabric-1-0-api-request HTTP/1.1
+Host: gateway.pixazo.ai
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+```json
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png",
+"audio_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Oz_g4AwQvXtXpUHL3Pa7u_Hope.mp3",
+"resolution": "720p"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "veed-fabric-1-0-api-130_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/veed-fabric-1-0-api-130_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - VEED Fabric 1.0 API generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| image_url | string | Yes | — | URL pointing to a static image (PNG, JPG) to be animated. Must be publicly accessible. |
+| audio_url | string | Yes | — | URL pointing to an audio file (MP3, WAV) that will drive lip-sync and facial motion. Must be publicly accessible. |
+| resolution | string | No | 720p | Output video resolution. Supported values: "720p", "1080p". |
+Minimum Request
+```json
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png",
+"audio_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Oz_g4AwQvXtXpUHL3Pa7u_Hope.mp3"
+}
+```
+Full Request (all options)
+```json
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png",
+"audio_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Oz_g4AwQvXtXpUHL3Pa7u_Hope.mp3",
+"resolution": "720p"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "veed-fabric-1-0-api-130_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/veed-fabric-1-0-api-130_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your subscription key |
+
+**Response Handling**
+
+Common status codes for VEED Fabric 1.0 API generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'veed-fabric-1-0-api-130' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "veed-fabric-1-0-api-130_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "veed-fabric-1-0-api-130",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/veed-fabric-1-0-api-130_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "veed-fabric-1-0-api-130_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "veed-fabric-1-0-api-130",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/veed-fabric-1-0-api-130_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Veed Fabric v1.0 Fabric Generation API Pricing
+
+No data available
+
+2. Veed v1
+
+#### Veed v1 Video Background Remover API Documentation
+`https://gateway.pixazo.ai/veed-video-background-remover-541/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Veed Video Background Remover generate request - Veed Video Background Remover
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/veed-video-background-remover-541/v1/veed-video-background-remover-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/kandinsky-5-0-pro-953/ijNirwcnwvZ0VLVPIylDF_output.mp4",
+"output_codec": "vp9",
+"refine_foreground_edges": true,
+"subject_is_person": true
+}
+```
+
+**Output**
+```json
+{
+"request_id": "veed-video-background-remover-541_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/veed-video-background-remover-541_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Veed Video Background Remover generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| video_url | string | Yes | — | Publicly accessible URL of the input video file to process. Must be accessible without authentication. |
+| output_codec | string | No | vp9 | Encoding codec for the output video. Supported values: vp9, h264, h265. |
+| refine_foreground_edges | boolean | No | true | Enables advanced edge refinement for smoother transitions between subject and background. Improves quality but increases processing time. |
+| subject_is_person | boolean | No | true | Optimizes segmentation model for human subjects. Disable if processing objects or animals. |
+Minimum Request
+```json
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/kandinsky-5-0-pro-953/ijNirwcnwvZ0VLVPIylDF_output.mp4"
+}
+```
+Full Request (all options)
+```json
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/kandinsky-5-0-pro-953/ijNirwcnwvZ0VLVPIylDF_output.mp4",
+"output_codec": "vp9",
+"refine_foreground_edges": true,
+"subject_is_person": true
+}
+```
+
+**Response**
+```json
+{
+"request_id": "veed-video-background-remover-541_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/veed-video-background-remover-541_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Veed Video Background Remover generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'veed-video-background-remover-541' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "veed-video-background-remover-541_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "veed-video-background-remover-541",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/veed-video-background-remover-541_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "veed-video-background-remover-541_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "veed-video-background-remover-541",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/veed-video-background-remover-541_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Veed v1 Video Background Remover API Pricing
+
+No data available
+
+API 
+---
+### Vidu API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/vidu
+
+
+by Vidu
+
+Vidu API, developers can create videos that follow reference images or styles, ensuring brand consistency and creative control. The API's Q2 Pro model delivers high-quality output suitable for commercial video production and content creation workflows.
+
+Vidu Q3
+Vidu v1
+Text To Video
+
+
+Text To Video
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Vidu Q3 Text To Video API Documentation
+`https://gateway.pixazo.ai/vidu/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Vidu generate request - Vidu
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/vidu/v1/vidu-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A slow-motion capture of a hummingbird hovering beside a vibrant red hibiscus flower, iridescent feathers catching sunlight, shallow depth of field, garden background",
+"duration": 5,
+"aspect_ratio": "16:9",
+"resolution": "720p",
+"audio": true
+}
+```
+
+**Output**
+```json
+{
+"request_id": "vidu_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/vidu_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Vidu generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | Detailed text description of the desired video scene |
+| duration | integer | Yes | — | Duration of the generated video in seconds (recommended: 3–10) |
+| aspect_ratio | string | Yes | — | Video aspect ratio: "16:9", "9:16", "1:1", "4:3", or "3:4" |
+| resolution | string | Yes | — | Output resolution: "720p", "1080p", or "4K" |
+| audio | boolean | Yes | — | Whether to generate synchronized audio with the video |
+Minimum Request
+```json
+{
+"prompt": "A slow-motion capture of a hummingbird hovering beside a vibrant red hibiscus flower, iridescent feathers catching sunlight, shallow depth of field, garden background",
+"duration": 5,
+"aspect_ratio": "16:9",
+"resolution": "720p",
+"audio": true
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "A slow-motion capture of a hummingbird hovering beside a vibrant red hibiscus flower, iridescent feathers catching sunlight, shallow depth of field, garden background",
+"duration": 5,
+"aspect_ratio": "16:9",
+"resolution": "720p",
+"audio": true
+}
+```
+
+**Response**
+```json
+{
+"request_id": "vidu_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/vidu_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for Vidu generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'vidu' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "vidu_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "vidu",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/vidu_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "vidu_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "vidu",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/vidu_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Vidu Q3 Text To Video API Pricing
+
+No data available
+
+2. Vidu v1
+
+#### Vidu v1 Reference To Video API Documentation
+`https://gateway.pixazo.ai/vidu-q2-reference-to-video-pro-api-454/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Vidu Q2 Reference to Video Pro API generate request - Vidu Q2 Reference to Video Pro API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/vidu-q2-reference-to-video-pro-api-454/v1/vidu-q2-reference-to-video-pro-api-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "@Figure 1 Character Reference@Refer to the special effects, movements, and camera work of Video 1.",
+"reference_image_urls": [
+"https://storage.googleapis.com/falserverless/model_tests/video_models/vidu-image-3123041388101890.png"
+],
+"reference_video_urls": [
+"https://storage.googleapis.com/falserverless/model_tests/video_models/vidu-video-3123002003131623.mp4"
+],
+"duration": 4,
+"resolution": "720p",
+"aspect_ratio": "16:9",
+"movement_amplitude": "auto"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "vidu-q2-reference-to-video-pro-api-454_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/vidu-q2-reference-to-video-pro-api-454_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Vidu Q2 Reference to Video Pro API generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | A descriptive text prompt that defines the desired action, scene, or context, while referencing the style and motion from the provided reference video. Use `@Figure X Character Reference@` syntax to explicitly link character identities to reference imagery. |
+| reference_image_urls | Yes | array of strings | Array of HTTPS URLs pointing to static reference images used to define character appearance, clothing, or static scene context. Each URL must be publicly accessible. |
+| reference_video_urls | Yes | array of strings | Array of HTTPS URLs pointing to reference video clips that define motion patterns, camera movement, lighting transitions, and special effects to be replicated. Must be MP4 format. |
+| duration | Optional | integer | Duration of the output video in seconds. Must be between 1 and 10. |
+| resolution | Optional | string | Output video resolution. Supported values: "480p", "720p", "1080p". |
+| aspect_ratio | Optional | string | Output video aspect ratio. Supported values: "16:9", "9:16", "1:1". |
+| movement_amplitude | Optional | string | Controls the intensity of motion reproduction from reference video. Values: "low", "medium", "high", "auto". "auto" enables dynamic adaptation based on reference content. |
+
+**Example Request**
+```json
+{
+"prompt": "@Figure 1 Character Reference@Refer to the special effects, movements, and camera work of Video 1.",
+"reference_image_urls": [
+"https://storage.googleapis.com/falserverless/model_tests/video_models/vidu-image-3123041388101890.png"
+],
+"reference_video_urls": [
+"https://storage.googleapis.com/falserverless/model_tests/video_models/vidu-video-3123002003131623.mp4"
+],
+"duration": 4,
+"resolution": "720p",
+"aspect_ratio": "16:9",
+"movement_amplitude": "auto"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "vidu-q2-reference-to-video-pro-api-454_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/vidu-q2-reference-to-video-pro-api-454_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'vidu-q2-reference-to-video-pro-api-454' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "vidu-q2-reference-to-video-pro-api-454_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "vidu-q2-reference-to-video-pro-api-454",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/vidu-q2-reference-to-video-pro-api-454_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "vidu-q2-reference-to-video-pro-api-454_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "vidu-q2-reference-to-video-pro-api-454",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/vidu-q2-reference-to-video-pro-api-454_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Vidu v1 Reference To Video API Pricing
+
+No data available
+
+API 
+---
+
+### Category: Audio & Music
+
+### Ace Step 1.5 XL API, Ace Step 1.5 API - AI Music Generation APIs
+**Page:** https://www.pixazo.ai/models/ace-step
+
+
+by ACE Studio
+
+Ace Step 1.5 XL API, developers can generate high-quality custom soundtracks, background music, and audio content with ease. The API enables creators to produce professional-grade music compositions suitable for videos, games, podcasts, and multimedia projects without traditional music production expertise.
+
+Ace Step 1.5 XL
+Ace Step 1.5
+Music Generation
+
+
+Music Generation
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Ace Step 1.5 XL Music Generation API Documentation
+`https://gateway.pixazo.ai/ace-step-xl/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Submit Music Generation Request - ACE Step 1.5 XL API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/ace-step-xl/v1/submitMusicGenerationRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "Uplifting pop song with acoustic guitar and bright piano",
+"lyrics": "[verse]\nWoke up to a sky painted gold\n\n[chorus]\nYou are my sunshine after the rain",
+"duration": 60
+}
+```
+
+**Output**
+```json
+{
+"request_id": "ace-step-xl_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ace-step-xl_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Submit Music Generation Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | Genre, instruments, mood, vocals description (e.g., "Uplifting pop song with acoustic guitar, bright piano") |
+| lyrics | No | string | Song lyrics with structure tags: [verse], [chorus], [bridge], [outro]. Default: empty |
+| duration | No | number | Audio duration in seconds, max 600 (10 min). Default: 30 |
+| seed | No | integer | Fixed seed for reproducible output. Default: -1 (random) |
+| bpm | No | number | Beats per minute. Default: auto |
+| key | No | string | Musical key (e.g., "C major", "B minor"). Default: auto |
+| time_signature | No | string | Time signature (e.g., "4/4", "3/4"). Default: auto |
+| batch_size | No | integer | Number of variations to generate (1-4). Default: 1 |
+| thinking | No | boolean | LM "thinks" about prompt before generating for better quality. Default: false |
+
+**Example Request**
+```json
+{
+"prompt": "Uplifting pop song with acoustic guitar, bright piano, and energetic drums. Female vocals, 120 BPM, key of C major",
+"lyrics": "[verse]\nWoke up to a sky painted gold\nSoft light dancing on my window\n\n[chorus]\nYou are my sunshine after the rain\nRunning wild through every vein",
+"duration": 180,
+"seed": 42,
+"bpm": 120,
+"key": "C major",
+"time_signature": "4/4",
+"batch_size": 4,
+"thinking": true
+}
+```
+
+**Response**
+```json
+{
+"request_id": "ace-step-xl_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ace-step-xl_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance. Required: $0.01"
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'ace-step-xl' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "ace-step-xl_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "ace-step-xl",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/ace-step-xl_019d42ce-946d-7739-f812-6875c434cb790"
+Response (Completed)
+{
+"request_id": "ace-step-xl_019d42ce-946d-7739-f812-6875c434cb790",
+"status": "COMPLETED",
+"model_id": "ace-step-xl",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/ace-step-xl_019d42ce-946d-7739-f812-6875c434cb790/output_0.wav"
+],
+"media_type": "audio/wav"
+},
+"created_at": "2026-03-31T07:32:03.749Z",
+"updated_at": "2026-03-31T07:32:20.000Z",
+"completed_at": "2026-03-31T07:32:20.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type (audio/wav) |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Ace Step 1.5 XL Music Generation API Pricing
+| Resolution | Price (USD) |
+| Per Generation | $0.015 |
+2. Ace Step 1.5
+
+#### Ace Step 1.5 Music Generation API Documentation
+`https://gateway.pixazo.ai/ace-step/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Music - Ace step
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/ace-step/v1/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A cinematic Hans Zimmer style orchestral piece, building tension with heavy percussion and brass, epic atmosphere",
+"lyrics": "",
+"instrumental": true,
+"duration": 120,
+"bpm": 140,
+"infer_steps": 25,
+"guidance_scale": 7.5,
+"seed": 42
+}
+```
+
+**Output**
+```json
+{
+"request_id": "ace-step_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ace-step_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Music
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | Describes the overall musical style, genre, mood, instrumentation, and atmosphere. |
+| lyrics | No | string | Temporal script of the song. Controls structure, sections, vocal style, instrumental breaks, and lyrical content. |
+| instrumental | No | boolean | If true, generates instrumental-only music (no vocals). |
+| duration | No | integer | Target duration in seconds. |
+| bpm | No | integer | Target tempo in beats per minute. |
+| infer_steps | No | integer | Number of inference steps; higher values may increase quality but take longer. |
+| guidance_scale | No | float | Controls how strongly the model follows the prompt. |
+| seed | No | integer | Used for reproducibility. Same seed and parameters produce similar outputs. |
+
+**Example Request**
+```json
+{
+"prompt": "A cinematic Hans Zimmer style orchestral piece, building tension with heavy percussion and brass, epic atmosphere",
+"lyrics": "",
+"instrumental": true,
+"duration": 120,
+"bpm": 140,
+"infer_steps": 25,
+"guidance_scale": 7.5,
+"seed": 42
+}
+```
+
+**Response**
+```json
+{
+"request_id": "ace-step_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/ace-step_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'ace-step' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "ace-step_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "ace-step",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/ace-step_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "ace-step_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "ace-step",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/ace-step_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Ace Step 1.5 Music Generation API Pricing
+| Resolution | Price (USD) |
+| All | $0.01 |
+API 
+---
+### Chatterbox API - AI Text to Speech APIs
+**Page:** https://www.pixazo.ai/models/chatterbox
+
+
+by Resemble-ai
+
+Chatterbox API, developers can convert text into lifelike audio with customizable voice characteristics. The API supports multiple languages and speaking styles, making it ideal for voiceovers, audiobooks, virtual assistants, and accessibility applications requiring human-quality speech output.
+
+Chatterbox v1
+Text To Speech
+
+
+Text To Speech
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Chatterbox v1 Text To Speech API Documentation
+`https://gateway.pixazo.ai/chatterbox-text-to-speech/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Chatterbox Text to Speech generate request - Chatterbox Text to Speech API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/chatterbox-text-to-speech/v1/chatterbox-text-to-speech-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"text": "Hello world, this is a test of the Chatterbox text to speech model.",
+"audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/prompts/male_rickmorty.mp3",
+"exaggeration": 0.25,
+"temperature": 0.7,
+"cfg": 0.5
+}
+```
+
+**Output**
+```json
+{
+"request_id": "chatterbox-text-to-speech_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/chatterbox-text-to-speech_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Chatterbox Text to Speech generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| text | Yes | string | The textual content to convert into speech. Must be a valid string of readable language. |
+| audio_url | No | string | A URL pointing to an audio file (e.g., MP3) to serve as a voice reference. Used to clone or adapt the speaking style. |
+| exaggeration | No | number | Controls the degree of expressive emphasis in the generated speech. Higher values increase modulation (e.g., intonation, stress). Range: 0.0 to 1.0. |
+| temperature | No | number | Controls randomness in voice generation. Higher values increase variability in pitch and timing; lower values produce more consistent, predictable speech. Range: 0.1 to 1.0. |
+| cfg | No | number | Classifier-Free Guidance strength. Influences how closely the output adheres to the input prompt and reference audio. Higher values increase fidelity. Range: 0.0 to 2.0. |
+
+**Example Request**
+```json
+{
+"text": "Hello world, this is a test of the Chatterbox text to speech model.",
+"audio_url": "https://storage.googleapis.com/chatterbox-demo-samples/prompts/male_rickmorty.mp3",
+"exaggeration": 0.25,
+"temperature": 0.7,
+"cfg": 0.5
+}
+```
+
+**Response**
+```json
+{
+"request_id": "chatterbox-text-to-speech_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/chatterbox-text-to-speech_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance. Required: $0.01"
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'chatterbox-text-to-speech' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "chatterbox-text-to-speech_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "chatterbox-text-to-speech",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/chatterbox-text-to-speech_019d42ce-bc92-7f98-8181-b42db433b9f2e"
+Response (Completed)
+{
+"request_id": "chatterbox-text-to-speech_019d42ce-bc92-7f98-8181-b42db433b9f2e",
+"status": "COMPLETED",
+"model_id": "chatterbox-text-to-speech",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/chatterbox-text-to-speech_019d42ce-bc92-7f98-8181-b42db433b9f2e/output.wav"
+],
+"media_type": "audio/wav"
+},
+"created_at": "2026-03-31T07:32:03.749Z",
+"updated_at": "2026-03-31T07:32:20.000Z",
+"completed_at": "2026-03-31T07:32:20.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type (audio/wav) |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Chatterbox v1 Text To Speech API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.03 |
+API 
+---
+### Minimax Music 2.5 API, Minimax Image, Minimax 2.6, 1.0 API - AI Music and Image Generation APIs
+**Page:** https://www.pixazo.ai/models/minimax
+
+
+by MiniMax
+
+Minimax Music 2.5 API, developers can access all MiniMax modalities including text-to-video, image generation, voice synthesis, and music creation. The API provides a unified interface for multimodal content generation, ideal for applications requiring diverse media outputs.
+
+MiniMax Speech 2.6 HD
+MiniMax Voice Design v1
+MiniMax Image 01
+Music Generation
+Get Audio Result
+
+
+Music Generation
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+Get Audio Result
+
+#### MiniMax Speech 2.6 HD Music Generation API Documentation
+`https://gateway.pixazo.ai/minimax-hailuo-ai-music/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Generate Speech Task - MiniMax Hailuo Speech API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/minimax-hailuo-ai-music/v1/getAudio
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"text": "Hello, this is a simple text to speech conversion."
+}
+```
+
+**Output**
+```json
+{
+"request_id": "minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Speech Task
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| text | Yes | string | The text to be synthesized into speech. The length limit is less than 50,000 characters. Paragraph switches are replaced by newlines. To add pauses in speech, use <#x#> between words, where x is the number of seconds, supporting values from 0.01 to 99.99 (up to two decimal places). The text must be syntactically correct for voice pronunciation. |
+| model | No | string | Specifies the speech synthesis model. Options include "speech-2.6-hd", "speech-2.6-turbo", "speech-02-hd", "speech-02-turbo", "speech-01-hd", "speech-01-turbo". This affects the voice characteristics of the output. |
+| voice_id | No | string | The ID of the target voice. Supports system voices, cloned voices, and AI-generated voices. See voice options below. |
+| speed | No | number | Defines the speed of speech. Acceptable range is from 0.5 to 2.0, where a higher value results in faster speech. |
+| vol | No | number | Sets the volume of the synthesized speech. The range is (0,10], with higher values yielding louder audio. |
+| pitch | No | integer | Adjusts the pitch of the generated speech. The range is [-12, 12], where 0 retains the original tone. |
+| emotion | No | string | Controls the emotional tone of the generated speech. Options include "happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper". |
+| audio_sample_rate | No | integer | Audio sample rate. Options: 8000, 16000, 22050, 24000, 32000, 44100. |
+| bitrate | No | integer | Audio bitrate. Options: 32000, 64000, 128000, 256000. |
+| format | No | string | Audio format. Options: "mp3", "pcm", "flac". |
+| channel | No | integer | Audio channels (1=mono, 2=stereo). |
+| pronunciation_dict | No | object | Pronunciation rules for specific characters/symbols. Example: {"tone": ["omg/oh my god"]} |
+| language_boost | No | string | Language enhancement for minority languages. Options: "Chinese", "Chinese,Yue", "English", "Arabic", "Russian", "Spanish", "French", "Portuguese", "German", "Turkish", "Dutch", "Ukrainian", "Vietnamese", "Indonesian", "Japanese", "Italian", "Korean", "Thai", "Polish", "Romanian", "Greek", "Czech", "Finnish", "Hindi", "Bulgarian", "Danish", "Hebrew", "Malay", "Persian", "Slovak", "Swedish", "Croatian", "Filipino", "Hungarian", "Norwegian", "Slovenian", "Catalan", "Nynorsk", "Tamil", "Afrikaans", "auto" |
+| voice_modify | No | object | Voice effect settings. Properties: pitch (-100 to 100), intensity (-100 to 100), timbre (-100 to 100), sound_effects ("spacious_echo", "auditorium_echo", "lofi_telephone", "robotic") |
+
+**Example Request**
+```json
+{
+"text": "Hello, this is an advanced text to speech conversion with custom settings.",
+"voice_id": "female-chengshu",
+"speed": 1.0,
+"emotion": "happy"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'minimax-hailuo-audio' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "minimax-hailuo-audio",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "minimax-hailuo-audio",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/minimax-hailuo-audio_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+MiniMax Speech 2.6 HD Music Generation API Pricing
+| Resolution | Price (USD) |
+| Per 1000 Characters | $0.1 |
+
+#### MiniMax Speech 2.6 HD Get Audio Result API Documentation
+`https://gateway.pixazo.ai/minimax-hailuo-ai-music/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Get Speech Result - MiniMax Hailuo Speech API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/minimax-hailuo-ai-music/v1/getAudioResult
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"task_id": "344614765236532"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Get Speech Result
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| task_id | Yes | string | Task ID returned from the create audio task. |
+
+**Example Request**
+```json
+{
+"task_id": "344614765236532"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'minimax-hailuo-audio' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "minimax-hailuo-audio",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "minimax-hailuo-audio_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "minimax-hailuo-audio",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/minimax-hailuo-audio_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+MiniMax Speech 2.6 HD Get Audio Result API Pricing
+| Resolution | Price (USD) |
+| Per 1000 Characters | $0.1 |
+2. MiniMax Voice Design v1
+
+#### MiniMax Voice Design v1 Voice Design API Documentation
+`https://gateway.pixazo.ai/minimax-voice-design-api-363/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+MiniMax Voice Design API generate request - MiniMax Voice Design
+
+**Request Code**
+POST /minimax-voice-design-api-request HTTP/1.1
+Host: gateway.pixazo.ai
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+```json
+{
+"prompt": "Bubbly and excitable female pop star interviewee, youthful, slightly breathless, and very enthusiastic",
+"preview_text": "Oh my gosh, hi. It iss like so amazing to be here. This new endpoint just dropped on pixazo and the results have been like totally incredible. Use it now, It is gonna be like epic!"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "minimax-voice-design-api-363_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/minimax-voice-design-api-363_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - MiniMax Voice Design API generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| prompt | string | Yes | — | A natural language description of the desired voice personality, tone, and characteristics (e.g., age, gender, emotion, style). This defines the unique vocal identity to be synthesized. |
+| preview_text | string | Yes | — | The sample text that will be spoken by the generated voice. Must be a natural, expressive phrase that demonstrates the intended vocal style. |
+Minimum Request
+```json
+{
+"prompt": "Bubbly and excitable female pop star interviewee, youthful, slightly breathless, and very enthusiastic",
+"preview_text": "Oh my gosh, hi. It's like so amazing to be here."
+}
+```
+Full Request (all options)
+```json
+{
+"prompt": "Bubbly and excitable female pop star interviewee, youthful, slightly breathless, and very enthusiastic",
+"preview_text": "Oh my gosh, hi. It iss like so amazing to be here. This new endpoint just dropped on pixazo and the results have been like totally incredible. Use it now, It is gonna be like epic!"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "minimax-voice-design-api-363_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/minimax-voice-design-api-363_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for MiniMax Voice Design API generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'minimax-voice-design-api-363' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "minimax-voice-design-api-363_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "minimax-voice-design-api-363",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/minimax-voice-design-api-363_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "minimax-voice-design-api-363_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "minimax-voice-design-api-363",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/minimax-voice-design-api-363_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+MiniMax Voice Design v1 Voice Design API Pricing
+| Resolution | Price (USD) |
+| Per 1000 Characters | $0.03 |
+3. MiniMax Image 01
+
+#### MiniMax Image 01 Image To Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/image-generation/v1/i2i
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A girl looking into the distance from a library window",
+"subject_reference": [
+{
+"type": "character",
+"image_file": "https://example.com/input-image.jpg"
+}
+```
+]
+}
+
+**Output**
+```json
+{
+"id": "03ff3cd0820949eb8a410056b5f21d38",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/..."
+],
+"image_count": 4
+}
+```
+Request Parameters - Image to Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | Text description of desired modifications or style to apply to the input image. |
+| subject_reference | Yes | array | Array of reference images. Each object contains: `type` ("character", "object", etc.) and `image_file` (URL or base64). Images must be <10MB, JPG/JPEG/PNG format. |
+| model | No | string | Model name. Currently only "image-01" is supported. |
+| aspect_ratio | No | string | Image aspect ratio. Options: "1:1" (1024x1024), "16:9" (1280x720), "4:3" (1152x864), "3:2" (1248x832), "2:3" (832x1248), "3:4" (864x1152), "9:16" (720x1280), "21:9" (1344x576). |
+| width | No | integer | Image width in pixels (512-2048, divisible by 8). Must be used with height. aspect_ratio takes priority if both are provided. |
+| height | No | integer | Image height in pixels (512-2048, divisible by 8). Must be used with width. aspect_ratio takes priority if both are provided. |
+| response_format | No | string | Response format. Options: "url" (expires in 24 hours) or "base64". |
+| seed | No | integer | Random seed for reproducible results. Same seed + parameters = same image. |
+| n | No | integer | Number of images to generate (1-9). |
+| prompt_optimizer | No | boolean | Enable automatic prompt optimization. |
+
+**Example Request**
+```json
+{
+"prompt": "A futuristic cyberpunk cityscape at night, neon lights, flying cars, dramatic shadows, highly detailed, cinematic lighting",
+"subject_reference": [
+{
+"type": "character",
+"image_file": "https://example.com/input-image.jpg"
+},
+{
+"type": "object",
+"image_file": "https://example.com/reference-object.png"
+}
+```
+],
+"model": "image-01",
+"aspect_ratio": "16:9",
+"response_format": "url",
+"seed": 98765,
+"n": 4,
+"prompt_optimizer": true
+}
+
+**Response**
+```json
+{
+"id": "03ff3cd0820949eb8a410056b5f21d38",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/minimax_images/i2i-1234567890-123456-1.png",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/minimax_images/i2i-1234567890-123456-2.png",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/minimax_images/i2i-1234567890-123456-3.png",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/minimax_images/i2i-1234567890-123456-4.png"
+],
+"image_count": 4,
+"metadata": {
+"success_count": "4",
+"failed_count": "0"
+},
+"base_resp": {
+"status_code": 0,
+"status_msg": "success"
+}
+```
+}
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Image to Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+MiniMax Image 01 Image To Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.02 |
+
+#### MiniMax Image 01 Text To Image API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/image-generation/v1/t2i
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A beautiful sunset over mountains"
+}
+```
+
+**Output**
+```json
+{
+"id": "03ff3cd0820949eb8a410056b5f21d38",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/minimax_images/t2i-1234567890-123456-1.png"
+],
+"image_count": 1
+}
+```
+Request Parameters - Text to Image
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | Text description of the image, maximum 1500 characters. |
+| model | No | string | Model name. Currently only "image-01" is supported. |
+| aspect_ratio | No | string | Image aspect ratio. Options: "1:1" (1024x1024), "16:9" (1280x720), "4:3" (1152x864), "3:2" (1248x832), "2:3" (832x1248), "3:4" (864x1152), "9:16" (720x1280), "21:9" (1344x576). |
+| width | No | integer | Image width in pixels (512-2048, divisible by 8). Must be used with height. aspect_ratio takes priority if both are provided. |
+| height | No | integer | Image height in pixels (512-2048, divisible by 8). Must be used with width. aspect_ratio takes priority if both are provided. |
+| response_format | No | string | Response format. Options: "url" (expires in 24 hours) or "base64". |
+| seed | No | integer | Random seed for reproducible results. Same seed + parameters = same image. |
+| n | No | integer | Number of images to generate (1-9). |
+| prompt_optimizer | No | boolean | Enable automatic prompt optimization. |
+
+**Example Request**
+```json
+{
+"prompt": "A man in a white t-shirt, full-body, standing front view, outdoors, with the Venice Beach sign in the background, Los Angeles. Fashion photography in 90s documentary style, film grain, photorealistic.",
+"model": "image-01",
+"aspect_ratio": "16:9",
+"response_format": "url",
+"seed": 12345,
+"n": 3,
+"prompt_optimizer": true
+}
+```
+
+**Response**
+```json
+{
+"id": "03ff3cd0820949eb8a410056b5f21d38",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/minimax_images/t2i-1234567890-123456-1.png",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/minimax_images/t2i-1234567890-123456-2.png",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/minimax_images/t2i-1234567890-123456-3.png"
+],
+"image_count": 3,
+"metadata": {
+"success_count": "3",
+"failed_count": "0"
+},
+"base_resp": {
+"status_code": 0,
+"status_msg": "success"
+}
+```
+}
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes for Text to Image.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+MiniMax Image 01 Text To Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.02 |
+API 
+---
+### Tracks API - AI Music Generation APIs
+**Page:** https://www.pixazo.ai/models/tracks
+
+
+by Pixazo
+
+Tracks API, content creators, filmmakers, and musicians can generate high-quality original music tracks for their projects. The API offers intuitive controls for style, tempo, and mood, making professional music creation accessible to users of all skill levels.
+
+View in Playground
+Track v1.0
+Music Generation
+
+
+Music Generation
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Track v1.0 Music Generation API Documentation
+`https://gateway.pixazo.ai/tracks/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Music - Tracks
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/tracks/v1/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A cinematic Hans Zimmer style orchestral piece, building tension with heavy percussion and brass, epic atmosphere",
+"lyrics": "",
+"instrumental": true,
+"duration": 120,
+"bpm": 140,
+"infer_steps": 25,
+"guidance_scale": 7.5,
+"seed": 42
+}
+```
+
+**Output**
+```json
+{
+"request_id": "tracks_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/tracks_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Music
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | Describes the overall musical style, genre, mood, instrumentation, and atmosphere. |
+| lyrics | No | string | Temporal script of the song. Controls structure, sections, vocal style, instrumental breaks, and lyrical content. |
+| instrumental | No | boolean | If true, generates instrumental-only music (no vocals). |
+| duration | No | integer | Target duration in seconds. |
+| bpm | No | integer | Target tempo in beats per minute. Beats per minute (30-300). enables auto-detection via LM. |
+| infer_steps | No | integer | Number of denoising steps. Base model: 1-200 (recommended 32-64). Higher = better quality but slower. |
+| guidance_scale | No | float | Controls how strongly the model follows the prompt. Typical range: 5.0-9.0. |
+| seed | No | integer | Used for reproducibility. Same seed and parameters produce similar outputs. Random seed for reproducibility. Use -1 for random seed, or any positive integer for fixed seed. |
+
+**Example Request**
+```json
+{
+"prompt": "A cinematic Hans Zimmer style orchestral piece, building tension with heavy percussion and brass, epic atmosphere",
+"lyrics": "",
+"instrumental": true,
+"duration": 120,
+"bpm": 140,
+"infer_steps": 25,
+"guidance_scale": 7.5,
+"seed": 42
+}
+```
+
+**Response**
+```json
+{
+"request_id": "tracks_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/tracks_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'tracks' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "tracks_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "tracks",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/tracks_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "tracks_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "tracks",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/tracks_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Track v1.0 Music Generation API Pricing
+| Resolution | Price (USD) |
+| All | $0 |
+API 
+---
+### XTTS API - AI Voice Cloning & Text to Speech APIs
+**Page:** https://www.pixazo.ai/models/xtts
+
+
+by Xtts
+
+XTTS API, developers can clone voices and generate speech in multiple languages while maintaining the cloned voice characteristics. The API is ideal for content localization, personalized voice experiences, and applications requiring custom voice generation across language barriers.
+
+v2
+Text To Speech
+
+
+Text To Speech
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### v2 Text To Speech API Documentation
+`https://gateway.pixazo.ai/voice-clone/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Text to Speech Request - XTTS V2 API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/voice-clone/v1/xtts-v2/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"speaker": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/male.wav",
+"text": "Hello! Welcome to our voice cloning service.",
+"language": "en"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "xtts-v2-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/xtts-v2-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Text to Speech Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| speaker | Yes | string | URL to speaker audio file (wav, mp3, m4a, ogg, or flv). 3-10 seconds of clear speech recommended |
+| text | No | string | Default: "Hi there, I'm your new voice clone. Try your best to upload quality audio", Text to synthesize (max 500 characters recommended) |
+| language | No | string | Default: "en", Output language code. Supported: en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh, hu, ko, hi |
+| cleanup_voice | No | boolean | Default: false, Apply denoising to speaker audio. Use for microphone recordings with background noise |
+| webhook | No | string | Default: null, Callback URL for completion notification. POST request sent with results when complete |
+| webhook_events_filter | No | array | Default: ["*"], Events that trigger webhook. Values: ["*"] (all), ["completed"] (success/failure only) |
+
+**Example Request**
+```json
+{
+"speaker": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/male.wav",
+"text": "Hello! Welcome to our voice cloning service.",
+"language": "en"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "xtts-v2-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/xtts-v2-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'xtts-v2-api' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "xtts-v2-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "xtts-v2-api",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/xtts-v2-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "xtts-v2-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "xtts-v2-api",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/xtts-v2-api_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+v2 Text To Speech API Pricing
+| Resolution | Price (USD) |
+| All | $0.015 |
+API 
+---
+
+### Category: 3D Generation
+
+### Hyper3D API - AI 3D Model Generation APIs
+**Page:** https://www.pixazo.ai/models/hyper3d
+
+
+by Hyper3D
+
+Hyper3D API, developers can create production-ready 3D assets for games, simulations, and visualization without manual modeling. The API supports various 3D formats and provides mesh optimization for different platform requirements.
+
+Hyper3D Rodin v1
+3D Generation
+
+
+3D Generation
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Hyper3D Rodin v1 3D Generation API Documentation
+`https://gateway.pixazo.ai/hyper3d-rodin-259/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Hyper3D Rodin generate request - Hyper3D Rodin
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/hyper3d-rodin-259/v1/hyper3d-rodin-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prompt": "A futuristic robot with sleek metallic design and glowing blue accents",
+"input_image_urls": "https://storage.googleapis.com/falserverless/model_tests/video_models/robot.png",
+"condition_mode": "concat",
+"geometry_file_format": "glb",
+"material": "Shaded",
+"quality": "medium",
+"tier": "Regular"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "hyper3d-rodin-259_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/hyper3d-rodin-259_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Hyper3D Rodin generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| prompt | Yes | string | A detailed textual description of the desired 3D object or scene. Be specific about shape, texture, color, and context. |
+| input_image_urls | No | string | URL to a single input image used as a reference for 3D generation. Supported formats: PNG, JPG, JPEG. |
+| condition_mode | No | string | Determines how the input image is used in generation. "concat" combines image features with text prompt. Other modes may be supported in future. |
+| geometry_file_format | No | string | Output format for the generated 3D geometry. Supported values: "glb", "gltf", "obj". |
+| material | No | string | Style of material rendering. Options: "Shaded", "Wireframe", "Flat". |
+| quality | No | string | Level of detail and rendering quality. Values: "low", "medium", "high", "ultra". |
+| tier | No | string | Processing priority tier. "Regular" is standard; "Premium" may be available for paid plans. |
+
+**Example Request**
+```json
+{
+"prompt": "A futuristic robot with sleek metallic design and glowing blue accents",
+"input_image_urls": "https://storage.googleapis.com/falserverless/model_tests/video_models/robot.png",
+"condition_mode": "concat",
+"geometry_file_format": "glb",
+"material": "Shaded",
+"quality": "medium",
+"tier": "Regular"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "hyper3d-rodin-259_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/hyper3d-rodin-259_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'hyper3d-rodin-259' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "hyper3d-rodin-259_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "hyper3d-rodin-259",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/hyper3d-rodin-259_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "hyper3d-rodin-259_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "hyper3d-rodin-259",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/hyper3d-rodin-259_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Hyper3D Rodin v1 3D Generation API Pricing
+| Resolution | Price (USD) |
+| Per Generation | $0.4 |
+API 
+---
+### Trellis 2 API, Trellis 3D API - AI 3D Model Generation APIs
+**Page:** https://www.pixazo.ai/models/trellis3d
+
+
+by Trellis
+
+Trellis 2 API, developers can transform product photos, concept art, and designs into production-ready 3D assets. The API streamlines 3D content creation for e-commerce, gaming, and AR/VR applications where converting existing 2D assets to 3D provides significant workflow advantages.
+
+Trellis v2
+Image To 3D
+
+
+Image To 3D
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Trellis v2 Image To 3D API Documentation
+`https://gateway.pixazo.ai/trellis-2-image-to-3d/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Trellis 2 Image to 3D generate request - Trellis 2 Image to 3D API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/trellis-2-image-to-3d/v1/trellis-2-image-to-3d-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"resolution": 1024,
+"ss_guidance_strength": 7.5,
+"ss_guidance_rescale": 0.7,
+"ss_sampling_steps": 12,
+"ss_rescale_t": 5,
+"shape_slat_guidance_strength": 7.5,
+"shape_slat_guidance_rescale": 0.5,
+"shape_slat_sampling_steps": 12,
+"shape_slat_rescale_t": 3,
+"tex_slat_guidance_strength": 1,
+"tex_slat_sampling_steps": 12,
+"tex_slat_rescale_t": 3,
+"decimation_target": 500000,
+"texture_size": 2048,
+"remesh": true,
+"remesh_band": 1
+}
+```
+
+**Output**
+```json
+{
+"request_id": "trellis-2-image-to-3d_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/trellis-2-image-to-3d_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Trellis 2 Image to 3D generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| image_url | Yes | string | URL of the input 2D image to convert into a 3D model. Must be publicly accessible. |
+| resolution | No | integer | Resolution of the initial 3D generation pass. Higher values yield finer detail but longer processing. |
+| ss_guidance_strength | No | number | Strength of shape guidance during the initial shape generation stage. Higher values enforce structure fidelity. |
+| ss_guidance_rescale | No | number | Rescaling factor applied to shape guidance to prevent overfitting. Helps balance creativity and structure. |
+| ss_sampling_steps | No | integer | Number of denoising steps during shape generation. More steps improve quality but increase latency. |
+| ss_rescale_t | No | integer | Time rescaling parameter for shape generation. Modulates how guidance changes over time steps. |
+| shape_slat_guidance_strength | No | number | Strength of shape SLAT (Spatial Latent Attention) guidance during refinement. |
+| shape_slat_guidance_rescale | No | number | Rescaling factor for shape SLAT guidance to smooth output. |
+| shape_slat_sampling_steps | No | integer | Number of denoising steps in the shape SLAT refinement stage. |
+| shape_slat_rescale_t | No | integer | Time rescaling value for shape SLAT refinement. |
+| tex_slat_guidance_strength | No | number | Strength of texture SLAT guidance during texturing pass. Controls detail in surface appearance. |
+| tex_slat_sampling_steps | No | integer | Number of denoising steps during texture generation. |
+| tex_slat_rescale_t | No | integer | Time rescaling value for texture SLAT generation. |
+| decimation_target | No | integer | Target number of polygons in the final mesh. Reduces mesh complexity for performance. |
+| texture_size | No | integer | Resolution of the generated texture map (e.g., 1024, 2048). Higher values improve texture quality. |
+| remesh | No | boolean | Whether to apply topology-preserving remeshing to improve mesh quality. |
+| remesh_band | No | integer | Bandwidth parameter for remeshing. Controls edge preservation during topology optimization. |
+
+**Example Request**
+```json
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"resolution": 1024,
+"ss_guidance_strength": 7.5,
+"ss_guidance_rescale": 0.7,
+"ss_sampling_steps": 12,
+"ss_rescale_t": 5,
+"shape_slat_guidance_strength": 7.5,
+"shape_slat_guidance_rescale": 0.5,
+"shape_slat_sampling_steps": 12,
+"shape_slat_rescale_t": 3,
+"tex_slat_guidance_strength": 1,
+"tex_slat_sampling_steps": 12,
+"tex_slat_rescale_t": 3,
+"decimation_target": 500000,
+"texture_size": 2048,
+"remesh": true,
+"remesh_band": 1
+}
+```
+
+**Response**
+```json
+{
+"request_id": "trellis-2-image-to-3d_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/trellis-2-image-to-3d_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'trellis-2-image-to-3d' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "trellis-2-image-to-3d_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "trellis-2-image-to-3d",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/trellis-2-image-to-3d_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "trellis-2-image-to-3d_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "trellis-2-image-to-3d",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/trellis-2-image-to-3d_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Trellis v2 Image To 3D API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.35 |
+API 
+---
+### Tripo3D API - AI 3D Model Generation APIs
+**Page:** https://www.pixazo.ai/models/tripo3d
+
+
+by Tripo
+
+Tripo3D API, developers can rapidly create 3D assets for prototyping, visualization, and production use. The API supports version 2.5 with improved geometry and texturing, making it suitable for game development, product visualization, and digital twin creation where speed and quality are both essential.
+
+Tripo3D v2.5
+Generate 3D Model
+
+
+Generate 3D Model
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Tripo3D v2.5 Generate 3D Model API Documentation
+`https://gateway.pixazo.ai/tripo3d-v2-5-413/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Tripo3D v2.5 generate request - Tripo3D v2.5
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/tripo3d-v2-5-413/v1/tripo3d-v2-5-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"texture": "standard",
+"texture_alignment": "original_image",
+"orientation": "default",
+"image_url": "https://platform.tripo3d.ai/assets/front-235queJB.jpg"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "tripo3d-v2-5-413_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/tripo3d-v2-5-413_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Tripo3D v2.5 generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| texture | No | string | Controls the texture quality and style of the generated 3D model. |
+| texture_alignment | No | string | Determines how the input image's texture is mapped onto the 3D model surface. |
+| orientation | No | string | Specifies the default orientation of the output 3D model. |
+| image_url | Yes | string | Publicly accessible URL of the 2D input image to be converted into a 3D model. Must be reachable by the server. |
+
+**Example Request**
+```json
+{
+"texture": "standard",
+"texture_alignment": "original_image",
+"orientation": "default",
+"image_url": "https://platform.tripo3d.ai/assets/front-235queJB.jpg"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "tripo3d-v2-5-413_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/tripo3d-v2-5-413_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'tripo3d-v2-5-413' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "tripo3d-v2-5-413_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "tripo3d-v2-5-413",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/tripo3d-v2-5-413_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "tripo3d-v2-5-413_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "tripo3d-v2-5-413",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/tripo3d-v2-5-413_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Tripo3D v2.5 Generate 3D Model API Pricing
+
+No data available
+
+API 
+---
+
+### Category: Image Processing
+
+### Bria 2.0 RMBG API - AI Background Remover APIs
+**Page:** https://www.pixazo.ai/models/bria
+
+
+by Bria
+
+Bria 2.0 RMBG API, businesses can access Bria's commercially-licensed models for creating and modifying images at scale. The API is designed for production workflows requiring high-quality outputs with clear intellectual property rights and enterprise-grade reliability.
+
+Bria RMBG 2.0
+Background Removal
+
+
+Background Removal
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Bria RMBG 2.0 Background Removal API Documentation
+`https://gateway.pixazo.ai/bria-rmbg-2-0-682/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### BRIA RMBG 2.0 generate request - BRIA RMBG 2.0 API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/bria-rmbg-2-0-682/v1/bria-rmbg-2-0-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"image_url": "https://storage.googleapis.com/generativeai-downloads/images/cat.jpg"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "bria-rmbg-2-0-682_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/bria-rmbg-2-0-682_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - BRIA RMBG 2.0 generate request
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| image_url | string | Yes | — | URL of the input image from which the background will be removed. Must be publicly accessible. |
+Minimum Request
+```json
+{
+"image_url": "https://storage.googleapis.com/generativeai-downloads/images/cat.jpg"
+}
+```
+Full Request (all options)
+```json
+{
+"image_url": "https://storage.googleapis.com/generativeai-downloads/images/cat.jpg"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "bria-rmbg-2-0-682_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/bria-rmbg-2-0-682_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | Your API subscription key |
+
+**Response Handling**
+
+Common status codes for BRIA RMBG 2.0 generate request.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'bria-rmbg-2-0-682' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "bria-rmbg-2-0-682_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "bria-rmbg-2-0-682",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/bria-rmbg-2-0-682_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "bria-rmbg-2-0-682_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "bria-rmbg-2-0-682",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/bria-rmbg-2-0-682_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Bria RMBG 2.0 Background Removal API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.018 |
+API 
+---
+### Crystal Upscaler API - AI Image Upscaling APIs
+**Page:** https://www.pixazo.ai/models/crystal-upscaler
+
+
+by Clarityai
+
+Crystal Upscaler API, developers can upscale low-resolution images up to 4x their original size without the blurriness of traditional methods. The API is perfect for enhancing product photos, restoring old images, preparing content for print, and improving visual assets for high-resolution displays.
+
+Crystal Upscaler v1
+Upscale Image
+
+
+Upscale Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### Crystal Upscaler v1 Upscale Image API Documentation
+`https://gateway.pixazo.ai/upscaler/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Image Request - Crystal Upscaler API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/upscaler/v1/crystal-upscaler/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"image": "https://example.com/portrait.jpg",
+"scale_factor": 4
+}
+```
+
+**Output**
+```json
+{
+"request_id": "crystal-upscaler_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/crystal-upscaler_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| image | Yes | string | Input image URL to upscale. Must be publicly accessible (HTTPS recommended). |
+| scale_factor | No | integer | Upscaling factor. Valid values: 2, 4, 6 or 8. |
+| webhook | No | string | Callback URL for completion notification. POST request sent with results when complete. |
+| webhook_events_filter | No | array | Events that trigger webhook. Valid values: ["*"] (all), ["completed"] (success/failure only). |
+
+**Example Request**
+```json
+{
+"image": "https://example.com/portrait.jpg",
+"scale_factor": 4
+}
+```
+
+**Response**
+```json
+{
+"request_id": "crystal-upscaler_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/crystal-upscaler_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'crystal-upscaler' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "crystal-upscaler_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "crystal-upscaler",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/crystal-upscaler_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "crystal-upscaler_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "crystal-upscaler",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/crystal-upscaler_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+Crystal Upscaler v1 Upscale Image API Pricing
+| Resolution | Price (USD) |
+| All resolution | $0.07 |
+| All resolution | $0.12 |
+| Per generation | $0.23 |
+| Per generation | $0.45 |
+API 
+---
+### Seed VR API - AI Image & Video Upscaling APIs
+**Page:** https://www.pixazo.ai/models/seedvr
+
+
+by Seed VR
+
+Seed VR API, developers can upscale visual content to higher resolutions suitable for large displays, print, and professional production. The API handles both static images and video frames, making it a comprehensive solution for quality enhancement workflows.
+
+SeedVR2
+Upscale Image
+Upscale Video
+
+
+Upscale Image
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+Upscale Video
+
+#### SeedVR2 Upscale Image API Documentation
+`https://gateway.pixazo.ai/seedvr-upscale/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Upscale Image Request - SeedVR Upscale API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/seedvr-upscale/v1/upscale-image/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/vt_human.jpg",
+"upscale_factor": 2,
+"output_format": "png"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Upscale Image Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| image_url | Yes | string | URL of the image to upscale. Must be publicly accessible (HTTPS recommended). Supported formats: PNG, JPEG, WebP. |
+| upscale_mode | No | string | Upscaling mode. Valid values: `factor` (multiply resolution), `target` (specific resolution). |
+| upscale_factor | No | number | Upscale multiplier (1-8). Only used with `upscale_mode: "factor"`. Higher values = larger output. Recommended: 2-4 for best results. |
+| target_resolution | No | string | Target output resolution. Valid values: `720p`, `1080p`, `1440p`, `2160p`. Only used with `upscale_mode: "target"`. |
+| noise_scale | No | number | Noise reduction strength (0.0-1.0). Lower = preserve details/texture, Higher = smoother/cleaner. Recommended: 0.05-0.15 for photos, 0.08-0.12 for digital art. |
+| output_format | No | string | Output image format. Valid values: `jpg` (smaller files, photos), `png` (lossless, graphics), `webp` (modern, efficient). |
+| seed | No | integer | Random seed for reproducibility. Use the same seed to get consistent results across runs. |
+| sync_mode | No | boolean | Synchronous mode. If true, returns image as data URI (not recommended for production). |
+| webhook | No | string | Callback URL for completion notification. POST request sent with upscaling results when complete. |
+| webhook_events_filter | No | array | Events that trigger webhook. Valid values: `["*"]` (all events), `["completed"]` (success/failure only). |
+
+**Example Request**
+```json
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/vt_human.jpg",
+"upscale_factor": 2,
+"output_format": "png"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'seedvr-upscale' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "seedvr-upscale",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "seedvr-upscale",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/seedvr-upscale_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+SeedVR2 Upscale Image API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.001 |
+
+#### SeedVR2 Upscale Video API Documentation
+`https://gateway.pixazo.ai/seedvr-upscale/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+
+#### Upscale Video Request - SeedVR Upscale API
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/seedvr-upscale/v1/upscale-video/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"video_url": "https://example.com/my-video.mp4",
+"upscale_factor": 2
+}
+```
+
+**Output**
+```json
+{
+"request_id": "seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Upscale Video Request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| video_url | Yes | string | URL of the video to upscale. Must be publicly accessible (HTTPS recommended). Supported formats: MP4, MOV, AVI, WebM. |
+| upscale_mode | No | string | Upscaling mode. Valid values: `factor` (multiply resolution), `target` (specific resolution). |
+| upscale_factor | No | number | Upscale multiplier (1-4). Only used with `upscale_mode: "factor"`. Higher values = larger output. Use 1 for quality enhancement without size increase. |
+| target_resolution | No | string | Target output resolution. Valid values: `720p`, `1080p`. Only used with `upscale_mode: "target". |
+| noise_scale | No | number | Noise reduction strength (0.0-1.0). Lower = preserve details/grain, Higher = smoother/cleaner. Recommended: 0.05-0.2. |
+| output_format | No | string | Output video codec. Valid values: `X264 (.mp4)` (widely compatible), `H265 (.mp4)` (better compression, newer devices). |
+| output_quality | No | string | Output encoding quality. Valid values: `low` (faster, smaller file), `medium` (balanced), `high` (best quality, recommended). |
+| output_write_mode | No | string | Encoding speed/quality tradeoff. Valid values: `fast` (quick encoding), `balanced` (recommended), `quality` (slower, best quality). |
+| seed | No | integer | Random seed for reproducibility. Use the same seed to get consistent results across runs. |
+| webhook | No | string | Callback URL for completion notification. POST request sent with upscaling results when complete. |
+| webhook_events_filter | No | array | Events that trigger webhook. Valid values: `["*"]` (all events), `["completed"]` (success/failure only), `["start", "output", "completed"]`. |
+
+**Example Request**
+```json
+{
+"video_url": "https://example.com/my-video.mp4",
+"upscale_factor": 2
+}
+```
+
+**Response**
+```json
+{
+"request_id": "seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+Checking Status
+
+After submitting your request, use this endpoint to check status and retrieve results.
+
+Endpoint
+
+```http
+POST https://gateway.pixazo.ai/seedvr-upscale/v1/upscale-video/prediction
+
+Request Body
+{
+"prediction_id": "abc123xyz789..."
+}
+```
+Code Examples
+```http
+POST https://gateway.pixazo.ai/seedvr-upscale/v1/upscale-video/prediction
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"prediction_id": "abc123xyz789..."
+}
+```
+Response Example
+```json
+{
+"success": true,
+"id": "abc123xyz789...",
+"status": "processing",
+"input": {
+"video_url": "https://example.com/video.mp4",
+"upscale_mode": "factor",
+"upscale_factor": 2,
+"noise_scale": 0.1,
+"output_format": "X264 (.mp4)",
+"output_quality": "high",
+"output_write_mode": "balanced"
+},
+"created_at": "2025-10-27T06:38:11.001Z"
+}
+```
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'seedvr-upscale' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "seedvr-upscale",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "seedvr-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "seedvr-upscale",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/seedvr-upscale_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+SeedVR2 Upscale Video API Pricing
+| Resolution | Price (USD) |
+| 1920 × 1080 | $0.68 |
+| 1280 × 720 | $0.12 |
+| 3840 × 2160 | $0.82 |
+| 2560 × 1440 | $1.95 |
+| Per generation | $0 |
+API 
+---
+
+### Category: Virtual Try-On
+
+### IDM VTON API - AI Virtual Try-On APIs
+**Page:** https://www.pixazo.ai/models/idm-vton
+
+
+by IDM-VTON
+
+IDM VTON API, fashion retailers and e-commerce platforms can implement realistic virtual fitting rooms. The API handles various clothing types and body poses, creating convincing visualizations that help customers make confident purchasing decisions.
+
+IDM VTON v1
+Virtual Try-On
+
+
+Virtual Try-On
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### IDM VTON v1 Virtual Try-On API Documentation
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/idm-vton-api/v1/r-idm-vton
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: your-subscription-key
+
+{
+"garm_img": "https://example.com/garment.jpg",
+"human_img": "https://example.com/human.jpg",
+"garment_des": "A blue cotton dress",
+"category": "dress"
+}
+```
+
+**Output**
+```json
+{
+"result_url": "https://result.pixazo.ai/output.jpg",
+"status": "completed",
+"job_set_id": "job-12345-abcde",
+"processing_time": 2.4
+}
+```
+Request Parameters - idm-vton
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| garm_img | Yes | string | URL of the garment image to be tried on |
+| human_img | Yes | string | URL of the human model image |
+| garment_des | Yes | string | Description of the garment for better generation |
+| category | Yes | string | Category of garment (e.g., dress, shirt, pants) |
+
+**Example Request**
+```json
+{
+"garm_img": "https://example.com/garment.jpg",
+"human_img": "https://example.com/human.jpg",
+"garment_des": "A blue cotton dress",
+"category": "dress"
+}
+```
+
+**Response**
+```json
+{
+"result_url": "https://result.pixazo.ai/output.jpg",
+"status": "completed",
+"job_set_id": "job-12345-abcde",
+"processing_time": 2.4
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | your-subscription-key |
+
+**Response Handling**
+
+Common status codes for idm-vton.
+
+| Code | Meaning |
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+IDM VTON v1 Virtual Try-On API Pricing
+| Resolution | Price (USD) |
+| All Resolution | $0.05 |
+API 
+---
+
+### Category: Lipsync & Avatar
+
+### OmniHuman 1.5 API - AI Lipsync & Video Generation APIs
+**Page:** https://www.pixazo.ai/models/omnihuman
+
+
+by BytePlus
+
+OmniHuman 1.5 API, developers can synchronize any audio with video to produce natural lip movements, facial expressions, and head motion. The API excels at multilingual dubbing, avatar animation, and creating talking head videos for education, marketing, and entertainment. OmniHuman's sophisticated algorithms ensure natural-looking results that maintain the character and emotion of the original content.
+
+OmniHuman v1.5
+Lipsync Generation
+
+
+Lipsync Generation
+
+**Request Code**
+
+**Request Parameters**
+
+**Example Request**
+
+**Response**
+
+**Request Headers**
+
+**Response Handling**
+
+#### OmniHuman v1.5 Lipsync Generation API Documentation
+`https://gateway.pixazo.ai/bytedance-omnihuman-v1-5-290/v1`
+
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| --- | --- | --- | --- |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+ByteDance Omnihuman v1.5 generate request - ByteDance Omnihuman v1.5
+
+**Request Code**
+```http
+POST https://gateway.pixazo.ai/bytedance-omnihuman-v1-5-290/v1/bytedance-omnihuman-v1-5-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+
+{
+"image_url": "https://storage.googleapis.com/falserverless/example_inputs/omnihuman_v15_input_image.png",
+"audio_url": "https://storage.googleapis.com/falserverless/example_inputs/omnihuman_v15_input_audio.mp3",
+"resolution": "1080p"
+}
+```
+
+**Output**
+```json
+{
+"request_id": "bytedance-omnihuman-v1-5-290_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/bytedance-omnihuman-v1-5-290_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+Webhook (Optional)
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - ByteDance Omnihuman v1.5 generate request
+| Parameter | Required | Type | Description |
+| --- | --- | --- | --- |
+| image_url | Yes | string | Publicly accessible URL to a static image of a human face or full-body portrait. The image should clearly show the subject’s face for accurate animation. |
+| audio_url | Yes | string | Publicly accessible URL to an audio file (MP3 or WAV) containing the speech to be synchronized with the subject’s lip movements. |
+| resolution | No | string | Output video resolution. Supports "720p", "1080p", and "480p". Higher resolutions result in larger file sizes and longer processing times. |
+
+**Example Request**
+```json
+{
+"image_url": "https://storage.googleapis.com/falserverless/example_inputs/omnihuman_v15_input_image.png",
+"audio_url": "https://storage.googleapis.com/falserverless/example_inputs/omnihuman_v15_input_audio.mp3",
+"resolution": "1080p"
+}
+```
+
+**Response**
+```json
+{
+"request_id": "bytedance-omnihuman-v1-5-290_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/bytedance-omnihuman-v1-5-290_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+**Request Headers**
+| Header | Value |
+| --- | --- |
+| Content-Type | application/json |
+| --- | --- |
+| Cache-Control | no-cache |
+| Ocp-Apim-Subscription-Key | YOUR_SUBSCRIPTION_KEY |
+
+**Response Handling**
+
+Common status codes.
+
+| Code | Meaning |
+| 202 | Accepted — Request queued |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 402 | Insufficient Balance |
+| 403 | Forbidden |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
+Error Responses
+
+Queue system errors and model validation errors.
+
+Queue System Errors
+// 402 — Insufficient balance
+```json
+{
+"error": "Insufficient Balance",
+"message": "Your wallet does not have enough balance."
+}
+```
+// 400 — Model not found
+```json
+{
+"error": "Model not found",
+"message": "Model 'bytedance-omnihuman-v1-5-290' not found or is disabled"
+}
+```
+Error via Status/Webhook
+```json
+{
+"request_id": "bytedance-omnihuman-v1-5-290_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "ERROR",
+"model_id": "bytedance-omnihuman-v1-5-290",
+"error": "Description of the error",
+"output": null
+}
+```
+Retrieving Results
+
+Poll the universal status endpoint to check progress and retrieve results.
+
+Endpoint
+```http
+GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+cURL Example
+curl -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
+"https://gateway.pixazo.ai/v2/requests/status/bytedance-omnihuman-v1-5-290_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+Response (Completed)
+{
+"request_id": "bytedance-omnihuman-v1-5-290_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "COMPLETED",
+"model_id": "bytedance-omnihuman-v1-5-290",
+"error": null,
+"output": {
+"media_url": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/bytedance-omnihuman-v1-5-290_019dxxxx-xxxx/output.ext"
+],
+"media_type": "application/octet-stream"
+},
+"created_at": "2026-03-31T10:00:00.000Z",
+"updated_at": "2026-03-31T10:00:15.000Z",
+"completed_at": "2026-03-31T10:00:15.000Z"
+}
+```
+Response Fields
+| Field | Type | Description |
+| --- | --- | --- |
+| request_id | string | Unique request identifier |
+| status | string | QUEUED, PROCESSING, COMPLETED, FAILED, or ERROR |
+| model_id | string | Model that processed the request |
+| error | string|null | Error message if failed |
+| output.media_url | array | URLs to generated media (R2 CDN) |
+| output.media_type | string | MIME type of the output |
+| created_at | string | When request was created |
+| completed_at | string|null | When request completed |
+| polling_url | string | Status URL (initial response only) |
+Status Values
+| Status | Description |
+| QUEUED | Request accepted, waiting to be processed |
+| PROCESSING | Being processed by the model |
+| COMPLETED | Done — output contains the result |
+| FAILED | Failed — check error field |
+| ERROR | System error — not charged |
+Status Flow
+QUEUED → PROCESSING → COMPLETED
+→ FAILED
+→ ERROR
+Typical Workflow
+Send a generate request to the API endpoint
+Save the request_id from the response
+Poll every 5-10 seconds: GET /v2/requests/status/{request_id}
+When status is "COMPLETED", download from output.media_url
+
+Tip: Use X-Webhook-URL header to get a callback instead of polling.
+
+OmniHuman v1.5 Lipsync Generation API Pricing
+| Resolution | Price (USD) |
+| Per second of output video | $0.16 |
+API 
+---
+
+### Category: Coming Soon
+
+#### DALL-E — Coming Soon
+**Page:** https://www.pixazo.ai/models/dalle
+> API documentation not yet available.
 
 ---

@@ -381,6 +381,184 @@
           "id_field": "request_id"
         }
       }
+    },
+
+    "sora-video": {
+      "label": "Sora (OpenAI)",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/sora-video/v1/video/generate",
+          "poll_endpoint": "/sora-video/v1/video/result",
+          "convention": "legacy_poll",
+          "id_field": "id"
+        },
+        "image_to_video": {
+          "endpoint": "/sora-video/v1/video/i2v/generate",
+          "poll_endpoint": "/sora-video/v1/video/result",
+          "convention": "legacy_poll",
+          "id_field": "id",
+          "input_field": "image_url"
+        }
+      }
+    },
+    "p-video": {
+      "label": "P Video (Pruna AI)",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/p-video/v1/p-video/generateTextToVideoRequest",
+          "poll_endpoint": "/p-video-polling/p-video/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "seedance": {
+      "label": "Seedance (BytePlus)",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/seedance/v1/seedance/generateTextToVideoRequest",
+          "poll_endpoint": "/seedance-polling/seedance/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "veo": {
+      "label": "Veo (Google)",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/veo/v1/veo/generateTextToVideoRequest",
+          "poll_endpoint": "/veo-polling/veo/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "runway": {
+      "label": "Runway Gen-4.5",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/runway/v1/runway/generateTextToVideoRequest",
+          "poll_endpoint": "/runway-polling/runway/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-video": {
+      "label": "Kling video (Kuaishou)",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/kling/v1/kling/generateTextToVideoRequest",
+          "poll_endpoint": "/kling-polling/kling/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "pika": {
+      "label": "Pika (Pika Labs)",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/pika/v1/pika/generateTextToVideoRequest",
+          "poll_endpoint": "/pika-polling/pika/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "luma-dream-machine": {
+      "label": "Luma Dream Machine (Luma AI)",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/luma-dream-machine/v1/luma-dream-machine/generateTextToVideoRequest",
+          "poll_endpoint": "/luma-dream-machine-polling/luma-dream-machine/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "hailuo": {
+      "label": "Hailuo (MiniMax)",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/hailuo/v1/hailuo/generateTextToVideoRequest",
+          "poll_endpoint": "/hailuo-polling/hailuo/getStatus",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+
+    "minimax-music": {
+      "label": "MiniMax Music 2.0 (Hailuo AI)",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/minimax-hailuo-ai-music/v1/getAudio",
+          "poll_endpoint": "/minimax-hailuo-ai-music/v1/getAudioResult",
+          "convention": "legacy_poll",
+          "id_field": "task_id"
+        }
+      }
+    },
+    "ace-step": {
+      "label": "Ace Step 1.5 (ACE Studio)",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/ace-step/v1/generate",
+          "poll_endpoint": "/ace-step/v1/status",
+          "convention": "legacy_poll",
+          "id_field": "task_id"
+        }
+      }
+    },
+    "lyria": {
+      "label": "Lyria 2 (Google)",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/lyria-2/v1/lyria-2/generate",
+          "prediction_endpoint": "/lyria-2/v1/lyria-2/prediction",
+          "convention": "legacy_poll",
+          "id_field": "prediction_id"
+        }
+      }
+    },
+    "elevenlabs-music": {
+      "label": "ElevenLabs Music",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/elevenlabs-music-api-368/v1/elevenlabs-music-api-request",
+          "poll_endpoint": "/elevenlabs-music-api-368/v1/elevenlabs-music-api-request-result",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "elevenlabs-v3": {
+      "label": "ElevenLabs v3 (TTS)",
+      "category": "audio",
+      "operations": {
+        "text_to_speech": {
+          "endpoint": "/eleven-v3-alpha-954/v1/eleven-v3-alpha/generate",
+          "poll_endpoint": "/eleven-v3-alpha-954/v1/eleven-v3-alpha/prediction",
+          "convention": "legacy_poll",
+          "id_field": "request_id",
+          "input_field": "text"
+        }
+      }
     }
   }
 }

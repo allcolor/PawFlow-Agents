@@ -83,6 +83,11 @@
           },
           {
             "method": "GET",
+            "pattern": "/files/{file_id}/{filename+}",
+            "relationship": "GET:/files"
+          },
+          {
+            "method": "GET",
             "pattern": "/fs/{service_name}/{rest+}",
             "relationship": "GET:/fs"
           },

@@ -44,7 +44,15 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         import re as _re
         from core.file_store import FileStore
         fstore = FileStore.instance()
-        pattern = _re.compile(r'/files/([a-f0-9]{12})')
+        # Match three URL shapes the agent / handlers emit:
+        #   fs://filestore/<id>/<name>     (canonical handler output)
+        #   /files/<id>/<name>             (HTTP same-origin)
+        #   /files/<id>                    (legacy without filename)
+        # Captures (file_id, filename?). filename is optional — when
+        # missing we fall back to the FileStore-recorded name.
+        pattern = _re.compile(
+            r'(?:fs://filestore|/files)/([a-f0-9]{12})'
+            r'(?:/([^\s)\'"<]+))?')
         seen = set()
         files = []
         for msg in messages_data:
@@ -53,11 +61,19 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 continue
             for match in pattern.finditer(content):
                 fid = match.group(1)
-                fname = match.group(2)
+                fname = match.group(2) or ""
                 if fid in seen:
                     continue
                 seen.add(fid)
                 available = fstore.exists(fid)
+                # Prefer the FileStore-recorded filename when the URL
+                # didn't carry one — keeps the panel labels meaningful.
+                if available and not fname:
+                    try:
+                        meta = fstore.get_metadata(fid) or {}
+                        fname = meta.get("filename", fid)
+                    except Exception:
+                        fname = fid
                 files.append({
                     "file_id": fid, "filename": fname,
                     "available": available,

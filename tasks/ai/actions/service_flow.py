@@ -1404,31 +1404,37 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         Same registration as claude_code_server_login — idempotent.
         """
+        # Routes must land on the HTTP listener that served THIS request,
+        # not any random listener (admin vs chat can run on different ports).
+        # http.listener.port is set by httpReceiver when the request comes in.
+        _req_port = flowfile.get_attribute("http.listener.port") or ""
+        if not _req_port:
+            logger.warning("[vnc] No http.listener.port on flowfile — cannot target listener")
+            return
         try:
             from services.vnc_proxy import vnc_ws_proxy, vnc_http_proxy
             from services.audio_proxy import audio_ws_proxy
-            from core.service_registry import ServiceRegistry
-            _greg = ServiceRegistry.get_instance()
-            for _sid2, _sdef in _greg.get_all("global", "").items():
-                if getattr(_sdef, "service_type", "") == "httpListener":
-                    _http_svc = _greg.get_live_instance("global", "", _sid2)
-                    if _http_svc:
-                        _vnc_owner = "_vnc_proxy"
-                        existing = [r for r in _http_svc.get_routes() if r.get("owner") == _vnc_owner]
-                        if not existing:
-                            _http_svc.register_route("GET", "/vnc/{session_id}/websockify",
-                                                     _vnc_owner, callback=lambda req: None,
-                                                     ws_handler=vnc_ws_proxy)
-                            _http_svc.register_route("GET", "/vnc/{session_id}/{path+}",
-                                                     _vnc_owner, callback=vnc_http_proxy)
-                        # Audio WebSocket route (same owner, idempotent)
-                        _audio_exists = [r for r in _http_svc.get_routes()
-                                         if r.get("pattern", "").startswith("/audio/")]
-                        if not _audio_exists:
-                            _http_svc.register_route("GET", "/audio/{session_id}/stream",
-                                                     _vnc_owner, callback=lambda req: None,
-                                                     ws_handler=audio_ws_proxy)
-                        return
+            from services.http_listener_service import _instances
+            _http_svc = _instances.get(int(_req_port))
+            if not _http_svc:
+                logger.warning("[vnc] No live listener on port %s (instances: %s)",
+                               _req_port, list(_instances.keys()))
+                return
+            _vnc_owner = "_vnc_proxy"
+            existing = [r for r in _http_svc.get_routes() if r.get("owner") == _vnc_owner]
+            if not existing:
+                _http_svc.register_route("GET", "/vnc/{session_id}/websockify",
+                                         _vnc_owner, callback=lambda req: None,
+                                         ws_handler=vnc_ws_proxy)
+                _http_svc.register_route("GET", "/vnc/{session_id}/{path+}",
+                                         _vnc_owner, callback=vnc_http_proxy)
+                logger.info("[vnc] Registered VNC routes on port %s", _req_port)
+            _audio_exists = [r for r in _http_svc.get_routes()
+                             if r.get("pattern", "").startswith("/audio/")]
+            if not _audio_exists:
+                _http_svc.register_route("GET", "/audio/{session_id}/stream",
+                                         _vnc_owner, callback=lambda req: None,
+                                         ws_handler=audio_ws_proxy)
         except Exception as e:
             logger.warning("[vnc] Route registration failed: %s", e)
 

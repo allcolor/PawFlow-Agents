@@ -124,6 +124,12 @@ class HTTPReceiverTask(BaseTask):
         ff.set_attribute("http.path", pending_req.path)
         ff.set_attribute("http.query", pending_req.query_string)
         ff.set_attribute("http.remote.addr", pending_req.remote_addr)
+        # Identify the listener that served this request so downstream
+        # tasks can register dynamic routes on the CORRECT listener when
+        # multiple listeners are running (admin vs chat, different ports…).
+        _svc = self.get_service(self.config.get("service_id", ""))
+        if _svc is not None:
+            ff.set_attribute("http.listener.port", str(getattr(_svc, "_port", "")))
 
         # Headers
         for k, v in pending_req.headers.items():

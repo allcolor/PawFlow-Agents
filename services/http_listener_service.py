@@ -299,8 +299,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
         result = registry.match(method, path)
 
         if result is None:
-            # Redirect unmatched GET requests to /chat
-            if method == "GET" and path != "/chat":
+            # Only the bare root redirects to /chat for authenticated users.
+            # Any other unmatched path must 404 — never mask a missing route
+            # with a redirect, it hides real bugs (e.g. unregistered VNC/proxy
+            # routes would silently show the chat UI instead of failing).
+            # Unauthenticated access is already handled earlier by the private
+            # gateway / session-auth checks above.
+            if method == "GET" and path == "/":
                 _scheme = "https" if headers.get('x-forwarded-proto') == 'https' else "http"
                 _host = headers.get('host') or headers.get('Host') or 'localhost'
                 self.send_response(302)

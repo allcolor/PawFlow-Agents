@@ -167,6 +167,17 @@ class LLMMessage:
         if not self.seq:
             self.seq = _next_msg_seq()
 
+    @property
+    def text_content(self) -> str:
+        """Extract text content regardless of content format."""
+        if isinstance(self.content, str):
+            return self.content
+        if isinstance(self.content, list):
+            return " ".join(
+                p.get("text", "") for p in self.content if p.get("type") == "text"
+            )
+        return ""
+
 
 # Process-global monotonic counter — the only true ordering source when
 # two messages are created within the same time.time() tick (Windows ~16ms
@@ -206,17 +217,6 @@ def stamp_message(msg: Dict[str, Any]) -> Dict[str, Any]:
     if not msg.get("msg_id"):
         msg["msg_id"] = _uuid.uuid4().hex[:12]
     return msg
-
-    @property
-    def text_content(self) -> str:
-        """Extract text content regardless of content format."""
-        if isinstance(self.content, str):
-            return self.content
-        if isinstance(self.content, list):
-            return " ".join(
-                p.get("text", "") for p in self.content if p.get("type") == "text"
-            )
-        return ""
 
 
 @dataclass

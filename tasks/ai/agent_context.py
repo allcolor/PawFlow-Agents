@@ -806,7 +806,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             len(attachments),
                             ", ".join(f"{a.get('filename','?')} ({a.get('mime_type','?')}, {len(a.get('data',''))//1024}KB)"
                                       for a in attachments))
-            user_content = self._build_user_content(user_text, attachments, conversation_id)
+            user_content = self._build_user_content(user_text, attachments, conversation_id, user_id)
             user_source = {"type": "user", "name": user_id}
             if _target_agent:
                 user_source["target_agent"] = _target_agent
@@ -1311,7 +1311,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
     # ── Context operation pause/resume ─────────────────────────────────
 
 
-    def _build_user_content(self, text: str, attachments: List[Dict], conversation_id: str = "") -> Any:
+    def _build_user_content(self, text: str, attachments: List[Dict], conversation_id: str = "", user_id: str = "") -> Any:
         """Build user message content from text and optional attachments.
 
         If no attachments, returns plain str.
@@ -1366,7 +1366,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 _img_fname = f"image_{int(_time.time())}_{len(parts)}.{filename.rsplit('.', 1)[-1] if '.' in filename else 'png'}"
                 _img_fid = FileStore.instance().store(
                     _img_fname, _img_bytes, mime,
-                    user_id=getattr(self, '_user_id', ''),
+                    user_id=user_id,
                     conversation_id=conversation_id or "",
                     category="attachment")
                 logger.info("Attachment image stored: %s (%d bytes) -> %s",
@@ -1385,7 +1385,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     raw = base64.b64decode(data_b64)
                     _fid = FileStore.instance().store(
                         filename, raw, mime,
-                        user_id=getattr(self, '_user_id', ''),
+                        user_id=user_id,
                         conversation_id=conversation_id or "",
                         category="attachment")
                     logger.info("Attachment stored: %s (%s, %d bytes) -> %s",

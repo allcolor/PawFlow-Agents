@@ -405,24 +405,37 @@ class _PixazoBaseService(BaseService):
 
         Returns the parsed JSON dict on success, None when no relay is
         available so the caller falls back to direct urllib.
+
+        Pixazo service has no user_id of its own — walk every live
+        instance across every scope (global, user, conv) so a relay
+        connected on any scope is usable.
         """
         try:
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             relay = None
-            # Walk every known scope/instance for a connected relay.
-            for scope in ("global", "user"):
-                for sdef in reg.resolve_by_type("relay") or []:
-                    candidate = reg.get_live_instance(
-                        sdef.scope, sdef.scope_id, sdef.service_id)
-                    # `_relay_pool` is the FilesystemService's connected
-                    # WS list — non-empty means a relay is actually online.
-                    if candidate and getattr(candidate, "_relay_pool", []):
+            # Walk every live instance across every scope. We don't
+            # know which user owns this Pixazo call, so any connected
+            # relay does the job — they all share the same Docker NAT
+            # egress that defeats the CF block.
+            with reg._data_lock:
+                instances = {sid: dict(svcs)
+                             for sid, svcs in reg._live_instances.items()}
+            for sid, svcs in instances.items():
+                for service_id, candidate in svcs.items():
+                    if getattr(candidate, "TYPE", "") != "relay":
+                        continue
+                    # _relay_pool is the FilesystemService's connected
+                    # WS list — non-empty means the relay is online.
+                    if getattr(candidate, "_relay_pool", []):
                         relay = candidate
                         break
                 if relay:
                     break
             if not relay:
+                logger.info("[PIXAZO] no live relay found across "
+                            "%d scope(s) — falling back to urllib",
+                            len(instances))
                 return None
         except Exception as e:
             logger.debug("[PIXAZO] relay lookup skipped: %s", e)

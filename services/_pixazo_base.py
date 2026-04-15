@@ -215,6 +215,27 @@ class _PixazoBaseService(BaseService):
                 "type": "integer", "required": False, "default": 5,
                 "description": "Max retries on 5xx errors (cold start).",
             },
+            "cf_clearance": {
+                "type": "string", "required": False, "default": "",
+                "sensitive": True,
+                "description": (
+                    "Cloudflare clearance cookie (cf_clearance value). "
+                    "Required when Pixazo's polling endpoint blocks "
+                    "your IP — extract from a browser session "
+                    "(F12 → Application → Cookies → gateway.pixazo.ai) "
+                    "and paste here. Bound to the User-Agent below + "
+                    "your IP, ~30 min TTL. Leave empty to skip — POSTs "
+                    "still work, only polling fails on flagged IPs."
+                ),
+            },
+            "cf_user_agent": {
+                "type": "string", "required": False, "default": "",
+                "description": (
+                    "Exact browser User-Agent the cf_clearance cookie "
+                    "was minted for (copy from the same browser request "
+                    "headers). Mandatory when cf_clearance is set."
+                ),
+            },
         }
         base.update(self._extra_parameter_schema())
         return base
@@ -229,6 +250,12 @@ class _PixazoBaseService(BaseService):
         self.poll_interval = int(self.config.get("poll_interval", 5))
         self.max_retries = int(self.config.get("max_retries", 5))
         self._model_id = self.config.get("model", "")
+        # Cloudflare bypass — opt-in. When set, sent on every request
+        # so the polling endpoint stops returning 'Just a moment...'.
+        # cf_user_agent is the exact UA the cookie was minted for —
+        # cf_clearance is HMAC'd to it on Cloudflare's side.
+        self._cf_cookie = (self.config.get("cf_clearance", "") or "").strip()
+        self._cf_ua = (self.config.get("cf_user_agent", "") or "").strip()
 
     # ── Catalog accessors ─────────────────────────────────────────────
 
@@ -302,13 +329,16 @@ class _PixazoBaseService(BaseService):
             ctype = f"multipart/form-data; boundary={multipart_boundary}"
         else:
             ctype = "application/json"
-        return {
+        h = {
             "Content-Type": ctype,
             "Cache-Control": "no-cache",
             "Ocp-Apim-Subscription-Key": self.api_key,
             "Content-Length": str(len(body_bytes)),
-            "User-Agent": _BROWSER_UA,
+            "User-Agent": self._cf_ua or _BROWSER_UA,
         }
+        if self._cf_cookie:
+            h["Cookie"] = f"cf_clearance={self._cf_cookie}"
+        return h
 
     @staticmethod
     def _encode_multipart(fields: Dict[str, Any]) -> Tuple[bytes, str]:
@@ -370,18 +400,24 @@ class _PixazoBaseService(BaseService):
 
         The URL is whatever the generate response put in `polling_url`
         — we never construct it ourselves. Verified at info-log level
-        for debugging when Cloudflare blocks the poll (known issue:
-        Pixazo's /v2/requests/status/ is behind a managed challenge
-        that curl itself cannot pass from flagged IPs — use the
-        webhook path in that case).
+        for debugging when Cloudflare blocks the poll.
+
+        On flagged IPs Pixazo's /v2/requests/status/ sits behind a
+        managed challenge. Setting `cf_clearance` + `cf_user_agent`
+        on the service config makes us look like the user's browser
+        and gets through — see service config description for how to
+        extract the cookie.
         """
         logger.info("[PIXAZO] GET %s", url)
-        req = urllib.request.Request(url, method="GET", headers={
+        headers = {
             "Cache-Control": "no-cache",
             "Ocp-Apim-Subscription-Key": self.api_key,
             "Accept": "application/json",
-            "User-Agent": _BROWSER_UA,
-        })
+            "User-Agent": self._cf_ua or _BROWSER_UA,
+        }
+        if self._cf_cookie:
+            headers["Cookie"] = f"cf_clearance={self._cf_cookie}"
+        req = urllib.request.Request(url, method="GET", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 body = resp.read().decode("utf-8", errors="replace")

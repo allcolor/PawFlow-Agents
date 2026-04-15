@@ -991,6 +991,111 @@ class ConversationStore:
             self._ctx_cache.setdefault(cid, {})[agent_name] = result
         return result
 
+    def load_transcript_for_agent(self, cid: str, agent_name: str
+                                   ) -> Optional[List[Dict]]:
+        """Return the full transcript personalized for one agent.
+
+        This is the right source for compaction: it contains everything
+        (user messages, every agent's assistant turns, tool_calls,
+        tool_results) and — unlike agent context — never includes a
+        previously-injected compaction summary. Compacting from here
+        can never layer stale summaries on top of each other.
+
+        Personalization:
+        - Own assistant messages: role=assistant, keep tool_calls, no prefix
+        - Own tool messages: kept as-is (they belong to the agent's turn)
+        - Other agents' messages: role=user, content prefixed "[Agent X]:"
+        - User messages: role=user, prefixed "[User to agent X]:" when targeted
+        - Other agents' tool_calls/tool_results: dropped (private to them)
+        """
+        if not self.exists(cid):
+            return None
+        canon = self._canon_agent(agent_name) if agent_name else ""
+        raw = self.load(cid)
+        if not raw:
+            return None
+
+        # First pass: collect tool_call_ids that belong to THIS agent so we
+        # can keep matching tool results and drop everybody else's.
+        own_tc_ids: set = set()
+        for m in raw:
+            if m.get("role") != "assistant":
+                continue
+            src = m.get("source") or {}
+            if src.get("type") != "agent":
+                continue
+            sname = src.get("name", "")
+            if not (canon and sname and sname.lower() == canon.lower()):
+                continue
+            for tc in (m.get("tool_calls") or []):
+                tid = tc.get("id") if isinstance(tc, dict) else None
+                if tid:
+                    own_tc_ids.add(tid)
+
+        out: List[Dict] = []
+        for m in raw:
+            role = m.get("role", "")
+            src = m.get("source") or {}
+            src_type = src.get("type", "")
+            src_name = src.get("name", "")
+
+            # Private per-agent traces — only keep this agent's own.
+            if role == "sub_agent_trace":
+                if src_type == "agent" and canon and src_name \
+                        and src_name.lower() == canon.lower():
+                    out.append(dict(m))
+                continue
+
+            # Tool results — keep only those answering this agent's tool_calls.
+            # Orphans (other agents' tool results) are dropped so the summarizer
+            # never sees them.
+            if role == "tool":
+                tcid = m.get("tool_call_id", "")
+                if tcid and tcid in own_tc_ids:
+                    out.append(dict(m))
+                continue
+
+            if role == "assistant" and src_type == "agent":
+                if canon and src_name and src_name.lower() == canon.lower():
+                    # Own turn — keep as assistant with tool_calls intact
+                    out.append(dict(m))
+                else:
+                    # Another agent's turn — demote to user with prefix,
+                    # strip tool_calls (private to them) and drop btw/task
+                    # side-channels entirely (these aren't addressed to us).
+                    if src.get("task_id") or src.get("btw"):
+                        continue
+                    mm = dict(m)
+                    mm["role"] = "user"
+                    prefix = f"[Agent {src_name}]: " if src_name else "[Agent]: "
+                    content = mm.get("content", "")
+                    if isinstance(content, str):
+                        mm["content"] = prefix + content
+                    mm.pop("tool_calls", None)
+                    out.append(mm)
+                continue
+
+            if role == "user":
+                tgt = src.get("target_agent", "") if isinstance(src, dict) else ""
+                # Drop btw/sub-task user messages addressed to another agent —
+                # those are private side-channels, not part of this agent's
+                # conversation view.
+                if src.get("btw") and tgt and canon \
+                        and tgt.lower() != canon.lower():
+                    continue
+                mm = dict(m)
+                if tgt and canon and tgt.lower() != canon.lower():
+                    prefix = f"[User to agent {tgt}]: "
+                    content = mm.get("content", "")
+                    if isinstance(content, str):
+                        mm["content"] = prefix + content
+                out.append(mm)
+                continue
+
+            # system, etc. — passthrough
+            out.append(dict(m))
+        return out
+
     def load_shared_for_agent(self, cid: str, agent_name: str) -> Optional[List[Dict]]:
         """Load shared context personalized for a specific agent.
 

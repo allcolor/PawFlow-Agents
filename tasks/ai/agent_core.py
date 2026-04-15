@@ -814,24 +814,42 @@ class AgentCoreMixin:
                                 logger.debug("[agent:%s] token recovery after compact: %s",
                                              conversation_id[:8], _rt_err)
                         try:
-                            # 1. Load FULL agent context from disk (not the in-memory messages)
+                            # 1. Load SHARED context from disk (not the agent-specific one).
+                            # Compaction always starts from the shared timeline: the
+                            # per-agent context is a personalized view that already
+                            # contains the previous compaction's leftovers. Sourcing
+                            # from shared gives a fresh summary each time, preventing
+                            # old summaries from piling up on top of new ones.
                             from core.conversation_store import ConversationStore
                             _store = ConversationStore.instance()
-                            _full_ctx = _store.load_agent_context(conversation_id, _agent_name)
+                            _full_ctx = _store.load_transcript_for_agent(
+                                conversation_id, _agent_name)
                             if not _full_ctx:
-                                raise RuntimeError("No agent context to compact")
+                                _full_ctx = _store.load_agent_context(
+                                    conversation_id, _agent_name)
+                            if not _full_ctx:
+                                raise RuntimeError("No context to compact")
                             _full_messages = self._deserialize_messages(_full_ctx)
-                            logger.info("[agent:%s] Loaded %d messages from agent context for compaction",
+                            logger.info("[agent:%s] Loaded %d messages from shared context for compaction",
                                         conversation_id[:8], len(_full_messages))
 
-                            # 2. Compact via summarizer (real LLM call)
-                            messages = list(self._auto_compact_messages(
-                                _full_messages,
+                            # 2. FORCE compact — CC said it's saturating, so we compact
+                            # unconditionally. PawFlow's token estimate may underestimate
+                            # (different tokenizer, tool schemas not counted), leading to
+                            # no-op compactions that leave stale summaries in the context.
+                            _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id)
+                            if not _sc:
+                                raise RuntimeError(
+                                    "No summarizer_service configured. Cannot compact.")
+                            messages = list(self._compact(
+                                _full_messages, _sc,
+                                max_tokens=ctx.get("max_context_size", 200000),
+                                threshold=0.9,
                                 conversation_id=conversation_id,
                                 agent_name=_agent_name,
-                                user_id=user_id,
-                                max_context=ctx.get("max_context_size", 200000),
                                 compact_instructions=ctx.get("compact_instructions", ""),
+                                force=True,
+                                user_id=user_id,
                             ))
                             logger.info("[agent:%s] PawFlow compact: %d → %d messages",
                                         conversation_id[:8], len(_full_messages), len(messages))

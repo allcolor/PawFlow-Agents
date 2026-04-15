@@ -107,7 +107,17 @@ class AgentSummarizeMixin:
         2. For CC: use complete_stream (CC handles tool loop)
         3. For API: run mini tool loop with read + compact_result
         """
-        logger.info(f"[compact] summarize via service='{llm_service or 'default'}', "
+        _svc_id = llm_service
+        if not _svc_id:
+            try:
+                _, _, _svc_id = self._get_summarizer_client(user_id)
+            except Exception:
+                _svc_id = ""
+        if not _svc_id:
+            raise RuntimeError(
+                "No summarizer_service configured. Set `summarizer_service` "
+                "in the flow/agent config — compaction has no default.")
+        logger.info(f"[compact] summarize via summarizer_service='{_svc_id}', "
                      f"target={target_tokens} tokens, input={len(text)} chars")
         if not target_tokens:
             target_tokens = 2000
@@ -149,7 +159,16 @@ class AgentSummarizeMixin:
             f"- Use this checklist — every section MUST be present:\n"
             f"  1. USER_INTENT 2. DECISIONS 3. FILES_MODIFIED (with paths)\n"
             f"  4. ERRORS 5. CURRENT_STATE 6. PENDING 7. CONTEXT\n"
-            f"- Skip raw tool output, JSON blobs, and technical plumbing."
+            f"- Skip raw tool output, JSON blobs, and technical plumbing.\n"
+            f"- RECENCY WEIGHTING: emphasize the LATEST work — what the user "
+            f"is currently focused on. Older threads (especially any content "
+            f"tagged as 'earlier planning work' or carried over from a prior "
+            f"compacted summary) should be compressed into at most one short "
+            f"bullet under CONTEXT — just enough that a reader knows it "
+            f"happened, without re-stating goals or decisions. If an older "
+            f"topic has clearly been completed or superseded, drop it. The "
+            f"summary's job is to set up the CURRENT state, not to preserve "
+            f"history indefinitely."
             f"{_focus}\n"
             f"\ncompact_key (use EXACTLY this): {compact_key}"
         )

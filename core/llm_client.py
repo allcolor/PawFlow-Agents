@@ -186,12 +186,56 @@ class LLMMessage:
 # rooted in CREATION time — independent of enqueue/persist races.
 import itertools as _itertools
 import threading as _threading
-_msg_seq_counter = _itertools.count(1)
+_msg_seq_counter = None  # lazy-init from disk on first call
 _msg_seq_lock = _threading.Lock()
+_msg_seq_bootstrapped = False
+
+
+def _bootstrap_seq_from_disk() -> int:
+    """Scan all existing conversation jsonl files and return max seq seen.
+
+    Called once at first _next_msg_seq() to continue numbering from where
+    the previous process left off — a fresh itertools.count(1) after a
+    restart would hand out seq=1,2,3… which collide (as tiebreakers) with
+    legacy low-seq messages and can scramble ordering in edge cases
+    (same-ts messages, tools that sort without ts).
+    """
+    try:
+        import core.paths as _p
+        import json as _json
+        from pathlib import Path as _Path
+        root = _p.CONVERSATIONS_DIR
+        if not root.exists():
+            return 0
+        max_seq = 0
+        for f in root.rglob("*.jsonl"):
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            m = _json.loads(line)
+                        except Exception:
+                            continue
+                        s = m.get("seq") or 0
+                        if isinstance(s, int) and s > max_seq:
+                            max_seq = s
+            except Exception:
+                continue
+        return max_seq
+    except Exception:
+        return 0
 
 
 def _next_msg_seq() -> int:
+    global _msg_seq_counter, _msg_seq_bootstrapped
     with _msg_seq_lock:
+        if not _msg_seq_bootstrapped:
+            _start = _bootstrap_seq_from_disk() + 1
+            _msg_seq_counter = _itertools.count(_start)
+            _msg_seq_bootstrapped = True
         return next(_msg_seq_counter)
 
 

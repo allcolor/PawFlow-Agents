@@ -187,8 +187,21 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
     """Handle context ops actions. Returns [flowfile] or None."""
 
     def _ctx_load(conv_id, agent_name=""):
-        """Load context for an agent (falls back to shared → messages)."""
-        if agent_name and agent_name != "ALL":
+        """Load context for compaction/view.
+
+        Rule: compaction always starts from the shared timeline, never
+        from the per-agent context (which may already contain leftover
+        summaries from previous compactions — feeding that back into a
+        new summarization just layers stale topics on top of each
+        other).  For a specific agent, personalize the shared view so
+        the agent's own messages read as assistant and the others as
+        user (via load_shared_for_agent).
+        """
+        if agent_name and agent_name not in ("", "ALL"):
+            full = store.load_transcript_for_agent(conv_id, agent_name)
+            if full:
+                return full
+            # Fresh conversation: no transcript yet → fall back to agent ctx
             return store.load_agent_context(conv_id, agent_name)
         return store.load_context(conv_id, user_id=user_id)
 
@@ -202,38 +215,26 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         else:
             store.invalidate_claude_sessions(conv_id)
 
-    def _resolve_agent_max_tokens(agent_name):
-        """Get max_tokens from an agent's LLM service config."""
-        _, _, svc = self._resolve_agent_client(agent_name, user_id)
-        if svc:
-            v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
-            if v:
-                return v
-        return 0
-
     def _ctx_max_tokens(agent_name=""):
-        """Get max_context_size for an agent or shared context."""
+        """Get max_context_size from the summarizer service.
+
+        Compaction is always driven by the summarizer_service (not the
+        agent's main LLM), so the context limit we size against is the
+        summarizer's — not whichever model happens to be answering the
+        user.
+        """
         flow_default = int(self.config.get("max_context_size", 64000))
-        if agent_name and agent_name not in ("", "ALL"):
-            return _resolve_agent_max_tokens(agent_name) or flow_default
         try:
-            from core.resource_store import ResourceStore
-            all_agents = ResourceStore.instance().list_all("agent", user_id)
-            max_val = 0
-            for a in all_agents:
-                v = _resolve_agent_max_tokens(a["name"])
-                if v > max_val:
-                    max_val = v
-            default_svc = self._resolve_service_param("llm_service", user_id) or "default"
-            if default_svc:
-                _, svc = self._resolve_llm_service(default_svc, user_id)
-                if svc:
-                    v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
-                    if v > max_val:
-                        max_val = v
-            return max_val or flow_default
+            _sc, _sc_max, _ = self._get_summarizer_client(user_id)
+            if _sc_max:
+                return int(_sc_max)
+            if _sc:
+                v = int((getattr(_sc, 'config', {}) or {}).get("max_context_size", 0))
+                if v:
+                    return v
         except Exception:
-            return flow_default
+            pass
+        return flow_default
 
     # ── /context (improved) ──
     if action == "view_context":
@@ -458,15 +459,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         if not source_data or len(source_data) < 4:
             flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
             return [flowfile]
-        # Resolve client
-        _summ_client, _, _ = self._get_summarizer_client(user_id)
-        if _summ_client:
-            _compact_client = _summ_client
-        else:
-            svc_id = self._resolve_service_param("llm_service", user_id) or "default"
-            _compact_client, _ = self._resolve_client(svc_id, user_id)
+        # Resolve client — compaction is driven by summarizer_service,
+        # full stop. No fallback to the agent's llm_service (that would
+        # compact with a model the user didn't choose for summarization)
+        # and no "default" that doesn't actually exist as a service.
+        _compact_client, _, _compact_svc_id = self._get_summarizer_client(user_id)
         if not _compact_client:
-            flowfile.set_content(json.dumps({"error": "LLM service not found"}).encode())
+            flowfile.set_content(json.dumps({
+                "error": "No summarizer_service configured — compaction needs one.",
+            }).encode())
             return [flowfile]
         _compact_max = _ctx_max_tokens(_ctx_agent)
         _compact_source = source_data
@@ -505,6 +506,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                         conversation_id=_compact_conv,
                         agent_name=_compact_agent_name,
                         force=True,
+                        user_id=user_id,
                     )
                 else:
                     self._persist_context(compacted, _compact_conv, _compact_agent_name)
@@ -517,6 +519,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     agent_name=_compact_agent_name,
                     compact_instructions=_compact_instructions,
                     force=True,
+                    user_id=user_id,
                 )
             after_tokens = self._estimate_tokens(compacted)
             # Invalidate the compacted agent's CC session

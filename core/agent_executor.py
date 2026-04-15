@@ -1155,98 +1155,101 @@ def resolve_agent_task(
     conversation_id: str = "",
     extra_skills: list = None,
 ) -> AgentTask:
-    """Resolve an agent name to an AgentTask using the ResourceStore.
+    """Resolve an agent instance name to an AgentTask.
 
-    Loads the agent definition and fills in all fields.
+    Looks up the instance in conv_agents, loads the definition from the
+    repository, and resolves expressions in the prompt with instance params.
     Supports nickname resolution and case-insensitive matching.
     Raises KeyError if agent not found.
     """
-    from core.resource_store import ResourceStore
-    store = ResourceStore.instance()
+    from core.expression import resolve_value
+    from core.conv_agent_config import (
+        get_all_agent_configs, get_agent_config, flatten_agent_params,
+    )
+    if not conversation_id:
+        raise KeyError(
+            f"Agent '{agent_name}' cannot be delegated to without a "
+            f"conversation \u2014 an agent's llm_service lives on the "
+            f"conv_agents link.")
 
-    # 1) Direct lookup
-    agent_def = store.get_any("agent", agent_name, user_id)
-
-    # 2) Case-insensitive lookup
-    if agent_def is None:
-        all_agents = store.list_all("agent", user_id)
-        for a in all_agents:
-            if a["name"].lower() == agent_name.lower():
-                agent_name = a["name"]
-                agent_def = store.get_any("agent", agent_name, user_id)
+    # 1) Resolve instance name: case-insensitive + nickname lookup
+    _all_configs = get_all_agent_configs(conversation_id)
+    _resolved_name = None
+    if agent_name in _all_configs:
+        _resolved_name = agent_name
+    else:
+        _needle = agent_name.lower()
+        for _k in _all_configs:
+            if isinstance(_k, str) and _k.lower() == _needle:
+                _resolved_name = _k
                 break
-
-    # 3) Nickname → real name resolution via conversation store
-    if agent_def is None and conversation_id:
+    # Nickname resolution
+    if _resolved_name is None:
         try:
             from core.conversation_store import ConversationStore
             nicknames = ConversationStore.instance().get_extra(
                 conversation_id, "agent_nicknames") or {}
-            # nicknames = {real_name: display_name} — reverse lookup
             for real_name, nick in nicknames.items():
                 if nick.lower() == agent_name.lower():
-                    agent_name = real_name
-                    agent_def = store.get_any("agent", agent_name, user_id)
+                    _resolved_name = real_name
                     break
-            # Also try case-insensitive on real names in nicknames
-            if agent_def is None:
+            if _resolved_name is None:
                 for real_name in nicknames:
                     if real_name.lower() == agent_name.lower():
-                        agent_name = real_name
-                        agent_def = store.get_any("agent", agent_name, user_id)
+                        _resolved_name = real_name
                         break
         except Exception:
             pass
-
-    if agent_def is None:
-        raise KeyError(f"Agent '{agent_name}' not found for user '{user_id}'")
-
-    # Resolve runtime config from conv_agents.
-    # An agent's llm_service lives on the conv_agents link, not on the
-    # repository definition. A delegate target MUST be linked in the
-    # conversation — otherwise we have no LLM to run it on.
-    from core.expression import resolve_value
-    from core.conv_agent_config import get_all_agent_configs, get_agent_config
-    if not conversation_id:
+    if _resolved_name is None:
         raise KeyError(
-            f"Agent '{agent_name}' cannot be delegated to without a "
-            f"conversation — an agent's llm_service lives on the "
-            f"conv_agents link.")
-    _all_configs = get_all_agent_configs(conversation_id)
-    _linked = agent_name in _all_configs or any(
-        isinstance(_k, str) and _k.lower() == agent_name.lower()
-        for _k in _all_configs
-    )
-    if not _linked:
-        raise KeyError(
-            f"Agent '{agent_name}' is not linked in conversation "
-            f"'{conversation_id}'. Link it first (with an llm_service) "
-            f"before delegating to it.")
+            f"Agent '{agent_name}' is not in conversation "
+            f"'{conversation_id}'. Add it first before delegating.")
+    agent_name = _resolved_name
+
+    # 2) Get instance config and load definition from repo
     acfg = get_agent_config(conversation_id, agent_name)
+    _def_name = acfg["definition"]
     llm_svc = resolve_value(acfg.get("llm_service", ""), owner=user_id) or ""
     if not llm_svc:
         raise KeyError(
-            f"Agent '{agent_name}' is linked in conversation "
-            f"'{conversation_id}' but has no llm_service configured. "
-            f"Fix the conv_agents entry.")
+            f"Agent '{agent_name}' is in conversation "
+            f"'{conversation_id}' but has no llm_service configured.")
 
-    # Inject skills: conv_agent_config skills (inherited) + extra_skills from delegate call
-    _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")
+    from core.resource_store import ResourceStore
+    agent_def = ResourceStore.instance().get_any("agent", _def_name, user_id)
+    if agent_def is None:
+        raise KeyError(
+            f"Definition '{_def_name}' for agent '{agent_name}' not found")
+
+    # 3) Resolve prompt with instance params
+    _raw_prompt = agent_def.get("prompt", "You are a helpful assistant.")
+    _inst_params = acfg.get("params") or {}
+    if _inst_params:
+        from core.expression import resolve_expression
+        _flat = flatten_agent_params(agent_name, _inst_params)
+        _sys_prompt = resolve_expression(
+            _raw_prompt, parameters=_flat,
+            owner=user_id, conversation_id=conversation_id)
+    else:
+        _sys_prompt = _raw_prompt
+
+    # 4) Inject skills
     _conv_skills = acfg.get("skills") or []
     _all_skills = list(_conv_skills) + list(extra_skills or [])
     if _all_skills:
         from core.skill_resolver import inject_skills_into_prompt
         _sys_prompt = inject_skills_into_prompt(_sys_prompt, _all_skills, user_id)
+
+    # 5) Identity injection
     _nick = None
-    if conversation_id:
-        try:
-            from core.conversation_store import ConversationStore
-            _nicks = ConversationStore.instance().get_extra(
-                conversation_id, "agent_nicknames") or {}
-            _nk = agent_name.lower()
-            _nick = next((v for k, v in _nicks.items() if k.lower() == _nk), None)
-        except Exception:
-            pass
+    try:
+        from core.conversation_store import ConversationStore
+        _nicks = ConversationStore.instance().get_extra(
+            conversation_id, "agent_nicknames") or {}
+        _nk = agent_name.lower()
+        _nick = next((v for k, v in _nicks.items() if k.lower() == _nk), None)
+    except Exception:
+        pass
     if _nick:
         _sys_prompt = (
             f"[IDENTITY] Your real agent id is \"{agent_name}\". "

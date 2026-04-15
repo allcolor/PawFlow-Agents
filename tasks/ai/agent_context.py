@@ -117,31 +117,40 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             client_resolver=_client_resolver,
             on_event=_sub_on_event,
         )
-        # Inject available agent names into SpawnAgentsHandler for tool description
+        # Inject available agent instances into SpawnAgentsHandler for tool description
         _uid_for_agents = flowfile.get_attribute("http.auth.principal") or ""
         try:
             from core.resource_store import ResourceStore
             from core.expression import resolve_value
-            from core.conv_agent_config import get_agent_config as _gac2
-            _all_agents = ResourceStore.instance().list_all("agent", _uid_for_agents)
+            from core.conv_agent_config import (
+                get_all_agent_configs as _gall2,
+                get_agent_config as _gac2,
+            )
+            _cid_for_agents = flowfile.get_attribute("conversation_id") or ""
+            _rs = ResourceStore.instance()
             _agent_infos = []
-            for _a in _all_agents:
-                _info = {"name": _a["name"]}
-                _desc = (_a.get("description", "") or "").strip()[:120]
-                if not _desc:
-                    _prompt = _a.get("prompt", "") or ""
-                    _desc = _prompt.split("\n")[0].strip()[:120]
-                if _desc:
-                    _info["description"] = _desc
-                # Runtime config from conversation
-                _cid_for_agents = flowfile.get_attribute("conversation_id") or ""
-                if _cid_for_agents:
-                    _acfg = _gac2(_cid_for_agents, _a["name"])
-                    _info["llm_service"] = resolve_value(
-                        _acfg.get("llm_service", ""),
-                        owner=_uid_for_agents) or ""
-                    if _acfg.get("tools"):
-                        _info["tools"] = _acfg["tools"]
+            # List from conv_agents (instances), not repo definitions
+            _conv_cfgs = _gall2(_cid_for_agents) if _cid_for_agents else {}
+            for _inst_name, _inst_raw in _conv_cfgs.items():
+                _info = {"name": _inst_name}
+                # Get description from definition
+                _acfg = _gac2(_cid_for_agents, _inst_name)
+                _def_name = _acfg["definition"]
+                _adef = _rs.get_any("agent", _def_name, _uid_for_agents)
+                if _adef:
+                    _desc = (_adef.get("description", "") or "").strip()[:120]
+                    if not _desc:
+                        _prompt = _adef.get("prompt", "") or ""
+                        _desc = _prompt.split("\n")[0].strip()[:120]
+                    if _desc:
+                        _info["description"] = _desc
+                    if _def_name != _inst_name:
+                        _info["definition"] = _def_name
+                _info["llm_service"] = resolve_value(
+                    _acfg.get("llm_service", ""),
+                    owner=_uid_for_agents) or ""
+                if _acfg.get("tools"):
+                    _info["tools"] = _acfg["tools"]
                 _agent_infos.append(_info)
         except Exception:
             _agent_infos = []
@@ -504,9 +513,15 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             base_message_count = len(messages)
 
         # Inject {agent_name}.md project instructions if available
+        # Try instance name first, then definition name as fallback
         _agent_md_content = ""
         if _active_agent_name and conversation_id:
             _agent_md = _find_agent_md(_active_agent_name, _user_id_for_svc)
+            if not _agent_md:
+                from core.conv_agent_config import get_definition_name as _gdn
+                _def_n = _gdn(conversation_id, _active_agent_name)
+                if _def_n != _active_agent_name:
+                    _agent_md = _find_agent_md(_def_n, _user_id_for_svc)
             if _agent_md:
                 _agent_md_content = _agent_md[1]
                 # Insert after system prompt (index 1 or after summary)
@@ -590,20 +605,39 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 # Active agent overrides system prompt (target_agent takes priority)
                 selected = _target_agent or active_res.get("agent", "")
                 if selected:
-                    agent_def = rs.get_any("agent", selected, _uid,
+                    # Resolve definition name from conv_agents config
+                    from core.conv_agent_config import (
+                        get_agent_config as _gac_sel,
+                        flatten_agent_params,
+                    )
+                    _inst_cfg = _gac_sel(conversation_id, selected)
+                    _def_name = _inst_cfg["definition"]
+                    agent_def = rs.get_any("agent", _def_name, _uid,
                                            conversation_id=conversation_id)
                     if not agent_def and _target_agent:
                         # /agent msg <name> with unknown agent — reject early
                         raise ValueError(f"Agent '{_target_agent}' not found")
                     if agent_def:
                         _selected_agent_def = agent_def
-                        system_prompt = agent_def["prompt"]
+                        # Resolve expressions in prompt with instance params
+                        _raw_prompt = agent_def["prompt"]
+                        _inst_params = _inst_cfg.get("params") or {}
+                        if _inst_params:
+                            from core.expression import resolve_expression
+                            _flat = flatten_agent_params(selected, _inst_params)
+                            system_prompt = resolve_expression(
+                                _raw_prompt, parameters=_flat,
+                                owner=_uid,
+                                conversation_id=conversation_id)
+                        else:
+                            system_prompt = _raw_prompt
                         # Identity is injected later (with nickname awareness)
 
                         # Date/time NOT in system prompt (KV cache killer)
-                        # List other available agents
-                        all_agents = rs.list_all("agent", _uid, conversation_id=conversation_id)
-                        others = [a["name"] for a in all_agents if a["name"] != selected]
+                        # List other agent instances in this conversation
+                        from core.conv_agent_config import get_all_agent_configs as _gall
+                        _conv_members = list(_gall(conversation_id).keys())
+                        others = [n for n in _conv_members if n != selected]
                         if others:
                             system_prompt += (
                                 f"\n\nOther agents available: "
@@ -735,8 +769,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             ]
         if _selected_agent_def and conversation_id:
             from core.conv_agent_config import get_agent_config as _gac
-            _agent_tools_cfg = _gac(conversation_id,
-                                     _selected_agent_def.get("name", "")
+            # Use the instance name (selected), not the definition name
+            _agent_tools_cfg = _gac(conversation_id, selected
                                      ).get("tools") or []
             if _agent_tools_cfg and isinstance(_agent_tools_cfg, list):
                 _allow = {t for t in _agent_tools_cfg if not str(t).startswith("!")}

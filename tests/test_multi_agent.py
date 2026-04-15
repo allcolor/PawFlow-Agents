@@ -374,9 +374,9 @@ class TestResolveAgentTask:
         """resolve_agent_task loads prompt from ResourceStore, runtime from conv_agent_config."""
         with patch("core.resource_store.ResourceStore.instance") as mock_store, \
              patch("core.conv_agent_config.get_all_agent_configs",
-                   return_value={"analyst": {"llm_service": "svc_a"}}), \
+                   return_value={"analyst": {"llm_service": "svc_a", "definition": "analyst"}}), \
              patch("core.conv_agent_config.get_agent_config",
-                   return_value={"llm_service": "svc_a"}):
+                   return_value={"llm_service": "svc_a", "definition": "analyst", "params": {}}):
             mock_store.return_value.get_any.return_value = {
                 "prompt": "You are an analyst",
             }
@@ -391,11 +391,17 @@ class TestResolveAgentTask:
             assert task.llm_service == "svc_a"
 
     def test_resolve_not_found(self):
-        """resolve_agent_task raises KeyError if agent not in store."""
-        with patch("core.resource_store.ResourceStore.instance") as mock_store:
-            mock_store.return_value.get_any.return_value = None
-            with pytest.raises(KeyError, match="not found"):
-                resolve_agent_task("nope", "Hi", "user1")
+        """resolve_agent_task raises KeyError if agent not in conversation."""
+        with pytest.raises(KeyError, match="cannot be delegated"):
+            resolve_agent_task("nope", "Hi", "user1")
+
+    def test_resolve_not_in_conv(self):
+        """resolve_agent_task raises KeyError if agent not in conv_agents."""
+        with patch("core.conv_agent_config.get_all_agent_configs",
+                   return_value={}):
+            with pytest.raises(KeyError, match="not in conversation"):
+                resolve_agent_task("nope", "Hi", "user1",
+                                   conversation_id="conv1")
 
 
 class TestDelegateExcluded:

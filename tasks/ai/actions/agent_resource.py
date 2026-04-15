@@ -148,28 +148,28 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing agent name"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        from core.resource_store import ResourceStore
-        uid = user_id
-        if ResourceStore.instance().get_any("agent", agent_name, uid) is None:
+        # Check agent is an instance in conv_agents (not just in the repo)
+        from core.conv_agent_config import get_all_agent_configs, get_agent_config
+        _conv_cfgs = get_all_agent_configs(conv_id)
+        _found = agent_name in _conv_cfgs or any(
+            isinstance(_k, str) and _k.lower() == agent_name.lower()
+            for _k in _conv_cfgs
+        )
+        if not _found:
             flowfile.set_content(json.dumps({
-                "error": f"Agent '{agent_name}' not found",
+                "error": f"Agent '{agent_name}' is not in this conversation.",
             }).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        # Must have a conv_agents entry with an llm_service before selecting
-        try:
-            from core.conv_agent_config import get_agent_config
-            _acfg = get_agent_config(conv_id, agent_name)
-            if not _acfg.get("llm_service"):
-                flowfile.set_content(json.dumps({
-                    "error": f"Agent '{agent_name}' has no llm_service in this "
-                             f"conversation. Add it via add_agent_to_conv with "
-                             f"an explicit llm_service first.",
-                }).encode())
-                flowfile.set_attribute("http.response.status", "400")
-                return [flowfile]
-        except Exception as _e:
-            logger.error("Agent config check failed: %s", _e)
+        _acfg = get_agent_config(conv_id, agent_name)
+        if not _acfg.get("llm_service"):
+            flowfile.set_content(json.dumps({
+                "error": f"Agent '{agent_name}' has no llm_service in this "
+                         f"conversation. Add it via add_agent_to_conv with "
+                         f"an explicit llm_service first.",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         active = store.get_extra(conv_id, "active_resources") or {}
         active["agent"] = agent_name
         store.set_extra(conv_id, "active_resources", active)
@@ -928,10 +928,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
     if action == "add_agent_to_conv":
         conv_id = body.get("conversation_id", "")
-        aname = body.get("name", "").strip()
+        # instance_name = the name in the conv (user-chosen)
+        # definition = the repo template name
+        # If only "name" is given (legacy), it's both instance_name and definition
+        instance_name = (body.get("instance_name") or body.get("name", "")).strip()
+        definition = (body.get("definition") or instance_name).strip()
+        inst_params = body.get("params") or {}
         llm_service = body.get("llm_service", "").strip()
-        if not conv_id or not aname:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id or name"}).encode())
+        if not conv_id or not instance_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or instance_name"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         if not llm_service:
@@ -942,23 +947,27 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         uid = user_id
-        agent = ResourceStore.instance().get_any("agent", aname, uid)
+        agent = ResourceStore.instance().get_any("agent", definition, uid)
         if not agent:
-            flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not found in repository"}).encode())
+            flowfile.set_content(json.dumps({"error": f"Definition '{definition}' not found in repository"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         from core.conv_agent_config import add_agent_to_conv as _add
-        _add(conv_id, aname,
+        _add(conv_id, instance_name,
              llm_service=llm_service,
+             definition=definition,
+             params=inst_params,
              model=body.get("model", ""),
              tools=body.get("tools", []),
              max_depth=int(body.get("max_depth", 1000) or 1000),
              skills=body.get("skills", []))
         active = store.get_extra(conv_id, "active_resources") or {}
         if not active.get("agent"):
-            active["agent"] = aname
+            active["agent"] = instance_name
         store.set_extra(conv_id, "active_resources", active)
-        flowfile.set_content(json.dumps({"ok": True, "agent": aname}).encode())
+        flowfile.set_content(json.dumps({
+            "ok": True, "agent": instance_name, "definition": definition,
+        }).encode())
         return [flowfile]
 
     if action == "get_agent_conv_config":
@@ -1014,7 +1023,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         # Merge — only update known fields
-        _allowed = {"llm_service", "model", "tools", "max_depth", "skills"}
+        _allowed = {"llm_service", "model", "tools", "max_depth", "skills", "params"}
         merged = dict(configs[aname])
         for k, v in cfg.items():
             if k in _allowed:
@@ -1052,15 +1061,24 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         uid = user_id
         rs = ResourceStore.instance()
         all_agents = rs.list_all("agent", uid)
-        conv_agents = set(get_all_agent_configs(conv_id).keys()) if conv_id else set()
+        conv_cfgs = get_all_agent_configs(conv_id) if conv_id else {}
+        # Build set of definitions currently in the conv
+        _conv_defs = set()
+        for _iname, _icfg in conv_cfgs.items():
+            _conv_defs.add(_icfg.get("definition", _iname))
+            _conv_defs.add(_iname)  # legacy compat
         out = []
         for a in all_agents:
-            out.append({
+            entry = {
                 "name": a["name"],
                 "description": a.get("description", ""),
                 "scope": a.get("_scope", ""),
-                "in_conversation": a["name"] in conv_agents,
-            })
+                "in_conversation": a["name"] in _conv_defs,
+            }
+            # Include parameters schema if present in the definition
+            if a.get("parameters"):
+                entry["parameters"] = a["parameters"]
+            out.append(entry)
         # Also return available LLM services for the new conv dialog
         llm_services = []
         try:
@@ -1086,33 +1104,64 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "'agents' list is required"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Validate agents exist in repo
+        # Normalize agent entries: support both legacy ["name", ...] and
+        # new [{instance_name, definition, params, llm_service}, ...]
         from core.resource_store import ResourceStore
         uid = user_id
         rs = ResourceStore.instance()
-        valid_agents = []
-        for aname in agents:
-            if rs.get_any("agent", aname, uid):
-                valid_agents.append(aname)
-        if not valid_agents:
-            flowfile.set_content(json.dumps({"error": "None of the specified agents exist in the repository"}).encode())
+        from core.conv_agent_config import add_agent_to_conv
+        _agent_entries = []
+        for item in agents:
+            if isinstance(item, str):
+                # Legacy format: string name, config from agent_configs dict
+                acfg = agent_configs.get(item, {})
+                _agent_entries.append({
+                    "instance_name": item,
+                    "definition": item,
+                    "params": {},
+                    "llm_service": acfg.get("llm_service", ""),
+                    "model": acfg.get("model", ""),
+                    "tools": acfg.get("tools"),
+                    "max_depth": int(acfg.get("max_depth", 1000)),
+                    "skills": acfg.get("skills"),
+                })
+            elif isinstance(item, dict):
+                # New format: full instance spec
+                iname = item.get("instance_name") or item.get("name", "")
+                _agent_entries.append({
+                    "instance_name": iname,
+                    "definition": item.get("definition", iname),
+                    "params": item.get("params") or {},
+                    "llm_service": item.get("llm_service", ""),
+                    "model": item.get("model", ""),
+                    "tools": item.get("tools"),
+                    "max_depth": int(item.get("max_depth", 1000)),
+                    "skills": item.get("skills"),
+                })
+        # Validate definitions exist in repo
+        valid_entries = []
+        for entry in _agent_entries:
+            if rs.get_any("agent", entry["definition"], uid):
+                valid_entries.append(entry)
+        if not valid_entries:
+            flowfile.set_content(json.dumps({"error": "None of the specified agent definitions exist in the repository"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         new_id = store.generate_id()
         store.save(new_id, [], user_id=uid)
-        active_res = {"agents": valid_agents, "agent": valid_agents[0]}
+        _instance_names = [e["instance_name"] for e in valid_entries]
+        active_res = {"agents": _instance_names, "agent": _instance_names[0]}
         store.set_extra(new_id, "active_resources", active_res)
-        # Set conv_agents runtime config for each agent
-        from core.conv_agent_config import add_agent_to_conv
-        for aname in valid_agents:
-            acfg = agent_configs.get(aname, {})
+        for entry in valid_entries:
             add_agent_to_conv(
-                new_id, aname,
-                llm_service=acfg.get("llm_service", ""),
-                model=acfg.get("model", ""),
-                tools=acfg.get("tools"),
-                max_depth=int(acfg.get("max_depth", 1000)),
-                skills=acfg.get("skills"),
+                new_id, entry["instance_name"],
+                llm_service=entry["llm_service"],
+                definition=entry["definition"],
+                params=entry["params"],
+                model=entry["model"],
+                tools=entry["tools"],
+                max_depth=entry["max_depth"],
+                skills=entry["skills"],
             )
         # Title
         title = body.get("title", "")
@@ -1129,7 +1178,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 set_default_relay(new_id, default_relay)
         flowfile.set_content(json.dumps({
             "conversation_id": new_id,
-            "agents": valid_agents,
+            "agents": _instance_names,
         }).encode())
         return [flowfile]
 

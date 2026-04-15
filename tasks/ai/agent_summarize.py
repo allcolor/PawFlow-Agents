@@ -221,7 +221,7 @@ class AgentSummarizeMixin:
 
         try:
             for attempt in range(1, max_retries + 1):
-                _pub(f"Compacting... attempt {attempt}/{max_retries}")
+                _pub("Compacting...")
                 logger.info("[compact-cc] attempt %d/%d", attempt, max_retries)
                 if attempt > 1:
                     prompt = (
@@ -287,7 +287,7 @@ class AgentSummarizeMixin:
         max_loop = 15  # max tool-loop iterations (read pages + compact)
 
         for attempt in range(1, max_retries + 1):
-            _pub(f"Compacting via API... attempt {attempt}/{max_retries}")
+            _pub("Compacting...")
             logger.info("[compact-api] attempt %d/%d", attempt, max_retries)
 
             if attempt > 1:

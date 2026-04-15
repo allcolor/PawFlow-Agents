@@ -40,6 +40,16 @@ logger = logging.getLogger(__name__)
 
 _GATEWAY = "gateway.pixazo.ai"
 
+# Cloudflare in front of gateway.pixazo.ai blocks the Python default
+# `User-Agent: Python-urllib/3.x` with a 403 challenge page on the
+# polling URLs (/v2/requests/status/...). We send a real-browser UA on
+# every request so async ops don't die at the first poll.
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
 
 def _catalog_path() -> str:
     """Locate the Pixazo catalog JSON in the repository."""
@@ -287,6 +297,7 @@ class _PixazoBaseService(BaseService):
             "Cache-Control": "no-cache",
             "Ocp-Apim-Subscription-Key": self.api_key,
             "Content-Length": str(len(body_bytes)),
+            "User-Agent": _BROWSER_UA,
         }
 
     @staticmethod
@@ -350,6 +361,9 @@ class _PixazoBaseService(BaseService):
             "Cache-Control": "no-cache",
             "Ocp-Apim-Subscription-Key": self.api_key,
             "Accept": "application/json",
+            # Cloudflare in front of /v2/requests/status/... rejects the
+            # default Python UA with a 403 challenge page.
+            "User-Agent": _BROWSER_UA,
         })
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -363,8 +377,10 @@ class _PixazoBaseService(BaseService):
                         *, default_mime: str = "application/octet-stream"
                         ) -> Tuple[bytes, str]:
         """Fetch bytes from a public CDN URL — no Pixazo auth needed."""
+        # Use a real-browser UA — some Pixazo CDNs sit behind the same
+        # Cloudflare gate as the polling endpoint.
         req = urllib.request.Request(
-            url, headers={"User-Agent": "PawFlow-Agent/1.0"})
+            url, headers={"User-Agent": _BROWSER_UA})
         with urllib.request.urlopen(req, timeout=120) as r:
             return r.read(), r.headers.get("Content-Type", default_mime)
 

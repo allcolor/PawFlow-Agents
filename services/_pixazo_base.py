@@ -397,18 +397,71 @@ class _PixazoBaseService(BaseService):
             raise ServiceError(f"Pixazo API error ({resp_status}): {resp_body[:300]}")
         return json.loads(resp_body) if resp_body.strip() else {}
 
+    def _try_get_via_relay(self, url: str,
+                            headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        """Route a GET through the first connected relay (Linux TCP
+        stack → JA3 different from Windows Python → bypasses the
+        Cloudflare managed challenge that the polling endpoint serves).
+
+        Returns the parsed JSON dict on success, None when no relay is
+        available so the caller falls back to direct urllib.
+        """
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            relay = None
+            # Walk every known scope/instance for a connected relay.
+            for scope in ("global", "user"):
+                for sdef in reg.resolve_by_type("relay") or []:
+                    candidate = reg.get_live_instance(
+                        sdef.scope, sdef.scope_id, sdef.service_id)
+                    # `_relay_pool` is the FilesystemService's connected
+                    # WS list — non-empty means a relay is actually online.
+                    if candidate and getattr(candidate, "_relay_pool", []):
+                        relay = candidate
+                        break
+                if relay:
+                    break
+            if not relay:
+                return None
+        except Exception as e:
+            logger.debug("[PIXAZO] relay lookup skipped: %s", e)
+            return None
+
+        try:
+            logger.info("[PIXAZO] GET via relay '%s' %s",
+                        getattr(relay, "_service_id", "?"), url)
+            r = relay.http_fetch(url, method="GET", headers=headers,
+                                  timeout=self.timeout)
+        except Exception as e:
+            logger.warning("[PIXAZO] relay GET failed (%s) — falling back to direct urllib", e)
+            return None
+        status = r.get("status", 0)
+        body = (r.get("body_bytes") or b"").decode("utf-8", errors="replace")
+        if status >= 400:
+            if "Just a moment" in body or "Un instant" in body:
+                # Even via the relay CF is challenging — give up the
+                # routed path so direct urllib at least surfaces the
+                # same error with the proper exception shape.
+                logger.warning("[PIXAZO] relay also got CF challenge — falling back")
+                return None
+            raise ServiceError(f"Pixazo poll error ({status}): {body[:300]}")
+        return json.loads(body) if body.strip() else {}
+
     def _get_url(self, url: str) -> Dict[str, Any]:
         """GET an absolute Pixazo URL (used for `polling_url` follow-up).
 
         The URL is whatever the generate response put in `polling_url`
-        — we never construct it ourselves. Verified at info-log level
-        for debugging when Cloudflare blocks the poll.
+        — we never construct it ourselves.
 
-        On flagged IPs Pixazo's /v2/requests/status/ sits behind a
-        managed challenge. Setting `cf_clearance` + `cf_user_agent`
-        on the service config makes us look like the user's browser
-        and gets through — see service config description for how to
-        extract the cookie.
+        Pixazo's /v2/requests/status/ endpoint is behind a Cloudflare
+        managed challenge that flags Python's TLS fingerprint on
+        Windows native (verified empirically: same machine, WSL/Docker
+        passes, Windows Python doesn't). When a relay service is
+        connected we route the GET through it — the relay's Linux
+        TCP stack produces a different JA3 that CF doesn't flag. The
+        IP is the user's regardless; only the client fingerprint
+        differs.
         """
         logger.info("[PIXAZO] GET %s", url)
         headers = {
@@ -419,6 +472,11 @@ class _PixazoBaseService(BaseService):
         }
         if self._cf_cookie:
             headers["Cookie"] = f"cf_clearance={self._cf_cookie}"
+        # Try via relay first if one is connected — defeats CF on
+        # flagged Windows Python without any extra dependency.
+        relay_result = self._try_get_via_relay(url, headers)
+        if relay_result is not None:
+            return relay_result
         req = urllib.request.Request(url, method="GET", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:

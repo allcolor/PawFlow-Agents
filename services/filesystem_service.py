@@ -1033,6 +1033,42 @@ class RelayService(BaseService):
             kwargs["shell"] = shell
         return self._request_stream("exec_stream", path, on_output=on_output, **kwargs)
 
+    def http_fetch(self, url: str, method: str = "GET",
+                    headers: dict = None, body: bytes = b"",
+                    timeout: int = 300, local: bool = False) -> dict:
+        """Sync HTTP fetch via the relay container.
+
+        Returns {ok, status, headers, body_bytes} — body is decoded
+        from the relay's base64 wire format. Use this when PawFlow's
+        own HTTP stack is fingerprint-blocked (Cloudflare on Windows
+        Python urllib) but the relay's Linux stack works.
+
+        `local=True` forwards to the user's host helper (PAWFLOW_HOST_HELPER),
+        same semantic as the screen / desktop actions.
+        """
+        import base64 as _b64
+        _body = body if isinstance(body, (bytes, bytearray)) else (body or b"")
+        result = self._request(
+            "http_fetch", ".",
+            local=local,
+            url=url,
+            method=method,
+            headers=headers or {},
+            body=_b64.b64encode(bytes(_body)).decode("ascii") if _body else "",
+            timeout=timeout,
+        )
+        if not isinstance(result, dict) or not result.get("ok"):
+            err = (result or {}).get("error", "http_fetch returned no result")
+            raise Exception(f"relay http_fetch failed: {err}")
+        b64 = result.get("body", "")
+        body_bytes = _b64.b64decode(b64) if b64 else b""
+        return {
+            "ok": True,
+            "status": int(result.get("status", 0)),
+            "headers": result.get("headers") or {},
+            "body_bytes": body_bytes,
+        }
+
     def http_fetch_stream(self, url: str, method: str = "GET",
                            headers: dict = None, body: bytes = b"",
                            timeout: int = 300, on_output=None):

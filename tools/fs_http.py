@@ -66,20 +66,20 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
 
     try:
         with urllib.request.urlopen(req_obj, timeout=timeout) as resp:
-            _emit_response(resp, on_chunk)
-        return {"ok": True}
+            return _consume(resp, on_chunk)
     except urllib.error.HTTPError as e:
-        # HTTP error status — still has a body we want to forward
+        # HTTP error status — still has a body we want to forward.
         try:
-            _emit_response(e, on_chunk)
+            return _consume(e, on_chunk)
         except Exception as inner:
-            logger.warning("Failed to stream HTTP error body: %s", inner)
+            logger.warning("Failed to read HTTP error body: %s", inner)
             if on_chunk:
                 try:
                     on_chunk("end", None)
                 except Exception:
                     pass
-        return {"ok": True}
+            return {"ok": False, "status": e.code,
+                    "error": f"HTTP {e.code}"}
     except urllib.error.URLError as e:
         logger.warning("http_fetch URL error: %s", e)
         return {"ok": False, "error": f"URL error: {e.reason}"}
@@ -88,19 +88,36 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
         return {"ok": False, "error": str(e)}
 
 
-def _emit_response(resp, on_chunk):
-    """Stream an HTTP response through on_chunk callback."""
-    if not on_chunk:
-        # Non-streaming fallback: read everything (caller can't consume chunks)
-        resp.read()
-        return
-    status = getattr(resp, "status", None) or getattr(resp, "code", 200)
+def _consume(resp, on_chunk):
+    """Either stream chunks (when on_chunk is set) or return the full
+    body inline so a sync caller can use http_fetch as a drop-in
+    replacement for `urllib.request.urlopen` (status, headers, body).
+
+    Inline mode always returns:
+        {"ok": True, "status": int, "headers": dict, "body": str}
+    where `body` is base64-encoded so binary payloads survive JSON.
+    """
+    status = int(getattr(resp, "status", None)
+                  or getattr(resp, "code", 200))
     _headers = {}
     for k, v in (resp.headers.items() if hasattr(resp.headers, "items") else []):
-        # Skip hop-by-hop headers on the way back too
         if k.lower() in ("connection", "transfer-encoding"):
             continue
         _headers[k] = v
+    if on_chunk:
+        _emit_response_streaming(resp, on_chunk, status, _headers)
+        return {"ok": True}
+    body = resp.read()
+    return {
+        "ok": True,
+        "status": status,
+        "headers": _headers,
+        "body": base64.b64encode(body).decode("ascii"),
+    }
+
+
+def _emit_response_streaming(resp, on_chunk, status, _headers):
+    """Stream chunks via on_chunk callback (start / chunk / end)."""
     on_chunk("start", {"status": int(status), "headers": _headers})
     # Read in small chunks to support SSE streaming (no fixed delimiter)
     while True:

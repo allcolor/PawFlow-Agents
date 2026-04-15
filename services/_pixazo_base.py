@@ -450,12 +450,33 @@ class _PixazoBaseService(BaseService):
             logger.warning("[PIXAZO] relay GET failed (%s) — falling back to direct urllib", e)
             return None
         status = r.get("status", 0)
-        body = (r.get("body_bytes") or b"").decode("utf-8", errors="replace")
+        body_bytes = r.get("body_bytes") or b""
+        # Server may return gzip / br even when we didn't ask — decode
+        # if Content-Encoding indicates compression.
+        _enc = (r.get("headers") or {}).get("Content-Encoding", "").lower()
+        if "gzip" in _enc:
+            try:
+                import gzip
+                body_bytes = gzip.decompress(body_bytes)
+            except Exception as ge:
+                logger.warning("[PIXAZO] gzip decode failed: %s", ge)
+        elif "br" in _enc:
+            try:
+                import brotli  # type: ignore
+                body_bytes = brotli.decompress(body_bytes)
+            except Exception as be:
+                logger.warning("[PIXAZO] br decode failed: %s", be)
+        elif "deflate" in _enc:
+            try:
+                import zlib
+                body_bytes = zlib.decompress(body_bytes)
+            except Exception as de:
+                logger.warning("[PIXAZO] deflate decode failed: %s", de)
+        body = body_bytes.decode("utf-8", errors="replace")
+        logger.info("[PIXAZO] relay GET %d, encoding=%r, body[:200]=%r",
+                    status, _enc, body[:200])
         if status >= 400:
             if "Just a moment" in body or "Un instant" in body:
-                # Even via the relay CF is challenging — give up the
-                # routed path so direct urllib at least surfaces the
-                # same error with the proper exception shape.
                 logger.warning("[PIXAZO] relay also got CF challenge — falling back")
                 return None
             raise ServiceError(f"Pixazo poll error ({status}): {body[:300]}")
@@ -524,9 +545,10 @@ class _PixazoBaseService(BaseService):
               *, polling_url: str = "") -> str:
         """Drive polling per convention until completion; return media URL.
 
-        No timeout — waits forever. Cancellation is via the agent loop's
-        interrupt path (raises AgentCancelled), per the project rule
-        "no arbitrary timeouts".
+        No timeout — waits forever. Cancellation comes from the active
+        tool's cancel_event (set by tool_relay_service when the user
+        clicks Kill); checked between polls so we don't keep hammering
+        Pixazo after the user already stopped the tool.
         """
         output_path = op.get("output_path", "")
         url_field = op.get("url_field", "")
@@ -535,7 +557,17 @@ class _PixazoBaseService(BaseService):
         prediction_endpoint = op.get("prediction_endpoint", "")
         use_url = bool(polling_url)
         start = time.time()
+        # Pulled lazily so direct service tests (which run outside a
+        # tool dispatch) don't need to fake the thread-local.
+        try:
+            from services.tool_relay_service import current_cancel_event
+            _cancel = current_cancel_event()
+        except Exception:
+            _cancel = None
         while True:
+            if _cancel is not None and _cancel.is_set():
+                raise ServiceError(
+                    "Pixazo polling cancelled by user")
             time.sleep(self.poll_interval)
             if use_url:
                 data = self._get_url(polling_url)

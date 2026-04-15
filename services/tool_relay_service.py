@@ -693,6 +693,12 @@ class ToolRelayService(BaseService):
         _result_holder = [None]
 
         def _exec():
+            # Expose the cancel event to the tool's call stack via
+            # thread-local — long-running tools (Pixazo poll loops,
+            # browser automation, anything with its own retry/wait)
+            # can read it and abort early instead of hammering the
+            # remote API after the user already clicked Kill.
+            _set_current_cancel_event(cancel_event)
             try:
                 _result_holder[0] = self._do_execute(
                     request_id, tool_name, arguments,
@@ -701,6 +707,7 @@ class ToolRelayService(BaseService):
                 _result_holder[0] = {"type": "result", "request_id": request_id,
                                       "data": f"Error: {e}"}
             finally:
+                _set_current_cancel_event(None)
                 evt.set()
 
         exec_thread = threading.Thread(target=_exec, daemon=True)
@@ -1080,3 +1087,22 @@ def resolve_secret_values(user_id: str, conversation_id: str) -> tuple:
 
 # Register with ServiceFactory
 ServiceFactory.register(ToolRelayService)
+
+
+# ── Thread-local cancel-event ────────────────────────────────────────
+# Populated by `_handle_execute._exec()` for the lifetime of one tool
+# dispatch so any code in the call stack (Pixazo poll loops, browser
+# automation, long-running waits) can check `current_cancel_event()`
+# and abort early when the user clicks Kill.
+_thread_local = threading.local()
+
+
+def _set_current_cancel_event(evt):
+    _thread_local.cancel_event = evt
+
+
+def current_cancel_event():
+    """Return the cancel Event for the currently-executing tool, or
+    None when not running inside a tool dispatch (tests, direct calls).
+    """
+    return getattr(_thread_local, "cancel_event", None)

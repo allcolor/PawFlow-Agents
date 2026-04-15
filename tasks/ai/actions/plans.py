@@ -46,7 +46,7 @@ def force_stop_agent(conv_id, agent_name):
 def _force_stop_agent(self, conv_id, agent_name=""):
     """Force stop an agent (legacy — uses self for CC subprocess kill)."""
     try:
-        self.cancel_agent(conv_id, agent_name=agent_name)
+        self.cancel_agent(conv_id, agent_name=agent_name, reason="plan_step_done")
         from services.tool_relay_service import ToolRelayService
         ToolRelayService.cancel_agent(conv_id, agent_name)
     except Exception:

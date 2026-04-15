@@ -233,8 +233,13 @@ flow node, with the type `tool.<handler_name>`.
 | `tool.local_files` | Manage local files on the filesystem |
 | `tool.generate_image` | Generate an image via an image model |
 | `tool.edit_image` | Edit one or more existing images via the image model (requires a model that declares an `edit_image` operation in `pixazo_catalog.json`, e.g. `nano-banana`). |
-| `tool.generate_video` | Generate a video via a video model |
+| `tool.generate_video` | Generate a video from text, image, video, or start+end frames. Supports text-to-video, image-to-video, video-edit, and frame-to-video modes via `image_url`, `video_url`, `end_image_url` params. |
 | `tool.generate_audio` | Generate audio via an audio model |
+| `tool.upscale_video` | Upscale a video (SeedVR, Topaz). Requires `video_url`. |
+| `tool.describe_image` | Describe an image in natural language (Ideogram). Requires `image_url`. Returns `{description}`. |
+| `tool.remix_image` | Remix an image with a text prompt (Ideogram). Requires `prompt` + `image_url`. |
+| `tool.remove_background` | Remove background from an image (Bria RMBG 2.0). Requires `image_url`. |
+| `tool.speech_to_video` | Speech-to-video from image + audio (Wan 2.2 S2V). Requires `image_url` + `audio_url`. |
 | `tool.get_image_model_info` | Get info about available image models |
 | `tool.remember` | Store a memory in the agent's memory |
 | `tool.recall` | Recall memories by keyword search |

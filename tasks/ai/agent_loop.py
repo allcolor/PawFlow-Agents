@@ -525,7 +525,7 @@ class AgentLoopTask(
 
 
     def cancel_agent(self, conversation_id: str, agent_name: str = "",
-                     silent: bool = False):
+                     silent: bool = False, reason: str = "user_request"):
         """Cancel a running agent for this conversation.
 
         If agent_name is specified, only cancel that specific agent's thread.
@@ -562,7 +562,7 @@ class AgentLoopTask(
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
                 conversation_id, "cancelled", {
-                    "reason": "user_request",
+                    "reason": reason,
                     "agent_name": agent_name if _is_named else "all",
                 }
             )
@@ -612,8 +612,18 @@ class AgentLoopTask(
         # Reset status
         from core.conversation_store import ConversationStore
         # _active_contexts cleanup happens in _run_agent_loop finally
-        logger.info(f"[agent:{conversation_id[:8]}] cancelled by user"
-                    f"{f' (agent: {agent_name})' if _is_named else ' (all)'}")
+        import traceback as _tb
+        _caller = ""
+        try:
+            _stack = _tb.extract_stack(limit=6)[:-1]
+            _caller = " <- " + " <- ".join(
+                f"{__import__('os').path.basename(f.filename)}:{f.lineno}"
+                for f in reversed(_stack[-4:]))
+        except Exception:
+            pass
+        logger.info(f"[agent:{conversation_id[:8]}] cancelled ({reason})"
+                    f"{f' (agent: {agent_name})' if _is_named else ' (all)'}"
+                    f"{_caller}")
 
 
     def interrupt_agent(self, conversation_id: str, agent_name: str = ""):

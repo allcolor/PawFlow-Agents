@@ -409,5 +409,20 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
         except Exception as e:
             logger.error("[bg-tool] failed to inject CC system message: %s", e)
 
+        # Wake the agent. The end-of-turn pending-message reschedule in
+        # agent_streaming skips CC on purpose (CC handles preempted msgs
+        # inline), so BG injections for CC would sit in the transcript
+        # forever with no new turn. Schedule one explicitly.
+        try:
+            from core.poll_scheduler import PollScheduler
+            PollScheduler.instance().schedule_delay(
+                conv_id, 1,
+                key=f"{conv_id}::bg_injected::{tc_id}",
+                reason=f"[bg-tool] CC result injected ({tool_name})",
+                user_id=task.get("user_id", "") or "",
+            )
+        except Exception as e:
+            logger.warning("[bg-tool] failed to schedule agent wake: %s", e)
+
     # Cleanup old tasks periodically
     cleanup_done(max_age=300)

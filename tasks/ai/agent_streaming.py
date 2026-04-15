@@ -507,46 +507,17 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         finally:
             use_conv_store = ctx.get("use_conv_store", False)
 
-            # Check for pending user messages — even after poll runs
-            # Skip for CC: preempted messages are handled inline by CC,
-            # the tail may show user messages without a separate assistant
-            # response but CC already answered them in its turn.
             _was_interrupted = not self._is_current_generation(gen_key, my_generation)
             _is_cc = ctx.get("_is_claude_code", False)
-            if use_conv_store and conversation_id and not _was_interrupted and not _had_error and not _is_cc:
-                try:
-                    # Flush writer — ensure all messages from this turn are on disk
-                    from core.conversation_writer import ConversationWriter
-                    try:
-                        ConversationWriter.for_conversation(conversation_id).flush(timeout=5)
-                    except Exception:
-                        pass
-                    _cs = ConversationStore.instance()
-                    _final_count = _cs.message_count(conversation_id)
-                    # Check: are there user messages AFTER the last assistant/tool message?
-                    # Load the tail and check if the very last message(s) are from the user
-                    # (meaning the agent didn't respond to them)
-                    _tail = _cs.load_page(conversation_id, limit=5, offset=max(0, _final_count - 5))
-                    _tail_msgs = (_tail["messages"] if _tail else []) if _tail else []
-                    _pending = []
-                    for m in reversed(_tail_msgs):
-                        if not isinstance(m, dict):
-                            continue
-                        if m.get("role") == "user" and not (
-                                isinstance(m.get("content"), str) and m["content"].startswith("[System:")):
-                            _pending.append(m)
-                        else:
-                            break  # hit a non-user message → no more pending
-                    if _pending:
-                            from core.poll_scheduler import PollScheduler
-                            PollScheduler.instance().schedule_delay(
-                                conversation_id, 3,
-                                key=f"{conversation_id}::pending_msg",
-                                reason=f"[pending_message] {len(_pending)} user message(s)",
-                                user_id=ctx.get("user_id", ""))
-                except Exception:
-                    pass
-            # Also check in-memory pending queue (messages queued while agent was busy)
+            # NOTE: transcript-tail detection removed — it could not
+            # distinguish a preempt already delivered to the LLM (which
+            # will get its response next, no reschedule needed) from one
+            # that arrived after the turn was wrapping up (undelivered,
+            # needs a new turn). The in-memory queue below is the single
+            # source of truth: a preempt is enqueued only when its
+            # delivery to the active session failed (send_user_message
+            # returned False, mode mismatch, or no active client).
+            # Check in-memory pending queue (messages queued while agent was busy)
             _agent_n = ctx.get("active_agent_name", "") or ""
             _ak = f"{conversation_id}:{_agent_n}" if _agent_n else conversation_id
             _qk = f"_queued_msgs:{_ak}"

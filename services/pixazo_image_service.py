@@ -98,6 +98,54 @@ class PixazoImageService(_PixazoBaseService, BaseImageGenerationService):
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
 
+    def describe_image(self, image_url: str = "",
+                       model: str = "", **kwargs) -> dict:
+        """Describe an image (Ideogram v2 / Turbo describe)."""
+        if not image_url:
+            raise ServiceError("describe_image requires `image_url`.")
+        self.ensure_connected()
+        op = self._op("describe_image", model_id=model)
+        endpoint = op.get("endpoint", "")
+        input_field = op.get("input_field", "image_file")
+        multipart = bool(op.get("multipart_form_data", False))
+        body: Dict[str, Any] = {input_field: image_url}
+        for k, v in kwargs.items():
+            if k not in body and k not in ("destination", "path", "service", "model"):
+                body[k] = v
+        if multipart:
+            data = self._post(endpoint, body, multipart=True)
+        else:
+            data = self._post(endpoint, body)
+        # Extract description text from response (e.g. data.description)
+        desc = data
+        for part in (op.get("url_field") or "description").split("."):
+            if isinstance(desc, dict):
+                desc = desc.get(part, "")
+        return {"description": str(desc) if desc else ""}
+
+    def remix_image(self, prompt: str = "", image_url: str = "",
+                    model: str = "", **kwargs) -> dict:
+        """Remix an image (Ideogram v2 / Turbo remix)."""
+        if not image_url:
+            raise ServiceError("remix_image requires `image_url`.")
+        if not prompt:
+            raise ServiceError("remix_image requires `prompt`.")
+        op = self._op("remix_image", model_id=model)
+        input_field = op.get("input_field", "image_file")
+        body: Dict[str, Any] = {
+            "prompt": prompt,
+            input_field: image_url,
+            "num_images": int(kwargs.get("num_images", 1)),
+            "output_format": kwargs.get("output_format", "png"),
+        }
+        for k, v in kwargs.items():
+            if k not in body and k not in ("destination", "path", "service", "model"):
+                body[k] = v
+        r = self._invoke("remix_image", body, model_id=model)
+        return {"image_bytes": r["bytes"],
+                "content_type": r["content_type"],
+                "source_url": r["source_url"]}
+
 
 ServiceFactory.register(PixazoImageService)
 

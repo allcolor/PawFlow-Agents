@@ -78,9 +78,14 @@ from core.handlers import (  # noqa: F401
     AudioGenerationHandler,
     Generate3DHandler,
     UpscaleImageHandler,
+    UpscaleVideoHandler,
+    DescribeImageHandler,
+    RemixImageHandler,
+    RemoveBackgroundHandler,
     TryOnHandler,
     LipsyncHandler,
     TrainImageModelHandler,
+    SpeechToVideoHandler,
     WebSearchHandler,
 )
 
@@ -256,9 +261,14 @@ def create_default_registry() -> ToolRegistry:
     registry.register(AudioGenerationHandler())
     registry.register(Generate3DHandler())
     registry.register(UpscaleImageHandler())
+    registry.register(UpscaleVideoHandler())
+    registry.register(DescribeImageHandler())
+    registry.register(RemixImageHandler())
+    registry.register(RemoveBackgroundHandler())
     registry.register(TryOnHandler())
     registry.register(LipsyncHandler())
     registry.register(TrainImageModelHandler())
+    registry.register(SpeechToVideoHandler())
     registry.register(RememberHandler())
     registry.register(RecallHandler())
     registry.register(SemanticRecallHandler())

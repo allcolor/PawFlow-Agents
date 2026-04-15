@@ -90,6 +90,41 @@ class PixazoUpscaleService(_PixazoBaseService, BaseImageUpscaleService):
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
 
+    def upscale_video(self, video_url: str = "", scale: int = 2,
+                      model: str = "", **kwargs) -> dict:
+        """Upscale a video (SeedVR Video, Topaz)."""
+        if not video_url:
+            raise ServiceError("upscale_video requires `video_url`.")
+        op = self._op("upscale", model_id=model)
+        input_field = op.get("input_field", "video_url")
+        body: Dict[str, Any] = {
+            input_field: video_url,
+            "scale": int(scale),
+        }
+        for k, v in kwargs.items():
+            if k not in body and k not in ("destination", "path", "service", "model"):
+                body[k] = v
+        r = self._invoke("upscale", body, model_id=model)
+        return {"bytes": r["bytes"],
+                "content_type": r["content_type"],
+                "source_url": r["source_url"]}
+
+    def remove_background(self, image_url: str = "",
+                           model: str = "", **kwargs) -> dict:
+        """Remove image background (Bria RMBG 2.0)."""
+        if not image_url:
+            raise ServiceError("remove_background requires `image_url`.")
+        op = self._op("remove_background", model_id=model)
+        input_field = op.get("input_field", "image_url")
+        body: Dict[str, Any] = {input_field: image_url}
+        for k, v in kwargs.items():
+            if k not in body and k not in ("destination", "path", "service", "model"):
+                body[k] = v
+        r = self._invoke("remove_background", body, model_id=model)
+        return {"bytes": r["bytes"],
+                "content_type": r["content_type"],
+                "source_url": r["source_url"]}
+
 
 class PixazoTryOnService(_PixazoBaseService, BaseTryOnService):
     """Virtual try-on (Kling VTON, Fashn, IDM-VTON, Glass)."""

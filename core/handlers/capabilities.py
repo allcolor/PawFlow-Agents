@@ -198,6 +198,210 @@ class UpscaleImageHandler(_CapabilityHandlerBase):
             return f"Error upscaling image: {e}"
 
 
+# ── Upscale Video ─────────────────────────────────────────────────────
+
+
+class UpscaleVideoHandler(_CapabilityHandlerBase):
+    @property
+    def name(self) -> str:
+        return "upscale_video"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Upscale a video (2x / 4x) using an AI upscaler "
+            "(SeedVR Video, Topaz, ...). Pass the source via "
+            "`video_url` (HTTP or fs://filestore/<id>/<name>). Saves the "
+            "result to FileStore (default) or a filesystem service."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "video_url": {"type": "string", "description": "Source video URL"},
+                "scale": {"type": "integer", "description": "Upscale factor (2, 4 — default 2)"},
+                "destination": {"type": "string"},
+                "path": {"type": "string"},
+                "model": {"type": "string", "description": "Override the upscale model (e.g. 'seedvr-upscale-video', 'topaz-upscale-video-753')."},
+            },
+            "required": ["video_url"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        svc, err = self._get_service()
+        if not svc:
+            return f"Error: {err or 'no upscale service available'}"
+        video_url = self._rewrite(arguments.get("video_url", "") or "")
+        if not video_url:
+            return "Error: `video_url` is required"
+        if not hasattr(svc, 'upscale_video'):
+            return "Error: the active upscale service does not support video upscaling"
+        scale = int(arguments.get("scale", 2))
+        try:
+            kwargs = {k: v for k, v in arguments.items()
+                      if k not in ("destination", "path", "video_url", "scale")}
+            r = svc.upscale_video(video_url=video_url, scale=scale, **kwargs)
+            filename = arguments.get("path") or (
+                f"upscaled_{int(time.time())}.mp4")
+            destination = arguments.get("destination", "filestore")
+            return self._persist(destination, filename, r, "Upscaled video")
+        except Exception as e:
+            return f"Error upscaling video: {e}"
+
+
+# ── Describe Image ───────────────────────────────────────────────────
+
+
+class DescribeImageHandler(_CapabilityHandlerBase):
+    @property
+    def name(self) -> str:
+        return "describe_image"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Describe the content of an image using an AI model "
+            "(Ideogram v2 / Turbo). Returns a text description of the "
+            "image content, style, and composition. Pass the source via "
+            "`image_url` (HTTP or fs://filestore/<id>/<name>)."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "image_url": {"type": "string", "description": "Source image URL to describe"},
+                "model": {"type": "string", "description": "Override the model (e.g. 'ideogram', 'ideogram-turbo')."},
+            },
+            "required": ["image_url"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        svc, err = self._get_service()
+        if not svc:
+            return f"Error: {err or 'no image service available'}"
+        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        if not image_url:
+            return "Error: `image_url` is required"
+        if not hasattr(svc, 'describe_image'):
+            return "Error: the active image service does not support describe_image"
+        try:
+            kwargs = {k: v for k, v in arguments.items()
+                      if k not in ("image_url",)}
+            r = svc.describe_image(image_url=image_url, **kwargs)
+            return f"Image description: {r.get('description', '(no description)')}"
+        except Exception as e:
+            return f"Error describing image: {e}"
+
+
+# ── Remix Image ─────────────────────────────────────────────────────
+
+
+class RemixImageHandler(_CapabilityHandlerBase):
+    @property
+    def name(self) -> str:
+        return "remix_image"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Remix an image: generate a new image inspired by a source image "
+            "and a text prompt. The output blends the style/content of the "
+            "source with the prompt direction. Uses Ideogram v2 / Turbo remix. "
+            "Pass the source via `image_url` (HTTP or fs://filestore/<id>/<name>)."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "Text prompt describing the desired remix"},
+                "image_url": {"type": "string", "description": "Source image URL to remix"},
+                "destination": {"type": "string"},
+                "path": {"type": "string"},
+                "model": {"type": "string", "description": "Override the model (e.g. 'ideogram', 'ideogram-turbo')."},
+            },
+            "required": ["prompt", "image_url"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        svc, err = self._get_service()
+        if not svc:
+            return f"Error: {err or 'no image service available'}"
+        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        prompt = arguments.get("prompt", "")
+        if not image_url or not prompt:
+            return "Error: `prompt` and `image_url` are required"
+        if not hasattr(svc, 'remix_image'):
+            return "Error: the active image service does not support remix_image"
+        try:
+            kwargs = {k: v for k, v in arguments.items()
+                      if k not in ("destination", "path", "image_url", "prompt")}
+            r = svc.remix_image(prompt=prompt, image_url=image_url, **kwargs)
+            ct = r.get("content_type", "image/png").split(";")[0].strip()
+            ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(ct, "png")
+            filename = arguments.get("path") or f"remix_{int(time.time())}.{ext}"
+            destination = arguments.get("destination", "filestore")
+            return self._persist(destination, filename, r, "Remixed image")
+        except Exception as e:
+            return f"Error remixing image: {e}"
+
+
+# ── Remove Background ─────────────────────────────────────────────────
+
+
+class RemoveBackgroundHandler(_CapabilityHandlerBase):
+    @property
+    def name(self) -> str:
+        return "remove_background"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Remove the background from an image using an AI model "
+            "(Bria RMBG 2.0, VEED, ...). Pass the source via "
+            "`image_url` (HTTP or fs://filestore/<id>/<name>). Returns "
+            "a PNG with transparent background."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "image_url": {"type": "string", "description": "Source image URL"},
+                "destination": {"type": "string"},
+                "path": {"type": "string"},
+                "model": {"type": "string", "description": "Override the model (e.g. 'bria-rmbg-2-0-682')."},
+            },
+            "required": ["image_url"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        svc, err = self._get_service()
+        if not svc:
+            return f"Error: {err or 'no upscale/background service available'}"
+        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        if not image_url:
+            return "Error: `image_url` is required"
+        if not hasattr(svc, 'remove_background'):
+            return "Error: the active service does not support remove_background"
+        try:
+            kwargs = {k: v for k, v in arguments.items()
+                      if k not in ("destination", "path", "image_url")}
+            r = svc.remove_background(image_url=image_url, **kwargs)
+            filename = arguments.get("path") or (
+                f"nobg_{int(time.time())}.png")
+            destination = arguments.get("destination", "filestore")
+            return self._persist(destination, filename, r, "Background removed")
+        except Exception as e:
+            return f"Error removing background: {e}"
+
+
 # ── Try-on ─────────────────────────────────────────────────────────────
 
 
@@ -361,3 +565,57 @@ class TrainImageModelHandler(_CapabilityHandlerBase):
             return f"Training complete. LoRA: {lora}"
         except Exception as e:
             return f"Error training image model: {e}"
+
+
+# ── Speech to Video ─────────────────────────────────────────────────
+
+
+class SpeechToVideoHandler(_CapabilityHandlerBase):
+    @property
+    def name(self) -> str:
+        return "speech_to_video"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Generate a lip-synced video from a face image and audio track "
+            "(Wan 2.2 Speech-to-Video). The output video shows the person "
+            "speaking/singing along with the audio. Requires `image_url` "
+            "(face photo) and `audio_url` (speech/music)."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "Style/scene description (e.g. 'beach vacation, man in sunglasses')"},
+                "image_url": {"type": "string", "description": "Face image URL (HTTP or fs://filestore/<id>/<name>)"},
+                "audio_url": {"type": "string", "description": "Audio track URL (speech or music)"},
+                "resolution": {"type": "string", "description": "Output resolution: '480p', '580p', '720p' (default '480p')"},
+                "destination": {"type": "string"},
+                "path": {"type": "string"},
+                "model": {"type": "string", "description": "Override model (default 'wan2.2-s2v')."},
+            },
+            "required": ["image_url", "audio_url"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        svc, err = self._get_service()
+        if not svc:
+            return f"Error: {err or 'no video service available'}"
+        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        audio_url = self._rewrite(arguments.get("audio_url", "") or "")
+        if not image_url or not audio_url:
+            return "Error: `image_url` and `audio_url` are required"
+        if not hasattr(svc, 'speech_to_video'):
+            return "Error: the active video service does not support speech_to_video"
+        try:
+            kwargs = {k: v for k, v in arguments.items()
+                      if k not in ("destination", "path", "image_url", "audio_url")}
+            r = svc.speech_to_video(image_url=image_url, audio_url=audio_url, **kwargs)
+            filename = arguments.get("path") or f"s2v_{int(time.time())}.mp4"
+            destination = arguments.get("destination", "filestore")
+            return self._persist(destination, filename, r, "Speech-to-video generated")
+        except Exception as e:
+            return f"Error generating speech-to-video: {e}"

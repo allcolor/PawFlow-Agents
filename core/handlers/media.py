@@ -309,9 +309,10 @@ class EditImageHandler(ToolHandler):
 class VideoGenerationHandler(ToolHandler):
     """Generate videos via a dynamically resolved video generation service.
 
-    At execution time, calls a resolver function that discovers available
-    video services and selects one based on per-agent conversation preferences.
-    Handles FileStore storage and URL creation.
+    Supports three modes:
+    - text-to-video: prompt only (default)
+    - image-to-video: prompt + image_url (continuation / animation)
+    - video-edit: prompt + video_url (style transfer / editing)
     """
 
     _base_url: str = "http://localhost:9090"
@@ -328,15 +329,14 @@ class VideoGenerationHandler(ToolHandler):
         return (
             "Generate a video from a text prompt using the active video generation\n"
             "service (provider-dependent -- e.g. Runway, Kling, etc.).\n\n"
+            "Three modes:\n"
+            "  1. Text-to-video (default): provide only `prompt`.\n"
+            "  2. Image-to-video: provide `prompt` + `image_url` to animate a\n"
+            "     still image or continue a video from its last frame.\n"
+            "  3. Video edit: provide `prompt` + `video_url` to apply style\n"
+            "     transfer or editing to an existing video.\n\n"
             "Returns a download URL (FileStore) or writes directly to a filesystem\n"
             "service when destination + path are provided.\n\n"
-            "Parameters:\n"
-            "  prompt          -- detailed description of the video to generate.\n"
-            "  negative_prompt -- what to avoid (optional).\n"
-            "  duration        -- length in seconds (provider-dependent limits).\n"
-            "  width / height  -- resolution in pixels (optional).\n"
-            "  destination     -- 'filestore' (default) or a filesystem service name.\n"
-            "  path            -- file path when destination is a filesystem service.\n\n"
             "Be descriptive in your prompt for best results. Generation may take\n"
             "30 seconds to several minutes depending on the provider and duration."
         )
@@ -349,6 +349,30 @@ class VideoGenerationHandler(ToolHandler):
                 "prompt": {
                     "type": "string",
                     "description": "Detailed description of the video to generate",
+                },
+                "image_url": {
+                    "type": "string",
+                    "description": (
+                        "Source image URL for image-to-video mode (HTTP or "
+                        "fs://filestore/<id>/<name>). Use this to animate a "
+                        "still image or continue a video from its last frame."
+                    ),
+                },
+                "video_url": {
+                    "type": "string",
+                    "description": (
+                        "Source video URL for video-edit mode (HTTP or "
+                        "fs://filestore/<id>/<name>). Use this for style "
+                        "transfer, re-editing, or video-to-video transformation."
+                    ),
+                },
+                "end_image_url": {
+                    "type": "string",
+                    "description": (
+                        "End-frame image URL for frame-to-video mode "
+                        "(Kling O1). Used with image_url as start frame "
+                        "to create a transition video between two images."
+                    ),
                 },
                 "negative_prompt": {
                     "type": "string",
@@ -376,7 +400,14 @@ class VideoGenerationHandler(ToolHandler):
                 },
                 "model": {
                     "type": "string",
-                    "description": "Override the active video model for this call (e.g. 'sora-video', 'veo', 'kling-video', 'wan-2-7-api'). One service handles every catalog video model.",
+                    "description": (
+                        "Override the active video model for this call. "
+                        "For i2v try: 'kling-3-0-image-to-video-standard', "
+                        "'sora-video', 'luma-dream-machine-ray-2-flash-image-to-video', "
+                        "'wan-2-6-image-to-video-477'. "
+                        "For video-edit: 'seedance-2-0-fast', 'seedance-2-0', "
+                        "'kling-o1-edit-video-video-to-video-634'."
+                    ),
                 },
             },
             "required": ["prompt"],
@@ -395,6 +426,16 @@ class VideoGenerationHandler(ToolHandler):
         """Set a resolver function: () -> (service, error_msg)."""
         self._service_resolver = resolver
 
+    def _rewrite(self, url: str) -> str:
+        """Convert fs://filestore/<id>/<name> to an absolute /files/<id> URL."""
+        if not url or not url.startswith("fs://filestore/"):
+            return url
+        rest = url[len("fs://filestore/"):]
+        fid = rest.split("/", 1)[0]
+        if not fid:
+            return url
+        return f"{self._base_url}/files/{fid}"
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
@@ -408,12 +449,55 @@ class VideoGenerationHandler(ToolHandler):
         if not prompt:
             return "Error: no prompt provided"
 
+        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        video_url = self._rewrite(arguments.get("video_url", "") or "")
+        end_image_url = self._rewrite(arguments.get("end_image_url", "") or "")
         destination = arguments.get("destination", "filestore")
 
         try:
             gen_args = {k: v for k, v in arguments.items()
-                        if k not in ("destination", "path")}
-            result = service.generate(**gen_args)
+                        if k not in ("destination", "path", "image_url",
+                                     "video_url", "end_image_url")}
+
+            if image_url and end_image_url:
+                # Frame-to-video mode (start + end frame)
+                if not hasattr(service, 'frame_to_video'):
+                    return ("Error: the active video service does not support "
+                            "frame_to_video. Use model "
+                            "'kling-o1-first-frame-last-frame-to-video-857'.")
+                gen_args["image_url"] = image_url
+                gen_args["end_image_url"] = end_image_url
+                result = service.frame_to_video(**gen_args)
+            elif video_url:
+                # Video-edit mode
+                if not hasattr(service, 'video_edit'):
+                    return ("Error: the active video service does not support "
+                            "video_edit. Use a model with a video_edit operation "
+                            "(e.g. 'seedance-2-0-fast', 'kling-o1-edit-video-video-to-video-634').")
+                gen_args["video_url"] = video_url
+                result = service.video_edit(**gen_args)
+            elif image_url:
+                # Image-to-video mode — try image_to_video first,
+                # fall back to reference_to_video (Seedance)
+                gen_args["image_url"] = image_url
+                if hasattr(service, 'image_to_video'):
+                    try:
+                        result = service.image_to_video(**gen_args)
+                    except Exception:
+                        if hasattr(service, 'reference_to_video'):
+                            result = service.reference_to_video(**gen_args)
+                        else:
+                            raise
+                elif hasattr(service, 'reference_to_video'):
+                    result = service.reference_to_video(**gen_args)
+                else:
+                    return ("Error: the active video service does not support "
+                            "image_to_video. Use a model with an image_to_video "
+                            "operation (e.g. 'kling-3-0-image-to-video-standard', "
+                            "'sora-video', 'seedance-2-0-fast').")
+            else:
+                # Text-to-video mode (default)
+                result = service.generate(**gen_args)
 
             ct = result["content_type"]
             ext = {

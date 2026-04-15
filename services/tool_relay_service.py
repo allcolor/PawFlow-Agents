@@ -407,6 +407,33 @@ class ToolRelayService(BaseService):
                     h.set_base_url(file_base_url)
                 h.set_service_resolver(
                     self._make_media_resolver(user_id, conversation_id, "audio"))
+            elif h.name in ("describe_image", "remix_image"):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                if hasattr(h, 'set_user_id'):
+                    h.set_user_id(user_id)
+                if hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
+                h.set_service_resolver(
+                    self._make_media_resolver(user_id, conversation_id, "image"))
+            elif h.name in ("speech_to_video",):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                if hasattr(h, 'set_user_id'):
+                    h.set_user_id(user_id)
+                if hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
+                h.set_service_resolver(
+                    self._make_media_resolver(user_id, conversation_id, "video"))
+            elif h.name in ("upscale_video", "remove_background"):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                if hasattr(h, 'set_user_id'):
+                    h.set_user_id(user_id)
+                if hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
+                h.set_service_resolver(
+                    self._make_media_resolver(user_id, conversation_id, "upscale"))
 
         # Populate available services on all BaseFsHandler instances
         from core.handlers._fs_base import BaseFsHandler, _FS_TYPES
@@ -442,6 +469,7 @@ class ToolRelayService(BaseService):
                 "image": ("base_image_generation", "BaseImageGenerationService"),
                 "video": ("base_video_generation", "BaseVideoGenerationService"),
                 "audio": ("base_audio_generation", "BaseAudioGenerationService"),
+                "upscale": ("base_capabilities", "BaseImageUpscaleService"),
             }
             mod_name, cls_name = type_map[media_type]
             import importlib
@@ -476,8 +504,11 @@ class ToolRelayService(BaseService):
             # Resolve the first one
             sid = matching[0].service_id
             svc = _sreg.resolve(sid, user_id=user_id)
-            if svc and hasattr(svc, 'generate'):
-                return svc, None
+            if svc:
+                # Different service types expose different methods
+                check = {'upscale': 'upscale'}.get(media_type, 'generate')
+                if hasattr(svc, check):
+                    return svc, None
             return None, f"{media_type.title()} service '{sid}' failed to connect"
         return resolver
 

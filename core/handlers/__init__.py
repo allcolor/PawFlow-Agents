@@ -53,9 +53,14 @@ from core.handlers.media import (  # noqa: F401
 from core.handlers.capabilities import (  # noqa: F401
     Generate3DHandler,
     UpscaleImageHandler,
+    UpscaleVideoHandler,
+    DescribeImageHandler,
+    RemixImageHandler,
+    RemoveBackgroundHandler,
     TryOnHandler,
     LipsyncHandler,
     TrainImageModelHandler,
+    SpeechToVideoHandler,
 )
 from core.handlers.memory import (  # noqa: F401
     RememberHandler,

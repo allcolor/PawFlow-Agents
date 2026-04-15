@@ -136,6 +136,27 @@
           "endpoint": "/ideogram/v1/ideogram/generateTextToImageRequest",
           "convention": "polling_url",
           "id_field": "request_id"
+        },
+        "describe_image": {
+          "endpoint": "/ideogramV_2/v1/describe",
+          "convention": "sync",
+          "url_field": "data.description",
+          "multipart_form_data": true,
+          "input_field": "image_file"
+        },
+        "edit_image": {
+          "endpoint": "/ideogramV_2/v1/edit",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "multipart_form_data": true,
+          "input_field": "image_file"
+        },
+        "remix_image": {
+          "endpoint": "/ideogramV_2/v1/remix",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "multipart_form_data": true,
+          "input_field": "image_file"
         }
       }
     },
@@ -665,6 +686,12 @@
           "convention": "polling_url",
           "id_field": "request_id",
           "body_shape": "content_array"
+        },
+        "reference_to_video": {
+          "endpoint": "/seedance-2-0-fast/v1/reference-to-video-fast",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "content"
         }
       }
     },
@@ -683,6 +710,12 @@
           "convention": "polling_url",
           "id_field": "request_id",
           "body_shape": "content_array"
+        },
+        "reference_to_video": {
+          "endpoint": "/seedance-2-0/v1/reference-to-video",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "content"
         }
       }
     },
@@ -843,6 +876,11 @@
       "category": "video",
       "operations": {
         "text_to_video": {
+          "endpoint": "/kling-o1-first-frame-last-frame-to-video-857/v1/kling-o1-first-frame-last-frame-to-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "frame_to_video": {
           "endpoint": "/kling-o1-first-frame-last-frame-to-video-857/v1/kling-o1-first-frame-last-frame-to-video-request",
           "convention": "polling_url",
           "id_field": "request_id"
@@ -1830,6 +1868,49 @@
       "operations": {
         "lipsync": {
           "endpoint": "/bytedance-omnihuman-v1-5-290/v1/bytedance-omnihuman-v1-5-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "ideogram-turbo": {
+      "label": "Ideogram Turbo",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/ideogramV_2_Turbo/v1/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "describe_image": {
+          "endpoint": "/ideogramV_2_Turbo/v1/describe",
+          "convention": "sync",
+          "url_field": "data.description",
+          "multipart_form_data": true,
+          "input_field": "image_file"
+        },
+        "edit_image": {
+          "endpoint": "/ideogramV_2_Turbo/v1/edit",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "multipart_form_data": true,
+          "input_field": "image_file"
+        },
+        "remix_image": {
+          "endpoint": "/ideogramV_2_Turbo/v1/remix",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "multipart_form_data": true,
+          "input_field": "image_file"
+        }
+      }
+    },
+    "wan2.2-s2v": {
+      "label": "Wan 2.2 Speech-to-Video",
+      "category": "video",
+      "operations": {
+        "speech_to_video": {
+          "endpoint": "/wan2.2-s2v/v1/generateSpeechToVideoRequest",
           "convention": "polling_url",
           "id_field": "request_id"
         }

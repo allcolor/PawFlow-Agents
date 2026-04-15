@@ -50,7 +50,7 @@ class SeeHandler(BaseFsHandler):
                 "path": {"type": "string", "description": "File path to view. Use 'screen' or 'screenshot' to capture the screen."},
                 "source": {"type": "string", "description": "Filesystem service name. Omit for default."},
                 "max_frames": {"type": "integer", "description": "Max frames to extract from video (default: 5)"},
-                "local": {"type": "boolean", "description": "If true, capture from the user's local screen (not Docker). Default false."},
+                "local": {"type": "boolean", "description": "If true, capture the user's REAL desktop (relay → host helper). If false (default), capture the Docker virtual desktop (relay's Xvfb / container)."},
             },
             "required": ["path"],
         }
@@ -112,30 +112,22 @@ class SeeHandler(BaseFsHandler):
     def _see_screen(self, arguments: Dict[str, Any]) -> str:
         """Capture screen and return as multimodal image.
 
-        local=true  → relay (user's actual desktop)
-        local=false → Docker virtual screen (local capture)
+        Always routes through the relay — the PawFlow server has no display.
+        local=true  → user's REAL desktop (relay → host helper)
+        local=false → Docker virtual screen (relay's own Xvfb / container)
         """
         local = self._resolve_local(arguments)
         source = arguments.get("source", "")
 
-        if local:
-            # Route to relay for user's desktop
-            from core.handlers._fs_base import find_fs_service
-            svc = find_fs_service(self._user_id, source) if source else (
-                self._fs_service or find_fs_service(self._user_id))
-            if not svc:
-                return "Error: no relay connected for local screen capture."
-            try:
-                result = svc._request("screen_screenshot", ".", local=True)
-            except Exception as e:
-                return f"Error: screen capture failed: {e}"
-        else:
-            # Local Docker capture
-            try:
-                from tools.fs_screen import action_screen_screenshot
-                result = action_screen_screenshot(".", ".", {})
-            except Exception as e:
-                return f"Error: local screen capture failed: {e}"
+        from core.handlers._fs_base import find_fs_service
+        svc = find_fs_service(self._user_id, source) if source else (
+            self._fs_service or find_fs_service(self._user_id))
+        if not svc:
+            return "Error: no relay connected for screen capture."
+        try:
+            result = svc._request("screen_screenshot", ".", local=local)
+        except Exception as e:
+            return f"Error: screen capture failed: {e}"
 
         if isinstance(result, dict) and not result.get("ok", True):
             return f"Error: {result.get('error', 'unknown error')}"

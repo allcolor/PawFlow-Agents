@@ -136,7 +136,7 @@ def action_screen_click(root_dir, abs_path, req):
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
     button = req.get("button", "left")
     btn = _BUTTON_MAP.get(button, "1")
-    _xdo("mousemove", "--sync", str(x), str(y))
+    _xdo("mousemove", str(x), str(y))
     _xdo("click", btn)
     return {"clicked": True, "x": x, "y": y}
 
@@ -144,7 +144,7 @@ def action_screen_click(root_dir, abs_path, req):
 def action_screen_double_click(root_dir, abs_path, req):
     _ensure_desktop()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
-    _xdo("mousemove", "--sync", str(x), str(y))
+    _xdo("mousemove", str(x), str(y))
     _xdo("click", "--repeat", "2", "--delay", "50", "1")
     return {"double_clicked": True, "x": x, "y": y}
 
@@ -152,7 +152,7 @@ def action_screen_double_click(root_dir, abs_path, req):
 def action_screen_triple_click(root_dir, abs_path, req):
     _ensure_desktop()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
-    _xdo("mousemove", "--sync", str(x), str(y))
+    _xdo("mousemove", str(x), str(y))
     _xdo("click", "--repeat", "3", "--delay", "50", "1")
     return {"triple_clicked": True, "x": x, "y": y}
 
@@ -160,7 +160,7 @@ def action_screen_triple_click(root_dir, abs_path, req):
 def action_screen_right_click(root_dir, abs_path, req):
     _ensure_desktop()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
-    _xdo("mousemove", "--sync", str(x), str(y))
+    _xdo("mousemove", str(x), str(y))
     _xdo("click", "3")
     return {"right_clicked": True, "x": x, "y": y}
 
@@ -183,7 +183,7 @@ def action_screen_key(root_dir, abs_path, req):
 def action_screen_move(root_dir, abs_path, req):
     _ensure_desktop()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
-    _xdo("mousemove", "--sync", str(x), str(y))
+    _xdo("mousemove", str(x), str(y))
     return {"moved": True, "x": x, "y": y}
 
 
@@ -191,7 +191,7 @@ def action_screen_scroll(root_dir, abs_path, req):
     _ensure_desktop()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
     amount = int(req.get("amount", 3))
-    _xdo("mousemove", "--sync", str(x), str(y))
+    _xdo("mousemove", str(x), str(y))
     if amount > 0:
         btn = "5"
     else:

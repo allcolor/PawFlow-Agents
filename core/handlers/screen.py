@@ -11,11 +11,12 @@ logger = logging.getLogger(__name__)
 class ScreenHandler(BaseFsHandler):
     """Control the desktop: screenshots, mouse, keyboard.
 
-    Routes screen_* actions to a filesystem relay (user's PC) or
-    executes locally on the Docker virtual screen.
+    Always routes through the filesystem relay — the PawFlow server
+    never runs a display itself.
 
-    local=true  → relay (user's actual desktop)
-    local=false → Docker Xvfb virtual screen
+    local=true  → user's REAL desktop (relay → host helper)
+    local=false → Docker virtual screen (relay's own Xvfb / container,
+                  i.e. the desktop you started via /desktop docker)
     """
 
     _fs_service = None
@@ -64,7 +65,7 @@ class ScreenHandler(BaseFsHandler):
                 "button": {"type": "string", "description": "Mouse button: left (default), right, middle"},
                 "amount": {"type": "integer", "description": "Scroll amount (positive=down, negative=up, default 3)"},
                 "relay": {"type": "string", "description": "Relay service name. Omit to auto-select."},
-                "local": {"type": "boolean", "description": "If true, execute on the user's local desktop (via relay). If false, use the Docker virtual screen. Default false."},
+                "local": {"type": "boolean", "description": "If true, act on the user's REAL desktop (relay → host helper). If false (default), act on the Docker virtual desktop (relay's Xvfb / container, i.e. the one started via /desktop docker)."},
             },
             "required": ["action"],
         }
@@ -95,20 +96,18 @@ class ScreenHandler(BaseFsHandler):
             return "Error: missing action parameter"
 
         relay_name = arguments.get("relay", "")
-        local = self._resolve_local(arguments)
-
-        if local:
-            # Route to relay — user's actual desktop
-            svc = self._find_relay(relay_name)
-            if not svc:
-                return "Error: no relay connected. Connect a filesystem relay to capture the user's screen."
-            return self._exec_via_relay(svc, action, arguments)
-        else:
-            # Execute locally on Docker virtual screen
-            return self._exec_local(action, arguments)
+        svc = self._find_relay(relay_name)
+        if not svc:
+            return ("Error: no relay connected. Connect a filesystem relay "
+                    "(local desktop or Docker desktop) before using screen.")
+        # `local` is forwarded to the relay verbatim:
+        #   local=true  → relay forwards to host helper (user's real desktop)
+        #   local=false → relay's own Xvfb / Docker desktop container
+        # The PawFlow server itself never runs a display — no local fallback.
+        return self._exec_via_relay(svc, action, arguments)
 
     def _exec_via_relay(self, svc, action: str, arguments: dict) -> str:
-        """Execute screen action via relay (user's desktop)."""
+        """Execute screen action via relay. `local` flag is passed through."""
         req_args = {k: v for k, v in arguments.items()
                     if k not in ("action", "relay")}
         try:
@@ -125,42 +124,6 @@ class ScreenHandler(BaseFsHandler):
 
         if isinstance(result, dict) and not result.get("ok", True):
             return f"Error: {result.get('error', 'unknown error')}"
-
-        return self._handle_result(action, result)
-
-    def _exec_local(self, action: str, arguments: dict) -> str:
-        """Execute screen action locally on Docker virtual screen."""
-        try:
-            from tools.fs_screen import (
-                action_screen_screenshot, action_screen_click,
-                action_screen_double_click, action_screen_type,
-                action_screen_key, action_screen_move,
-                action_screen_scroll, action_screen_mouse_position,
-            )
-        except ImportError:
-            return "Error: screen automation not available in this environment (missing fs_screen)."
-
-        req = {k: v for k, v in arguments.items()
-               if k not in ("action", "relay", "local")}
-
-        _actions = {
-            "screenshot": action_screen_screenshot,
-            "click": action_screen_click,
-            "double_click": action_screen_double_click,
-            "type": action_screen_type,
-            "key": action_screen_key,
-            "move": action_screen_move,
-            "scroll": action_screen_scroll,
-            "mouse_position": action_screen_mouse_position,
-        }
-        fn = _actions.get(action)
-        if not fn:
-            return f"Error: unknown screen action '{action}'"
-
-        try:
-            result = fn(".", ".", req)
-        except Exception as e:
-            return f"Error: screen action failed: {e}"
 
         return self._handle_result(action, result)
 

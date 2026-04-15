@@ -76,6 +76,13 @@ class AgentCoreMixin:
         # the webchat parses to open the viewer), not external untrusted
         # data. Wrapping it would break the JSON.parse on the client.
         "show_file",
+        # Media-producing tools: their output is a short status string
+        # followed by a fs://filestore/<id>/<name>.ext URL minted by our
+        # own handlers. Wrapping with <tool_output>…</tool_output> + the
+        # anti-injection note buries the URL and clutters the chat
+        # bubble. These are not external untrusted payloads.
+        "generate_image", "edit_image", "generate_video", "generate_audio",
+        "see", "screen",
     }
 
     @classmethod

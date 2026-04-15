@@ -76,7 +76,8 @@ class BashHandler(BaseFsHandler):
             " - command: The shell command to execute.\n"
             " - description: A short description of what the command does. "
             "This is logged for auditability but NOT executed.\n"
-            " - timeout: Timeout in milliseconds (default 120000, max 600000). "
+            " - timeout: Optional timeout in milliseconds. No default — "
+            "commands run without a time limit unless you set this. "
             "If > 1000, treated as ms.\n"
             " - run_in_background: Set to true to run in background. "
             "Use read to check the output file later. "
@@ -102,7 +103,7 @@ class BashHandler(BaseFsHandler):
             "properties": {
                 "command": {"type": "string", "description": "Shell command to execute"},
                 "description": {"type": "string", "description": "Short description of what the command does."},
-                "timeout": {"type": "integer", "description": "Timeout in milliseconds (default: 120000)"},
+                "timeout": {"type": "integer", "description": "Optional timeout in milliseconds. Omit for no timeout (command runs until it exits)."},
                 "run_in_background": {"type": "boolean", "description": "Run command in background. Use read to check output later."},
                 "shell": {
                     "type": "string",
@@ -120,16 +121,22 @@ class BashHandler(BaseFsHandler):
     # Background task storage: bg_id → {thread, output_file, command, started_at}
     _bg_tasks: Dict[str, dict] = {}
 
-    def _resolve_timeout(self, arguments: dict) -> int:
-        """Resolve timeout: CC sends milliseconds, convert to seconds."""
+    def _resolve_timeout(self, arguments: dict):
+        """Resolve timeout: CC sends milliseconds, convert to seconds.
+
+        Returns None when no timeout is specified — the command then
+        runs without a time limit. Project rule: no arbitrary timeouts
+        (only the LLM watchdog has one). If the LLM needs a cutoff it
+        passes `timeout` explicitly.
+        """
         raw = arguments.get("timeout")
         if raw is None:
-            return 120  # default 2 minutes
+            return None  # no timeout by default
         raw = int(raw)
-        # CC sends milliseconds (max 600000). If > 1000, assume ms.
+        # CC sends milliseconds. Heuristic: values > 1000 are ms.
         if raw > 1000:
-            return min(raw // 1000, 600)
-        return min(raw, 600)
+            return raw // 1000
+        return raw
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)

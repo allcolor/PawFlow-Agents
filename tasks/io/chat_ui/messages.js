@@ -287,9 +287,11 @@ function addMsg(role, text, extra) {
     const display = _TOOL_DISPLAY[toolName] || toolName;
     const firstLine = resultText.split('\n')[0].substring(0, 120);
     const rendered = _renderToolOutput(resultText);
-    // Reload: always collapsed
+    const inlineMedia = _extractInlineMedia(resultText);
+    // Reload: always collapsed, but pull out inline media so it stays visible
     el.innerHTML = timeHtml + '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
-      + '<div class="tc-result"><details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
+      + '<div class="tc-result">' + inlineMedia
+      + '<details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
       + rendered + '</details></div>';
   } else if (role === 'thinking') {
     // Collapsible thinking block (same as SSE thinking_content)
@@ -527,8 +529,10 @@ function _renderToolOutput(text, toolHint, pathHint) {
     } catch(e) {}
   }
 
-  // Default
-  return '<pre class="tc-output">' + escapeHtml(text) + '</pre>';
+  // Default — escape but auto-inline any fs://filestore or /files/<id> media URLs
+  // so generate_image / screen / see / edit_image results show the image
+  // directly in the tool-result bubble instead of printing the raw URL.
+  return '<pre class="tc-output">' + renderTextWithInlineMedia(text) + '</pre>';
 }
 
 function _attachToolResult(tcEl, resultText) {
@@ -547,8 +551,10 @@ function _attachToolResult(tcEl, resultText) {
   resultDiv.className = 'tc-result';
   const firstLine = resultText.split('\n')[0].substring(0, 120);
   const rendered = _renderToolOutput(resultText, toolHint, pathHint);
+  const inlineMedia = _extractInlineMedia(resultText);
   // Open while streaming, auto-collapse after 1.5s
-  resultDiv.innerHTML = '<details open><summary>\u23bf ' + escapeHtml(firstLine)
+  resultDiv.innerHTML = inlineMedia
+    + '<details open><summary>\u23bf ' + escapeHtml(firstLine)
     + '</summary>' + rendered + '</details>';
   tcEl.appendChild(resultDiv);
   // Auto-collapse after brief display
@@ -691,6 +697,100 @@ function isImageFile(name) {
   return /\.(png|jpe?g|gif|svg|webp|bmp)$/i.test(name || '');
 }
 
+/** Scan tool-result text for media URLs and return inline HTML
+ * (img/audio/video tags) for each one found, concatenated. Used to
+ * surface media above the collapsed <details> tool-result block so the
+ * user sees the image/video/audio directly without opening anything. */
+function _extractInlineMedia(text) {
+  if (!text) return '';
+  const urlRe = /(fs:\/\/[^\s<"'`]+|https?:\/\/[^\s<"'`]*\/files\/[a-f0-9]+\/[^\s<"'`]+|\/files\/[a-f0-9]+\/[^\s<"'`]+)/g;
+  const seen = new Set();
+  let out = '';
+  let m;
+  while ((m = urlRe.exec(text)) !== null) {
+    const url = m[0];
+    if (seen.has(url)) continue;
+    seen.add(url);
+    let fname = '';
+    let httpUrl = url;
+    const fsMatch = url.match(/^fs:\/\/([^/]+)\/(.+)$/);
+    if (fsMatch) {
+      const service = fsMatch[1];
+      const fpath = fsMatch[2];
+      fname = fpath.split('/').pop() || fpath;
+      if (service === 'filestore') {
+        const fidMatch = fpath.match(/^([a-f0-9]+)(?:\/|$)/);
+        // /files/<id>/<name> — the trailing "/<name>" matters:
+        // _flushPendingImages matches /\/files\/([a-f0-9]+)\// and
+        // won't recognize a /files/<id> without the slash, leaving the
+        // <img> permanently hidden (display:none).
+        httpUrl = fidMatch ? '/files/' + fidMatch[1] + '/' + encodeURIComponent(fname) : '';
+      } else {
+        httpUrl = '/fs/' + encodeURIComponent(service) + '/'
+          + fpath.split('/').map(encodeURIComponent).join('/');
+      }
+    } else {
+      const fm = url.match(/\/files\/[a-f0-9]+\/([^?#]+)/);
+      fname = fm ? fm[1] : '';
+    }
+    if (!httpUrl || !fname) continue;
+    if (isImageFile(fname)) out += inlineImageHtml(httpUrl, fname, '');
+    else if (isAudioFile(fname)) out += inlineAudioHtml(httpUrl, fname);
+    else if (isVideoFile(fname)) out += inlineVideoHtml(httpUrl, fname);
+  }
+  return out;
+}
+
+/** Escape text for HTML but render fs://filestore/<id>/<name>.ext,
+ * fs://<relay>/<path>/<name>.ext, and /files/<id>/<name>.ext media URLs
+ * as inline <img>/<audio>/<video>. Used in tool-result default renderer
+ * so generate_image / screen / see outputs show the image directly
+ * instead of printing the raw URL. */
+function renderTextWithInlineMedia(text) {
+  if (!text) return '';
+  // Single regex that matches either a full fs:// URL or an HTTP /files/<id>/<name> URL.
+  const urlRe = /(fs:\/\/[^\s<"'`]+|https?:\/\/[^\s<"'`]*\/files\/[a-f0-9]+\/[^\s<"'`]+|\/files\/[a-f0-9]+\/[^\s<"'`]+)/g;
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = urlRe.exec(text)) !== null) {
+    // Escaped text before the match
+    if (m.index > last) out += escapeHtml(text.slice(last, m.index));
+    const url = m[0];
+    let fname = '';
+    let httpUrl = url;
+    const fsMatch = url.match(/^fs:\/\/([^/]+)\/(.+)$/);
+    if (fsMatch) {
+      const service = fsMatch[1];
+      const fpath = fsMatch[2];
+      fname = fpath.split('/').pop() || fpath;
+      if (service === 'filestore') {
+        const fidMatch = fpath.match(/^([a-f0-9]+)(?:\/|$)/);
+        httpUrl = fidMatch ? '/files/' + fidMatch[1] + '/' + encodeURIComponent(fname) : '';
+      } else {
+        httpUrl = '/fs/' + encodeURIComponent(service) + '/'
+          + fpath.split('/').map(encodeURIComponent).join('/');
+      }
+    } else {
+      // /files/... URL (absolute or relative)
+      const fm = url.match(/\/files\/[a-f0-9]+\/([^?#]+)/);
+      fname = fm ? fm[1] : '';
+    }
+    if (httpUrl && fname && isImageFile(fname)) {
+      out += inlineImageHtml(httpUrl, fname, '');
+    } else if (httpUrl && fname && isAudioFile(fname)) {
+      out += inlineAudioHtml(httpUrl, fname);
+    } else if (httpUrl && fname && isVideoFile(fname)) {
+      out += inlineVideoHtml(httpUrl, fname);
+    } else {
+      out += escapeHtml(url);
+    }
+    last = m.index + url.length;
+  }
+  if (last < text.length) out += escapeHtml(text.slice(last));
+  return out;
+}
+
 function isAudioFile(name) {
   return /\.(mp3|wav|ogg|m4a|flac|opus)$/i.test(name || '');
 }
@@ -810,7 +910,7 @@ function renderMarkdown(text) {
         // same-origin so the auth cookie applies).
         let _httpUrl = parsed.url;
         const _fsm = String(parsed.url || '').match(/^fs:\/\/filestore\/([a-f0-9]+)\//);
-        if (_fsm) _httpUrl = '/files/' + _fsm[1];
+        if (_fsm) _httpUrl = '/files/' + _fsm[1] + '/' + encodeURIComponent(parsed.filename || 'file');
         if (isImageFile(parsed.filename)) {
           return inlineImageHtml(_httpUrl, parsed.filename, parsed.size_kb + ' KB');
         }
@@ -888,7 +988,7 @@ function renderMarkdown(text) {
       const fidMatch = fpath.match(/^([a-f0-9]+)(?:\/|$)/);
       const fid = fidMatch ? fidMatch[1] : '';
       if (fid) {
-        const httpUrl = '/files/' + fid;
+        const httpUrl = '/files/' + fid + '/' + encodeURIComponent(fname);
         if (isImageFile(fname)) return inlineImageHtml(httpUrl, fname, '');
         if (isAudioFile(fname)) return inlineAudioHtml(httpUrl, fname);
         if (isVideoFile(fname)) return inlineVideoHtml(httpUrl, fname);

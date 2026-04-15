@@ -1,1489 +1,7158 @@
 # Pixazo API — Complete Model Reference
 
-> Source: [pixazo.ai/models](https://www.pixazo.ai/models)  
-> Gateway: `https://gateway.pixazo.ai`  
-> Last updated: 2026-04-15
-
----
-
-## Authentication
-
-All requests require an API key via header:
-
-```
-Ocp-Apim-Subscription-Key: YOUR_API_KEY
-```
-
-Get your API key at [pixazo.ai](https://www.pixazo.ai).
-
----
+> Auto-generated from [pixazo.ai/models](https://www.pixazo.ai/models) on 2026-04-15.
+> 17 models, ~130 API endpoints.
 
 ## Common API Patterns
 
-### Async Polling Flow
+### Authentication
+All requests require: `Ocp-Apim-Subscription-Key: YOUR_API_KEY`
 
-Most models use an async queue pattern:
+### Async Workflow
+1. `POST` generate endpoint → `{request_id, status: "QUEUED", polling_url}`
+2. Poll `GET /v2/requests/status/{request_id}` every 5-10s
+3. Status: `QUEUED → PROCESSING → COMPLETED` (or `FAILED`/`ERROR`)
+4. Download from `output.media_url`
 
-1. **Submit** a POST request → get `request_id` + status `IN_QUEUE`
-2. **Poll** the result endpoint every 5-10s
-3. **Download** from output URL when `status == "COMPLETED"`
+**Webhook alternative:** `X-Webhook-URL: https://your-server.com/callback`
 
+### Status Endpoint
 ```
-IN_QUEUE → IN_PROGRESS → COMPLETED
-                       → FAILED
-```
-
-### Universal Status Endpoint
-
-```http
 GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
-Ocp-Apim-Subscription-Key: YOUR_API_KEY
 ```
 
-**Response (completed):**
-```json
+---
+
+## Quick Endpoint Reference
+
+| Model | API ID | Operation | Method |
+|-------|--------|-----------|--------|
+| p-video | `p-video` | `p-video/generate` | POST |
+| p-video | `p-video` | `p-video/prediction` | POST |
+| seedance | `byteplus` | `generateFrame2VideoTask` | POST |
+| seedance | `byteplus` | `generateImage2VideoTask` | POST |
+| seedance | `byteplus` | `generateVideoTask` | POST |
+| seedance | `seedance-2-0-fast` | `edit-video-fast` | POST |
+| seedance | `seedance-2-0-fast` | `reference-to-video-fast` | POST |
+| seedance | `seedance-2-0-fast` | `text-to-video-fast` | POST |
+| seedance | `seedance-2-0` | `edit-video` | POST |
+| seedance | `seedance-2-0` | `reference-to-video` | POST |
+| seedance | `seedance-2-0` | `text-to-video` | POST |
+| sora | `sora-video` | `video/generate` | POST |
+| sora | `sora-video` | `video/i2v/generate` | POST |
+| sora | `sora-video` | `video/result` | POST |
+| veo | `veo` | `veo-3.1/generate` | POST |
+| veo | `veo31f` | `veo-3.1-fast/generate` | POST |
+| runway | `runway-gen-4-5` | `gen-4.5/generate` | POST |
+| runway | `runway-gen-4-5` | `gen-4.5/prediction` | POST |
+| kling | `kling-3-0-image-to-video-standard` | `kling-3-0-image-to-video-standard-request` | POST |
+| kling | `kling-3-0-image-to-video-standard` | `kling-3-0-image-to-video-standard-request-result` | POST |
+| kling | `kling-3-0-text-to-video-standard` | `kling-3-0-text-to-video-standard-request` | POST |
+| kling | `kling-3-0-text-to-video-standard` | `kling-3-0-text-to-video-standard-request-result` | POST |
+| kling | `kling-ai-avatar-v2-pro-789` | `kling-ai-avatar-v2-pro-request` | POST |
+| kling | `kling-ai-video` | `generateVideoTask` | POST |
+| kling | `kling-ai-video` | `getImageToVideoTask` | POST |
+| kling | `kling-ai-vton` | `getVirtualTryOnTask` | POST |
+| kling | `kling-image-o3-i2i` | `kling-image-o3-i2i-request` | POST |
+| kling | `kling-image-t2i` | `kling-image-t2i-request` | POST |
+| kling | `kling-image` | `kling-image-request` | POST |
+| kling | `kling-o1-edit-video-video-to-video-634` | `kling-o1-edit-video-video-to-video-request` | POST |
+| kling | `kling-o1-first-frame-last-frame-to-video-857` | `kling-o1-first-frame-last-frame-to-video-request` | POST |
+| kling | `kling-o1-image-208` | `kling-o1-image-request` | POST |
+| kling | `kling-o1-reference-image-to-video-382` | `kling-o1-reference-image-to-video-request` | POST |
+| kling | `kling-o1-reference-video-to-video-315` | `kling-o1-reference-video-to-video-request` | POST |
+| kling | `kling-video-v2-6-standard-motion-control` | `kling-video-v2-6-standard-motion-control-request` | POST |
+| flux | `flux-1-schnell` | `checkStatus` | POST |
+| flux | `flux-1-schnell` | `getData` | POST |
+| flux | `flux-1-schnell` | `getDataBatch` | POST |
+| flux | `flux-2-klein-4b` | `generateImage` | POST |
+| flux | `flux-2-pro-image-to-image-866` | `flux-2-pro-image-to-image-request` | POST |
+| flux | `flux-2-pro-image-to-image-trainer-831` | `flux-2-pro-image-to-image-trainer-request` | POST |
+| flux | `flux-2-pro-text-to-image-799` | `flux-2-pro-text-to-image-request` | POST |
+| flux | `flux-2-pro-text-to-image-trainer-712` | `flux-2-pro-text-to-image-trainer-request` | POST |
+| flux | `flux-dev` | `dev/imageToImage` | POST |
+| flux | `flux-dev` | `dev/textToImage` | POST |
+| flux | `flux-fill-dev` | `flux-fill/generate` | POST |
+| flux | `flux-pro` | `pro/textToImage` | POST |
+| flux | `pro1.1` | `pro1.1ultra/generateRequest` | POST |
+| gpt-image | `gpt-image-1-5-api-923` | `gpt-image-1-5-api-request` | POST |
+| seedream | `byteplus` | `getEditImage` | POST |
+| seedream | `byteplus` | `getEditMultiImage` | POST |
+| seedream | `byteplus` | `getTextToImage` | POST |
+| seedream | `seedream-5-0-lite-image` | `seedream-5-0-lite-image-request` | POST |
+| seedream | `seedream-5-0-lite-image` | `seedream-5-0-lite-image-request-result` | POST |
+| seedream | `seedream-5-0-lite-text-to-image` | `seedream-5-0-lite-text-to-image-request` | POST |
+| seedream | `seedream-5-0-lite-text-to-image` | `seedream-5-0-lite-text-to-image-request-result` | POST |
+| hunyuan | `hunyuan-image-3-0-instruct` | `hunyuan-image-3-0-instruct-request` | POST |
+| hunyuan | `hunyuan-image` | `hunyuan-image/generateRequest` | POST |
+| hunyuan | `hunyuan3d-3-0-api-294` | `hunyuan3d-3-0-api-request` | POST |
+| firered-image-edit | `firered-image-edit` | `firered-image-edit/generate` | POST |
+| firered-image-edit | `firered-image-edit` | `firered-image-edit/prediction` | POST |
+| p-image | `p-image-upscale` | `p-image-upscale/generate` | POST |
+| p-image | `p-image` | `p-image-edit/generate` | POST |
+| wan | `pixazo-wan-image-to-video-1763709522` | `pixazo-wan-image-to-video-request` | POST |
+| wan | `wan-2-6-image-to-video-477` | `wan-2-6-image-to-video-request` | POST |
+| wan | `wan-2-6-image-to-video-flash-api-353` | `wan-2-6-image-to-video-flash-api-request` | POST |
+| wan | `wan-2-6-text-to-video-569` | `wan-2-6-text-to-video-request` | POST |
+| wan | `wan-2-7-api` | `generateWan27EditImageRequest` | POST |
+| wan | `wan-2-7-api` | `generateWan27TextToImageRequest` | POST |
+| wan | `wan-2-7-pro-api` | `generateWan27ProEditImageRequest` | POST |
+| wan | `wan-2-7-pro-api` | `generateWan27ProTextToImageRequest` | POST |
+| wan | `wan-2-7-video-api` | `generateWan27VideoEditRequest` | POST |
+| wan | `wan-2-7-video-api` | `generateWan27VideoStyleRequest` | POST |
+| wan | `wan-i2v` | `generateImageToVideoRequest` | POST |
+| wan | `wan-image-2-5` | `generateEditImage2-5Request` | POST |
+| wan | `wan-image-2-5` | `generateTextToImage2-5Request` | POST |
+| wan | `wan-t2i` | `generateEditImageRequest` | POST |
+| wan | `wan-t2i` | `generateTextToImageRequest` | POST |
+| wan | `wan-video-2-5` | `generateImageToVideo2-5Request` | POST |
+| wan | `wan-video-2-5` | `generateTextToVideo2-5Request` | POST |
+| wan | `wan-video` | `generateTextToVideoRequest` | POST |
+| wan | `wan2.2-s2v` | `generateSpeechToVideoRequest` | POST |
+| elevenlabs | `eleven-v3-alpha-954` | `eleven-v3-alpha-request` | POST |
+| elevenlabs | `elevenlabs-music-api-368` | `elevenlabs-music-api-request` | POST |
+| lyria | `lyria-2` | `lyria-2/generate` | POST |
+| lyria | `lyria-2` | `lyria-2/prediction` | POST |
+| lyria | `lyria-3-pro` | `lyria-3-pro/generate` | POST |
+| fashn-virtual-try-on | `fashn-virtual-try-on` | `fashn-virtual-try-on-request` | POST |
+| fashn-virtual-try-on | `glass-virtual-try-on` | `api/glass-virtual-tryon` | POST |
+
+---
+
+## Video Generation
+
+### P-Video API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/p-video
+
+
+by Pruna AI
+
+P Video is an advanced AI video generation model offering multiple generation modes including text-to-video, image-to-video, audio-conditioned, and image+audio synthesis. Integrate seamlessly via the Pixazo API.
+
+Models Version
+P Video v1
+Video Generation
+Video Generation
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### P Video v1 Video Generation API Documentation
+https://gateway.pixazo.ai/p-video/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Video Request - P Video
+**Request Code**
+```
+POST https://gateway.pixazo.ai/p-video/v1/p-video/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
 {
-  "request_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
-  "status": "COMPLETED",
-  "output": {
-    "media_url": ["https://storage.googleapis.com/output/image_1.png"],
-    "media_type": "image/png"
-  },
-  "created_at": "2026-04-15T10:00:00.000Z",
-  "completed_at": "2026-04-15T10:00:15.000Z"
+"prompt": "A cat walking in a garden"
 }
 ```
-
-### Webhook (Optional)
-
-Add `X-Webhook-URL` header to receive a POST callback instead of polling:
-
+**Output**
 ```
+{
+"request_id": "p-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/p-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
 X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Video Request
+| Parameter | Required | Type | Default | Description |
+| prompt | Yes | string | — | Text prompt for video generation |
+| image | No | string (URI) | — | Input image URL for image-to-video generation (jpg, jpeg, png, webp) |
+| audio | No | string (URI) | — | Input audio URL to condition video generation (flac, mp3, wav) |
+| duration | No | integer | 5 | Duration of the video in seconds (1-10). Ignored when audio is provided |
+| aspect_ratio | No | string | "16:9" | Aspect ratio of the video. Ignored when image is provided |
+| resolution | No | string | "720p" | Resolution: "720p", "1080p" |
+| fps | No | integer | 24 | Frames per second: 24, 48 |
+| draft | No | boolean | false | Draft mode — generates a lower-quality preview faster |
+| prompt_upsampling | No | boolean | true | Enhance the prompt for better results |
+| disable_safety_filter | No | boolean | tru e | Disable safety filter for prompts and input image |
+| save_audio | No | boolean | true | Save the video with audio |
+| seed | No | integer | — | Random seed for reproducible generation |
+| webhook | No | string | — | Webhook URL for async notifications when generation completes |
+| webhook_events_filter | No | array | — | Event types to receive (e.g. ["completed"]) |
+**Example Request**
 ```
-
-### Common Status Codes
-
-| Code | Meaning |
-|------|---|
-| 200  | Success |
-| 202  | Accepted — Request queued |
-| 400  | Bad Request — Invalid parameters |
-| 401  | Unauthorized — Missing or invalid API key |
-| 402  | Insufficient Balance |
-| 403  | Forbidden |
-| 404  | Not Found |
-| 429  | Too Many Requests — Rate limit exceeded |
-| 500  | Internal Server Error |
-
-### Common Headers
-
+{
+"prompt": "A cat walking gracefully through a sunlit garden with butterflies and flowers swaying in the breeze",
+"image": "https://example.com/cat.jpg",
+"audio": "https://example.com/garden-ambience.wav",
+"duration": 10,
+"aspect_ratio": "16:9",
+"resolution": "1080p",
+"fps": 48,
+"draft": false,
+"prompt_upsampling": true,
+"disable_safety_filter": true,
+"save_audio": true,
+"seed": 42,
+"webhook": "https://your-webhook.com/callback",
+"webhook_events_filter": ["completed"]
+}
 ```
+**Response**
+```
+{
+"request_id": "p-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/p-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_API_KEY
+```
+Video Status - P Video
+**Request Code**
+```
+POST https://gateway.pixazo.ai/p-video/v1/p-video/prediction
 Content-Type: application/json
 Cache-Control: no-cache
 Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"requestId": "12gkggc805rmw0cwmg9skrgcb8"
+}
 ```
-
-### URL Pattern
-
-All endpoints follow:
+**Output**
 ```
-POST https://gateway.pixazo.ai/{api-id}/v1/{operation}
+{
+"success": true,
+"id": "12gkggc805rmw0cwmg9skrgcb8",
+"status": "succeeded",
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/..."
+}
 ```
-
-> **Note:** Older documentation may reference `gateway.appypie.com`. Use `gateway.pixazo.ai` for all new integrations.
+Request Parameters - Video Status
+| Parameter | Required | Type | Description |
+| requestId | Yes | string | The prediction ID returned from the generate endpoint |
+**Example Request**
+```
+{
+"requestId": "12gkggc805rmw0cwmg9skrgcb8"
+}
+```
+**Response**
+```
+{
+"success": true,
+"id": "12gkggc805rmw0cwmg9skrgcb8",
+"status": "succeeded",
+"input": {
+"prompt": "A cat walking in a garden",
+"aspect_ratio": "16:9",
+"resolution": "720p",
+"fps": 24,
+"duration": 5,
+"prompt_upsampling": true,
+"disable_safety_filter": true,
+"save_audio": true
+},
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/p-video/12gkggc805rmw0cwmg9skrgcb8_output_0.mp4",
+"created_at": "2026-02-28T11:47:49.377Z"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_API_KEY
+```
 
 ---
 
-## Table of Contents
+### Seedance 2.0 API, Seedance 1.0 Pro API, 1.0 Lite API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/seedance
 
-1. [Text-to-Image](#text-to-image)
-2. [Image-to-Image](#image-to-image)
-3. [Image Editing](#image-editing)
-4. [Image Restoration & Upscaling](#image-restoration--upscaling)
-5. [Text-to-Video](#text-to-video)
-6. [Image-to-Video](#image-to-video)
-7. [Video Editor](#video-editor)
-8. [Speech-to-Video](#speech-to-video)
-9. [Reference-to-Image](#reference-to-image)
-10. [Reference-to-Video](#reference-to-video)
-11. [Consistent Character](#consistent-character)
-12. [Virtual Try-On](#virtual-try-on)
-13. [Lipsync](#lipsync)
-14. [Text-to-Speech](#text-to-speech)
-15. [Audio & Music Generation](#audio--music-generation)
-16. [Voice Cloning](#voice-cloning)
-17. [3D Models](#3d-models)
-18. [Background Remover](#background-remover)
-19. [Tools & Training](#tools--training)
-20. [API ID Quick Reference](#api-id-quick-reference)
+
+by BytePlus
+
+Seedance 2.0 API by ByteDance offers professional AI video generation with Lite and Pro variants optimized for different quality and speed requirements. Through Pixazo's API, developers can generate videos from images and text with ByteDance's advanced motion synthesis technology. The API includes specialized features like OmniHuman for realistic human animation, making it ideal for social content and marketing videos.
+
+Models Version
+Seedance 2.0 Fast
+Seedance 2.0
+Seedance 1.0 Pro
+Seedance 1.0 Lite
+Text to Video
+Image + Video + Audio to Video
+Video to Video
+Text to Video
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+Image + Video + Audio to Video
+Video to Video
+#### Seedance 2.0 Fast Text to Video API Documentation
+https://gateway.pixazo.ai/seedance-2-0-fast/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text to Video - Seedance 2.0 Fast API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedance-2-0-fast/v1/text-to-video-fast
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"content": [{"type": "text", "text": "A cat walking on the beach"}]
+}
+```
+**Output**
+```
+{
+"request_id": "seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Text to Video Fast
+| Parameter | Required | Type | Description |
+| content | Yes | array | Array of content items. Each item: {"type":"text","text":"your prompt"} |
+| duration | No | integer | Default: 5. Video length in seconds (4-15). Use -1 for auto. |
+| ratio | No | string | Default: "adaptive". Aspect ratio: "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive" |
+| resolution | No | string | Default: "720p". Video resolution: "480p", "720p" |
+| generate_audio | No | boolean | Default: true. Auto-generate audio for the video |
+| tools | No | array | Optional tools. Example: [{"type":"web_search"}] |
+| watermark | No | boolean | Default: false. Add watermark to video |
+**Example Request**
+```
+{
+"content": [{"type": "text", "text": "A cinematic shot of a cat on a tropical beach at golden hour"}],
+"generate_audio": true,
+"ratio": "16:9",
+"duration": 15,
+"resolution": "720p",
+"tools": [{"type": "web_search"}],
+"watermark": false
+}
+```
+**Response**
+```
+{
+"request_id": "seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Seedance 2.0 Fast Image + Video + Audio to Video API Documentation
+https://gateway.pixazo.ai/seedance-2-0-fast/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Reference to Video - Seedance 2.0 Fast API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedance-2-0-fast/v1/reference-to-video-fast
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"content": [
+{"type": "image_url", "image_url": {"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"}}
+]
+}
+```
+**Output**
+```
+{
+"request_id": "seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Reference to Video Fast
+| Parameter | Required | Type | Description |
+| content | Yes | array | Array of content items. Must contain at least one image_url, video_url, or audio_url item. Can also include text items for prompts. |
+| duration | No | integer | Default: 5. Video length in seconds (4-15). Use -1 for auto. |
+| ratio | No | string | Default: "adaptive". Aspect ratio: "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive" |
+| resolution | No | string | Default: "720p". Video resolution: "480p", "720p" |
+| generate_audio | No | boolean | Default: true. Auto-generate audio for the video |
+| watermark | No | boolean | Default: false. Add watermark to video |
+Content Item Types
+| Type | Format | Description |
+| text | {"type":"text","text":"..."} | Text prompt or description |
+| image_url | {"type":"image_url","image_url":{"url":"https://..."}} | Reference image |
+| video_url | {"type":"video_url","video_url":{"url":"https://..."}} | Reference video |
+| audio_url | {"type":"audio_url","audio_url":{"url":"https://..."}} | Reference audio |
+**Example Request**
+```
+{
+"content": [
+{"type": "text", "text": "Animate this scene with dramatic camera movement"},
+{"type": "image_url", "image_url": {"url": "https://example.com/photo.jpg"}},
+{"type": "video_url", "video_url": {"url": "https://example.com/reference.mp4"}},
+{"type": "audio_url", "audio_url": {"url": "https://example.com/music.mp3"}}
+],
+"generate_audio": false,
+"ratio": "21:9",
+"duration": 15,
+"resolution": "720p",
+"watermark": false
+}
+```
+**Response**
+```
+{
+"request_id": "seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Seedance 2.0 Fast Video to Video API Documentation
+https://gateway.pixazo.ai/seedance-2-0-fast/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Edit Video - Seedance 2.0 Fast API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedance-2-0-fast/v1/edit-video-fast
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"content": [
+{"type": "text", "text": "Make truck Orange"},
+{"type": "video_url", "video_url": {"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/motion.mp4"}}
+]
+}
+```
+**Output**
+```
+{
+"request_id": "seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Edit Video Fast
+| Parameter | Required | Type | Description |
+| content | Yes | array | Array of content items. Must contain at least one video_url item (the video to edit). Can include text for edit instructions and image_url for style reference. |
+| duration | No | integer | Default: 5. Video length in seconds (4-15). Use -1 for auto. |
+| ratio | No | string | Default: "adaptive". Aspect ratio: "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive" |
+| resolution | No | string | Default: "720p". Video resolution: "480p", "720p" |
+| generate_audio | No | boolean | Default: true. Auto-generate audio for the video |
+| watermark | No | boolean | Default: false. Add watermark to video |
+Content Item Types
+| Type | Format | Description |
+| text | {"type":"text","text":"..."} | Edit instructions |
+| video_url | {"type":"video_url","video_url":{"url":"https://..."}} | Video to edit (required) |
+| image_url | {"type":"image_url","image_url":{"url":"https://..."}} | Style/reference image (optional) |
+**Example Request**
+```
+{
+"content": [
+{"type": "text", "text": "Change background to a futuristic cityscape with neon lighting"},
+{"type": "video_url", "video_url": {"url": "https://example.com/original.mp4"}},
+{"type": "image_url", "image_url": {"url": "https://example.com/style-ref.jpg"}}
+],
+"generate_audio": true,
+"ratio": "16:9",
+"duration": 10,
+"resolution": "720p",
+"watermark": false
+}
+```
+**Response**
+```
+{
+"request_id": "seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 2. Seedance 2.0
+#### Seedance 2.0 Text to Video API Documentation
+https://gateway.pixazo.ai/seedance-2-0/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text to Video - Seedance 2.0 API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedance-2-0/v1/text-to-video
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"content": [{"type": "text", "text": "A cat walking on the beach"}]
+}
+```
+**Output**
+```
+{
+"request_id": "seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Text to Video
+| Parameter | Required | Type | Description |
+| content | Yes | array | Array of content items. Each item: {"type":"text","text":"your prompt"} |
+| duration | No | integer | Default: 5. Video length in seconds (4-15). Use -1 for auto. |
+| ratio | No | string | Default: "adaptive". Aspect ratio: "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive" |
+| resolution | No | string | Default: "720p". Video resolution: "480p", "720p" |
+| generate_audio | No | boolean | Default: true. Auto-generate audio for the video |
+| tools | No | array | Optional tools. Example: [{"type":"web_search"}] |
+| watermark | No | boolean | Default: false. Add watermark to video |
+**Example Request**
+```
+{
+"content": [{"type": "text", "text": "A cinematic shot of a cat on a tropical beach at golden hour"}],
+"generate_audio": true,
+"ratio": "16:9",
+"duration": 15,
+"resolution": "720p",
+"tools": [{"type": "web_search"}],
+"watermark": false
+}
+```
+**Response**
+```
+{
+"request_id": "seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Seedance 2.0 Image + Video + Audio to Video API Documentation
+https://gateway.pixazo.ai/seedance-2-0/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Reference to Video - Seedance 2.0 API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedance-2-0/v1/reference-to-video
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"content": [
+{"type": "image_url", "image_url": {"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"}}
+]
+}
+```
+**Output**
+```
+{
+"request_id": "seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Reference to Video
+| Parameter | Required | Type | Description |
+| content | Yes | array | Array of content items. Must contain at least one image_url, video_url, or audio_url item. Can also include text items for prompts. |
+| duration | No | integer | Default: 5. Video length in seconds (4-15). Use -1 for auto. |
+| ratio | No | string | Default: "adaptive". Aspect ratio: "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive" |
+| resolution | No | string | Default: "720p". Video resolution: "480p", "720p" |
+| generate_audio | No | boolean | Default: true. Auto-generate audio for the video |
+| watermark | No | boolean | Default: false. Add watermark to video |
+Content Item Types
+| Type | Format | Description |
+| text | {"type":"text","text":"..."} | Text prompt or description |
+| image_url | {"type":"image_url","image_url":{"url":"https://..."}} | Reference image |
+| video_url | {"type":"video_url","video_url":{"url":"https://..."}} | Reference video |
+| audio_url | {"type":"audio_url","audio_url":{"url":"https://..."}} | Reference audio |
+**Example Request**
+```
+{
+"content": [
+{"type": "text", "text": "Animate this scene with dramatic camera movement"},
+{"type": "image_url", "image_url": {"url": "https://example.com/photo.jpg"}},
+{"type": "video_url", "video_url": {"url": "https://example.com/reference.mp4"}},
+{"type": "audio_url", "audio_url": {"url": "https://example.com/music.mp3"}}
+],
+"generate_audio": false,
+"ratio": "21:9",
+"duration": 15,
+"resolution": "720p",
+"watermark": false
+}
+```
+**Response**
+```
+{
+"request_id": "seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Seedance 2.0 Video to Video API Documentation
+https://gateway.pixazo.ai/seedance-2-0/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Edit Video - Seedance 2.0 API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedance-2-0/v1/edit-video
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"content": [
+{"type": "text", "text": "Make truck Orange"},
+{"type": "video_url", "video_url": {"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/motion.mp4"}}
+]
+}
+```
+**Output**
+```
+{
+"request_id": "seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Edit Video
+| Parameter | Required | Type | Description |
+| content | Yes | array | Array of content items. Must contain at least one video_url item (the video to edit). Can include text for edit instructions and image_url for style reference. |
+| duration | No | integer | Default: 5. Video length in seconds (4-15). Use -1 for auto. |
+| ratio | No | string | Default: "adaptive". Aspect ratio: "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive" |
+| resolution | No | string | Default: "720p". Video resolution: "480p", "720p" |
+| generate_audio | No | boolean | Default: true. Auto-generate audio for the video |
+| watermark | No | boolean | Default: false. Add watermark to video |
+Content Item Types
+| Type | Format | Description |
+| text | {"type":"text","text":"..."} | Edit instructions |
+| video_url | {"type":"video_url","video_url":{"url":"https://..."}} | Video to edit (required) |
+| image_url | {"type":"image_url","image_url":{"url":"https://..."}} | Style/reference image (optional) |
+**Example Request**
+```
+{
+"content": [
+{"type": "text", "text": "Change background to a futuristic cityscape with neon lighting"},
+{"type": "video_url", "video_url": {"url": "https://example.com/original.mp4"}},
+{"type": "image_url", "image_url": {"url": "https://example.com/style-ref.jpg"}}
+],
+"generate_audio": true,
+"ratio": "16:9",
+"duration": 10,
+"resolution": "720p",
+"watermark": false
+}
+```
+**Response**
+```
+{
+"request_id": "seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedance-2-0_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 3. Seedance 1.0 Pro
+#### Seedance 1.0 Pro Image to Video API Documentation
+https://gateway.pixazo.ai/byteplus/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Seedance 1.0 Image to Video - Bytedance API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/byteplus/v1/generateImage2VideoTask
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model": "seedance-1-0-lite-i2v-250428",
+"content": [
+{
+"type": "text",
+"text": "Soft cotton-like clouds drift with subtle layered motions across a pale blue sky. --ratio 16:9 --resolution 720p --duration 5"
+},
+{
+"type": "image_url",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+}
+]
+}
+```
+**Output**
+```
+{
+"request_id": "byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Seedance 1.0 Image to Video - Bytedance API
+| Parameter | Required | Type | Default | Description |
+| model | Yes | string | — | The Seedance model ID. Use "seedance-1-0-lite-i2v-250428" for image-to-video. |
+| content | Yes | array | — | Array of content blocks. Must include one text block (prompt with optional inline knobs) and one image_url block (source image URL). |
+| content[].type | Yes | string | — | Block type: "text" or "image_url". |
+| content[].text | For text block | string | — | Prompt describing the motion. Control knobs can be embedded: --ratio, --resolution, --duration, --camerafixed. |
+| content[].image_url | For image_url block | string | — | Publicly accessible HTTPS URL of the source image. |
+Inline knobs (embedded in text block):
+| --ratio | No | string | 16:9 | Aspect ratio: 16:9, 9:16, 1:1, 4:3, 3:4, adaptive. |
+| --resolution | No | string | 720p | Output resolution: 480p, 720p, 1080p. |
+| --duration | No | number | 5 | Video duration in seconds (3–12). |
+| --camerafixed | No | boolean | false | Lock camera position. |
+**Example Request**
+```
+{
+"model": "seedance-1-0-lite-i2v-250428",
+"content": [
+{
+"type": "text",
+"text": "Soft cotton-like clouds drift with subtle layered motions across a pale blue sky."
+},
+{
+"type": "image_url",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+}
+]
+}
+```
+**Response**
+```
+{
+"request_id": "byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+X-Webhook-URL	Optional callback URL
+```
+#### Seedance 1.0 Pro Text to Video API Documentation
+https://gateway.pixazo.ai/byteplus/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Seedance 1.0 Pro Text to Video - Bytedance API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/byteplus/v1/generateVideoTask
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model": "seedance-1-0-lite-t2v-250428",
+"text": "A vast expanse of white daisy fields under a clear blue sky. --ratio 16:9 --resolution 720p --duration 5 --camerafixed false"
+}
+```
+**Output**
+```
+{
+"request_id": "byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Seedance 1.0 Pro Text to Video - Bytedance API
+| Parameter | Required | Type | Default | Description |
+| model | Yes | string | — | The Seedance model ID. Use "seedance-1-0-lite-t2v-250428" for text-to-video generation. |
+| text | Yes | string | — | Prompt describing the video. Control knobs can be embedded inline: --ratio, --resolution, --duration, --camerafixed. Abbreviations: --rt, --rs, --dur, --cf. |
+Inline knobs (embedded in the text field):
+| --ratio | No | string | 16:9 | Aspect ratio: 16:9, 9:16, 1:1, 4:3, 3:4, 21:9, adaptive. Abbreviation: --rt. |
+| --resolution | No | string | 720p (lite) / 1080p (pro) | Output resolution: 480p, 720p, 1080p. Higher = more cost and longer processing. Abbreviation: --rs. |
+| --duration | No | number | 5 | Video duration in seconds. Valid range: 3–12. Abbreviation: --dur. |
+| --camerafixed | No | boolean | false | Lock camera position (adds instruction to prompt). Abbreviation: --cf. |
+**Example Request**
+```
+{
+"model": "seedance-1-0-lite-t2v-250428",
+"text": "A vast expanse of white daisy fields under a clear blue sky. --ratio 16:9 --resolution 720p --duration 5 --camerafixed false"
+}
+```
+**Response**
+```
+{
+"request_id": "byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+X-Webhook-URL	Optional callback URL
+```
+#### 4. Seedance 1.0 Lite
+#### Seedance 1.0 Lite Frame to Video API Documentation
+https://gateway.pixazo.ai/byteplus/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Seedance 1.0 Lite Frame to Video - Bytedance API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/byteplus/v1/generateFrame2VideoTask
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model": "seedance-1-0-lite-i2v-250428",
+"text": "Realistic style. Aeroplane from takeoff to fly captured in camera --ratio 16:9 --resolution 720p --duration 5",
+"first_frame": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2i/wan-t2i-75d44f7d-a954-46b0-a603-10c09cb5df84-0.png",
+"last_frame": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2i/wan-t2i-47c06b16-ce7f-4977-8f7c-a04384409934-0.png"
+}
+```
+**Output**
+```
+{
+"request_id": "byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Seedance 1.0 Lite Frame to Video - Bytedance API
+| Parameter | Required | Type | Default | Description |
+| model | Yes | string | — | The Seedance model ID. Use "seedance-1-0-lite-i2v-250428" for frame-to-video. |
+| text | Yes | string | — | Prompt describing the motion between frames. Control knobs can be embedded: --ratio, --resolution, --duration, --camerafixed. |
+| first_frame | Yes | string | — | Publicly accessible HTTPS URL of the starting frame image. |
+| last_frame | Yes | string | — | Publicly accessible HTTPS URL of the ending frame image. |
+Inline knobs (embedded in the text field):
+| --ratio | No | string | 16:9 | Aspect ratio: 16:9, 9:16, 1:1, 4:3, 3:4. |
+| --resolution | No | string | 720p | Output resolution: 480p, 720p, 1080p. |
+| --duration | No | number | 5 | Video duration in seconds (3–12). |
+| --camerafixed | No | boolean | false | Lock camera position. |
+**Example Request**
+```
+{
+"model": "seedance-1-0-lite-i2v-250428",
+"text": "Realistic style. Aeroplane from takeoff to fly captured in camera",
+"first_frame": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2i/wan-t2i-75d44f7d-a954-46b0-a603-10c09cb5df84-0.png",
+"last_frame": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2i/wan-t2i-47c06b16-ce7f-4977-8f7c-a04384409934-0.png"
+}
+```
+**Response**
+```
+{
+"request_id": "byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/byteplus_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+X-Webhook-URL	Optional callback URL
+```
 
 ---
 
-## Text-to-Image
+### Sora 2 Pro API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/sora
 
-### Flux Schnell
 
-| Field | Value |
-|-------|-------|
-| Provider | Black Forest Labs |
-| API ID | `flux-1-schnell` |
-| Endpoint | `POST https://gateway.pixazo.ai/flux-1-schnell/v1/getData` |
-| Type | Synchronous |
+by OpenAI
 
-**Parameters:**
+Sora 2 Pro API, developers can access Sora 2 Pro for generating videos that were previously impossible with AI. The API supports both text-to-video and image-to-video generation, opening new possibilities for filmmaking, simulation, and creative expression.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| prompt | string | Yes | Text description of the image to generate |
-| num_steps | integer | No | Number of inference steps (default: 4) |
-| seed | integer | No | Random seed for reproducibility |
-| height | integer | No | Image height in pixels (default: 512) |
-| width | integer | No | Image width in pixels (default: 512) |
+Models Version
+Sora 2 Pro
+Image To Video
+Text To Video
+Image To Video
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+Text To Video
+#### Sora 2 Pro Image To Video API Documentation
+https://gateway.pixazo.ai/sora-video/v1
+**Authentication**
 
-**Example Request:**
+All requests require an API key passed via header.
 
-<details>
-<summary>HTTP</summary>
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Image to Video Request - Sora Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/sora-video/v1/video/i2v/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "The woman turns her head and smiles",
+"image": "https://example.com/image-1280x720.jpg"
+}
+```
+**Output**
+```
+{
+"request_id": "sora-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/sora-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
 
-```http
-POST https://gateway.pixazo.ai/flux-1-schnell/v1/getData HTTP/1.1
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Image to Video Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The text description of how you want to animate the image. Describe the motion, action, or transformation you want to see. |
+| image | Yes | string | The input image URL (http:// or https://) or base64-encoded string (e.g., data:image/jpeg;base64,...). Must be exactly one of these dimensions: 1280×720, 720×1280, 1792×1024, or 1024×1792. Images in other sizes must be resized before uploading — the API will reject unsupported dimensions with a 400 error. |
+| model | No | string | The ID of the Sora model to use for generation. Currently supports sora-2-pro. |
+| size | No | string | The resolution of the output video. Must match the input image dimensions exactly. If omitted, derived from the input image. Valid values: 1280x720, 720x1280, 1792x1024, 1024x1792. |
+| seconds | No | integer | The duration of the output video in seconds. Valid values: 4, 8, or 12. |
+| callback_url | No | string | Callback notification URL for the result of this generation task. When the video generation completes, the system sends a POST request with the video details. If omitted, use polling to retrieve results. |
+**Example Request**
+```
+{
+"prompt": "The cityscape comes alive as the sun sets, lights gradually turning on across the buildings, traffic moving below",
+"image": "https://example.com/city-skyline-1792x1024.jpg",
+"size": "1792x1024",
+"seconds": 12,
+"callback_url": "https://your-domain.com/webhook/notify"
+}
+```
+**Response**
+```
+{
+"request_id": "sora-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/sora-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+Check Video Result - Sora Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/sora-video/v1/video/result
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"video_id": "video_68e4ff15fd8c8193ae7c27ca15812XXXXXXXXXXXXXXXXXXX"
+}
+```
+**Output**
+```
+{
+"id": "video_68e4ff15fd8c...",
+"status": "completed",
+"video_url": "https://...XXXXXXXXXXXXXXXXXXXXX.mp4"
+}
+```
+Request Parameters - Check Video Result
+| Parameter | Required | Type | Description |
+| video_id | Yes | string | The unique identifier of the video generation task to check. |
+**Example Request**
+```
+{
+"video_id": "video_68e4ff15fd8c8193ae7c27ca15812XXXXXXXXXXXXXXXXXXX"
+}
+```
+**Response**
+```
+{
+"id": "video_68e4ff15fd8c8193ae7c27ca15812XXXXXXXXXXXXXXXXXXX",
+"status": "completed",
+"model": "sora-2-pro",
+"prompt": "She turns around and smiles, then slowly walks out of the frame",
+"created_at": 1759837181637,
+"completed_at": 1759837336742,
+"video_url": "https://...XXXXXXXXXXXXXXXXXXXXX.mp4",
+"metadata": {
+"total_attempts": 5,
+"polling_duration_seconds": 155
+}
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Sora 2 Pro Text To Video API Documentation
+https://gateway.pixazo.ai/sora-video/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Text to Video Request - Sora Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/sora-video/v1/video/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A serene beach at sunset with gentle waves rolling onto the shore, palm trees swaying in the breeze, and seagulls flying overhead",
+"size": "1280x720",
+"seconds": 4,
+"callback_url": "https://your-domain.com/webhook/notify"
+}
+```
+**Output**
+```
+{
+"request_id": "sora-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/sora-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Text to Video Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The text description of the video you want to generate. Be descriptive and specific for best results. |
+| model | No | string | The ID of the Sora model to use for generation. Currently supports `sora-2-pro`. |
+| size | No | string | The resolution of the output video. Valid values: `1280x720`, `720x1280`, `1792x1024`, `1024x1792`. |
+| seconds | No | integer | The duration of the output video in seconds. Valid values: `4`, `8`, or `12`. |
+| callback_url | No | string | Callback notification URL for the result of this generation task. When the video generation completes, the system sends a POST request with the video details. If omitted, use polling to retrieve results. |
+**Example Request**
+```
+{
+"prompt": "A futuristic city at night with flying cars, neon lights reflecting off glass skyscrapers, and holographic advertisements floating in the air",
+"size": "1792x1024",
+"seconds": 12,
+"callback_url": "https://your-domain.com/webhook/notify"
+}
+```
+**Response**
+```
+{
+"request_id": "sora-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/sora-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+
+---
+
+### Veo 3.1 Fast API Veo 3.1 API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/veo
+
+
+by Google
+
+Veo 3.1 Fast API Veo 3.1 API, developers can access Veo 3.1 for generating videos that accurately depict motion, lighting, and real-world physics. The API leverages Google's DeepMind research to produce videos with remarkable realism, suitable for professional video production and creative applications.
+
+Models Version
+Veo v3.1 Fast
+Veo v3.1
+Video Generation
+Video Generation
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### Veo v3.1 Fast Video Generation API Documentation
+https://gateway.pixazo.ai/veo31f/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Veo 3.1 Fast Video Generation Request - Veo 3.1 Fast API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/veo31f/v1/veo-3.1-fast/generate HTTP/1.1
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A snow-covered tree gradually transforms as winter melts away, snow dripping from branches as green leaves emerge and colorful flowers bloom around the base, transitioning from a cold white landscape to a vibrant lush green meadow full of life",
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"last_frame": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png",
+"duration": 8,
+"aspect_ratio": "16:9",
+"resolution": "1080p",
+"negative_prompt": "blurry, low quality, distorted, artifacts, text, watermark",
+"generate_audio": true,
+"seed": 42
+}
+```
+**Output**
+```
+{
+"request_id": "veo-3-1-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/veo-3-1-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Veo 3.1 Fast Video Generation
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text prompt describing the desired video content, motion, mood, or style for the generated video. |
+| image | No | string | Publicly accessible URL of a reference image to guide the video generation. Used as the starting frame or visual reference. |
+| last_frame | No | string | Publicly accessible URL of an image to use as the last frame of the video, enabling start-to-end visual transitions. |
+| duration | No | number | Duration of the generated video in seconds. Supported values: 5, 6, 8. Default varies by model configuration. |
+| aspect_ratio | No | string | Aspect ratio of the output video. Supported values: "16:9", "9:16", "1:1", "4:3", "3:4". |
+| resolution | No | string | Resolution of the output video. Supported values: "720p", "1080p". |
+| negative_prompt | No | string | Text describing elements to avoid in the generated video (e.g., "blurry, low quality, distorted, artifacts, text, watermark"). |
+| generate_audio | No | boolean | When true, generates synchronized audio alongside the video output. |
+| seed | No | number | Random seed for reproducible video generation. Use the same seed to get consistent results across runs. |
+**Example Request**
+```
+{
+"prompt": "A snow-covered tree gradually transforms as winter melts away, snow dripping from branches as green leaves emerge and colorful flowers bloom around the base, transitioning from a cold white landscape to a vibrant lush green meadow full of life",
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"last_frame": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png",
+"duration": 8,
+"aspect_ratio": "16:9",
+"resolution": "1080p",
+"negative_prompt": "blurry, low quality, distorted, artifacts, text, watermark",
+"generate_audio": true,
+"seed": 42
+}
+```
+**Response**
+```
+{
+"request_id": "veo-3-1-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/veo-3-1-fast_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 2. Veo v3.1
+#### Veo v3.1 Video Generation API Documentation
+https://gateway.pixazo.ai/veo/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Video Generation Request - Veo 3.1 API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/veo/v1/veo-3.1/generate
+Content-Type: application/json
+Ocp-Apim-Subscription-Key: your-subscription-key
+{
+"prompt": "A serene lake with mountains in the background at sunset",
+"aspect_ratio": "16:9",
+"duration": 8,
+"resolution": "1080p",
+"generate_audio": true,
+"negative_prompt": "blur, distortion, low quality",
+"webhook": "https://your-server.com/webhook"
+}
+```
+**Output**
+```
+{
+"request_id": "veo-3-1_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/veo-3-1_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Video Generation Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of the video to generate (required) |
+| aspect_ratio | No | string | Video aspect ratio: "16:9" or "9:16" |
+| duration | No | integer | Video duration in seconds: 4, 6, or 8 |
+| resolution | No | string | Video resolution: "720p" or "1080p" |
+| generate_audio | No | boolean | Whether to generate audio with the video |
+| negative_prompt | No | string | What to exclude from the generated video |
+| image | No | string | Input image URL for image-to-video generation |
+| last_frame | No | string | Ending image URL for interpolation (requires image) |
+| reference_images | No | array | 1-3 reference images for subject-consistent generation (R2V) |
+| seed | No | integer | Random seed for reproducible results (optional) |
+| webhook | No | string | Webhook URL for completion notifications |
+| webhook_events_filter | No | array | Event types to receive: ["start", "completed"] |
+**Example Request**
+```
+{
+"prompt": "A serene lake with mountains in the background at sunset",
+"aspect_ratio": "16:9",
+"duration": 8,
+"resolution": "1080p",
+"generate_audio": true,
+"negative_prompt": "blur, distortion, low quality",
+"webhook": "https://your-server.com/webhook"
+}
+```
+**Response**
+```
+{
+"request_id": "veo-3-1_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/veo-3-1_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Ocp-Apim-Subscription-Key	Your subscription key
+```
+
+---
+
+### Runway Gen 4.5 API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/runway
+
+
+by Runway
+
+Runway Gen 4.5 API, developers can access Runway's industry-leading video generation for creating cinematic content from text and images. The API powers professional video production workflows, offering the quality and features demanded by filmmakers, advertisers, and media companies.
+
+Models Version
+Runway Gen-4.5
+Image To Video
+Image To Video
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### Runway Gen-4.5 Image To Video API Documentation
+https://gateway.pixazo.ai/runway-gen-4-5/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Video Generation Request - Runway gen-4.5
+**Request Code**
+```
+POST https://gateway.pixazo.ai/runway-gen-4-5/v1/gen-4.5/generate
 Content-Type: application/json
 Cache-Control: no-cache
 Ocp-Apim-Subscription-Key: YOUR_API_KEY
-
 {
-    "prompt": "A female skateboarder executing a trick at the Paris Olympics with the Eiffel Tower in the background.",
-    "num_steps": 4,
-    "seed": 15,
-    "height": 512,
-    "width": 512
+"prompt": "A golden retriever puppy chasing butterflies through a sunlit lavender field, slow motion, cinematic depth of field, warm afternoon light casting long shadows"
 }
 ```
-</details>
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/flux-1-schnell/v1/getData"
-headers = {
-    "Content-Type": "application/json",
-    "Cache-Control": "no-cache",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {
-    "prompt": "A female skateboarder executing a trick at the Paris Olympics with the Eiffel Tower in the background.",
-    "num_steps": 4,
-    "seed": 15,
-    "height": 512,
-    "width": 512
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
+**Output**
 ```
-</details>
-
-<details>
-<summary>JavaScript</summary>
-
-```javascript
-const body = {
-    "prompt": "A female skateboarder executing a trick at the Paris Olympics with the Eiffel Tower in the background.",
-    "num_steps": 4,
-    "seed": 15,
-    "height": 512,
-    "width": 512
-};
-
-fetch("https://gateway.pixazo.ai/flux-1-schnell/v1/getData", {
-    method: "POST",
-    body: JSON.stringify(body),
-    headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache",
-        "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-    }
-})
-.then(response => response.json())
-.then(data => console.log(data))
-.catch(err => console.error(err));
-```
-</details>
-
-<details>
-<summary>cURL</summary>
-
-```bash
-curl -X POST "https://gateway.pixazo.ai/flux-1-schnell/v1/getData" \
-  -H "Content-Type: application/json" \
-  -H "Cache-Control: no-cache" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"prompt": "A female skateboarder executing a trick at the Paris Olympics with the Eiffel Tower in the background.", "num_steps": 4, "seed": 15, "height": 512, "width": 512}'
-```
-</details>
-
-<details>
-<summary>Java</summary>
-
-```java
-import java.net.URI;
-import java.net.http.*;
-
-public class FluxSchnell {
-    public static void main(String[] args) throws Exception {
-        String json = "{\"prompt\": \"A female skateboarder executing a trick at the Paris Olympics\", \"num_steps\": 4, \"seed\": 15, \"height\": 512, \"width\": 512}";
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create("https://gateway.pixazo.ai/flux-1-schnell/v1/getData"))
-            .header("Content-Type", "application/json")
-            .header("Ocp-Apim-Subscription-Key", "YOUR_API_KEY")
-            .POST(HttpRequest.BodyPublishers.ofString(json))
-            .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        System.out.println(response.body());
-    }
-}
-```
-</details>
-
-<details>
-<summary>PHP</summary>
-
-```php
-<?php
-$url = "https://gateway.pixazo.ai/flux-1-schnell/v1/getData";
-$headers = [
-    "Content-Type: application/json",
-    "Cache-Control: no-cache",
-    "Ocp-Apim-Subscription-Key: YOUR_API_KEY"
-];
-$data = json_encode([
-    "prompt" => "A female skateboarder executing a trick at the Paris Olympics with the Eiffel Tower in the background.",
-    "num_steps" => 4,
-    "seed" => 15,
-    "height" => 512,
-    "width" => 512
-]);
-$ch = curl_init($url);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-$resp = curl_exec($ch);
-curl_close($ch);
-echo $resp;
-?>
-```
-</details>
-
----
-
-### Flux Dev
-
-| Field | Value |
-|-------|-------|
-| Provider | Black Forest Labs |
-| API ID | `flux-dev` |
-| Endpoint | `POST https://gateway.pixazo.ai/flux-dev/v1/getData` |
-| Type | Synchronous |
-| Description | Cutting-edge text-to-image model excelling at high-quality visuals from textual descriptions with exceptional prompt adherence, visual fidelity, and image diversity. |
-
----
-
-### Flux Pro
-
-| Field | Value |
-|-------|-------|
-| Provider | Black Forest Labs |
-| API ID | `flux-pro` |
-| Endpoint | `POST https://gateway.pixazo.ai/flux-pro/v1/getData` |
-| Type | Synchronous |
-| Description | State-of-the-art image generation with exceptional prompt following, outstanding visual quality, intricate detail, and impressive output diversity. |
-
----
-
-### Flux 1.1 Pro Ultra
-
-| Field | Value |
-|-------|-------|
-| Provider | Black Forest Labs |
-| API ID | `flux-1-1-ultra` |
-| Endpoint | `POST https://gateway.pixazo.ai/flux-1-1-ultra/v1/getData` |
-| Type | Synchronous |
-| Description | Hyper-realistic image generation with remarkable detail and precision. Designed for businesses, developers, and creators. |
-
----
-
-### Flux 2
-
-| Field | Value |
-|-------|-------|
-| Provider | Black Forest Labs |
-| API ID | `flux-2` |
-| Endpoint | `POST https://gateway.pixazo.ai/flux-2/v1/generate` |
-| Pixazo Page | [/models/text-to-image/flux-2-api](https://www.pixazo.ai/models/text-to-image/flux-2-api) |
-
----
-
-### Ideogram V2
-
-| Field | Value |
-|-------|-------|
-| Provider | Ideogram AI |
-| API ID | `ideogramV_2` |
-| Endpoint | `POST https://gateway.pixazo.ai/ideogramV_2/v1/generate` |
-| Type | Synchronous |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| image_request.prompt | string | Yes | Text description of the image |
-| image_request.negative_prompt | string | No | What to avoid in the image |
-| image_request.model | string | No | Model version (e.g., "V_2") |
-| image_request.aspect_ratio | string | No | e.g., "ASPECT_10_16", "ASPECT_1_1" |
-| image_request.magic_prompt_option | string | No | "AUTO", "ON", "OFF" |
-| image_request.seed | integer | No | Random seed |
-| image_request.style_type | string | No | "AUTO", "REALISTIC", "DESIGN", "3D", "ANIME" |
-| image_request.color_palette.name | string | No | e.g., "JUNGLE", "PASTEL", "NEON" |
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/ideogramV_2/v1/generate"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {
-    "image_request": {
-        "prompt": "A serene tropical beach scene with tall palm trees against a sunset sky.",
-        "negative_prompt": "blur",
-        "model": "V_2",
-        "aspect_ratio": "ASPECT_10_16",
-        "magic_prompt_option": "AUTO",
-        "seed": 212,
-        "style_type": "AUTO",
-        "color_palette": {"name": "JUNGLE"}
-    }
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
-```
-</details>
-
-<details>
-<summary>JavaScript</summary>
-
-```javascript
-const body = {
-    image_request: {
-        prompt: "A serene tropical beach scene with tall palm trees against a sunset sky.",
-        negative_prompt: "blur",
-        model: "V_2",
-        aspect_ratio: "ASPECT_10_16",
-        magic_prompt_option: "AUTO",
-        seed: 212,
-        style_type: "AUTO",
-        color_palette: { name: "JUNGLE" }
-    }
-};
-
-fetch("https://gateway.pixazo.ai/ideogramV_2/v1/generate", {
-    method: "POST",
-    headers: {
-        "Content-Type": "application/json",
-        "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-    },
-    body: JSON.stringify(body)
-})
-.then(r => r.json()).then(console.log);
-```
-</details>
-
-<details>
-<summary>cURL</summary>
-
-```bash
-curl -X POST "https://gateway.pixazo.ai/ideogramV_2/v1/generate" \
-  -H "Content-Type: application/json" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"image_request": {"prompt": "A serene tropical beach scene", "model": "V_2", "aspect_ratio": "ASPECT_10_16", "style_type": "AUTO"}}'
-```
-</details>
-
----
-
-### Kling AI Image Generation
-
-| Field | Value |
-|-------|-------|
-| Provider | Kling AI |
-| API ID | `kling-ai-image` |
-| Endpoint | `POST https://gateway.pixazo.ai/kling-ai-image/v1/getImageTask` |
-| Type | Async |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| prompt | string | Yes | Text description of the image |
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/kling-ai-image/v1/getImageTask"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {"prompt": "Sparrow bird flying"}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
-```
-</details>
-
-<details>
-<summary>cURL</summary>
-
-```bash
-curl -X POST "https://gateway.pixazo.ai/kling-ai-image/v1/getImageTask" \
-  -H "Content-Type: application/json" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"prompt": "Sparrow bird flying"}'
-```
-</details>
-
----
-
-### SDXL (Stable Diffusion XL)
-
-| Field | Value |
-|-------|-------|
-| Provider | Stability AI |
-| API ID | `getImage` |
-| Endpoint | `POST https://gateway.pixazo.ai/getImage/v1/getSDXLImage` |
-| Type | Synchronous |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| prompt | string | Yes | Text description |
-| negative_prompt | string | No | What to avoid |
-| height | integer | No | Image height (default: 1024) |
-| width | integer | No | Image width (default: 1024) |
-| num_steps | integer | No | Inference steps (default: 20) |
-| guidance_scale | float | No | CFG scale (default: 5) |
-| seed | integer | No | Random seed |
-
-**Pricing:** Basic $19/mo (5K calls), Standard $49/mo (15K calls), Pro $99/mo (40K calls)
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/getImage/v1/getSDXLImage"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {
-    "prompt": "High-resolution realistic image of a sparrow bird perched on a cherry blossom branch.",
-    "negative_prompt": "Low-quality, blurry",
-    "height": 1024,
-    "width": 1024,
-    "num_steps": 20,
-    "guidance_scale": 5,
-    "seed": 40
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
-```
-</details>
-
-<details>
-<summary>cURL</summary>
-
-```bash
-curl -X POST "https://gateway.pixazo.ai/getImage/v1/getSDXLImage" \
-  -H "Content-Type: application/json" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"prompt": "A sparrow bird on a cherry blossom branch", "negative_prompt": "blurry", "height": 1024, "width": 1024, "num_steps": 20, "guidance_scale": 5, "seed": 40}'
-```
-</details>
-
----
-
-### SDXL Lightning
-
-| Field | Value |
-|-------|-------|
-| Provider | Stability AI |
-| API ID | `sdxl_lightning/getImage` |
-| Endpoint | `POST https://gateway.pixazo.ai/sdxl_lightning/getImage/v1/getSDXLImage` |
-| Type | Synchronous |
-| Description | Lightning-fast version of SDXL with reduced inference steps. |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| prompt | string | Yes | Text description |
-| negativePrompt | string | No | What to avoid |
-| height | integer | No | Image height (default: 1024) |
-| width | integer | No | Image width (default: 1024) |
-| num_steps | integer | No | Inference steps (default: 20) |
-| guidance | float | No | Guidance scale (default: 5) |
-| seed | integer | No | Random seed |
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/sdxl_lightning/getImage/v1/getSDXLImage"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {
-    "prompt": "A mystical phoenix rising from golden flames, its fiery wings lighting up the night sky.",
-    "negativePrompt": "blurry, low quality",
-    "height": 1024,
-    "width": 1024,
-    "num_steps": 20,
-    "guidance": 5,
-    "seed": 42
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
-```
-</details>
-
-<details>
-<summary>cURL</summary>
-
-```bash
-curl -X POST "https://gateway.pixazo.ai/sdxl_lightning/getImage/v1/getSDXLImage" \
-  -H "Content-Type: application/json" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"prompt": "A mystical phoenix rising from golden flames", "negativePrompt": "blurry", "height": 1024, "width": 1024, "num_steps": 20, "guidance": 5, "seed": 42}'
-```
-</details>
-
----
-
-### Stable Diffusion
-
-| Field | Value |
-|-------|-------|
-| Provider | Stability AI |
-| API ID | `getImage` |
-| Endpoint | `POST https://gateway.pixazo.ai/getImage/v1/getSDXLImage` |
-| Type | Synchronous |
-| Note | Shares the same endpoint as SDXL |
-
-Same parameters and usage as [SDXL](#sdxl-stable-diffusion-xl).
-
----
-
-### Stable Diffusion Inpainting
-
-| Field | Value |
-|-------|-------|
-| Provider | Stability AI |
-| API ID | `inpainting` |
-| Endpoint | `POST https://gateway.pixazo.ai/inpainting/v1/getImage` |
-| Type | Synchronous |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| prompt | string | Yes | What to generate in the masked area |
-| imageUrl | string | Yes | URL of the original image |
-| maskUrl | string | Yes | URL of the mask image (white = edit area) |
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/inpainting/v1/getImage"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {
-    "prompt": "Change to a lion",
-    "imageUrl": "https://example.com/photo.png",
-    "maskUrl": "https://example.com/mask.png"
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
-```
-</details>
-
-<details>
-<summary>cURL</summary>
-
-```bash
-curl -X POST "https://gateway.pixazo.ai/inpainting/v1/getImage" \
-  -H "Content-Type: application/json" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"prompt": "Change to a lion", "imageUrl": "https://example.com/photo.png", "maskUrl": "https://example.com/mask.png"}'
-```
-</details>
-
----
-
-### Additional Text-to-Image Models
-
-| Model | Provider | API ID | Endpoint | Pixazo Page |
-|-------|----------|--------|----------|-------------|
-| GPT Image 1.5 | OpenAI | `gpt-image-1-5` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/gpt-image-1-5-api) |
-| Hunyuan Image 3.0 | Tencent | `hunyuan-image-3-0` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/hunyuan-image-3-0-api) |
-| Longcat Image | Longcat AI | `longcat-image` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/longcat-image-api) |
-| Seedream V4 | ByteDance | `seedream-v4` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/seedream-v4-api) |
-| Z-Image Turbo | Z-AI | `z-image-turbo` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/z-image-turbo-api) |
-| Qwen Image | Alibaba | `qwen-image` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/qwen-image-api) |
-| PixelForge T2I | Pixazo AI | `pixelforge` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/pixelforge-api) |
-| PixelYatra | Pixazo AI | `pixelyatra` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/pixelyatra-api) |
-| Higgsfield Soul | Higgsfield | `soul` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/soul-api) |
-| Wan 2.5 T2I | Alibaba | `wan-2-5` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/wan-2.5-api) |
-| Ghibli Style | Community | `ghibli-style` | `/v1/generate` | [Link](https://www.pixazo.ai/models/text-to-image/ghibli-style) |
-
----
-
-## Image-to-Image
-
-### Nano Banana Pro
-
-| Field | Value |
-|-------|-------|
-| Provider | Google (Gemini 3 Pro) |
-| API ID | `nano-banana-pro-770` |
-| Generate | `POST https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request` |
-| Poll Result | `POST https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request-result` |
-| Type | Async (queue → poll) |
-| Pricing | $0.045 per request |
-
-**Parameters (Generate):**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| prompt | string | Yes | Text describing the desired transformation |
-| image_urls | array of strings | Yes | HTTPS URLs of input images (up to 14) |
-
-**Generate Response:**
-```json
-{"status": "IN_QUEUE", "request_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8"}
-```
-
-**Poll Response (Completed):**
-```json
 {
-  "status": "COMPLETED",
-  "request_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
-  "images": [
-    {"url": "https://storage.googleapis.com/output/image_1.png", "width": 1024, "height": 1024, "content_type": "image/png"}
-  ],
-  "metadata": {"processing_time_seconds": 12.4, "input_image_count": 2}
+"request_id": "runway-gen-4-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/runway-gen-4-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
+**Webhook (Optional)**
 
-<details>
-<summary>Python</summary>
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
 
-```python
-import requests, time
-
-BASE = "https://gateway.pixazo.ai/nano-banana-pro-770/v1"
-HEADERS = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-
-# Step 1: Submit
-resp = requests.post(f"{BASE}/nano-banana-pro-request", json={
-    "prompt": "make a photo of the man driving the car down the california coastline",
-    "image_urls": [
-        "https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input.png",
-        "https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input-2.png"
-    ]
-}, headers=HEADERS)
-request_id = resp.json()["request_id"]
-
-# Step 2: Poll
-while True:
-    result = requests.post(f"{BASE}/nano-banana-pro-request-result",
-        json={"request_id": request_id}, headers=HEADERS).json()
-    if result["status"] == "COMPLETED":
-        print(result["images"][0]["url"])
-        break
-    elif result["status"] == "FAILED":
-        print("Error:", result["error"])
-        break
-    time.sleep(5)
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Video Generation Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text prompt describing the video to generate |
+| image | No | string (URI) | Image URL for the first frame (image-to-video mode). If omitted, generates from text only |
+| duration | No | integer | Video duration in seconds. Allowed values: 5, 10 |
+| aspect_ratio | No | string | Video aspect ratio. Allowed values: "16:9", "9:16", "4:3", "3:4", "1:1", "21:9" |
+| seed | No | integer | Random seed for reproducible generation |
+**Example Request**
 ```
-</details>
-
-<details>
-<summary>JavaScript</summary>
-
-```javascript
-const BASE = "https://gateway.pixazo.ai/nano-banana-pro-770/v1";
-const HEADERS = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-};
-
-// Step 1: Submit
-const submitResp = await fetch(`${BASE}/nano-banana-pro-request`, {
-    method: "POST",
-    headers: HEADERS,
-    body: JSON.stringify({
-        prompt: "make a photo of the man driving the car down the california coastline",
-        image_urls: [
-            "https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input.png",
-            "https://storage.googleapis.com/falserverless/example_inputs/nano-banana-edit-input-2.png"
-        ]
-    })
-});
-const { request_id } = await submitResp.json();
-
-// Step 2: Poll
-let result;
-do {
-    await new Promise(r => setTimeout(r, 5000));
-    const pollResp = await fetch(`${BASE}/nano-banana-pro-request-result`, {
-        method: "POST", headers: HEADERS,
-        body: JSON.stringify({ request_id })
-    });
-    result = await pollResp.json();
-} while (result.status !== "COMPLETED" && result.status !== "FAILED");
-
-console.log(result.images?.[0]?.url || result.error);
-```
-</details>
-
-<details>
-<summary>cURL</summary>
-
-```bash
-# Submit
-curl -X POST "https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request" \
-  -H "Content-Type: application/json" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"prompt": "man driving car down california coastline", "image_urls": ["https://example.com/input.png"]}'
-
-# Poll result
-curl -X POST "https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request-result" \
-  -H "Content-Type: application/json" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"request_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8"}'
-```
-</details>
-
----
-
-### Additional Image-to-Image Models
-
-| Model | API ID | Endpoint | Page |
-|-------|--------|----------|------|
-| Crystal Upscaler | `crystal-upscaler` | `/v1/upscale` | [Link](https://www.pixazo.ai/models/image-to-image/crystal-upscaler-api) |
-| Qwen Image Layered | `qwen-image-layered` | `/v1/generate` | [Link](https://www.pixazo.ai/models/image-to-image/qwen-image-layered-api) |
-| SeedEdit V3 I2I | `seededit-v3-image-to-image` | `/v1/generate` | [Link](https://www.pixazo.ai/models/image-to-image/seededit-v3-image-to-image-api) |
-| Wan 2.5 I2I | `wan-2-5-i2i` | `/v1/generate` | [Link](https://www.pixazo.ai/models/image-to-image/wan-2-5-api) |
-| PixelForge I2I | `pixelforge-i2i` | `/v1/generate` | [Link](https://www.pixazo.ai/models/image-to-image/pixelforge-api) |
-
----
-
-## Image Editing
-
-### Nano Banana Image Edit
-
-| Field | Value |
-|-------|-------|
-| Provider | Google (Gemini 2.5 Flash) |
-| API ID | `nano-banana-image-edit` |
-| Endpoint | `POST https://gateway.pixazo.ai/nano-banana-image-edit/v1/edit` |
-| Description | All-in-one AI for creating and editing images. Add/remove objects, change colors/lighting, backgrounds, extend edges, blend images. |
-| Pixazo Page | [Link](https://www.pixazo.ai/models/image-editing/google-gemini-2.5-flash-nano-banana-image-edit-api) |
-
-### Additional Image Editing Models
-
-| Model | API ID | Page |
-|-------|--------|------|
-| Qwen Image Edit | `qwen-image-edit` | [Link](https://www.pixazo.ai/models/image-editing/qwen-image-edit-api) |
-| Qwen Image Edit Plus LoRA | `qwen-image-edit-plus-lora` | [Link](https://www.pixazo.ai/models/image-editing/qwen-image-edit-plus-lora-api) |
-| Reve Edit Image | `reve-edit-image` | [Link](https://www.pixazo.ai/models/image-editing/reve-edit-image-api) |
-| Seedream 4.5 | `seedream-4-5` | [Link](https://www.pixazo.ai/models/image-editing/seedream-4-5-api) |
-| FireRed Image Edit | `firered-image-edit` | [Link](https://www.pixazo.ai/models/firered-image-edit) |
-| Lucy Edit | `lucy-edit` | [Link](https://www.pixazo.ai/models/lucy-edit) |
-
----
-
-## Image Restoration & Upscaling
-
-### AI Image Upscaler
-
-| Model | API ID | Page |
-|-------|--------|------|
-| Flux.1-dev ControlNet | `flux-1-dev-controlnet` | [Link](https://www.pixazo.ai/models/ai-image-upscaler/flux.1-dev-controlnet-api) |
-| SeedVR2 Image | `seedvr2-image` | [Link](https://www.pixazo.ai/models/ai-image-upscaler/seedvr2-image-api) |
-| Topaz | `topaz` | [Link](https://www.pixazo.ai/models/topaz) |
-
-### AI Video Upscaler
-
-| Model | API ID | Page |
-|-------|--------|------|
-| SeedVR | `seedvr` | [Link](https://www.pixazo.ai/models/ai-video-upscaler/seedvr-api) |
-
-### Image Restoration
-
-| Model | API ID | Description | Page |
-|-------|--------|-------------|------|
-| BSRGAN | `bsrgan` | Blind super-resolution for low-quality images | [Link](https://www.pixazo.ai/models/image-restoration/bsrgan-api) |
-| Flux 1 Kontext | `flux-1-kontext` | Context-aware image restoration | [Link](https://www.pixazo.ai/models/image-restoration/flux-1-kontext-api) |
-| CodeFormer | `sczhou-codeformer` | Face restoration model | [Link](https://www.pixazo.ai/models/image-restoration/sczhou-codeformer-api) |
-
----
-
-## Text-to-Video
-
-### Kling AI T2V
-
-| Field | Value |
-|-------|-------|
-| Provider | Kling AI |
-| API ID | `kling-ai-video` |
-| Endpoint | `POST https://gateway.pixazo.ai/kling-ai-video/v1/generateVideoTask` |
-| Type | Async |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| prompt | string | Yes | Text description of the video |
-| negative_prompt | string | No | What to avoid |
-
-**Pricing:** Basic $19/mo (200 calls), Standard $49/mo (400 calls, $0.30 overage), Pro $99/mo (750 calls, $0.20 overage). 10s plans: Standard $129-149/mo, Pro $199/mo.
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/kling-ai-video/v1/generateVideoTask"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
+{
+"prompt": "An astronaut gazes through the cupola window of a space station at the glowing curve of Earth below, soft ambient light from control panels illuminates the cabin, the camera slowly drifts forward revealing the full panoramic viewport weightless tools float gently in the background, calm and awe-inspiring cinematic atmosphere",
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/iss043e284928~medium.jpg",
+"duration": 10,
+"aspect_ratio": "21:9",
+"seed": 42
 }
-data = {
-    "prompt": "An enchanted forest with glowing mushrooms, fireflies, and a sparkling river flowing through the trees.",
-    "negative_prompt": "nude, porn, abusive"
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
 ```
-</details>
-
-<details>
-<summary>cURL</summary>
-
-```bash
-curl -X POST "https://gateway.pixazo.ai/kling-ai-video/v1/generateVideoTask" \
-  -H "Content-Type: application/json" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"prompt": "An enchanted forest with glowing mushrooms and fireflies", "negative_prompt": "low quality"}'
+**Response**
 ```
-</details>
-
----
-
-### MiniMax Hailuo AI T2V
-
-| Field | Value |
-|-------|-------|
-| Provider | MiniMax |
-| API ID | `minimax-hailuo-ai` |
-| Endpoint | `POST https://gateway.pixazo.ai/minimax-hailuo-ai/v1/generate` |
-| Type | Async |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| prompt | string | Yes | Detailed text description of the video |
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/minimax-hailuo-ai/v1/generate"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
+{
+"request_id": "runway-gen-4-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/runway-gen-4-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
-data = {
-    "prompt": "A bear leaping into a fast-flowing river to catch a fish, with lush green forest and distant mountains."
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
 ```
-</details>
-
----
-
-### Additional Text-to-Video Models
-
-| Model | API ID | Page |
-|-------|--------|------|
-| Hailuo 2.3 Pro | `hailuo-2-3-pro` | [Link](https://www.pixazo.ai/models/text-to-video/hailuo-2-3-pro-api) |
-| LTX 2 Video | `ltx-2-video` | [Link](https://www.pixazo.ai/models/text-to-video/ltx-2-video-api) |
-| Seedance Pro T2V | `seedance-pro` | [Link](https://www.pixazo.ai/models/text-to-video/seedance-pro-api) |
-| Sora 2 T2V | `sora-2` | [Link](https://www.pixazo.ai/models/text-to-video/sora-2-api) |
-| Veo 3.1 T2V | `veo3-1` | [Link](https://www.pixazo.ai/models/text-to-video/veo3-1-api) |
-| Wan 2.1 T2V | `wan2-1` | [Link](https://www.pixazo.ai/models/text-to-video/wan2.1-api) |
-| Wan 2.2 T2V | `wan2-2` | [Link](https://www.pixazo.ai/models/text-to-video/wan2.2-api) |
-| Wan 2.5 T2V | `wan-2-5` | [Link](https://www.pixazo.ai/models/text-to-video/wan-2.5-api) |
-
----
-
-## Image-to-Video
-
-### Kling AI I2V
-
-| Field | Value |
-|-------|-------|
-| Provider | Kling AI |
-| API ID | `kling-ai-video` |
-| Endpoint | `POST https://gateway.pixazo.ai/kling-ai-video/v1/getImageToVideoTask` |
-| Type | Async |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| image | string | Yes | URL of the source image |
-| negative_prompt | string | No | What to avoid |
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/kling-ai-video/v1/getImageToVideoTask"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {
-    "image": "https://example.com/photo.jpg",
-    "negative_prompt": "Fade"
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
+**Request Headers**
+| Header | Value |
 ```
-</details>
-
-<details>
-<summary>cURL</summary>
-
-```bash
-curl -X POST "https://gateway.pixazo.ai/kling-ai-video/v1/getImageToVideoTask" \
-  -H "Content-Type: application/json" \
-  -H "Ocp-Apim-Subscription-Key: YOUR_API_KEY" \
-  -d '{"image": "https://example.com/photo.jpg", "negative_prompt": "Fade"}'
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
 ```
-</details>
-
----
-
-### MiniMax Hailuo AI I2V
-
-| Field | Value |
-|-------|-------|
-| Provider | MiniMax |
-| API ID | `minimax-hailuo-ai` |
-| Endpoint | `POST https://gateway.pixazo.ai/minimax-hailuo-ai/v1/generate` |
-| Type | Async |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| first_frame_image | string | Yes | URL of the source image |
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/minimax-hailuo-ai/v1/generate"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {
-    "first_frame_image": "https://example.com/photo.jpg"
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
+Check Prediction Status - Runway gen-4.5
+**Request Code**
 ```
-</details>
+POST https://gateway.pixazo.ai/runway-gen-4-5/v1/gen-4.5/prediction
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"prediction_id": "phzd8zp6anrmt0cwfcntztr2xc"
+}
+```
+**Output**
+```
+{
+"success": true,
+"id": "phzd8zp6anrmt0cwfcntztr2xc",
+"status": "succeeded",
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/gen-4.5/phzd8zp6anrmt0cwfcntztr2xc_output_0.mp4",
+"created_at": "2026-02-20T13:09:52.341Z"
+}
+```
+Request Parameters - Check Prediction Status
+| Parameter | Required | Type | Description |
+| prediction_id | Yes | string | The prediction ID returned from the generate endpoint |
+**Example Request**
+```
+{
+"prediction_id": "phzd8zp6anrmt0cwfcntztr2xc"
+}
+```
+**Response**
+```
+{
+"success": true,
+"id": "phzd8zp6anrmt0cwfcntztr2xc",
+"status": "succeeded",
+"input": {
+"aspect_ratio": "16:9",
+"duration": 5,
+"prompt": "A golden retriever puppy chasing butterflies through a sunlit lavender field..."
+},
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/gen-4.5/phzd8zp6anrmt0cwfcntztr2xc_output_0.mp4",
+"created_at": "2026-02-20T13:09:52.341Z"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
 
 ---
 
-### Higgsfield DoP (Director of Photography)
+### Kling Video 3.0 Motion Control API, Kling 3.0, 2.6, 2.0, 1.6, O1 API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/kling
 
-| Field | Value |
-|-------|-------|
-| Provider | Higgsfield |
-| API ID | `dop` |
-| Endpoint | `POST https://gateway.pixazo.ai/dop/v1/generate` |
-| Type | Async |
-| Pixazo Page | [Link](https://www.pixazo.ai/models/image-to-video/dop-api) |
+
+by Kuaishou
+
+Kling Video 3.0 Motion Control API, developers can generate high-quality videos from text and images, with advanced features like motion control, video-to-video editing, and avatar generation. The API supports extended video lengths and cinematic quality output.
+
+Models Version
+Kling Image O3
+Kling 3.0
+Kling Image V3 t2i
+Kling v2.6 Standard
+Kling Avatar v2 Pro
+Kling v1.6
+Kling O1
+Kling v1
+Text to Image
+Image to Image
+Text to Image
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+Image to Image
+#### Kling Image O3 Text to Image API Documentation
+https://gateway.pixazo.ai/kling-image/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Kling Image O3 Text to Image - Kling Image API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-image/v1/kling-image-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A serene mountain lake at sunset with golden reflections, painterly style",
+"resolution": "1K",
+"aspect_ratio": "auto",
+"num_images": 1,
+"output_format": "png"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Kling Image O3 Text to Image - Kling Image API
+| Parameter | Required | Type | Default | Description |
+| prompt | Yes | string | — | Text description of the image to generate. Max 2500 characters. |
+| resolution | No | string | 1K | Target output resolution. Supported: "1K", "2K", "4K". Higher resolutions increase cost. |
+| result_type | No | string | single | Output type: "single" for one or more independent results, "series" for a coordinated sequence. |
+| num_images | No | integer | 1 | Number of output images to generate (1-9). Only applicable when result_type is "single". |
+| series_amount | No | integer | — | Number of images in a coordinated sequence (2-9). Only applicable when result_type is "series". |
+| aspect_ratio | No | string | auto | Desired aspect ratio: "auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9". |
+| output_format | No | string | png | Output image format: "png", "jpeg", or "webp". |
+| sync_mode | No | boolean | false | If true, returns image as data URI directly in the response instead of a URL. |
+**Example Request**
+```
+{
+"prompt": "A serene mountain lake at sunset with golden reflections"
+}
+```
+**Response**
+```
+{
+"request_id": "kling-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+X-Webhook-URL	Optional callback URL
+```
+#### Kling Image O3 Image to Image API Documentation
+https://gateway.pixazo.ai/kling-image-o3-i2i/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Kling Image O3 Image to Image - Kling Image O3 i2i API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-image-o3-i2i/v1/kling-image-o3-i2i-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Reimagine this as a detailed pencil sketch with cross-hatching on aged parchment",
+"image_urls": [
+"https://imagesai.appypie.com/7686410/a4i4mHl7B9MUtbt09qBA_017731443271512.png"
+],
+"resolution": "1K",
+"aspect_ratio": "auto",
+"num_images": 1,
+"output_format": "png"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-image-o3-i2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-image-o3-i2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Kling Image O3 Image to Image - Kling Image O3 i2i API
+| Parameter | Required | Type | Default | Description |
+| prompt | Yes | string | — | Text description of how to transform the input image. Max 2500 characters. |
+| image_urls | Yes | array of strings | — | Array of 1-10 HTTPS URLs pointing to reference images. Multiple references can be controlled with @Image1, @Image2 syntax in the prompt. |
+| elements | No | array | — | ElementInput objects for advanced face control and character consistency. |
+| resolution | No | string | 1K | Target output resolution. Supported: "1K", "2K", "4K". Higher resolutions increase cost. |
+| result_type | No | string | single | Output type: "single" for one or more independent results, "series" for a coordinated sequence. |
+| num_images | No | integer | 1 | Number of output images to generate (1-9). Only applicable when result_type is "single". |
+| series_amount | No | integer | — | Number of images in a coordinated sequence (2-9). Only applicable when result_type is "series". |
+| aspect_ratio | No | string | auto | Desired aspect ratio: "auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9". "auto" preserves the input image's aspect ratio. |
+| output_format | No | string | png | Output image format: "png", "jpeg", or "webp". |
+| sync_mode | No | boolean | false | If true, returns image as data URI directly in the response instead of a URL. |
+**Example Request**
+```
+{
+"prompt": "Reimagine this as a detailed pencil sketch with cross-hatching on aged parchment",
+"image_urls": [
+"https://imagesai.appypie.com/7686410/a4i4mHl7B9MUtbt09qBA_017731443271512.png"
+]
+}
+```
+**Response**
+```
+{
+"request_id": "kling-image-o3-i2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-image-o3-i2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+X-Webhook-URL	Optional callback URL
+```
+#### 2. Kling 3.0
+#### Kling 3.0 Text To Video API Documentation
+https://gateway.pixazo.ai/kling-3-0-text-to-video-standard/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Kling 3.0 Text to Video Standard generate request - Kling 3.0 Text to Video Standard
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-3-0-text-to-video-standard/v1/kling-3-0-text-to-video-standard-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Cinematic drone shot flying through ancient stone ruins covered in moss and vines at golden hour. Camera starts low, rises through crumbling archways, revealing a vast misty valley beyond. Volumetric light rays pierce through gaps in the stone. Epic scale, photorealistic, 8K quality.",
+"duration": "5",
+"multi_prompt": null,
+"generate_audio": true,
+"shot_type": "customize",
+"aspect_ratio": "16:9",
+"negative_prompt": "blur, distort, and low quality",
+"cfg_scale": 0.5
+}
+```
+**Output**
+```
+{
+"request_id": "kling-3-0-text-to-video-standard_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-3-0-text-to-video-standard_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Kling 3.0 Text to Video Standard generate request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | A detailed text description of the desired video scene. Be specific about camera movement, lighting, mood, and visual elements for best results. |
+| duration | Yes | string | Duration of the generated video in seconds. Must be between "3" and "15". |
+| multi_prompt | No | string or null | Optional secondary prompt for multi-sequence video generation. Use null for single-prompt generation. |
+| generate_audio | No | boolean | Whether to generate synchronized audio with the video. Set to false to disable audio. |
+| shot_type | No | string | Type of camera shot. Options: "customize", "static", "pan", "zoom", "dolly". |
+| aspect_ratio | No | string | Output video aspect ratio. Options: "16:9", "9:16", "1:1". |
+| negative_prompt | No | string | Describes undesired elements to avoid in the output. Helps refine visual quality. |
+| cfg_scale | No | number | Classifier-free guidance scale. Controls how closely the output adheres to the prompt. Range: 0.1 to 2.0. Higher values increase prompt fidelity. |
+**Example Request**
+```
+{
+"prompt": "Cinematic drone shot flying through ancient stone ruins covered in moss and vines at golden hour. Camera starts low, rises through crumbling archways, revealing a vast misty valley beyond. Volumetric light rays pierce through gaps in the stone. Epic scale, photorealistic, 8K quality.",
+"duration": "5",
+"multi_prompt": null,
+"generate_audio": true,
+"shot_type": "customize",
+"aspect_ratio": "16:9",
+"negative_prompt": "blur, distort, and low quality",
+"cfg_scale": 0.5
+}
+```
+**Response**
+```
+{
+"request_id": "kling-3-0-text-to-video-standard_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-3-0-text-to-video-standard_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+Kling 3.0 Text to Video Standard check status - Kling 3.0 Text to Video Standard
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-3-0-text-to-video-standard/v1/kling-3-0-text-to-video-standard-request-result
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"request_id": "abc123-def456"
+}
+```
+**Output**
+```
+{
+"video": {
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/XXXXXXXXXXXXXXXXXX.mp4",
+"content_type": "video/mp4",
+"file_name": "output.mp4",
+"file_size": 6841082
+}
+}
+```
+Request Parameters - Kling 3.0 Text to Video Standard check status
+| Parameter | Required | Type | Description |
+| request_id | Yes | string | The unique identifier returned from the initial request to check its status. |
+**Example Request**
+```
+{
+"request_id": "abc123-def456"
+}
+```
+**Response**
+```
+{
+"video": {
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/XXXXXXXXXXXXXXXXXX.mp4",
+"content_type": "video/mp4",
+"file_name": "output.mp4",
+"file_size": 6841082
+}
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Kling 3.0 Image To Video API Documentation
+https://gateway.pixazo.ai/kling-3-0-image-to-video-standard/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Kling 3.0 Image to Video Standard generate request - Kling 3.0 Image to Video Standard
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-3-0-image-to-video-standard/v1/kling-3-0-image-to-video-standard-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Create a magical timelapse transition. The snow melts rapidly to reveal green grass, and the tree branches burst into bloom with pink flowers in real-time. The lighting shifts from cold winter light to warm spring sunshine. The camera pushes in slowly towards the tree. Disney-style magical transformation, cinematic, 8k.",
+"start_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"end_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png",
+"duration": "5",
+"multi_prompt": null,
+"generate_audio": true,
+"shot_type": "customize",
+"aspect_ratio": "16:9",
+"negative_prompt": "blur, distort, and low quality",
+"cfg_scale": 0.5
+}
+```
+**Output**
+```
+{
+"request_id": "kling-3-0-image-to-video-standard_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-3-0-image-to-video-standard_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Kling 3.0 Image to Video Standard generate request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Detailed text description of the desired video transformation, including motion, lighting, and style. |
+| start_image_url | Yes | string | Publicly accessible URL of the starting image for the video transition. |
+| end_image_url | Yes | string | Publicly accessible URL of the ending image for the video transition. |
+| duration | Yes | string | Duration of the generated video in seconds. Must be between 3 and 15. |
+| multi_prompt | No | string or null | Optional additional prompt for complex scene variations. Use null if not needed. |
+| generate_audio | Yes | boolean | Whether to generate synchronized ambient audio matching the video motion and mood. |
+| shot_type | Yes | string | Type of camera motion. Options: "customize", "pan_left", "pan_right", "zoom_in", "zoom_out", "tilt_up", "tilt_down". |
+| aspect_ratio | Yes | string | Output video aspect ratio. Options: "16:9", "9:16", "1:1". |
+| negative_prompt | No | string | Describes undesired elements to avoid in the output (e.g., blur, distort, low quality). |
+| cfg_scale | No | number | Control the influence of the prompt on the generation. Lower values (0.1–0.5) allow more creative freedom; higher values (0.6–2.0) follow the prompt more strictly. |
+**Example Request**
+```
+{
+"prompt": "Create a magical timelapse transition. The snow melts rapidly to reveal green grass, and the tree branches burst into bloom with pink flowers in real-time. The lighting shifts from cold winter light to warm spring sunshine. The camera pushes in slowly towards the tree. Disney-style magical transformation, cinematic, 8k.",
+"start_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"end_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png",
+"duration": "5",
+"multi_prompt": null,
+"generate_audio": true,
+"shot_type": "customize",
+"aspect_ratio": "16:9",
+"negative_prompt": "blur, distort, and low quality",
+"cfg_scale": 0.5
+}
+```
+**Response**
+```
+{
+"request_id": "kling-3-0-image-to-video-standard_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-3-0-image-to-video-standard_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+Kling 3.0 Image to Video Standard check status - Kling 3.0 Image to Video Standard
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-3-0-image-to-video-standard/v1/kling-3-0-image-to-video-standard-request-result
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"request_id": "abc123-def456"
+}
+```
+**Output**
+
+```
+{
+"video": {
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/XXXXXXXXXXXXXXXXXX.mp4",
+"content_type": "video/mp4",
+"file_name": "output.mp4",
+"file_size": 6841082
+}
+}
+```
+Request Parameters - Kling 3.0 Image to Video Standard check status
+| Parameter | Required | Type | Description |
+| request_id | Yes | string | The unique identifier returned from the initial request to track status. |
+**Example Request**
+```
+{
+"request_id": "abc123-def456"
+}
+```
+**Response**
+```
+{
+"video": {
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/XXXXXXXXXXXXXXXXXX.mp4",
+"content_type": "video/mp4",
+"file_name": "output.mp4",
+"file_size": 6841082
+}
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 3. Kling Image V3 t2i
+#### Kling Image V3 t2i Text To Image API Documentation
+https://gateway.pixazo.ai/kling-image-t2i/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Kling Image t2i generate request - Kling Image t2i
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-image-t2i/v1/kling-image-t2i-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "An aerial view of a lavender field in Provence at sunset, rows of purple flowers stretching to the horizon, warm golden light, countryside landscape photography",
+"resolution": "1K",
+"num_images": 1,
+"aspect_ratio": "16:9",
+"output_format": "png"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-image-t2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-image-t2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Kling Image t2i generate request
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | Text description describing the desired image. Be specific for optimal results. |
+| resolution | string | No | 1K | Image resolution: "1K", "2K", or "4K". Higher resolutions require more processing time. |
+| num_images | integer | No | 1 | Number of images to generate per request. Must be between 1 and 4. |
+| aspect_ratio | string | No | 16:9 | Image aspect ratio. Supported values: "1:1", "4:3", "16:9", "9:16", "21:9". |
+| output_format | string | No | png | Output image format. Supported values: "png", "jpeg", "webp". |
+Minimum Request
+```
+{
+"prompt": "A realistic photo of a golden retriever puppy playing in a sunlit meadow"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "A realistic photo of a golden retriever puppy playing in a sunlit meadow",
+"resolution": "4K",
+"num_images": 4,
+"aspect_ratio": "1:1",
+"output_format": "webp"
+}
+```
+**Response**
+```
+{
+"request_id": "kling-image-t2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-image-t2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+#### Kling Image V3 t2i Text To Image API Documentation
+https://gateway.pixazo.ai/kling-image-t2i/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Kling Image t2i generate request - Kling Image t2i
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-image-t2i/v1/kling-image-t2i-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "An aerial view of a lavender field in Provence at sunset, rows of purple flowers stretching to the horizon, warm golden light, countryside landscape photography",
+"resolution": "1K",
+"num_images": 1,
+"aspect_ratio": "16:9",
+"output_format": "png"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-image-t2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-image-t2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Kling Image t2i generate request
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | Text description describing the desired image. Be specific for optimal results. |
+| resolution | string | No | 1K | Image resolution: "1K", "2K", or "4K". Higher resolutions require more processing time. |
+| num_images | integer | No | 1 | Number of images to generate per request. Must be between 1 and 4. |
+| aspect_ratio | string | No | 16:9 | Image aspect ratio. Supported values: "1:1", "4:3", "16:9", "9:16", "21:9". |
+| output_format | string | No | png | Output image format. Supported values: "png", "jpeg", "webp". |
+Minimum Request
+```
+{
+"prompt": "A realistic photo of a golden retriever puppy playing in a sunlit meadow"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "A realistic photo of a golden retriever puppy playing in a sunlit meadow",
+"resolution": "4K",
+"num_images": 4,
+"aspect_ratio": "1:1",
+"output_format": "webp"
+}
+```
+**Response**
+```
+{
+"request_id": "kling-image-t2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-image-t2i_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+#### 4. Kling v2.6 Standard
+#### Kling v2.6 Standard Motion Control API Documentation
+https://gateway.pixazo.ai/kling-video-v2-6-standard-motion-control/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Kling Video v2.6 Standard Motion Control generate request - Kling Video v2.6 Standard Motion Control API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-video-v2-6-standard-motion-control/v1/kling-video-v2-6-standard-motion-control-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/motion.jpg",
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/motion.mp4",
+"character_orientation": "video",
+"keep_original_sound": true
+}
+```
+**Output**
+```
+{
+"request_id": "kling-video-v2-6-standard-motion-control_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-video-v2-6-standard-motion-control_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Kling Video v2.6 Standard Motion Control generate request
+| Parameter | Required | Type | Description |
+| image_url | Yes | string | URL pointing to the static character image (JPEG/PNG) to which motion will be transferred. Must be publicly accessible. Maximum allowed size of 10485760 bytes |
+| video_url | Yes | string | URL pointing to the reference video containing the motion to transfer (MP4). Must be publicly accessible and under 10 seconds. |
+| character_orientation | No | string | Specifies how the character in the image should align with the video motion. Use "video" to match the video’s orientation or "image" to match the image’s orientation. |
+| keep_original_sound | No | boolean | If true, preserves the audio from the reference video in the output. If false, output will be silent. |
+**Example Request**
+```
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/motion.jpg",
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/motion.mp4",
+"character_orientation": "video",
+"keep_original_sound": true
+}
+```
+**Response**
+```
+{
+"request_id": "kling-video-v2-6-standard-motion-control_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-video-v2-6-standard-motion-control_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 5. Kling Avatar v2 Pro
+#### Kling Avatar v2 Pro AI Avatar API Documentation
+https://gateway.pixazo.ai/kling-ai-avatar-v2-pro-789/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Kling AI Avatar v2 Pro generate request - Kling AI Avatar v2 Pro API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-ai-avatar-v2-pro-789/v1/kling-ai-avatar-v2-pro-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png",
+"audio_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/abhinav_YF5ZZmi6.mp3",
+"prompt": "smiling warmly, slight head turn"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-ai-avatar-v2-pro-789_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-ai-avatar-v2-pro-789_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Kling AI Avatar v2 Pro generate request
+| Field | Type | Required | Default | Description |
+| image_url | string | Yes | — | Publicly accessible URL to a static image (face portrait) to be animated. Supported formats: JPEG, PNG. |
+| audio_url | string | Yes | — | Publicly accessible URL to an audio file (MP3, WAV) to drive lip-sync and expression animation. Maximum duration: 60 seconds. |
+| prompt | string | No | ." | Additional descriptive prompt to guide avatar expression and motion style. Example: "smiling warmly, slight head turn". |
+Minimum Request
+```
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png",
+"audio_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/abhinav_YF5ZZmi6.mp3"
+}
+```
+Full Request (all options)
+```
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png",
+"audio_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/abhinav_YF5ZZmi6.mp3",
+"prompt": "smiling warmly, slight head turn"
+}
+```
+**Response**
+```
+{
+"request_id": "kling-ai-avatar-v2-pro-789_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-ai-avatar-v2-pro-789_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+#### 6. Kling v1.6
+#### Kling v1.6 Image To Video API Documentation
+https://gateway.pixazo.ai/kling-ai-video/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image To Video Request - klingai Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-ai-video/v1/getImageToVideoTask
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Bird fishing in water",
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/b-d-a-lbdo-2-5-21.jpg",
+"negative_prompt": "blur, distort, and low quality"
+}
+```
+**Output**
+```
+{
+"request_id": "klingai-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/klingai-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image To Video Request
+| Parameter | Required | Type | Description |
+| image | Yes | string | Support inputting image Base64 encoding or image URL (ensure accessibility). Ex: https://pub-582b7213209642b9b995c96c95a30381.r2.dev/b-d-a-lbdo-2-5-21.jpg. Please note, if you use the Base64 method, make sure all image data parameters you pass are in Base64 encoding format. When submitting data, do not add any prefixes to the Base64-encoded string, such as data:image/png;base64. The correct parameter format should be the Base64-encoded string itself. |
+| prompt | Yes | string | Default: null, The instruction or description for the video scene to be generated. Cannot exceed 2500 characters |
+| negative_prompt | Optional | string | Negative text prompt. Cannot exceed 2500 characters |
+| duration | Optional | string | The duration of the generated video in seconds Default value: "5". Possible enum values: 5, 10 |
+| cfg_scale | Optional | float | Default 0.5, Value range: [0, 1]. Flexibility in video generation; The higher the value, the lower the model's degree of flexibility, and the stronger the relevance to the user's prompt |
+**Example Request**
+```
+{
+"prompt": "Bird fishing in water",
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/b-d-a-lbdo-2-5-21.jpg",
+"negative_prompt": "blur, distort, and low quality"
+}
+```
+**Response**
+```
+{
+"request_id": "klingai-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/klingai-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Kling v1.6 Text To Video API Documentation
+https://gateway.pixazo.ai/kling-ai-video/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text To Video Request - klingai Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-ai-video/v1/generateVideoTask
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "An enchanted forest with glowing mushrooms, fireflies, and a sparkling river flowing through the trees.",
+"negative_prompt": "nude, porn, abusive"
+}
+```
+**Output**
+```
+{
+"request_id": "klingai-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/klingai-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Text To Video Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The instruction or description for the video scene to be generated. Cannot exceed 2500 characters |
+| negative_prompt | No | string | Negative text prompt. Cannot exceed 2500 characters |
+| duration | Optional | string | The duration of the generated video in seconds Default value: "5". Possible enum values: 5, 10 |
+| cfg_scale | No | float | Default 0.5, Value range: [0, 1]. Flexibility in video generation; The higher the value, the lower the model's degree of flexibility, and the stronger the relevance to the user's prompt |
+| aspect_ratio | No | string | Default: 16:9. The aspect ratio of the generated video frame (width:height). Enum values：16:9, 9:16, 1:1 |
+**Example Request**
+```
+{
+"prompt": "An enchanted forest with glowing mushrooms, fireflies, and a sparkling river flowing through the trees.",
+"negative_prompt": "nude, porn, abusive"
+}
+```
+**Response**
+```
+{
+"request_id": "klingai-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/klingai-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 7. Kling O1
+#### Kling O1 Edit Video API Documentation
+https://gateway.pixazo.ai/kling-o1-edit-video-video-to-video-634/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - Kling O1 Edit Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-o1-edit-video-video-to-video-634/v1/kling-o1-edit-video-video-to-video-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Replace the character in the video with @Element1, maintaining the same movements and camera angles. Transform the landscape into @Image1",
+"video_url": "https://example.com/input-video.mp4"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-o1-edit-video-video-to-video-634_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-edit-video-video-to-video-634_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | Natural language instruction describing the desired video transformation. Use placeholders like @Element1 and @Image1 to reference elements and images defined in the payload. |
+| video_url | string | Yes | — | Publicly accessible URL of the input video to be edited. Must be accessible without authentication. Reference video URL. Only .mp4/.mov formats supported, 3-10 seconds duration, 720-2160px resolution, max 200MB. Min width: 720px, Min height: 720px, Max width: 2160px, Max height: 2160px, Min duration: 3.0s, Max duration: 10.05s, Min FPS: 24.0, Max FPS: 60.0, Timeout: 30.0s |
+| image_urls | array of strings | No | [] | Array of image URLs to be used as background or environment replacements in the prompt (referenced as @Image1, @Image2, etc.). |
+| elements | array of objects | No | [] | Array of element definitions containing reference and frontal images for subject replacement. Each element is referenced in the prompt via @Element1, @Element2, etc. |
+Minimum Request
+```
+{
+"prompt": "Replace tree with a Mango Tree with flower. All purpul flower color should change to yellow",
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/kling-o1-reference-image-to-video-382/zLDbsHoe_0jS8ClKdo9P__output.mp4"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "Replace the character in the video with @Element1, maintaining the same movements and camera angles. Transform the landscape into @Image1",
+"video_url": "https://example.com/input-video.mp4",
+"image_urls": [
+"https://example.com/background.jpg"
+],
+"elements": [
+{
+"reference_image_urls": [
+"https://example.com/reference1.jpg",
+"https://example.com/reference2.jpg"
+],
+"frontal_image_url": "https://example.com/frontal.jpg"
+}
+]
+}
+```
+**Response**
+```
+{
+"request_id": "kling-o1-edit-video-video-to-video-634_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-edit-video-video-to-video-634_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+#### Kling O1 Frame To Video API Documentation
+https://gateway.pixazo.ai/kling-o1-first-frame-last-frame-to-video-857/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - Kling O1 First Frame Last Frame to Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-o1-first-frame-last-frame-to-video-857/v1/kling-o1-first-frame-last-frame-to-video-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Create a magical timelapse transition. The snow melts rapidly to reveal green grass, and the tree branches burst into bloom with pink flowers in real-time. The lighting shifts from cold winter light to warm spring sunshine. The camera pushes in slowly towards the tree. Disney-style magical transformation, cinematic, 8k.",
+"start_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"end_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png",
+"duration": "5"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-o1-first-frame-last-frame-to-video-857_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-first-frame-last-frame-to-video-857_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | A detailed natural language description of the visual transformation you want to generate. Include motion, lighting, style, and mood. |
+| start_image_url | Yes | string | Publicly accessible URL to the JPG or PNG image that represents the starting frame of the video. |
+| end_image_url | Yes | string | Publicly accessible URL to the JPG or PNG image that represents the ending frame of the video. |
+| duration | Optional | string | Duration of the resulting video in seconds. Must be a numeric string (e.g., "5", "10"). |
+**Example Request**
+```
+{
+"prompt": "Create a magical timelapse transition. The snow melts rapidly to reveal green grass, and the tree branches burst into bloom with pink flowers in real-time. The lighting shifts from cold winter light to warm spring sunshine. The camera pushes in slowly towards the tree. Disney-style magical transformation, cinematic, 8k.",
+"start_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"end_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png",
+"duration": "5"
+}
+```
+**Response**
+```
+{
+"request_id": "kling-o1-first-frame-last-frame-to-video-857_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-first-frame-last-frame-to-video-857_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Kling O1 Image To Image API Documentation
+https://gateway.pixazo.ai/kling-o1-image-208/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - Kling O1 Image API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-o1-image-208/v1/kling-o1-image-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "@image1 is the model and @image2 is the glasses. Perform a virtual try-on by placing the glasses from @image2 onto the model in @image1.",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Image.jpeg",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Captura-de-tela-2025-07-17%20171002.png"
+],
+"resolution": "1K",
+"num_images": 1,
+"aspect_ratio": "auto",
+"output_format": "png"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-o1-image-208_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-image-208_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | A detailed textual instruction describing the transformation. Must reference images using `@image1` and `@image2` to indicate subject and source. Example: `"@image1 is the model and @image2 is the glasses. Perform a virtual try-on by placing the glasses from @image2 onto the model in @image1."` |
+| image_urls | Yes | array of strings | Array of two URLs pointing to the source images. `@image1` corresponds to the first URL (subject), `@image2` to the second URL (reference object). |
+| resolution | No | string | Target resolution of the output image. Accepted values: `"1K"`, `"2K"`, `"4K"`. |
+| num_images | No | integer | Number of output images to generate. Supported values: 1–4. |
+| aspect_ratio | No | string | Desired aspect ratio for the output. Accepted values: `"auto"`, `"1:1"`, `"4:3"`, `"16:9"`, `"9:16"`. `"auto"` adapts to input image dimensions. |
+| output_format | No | string | Format of the generated image output. Accepted values: `"png"`, `"jpeg"`. |
+**Example Request**
+```
+{
+"prompt": "@image1 is the model and @image2 is the glasses. Perform a virtual try-on by placing the glasses from @image2 onto the model in @image1.",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Image.jpeg",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Captura-de-tela-2025-07-17%20171002.png"
+],
+"resolution": "1K",
+"num_images": 1,
+"aspect_ratio": "auto",
+"output_format": "png"
+}
+```
+**Response**
+```
+{
+"request_id": "kling-o1-image-208_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-image-208_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Kling O1 Reference Image To Video API Documentation
+https://gateway.pixazo.ai/kling-o1-reference-image-to-video-382/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - Kling O1 Reference Image to Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-o1-reference-image-to-video-382/v1/kling-o1-reference-image-to-video-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Take @Image1 as the start frame. Create a smooth cinematic transition that matches the style and composition of @Image2. The camera should move elegantly, maintaining visual consistency between the two reference images. Cinematic lighting, professional quality, 35mm lens.",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png"
+],
+"duration": "5",
+"aspect_ratio": "16:9"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-o1-reference-image-to-video-382_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-reference-image-to-video-382_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Detailed textual description of the desired video motion, camera path, lighting, and styling. Use `@Image{i}` to reference input images and `@Element{i}` to reference visual elements. |
+| image_urls | Yes | array[string] | Array of URLs pointing to reference images. Use `@Image1`, `@Image2`, etc. in the prompt to reference these in order. Must contain at least one image. |
+| elements | No | array[object] | Array of visual elements to anchor in the video. Each element contains reference images and a frontal image for identity consistency. |
+| elements[i].reference_image_urls | No | array[string] | Array of URLs for additional reference images of the element (e.g., side views, poses) to improve consistency. |
+| elements[i].frontal_image_url | No | string | Front-facing image of the element used to preserve identity throughout motion (e.g., character face or object front). |
+| duration | No | string | Duration of the generated video in seconds. Valid values: "3", "5", "10". |
+| aspect_ratio | No | string | Aspect ratio of the output video. Valid values: "16:9", "9:16", "1:1". |
+**Example Request**
+```
+{
+"prompt": "Take @Image1 as the start frame. Start with a high-angle satellite view of the ancient greenhouse ruin surrounded by nature. The camera swoops down and flies inside the building, revealing the character from @Element1 standing in the sun-drenched center. The camera then seamlessly transitions into a smooth 180-degree orbit around the character, moving to the back view. As the open backpack comes into focus, the camera continues to push forward, zooming deep inside the bag to reveal the glowing stone from @Element2 nestled inside. Cinematic lighting, hopeful atmosphere, 35mm lens. Make sure to keep it as the style of @Image2.",
+"image_urls": [
+"https://...23FGBYdGLgbK3u.png",
+"https://...uKQFSE7A7c5uUeUF.png"
+],
+"elements": [
+{
+"reference_image_urls": [
+"https://...t9xugpOTQyZW0O.png",
+"https://...NyJ6bnpa_xBue-K.png"
+],
+"frontal_image_url": "...qshvMZROKh9lW3.png"
+},
+{
+"reference_image_urls": [
+"https://...Wihspyv4pp6hgj7D.png"
+],
+"frontal_image_url": "https://...HJlgcaTyR5Ujj2H.png"
+}
+],
+"duration": "5",
+"aspect_ratio": "16:9"
+}
+```
+**Response**
+```
+{
+"request_id": "kling-o1-reference-image-to-video-382_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-reference-image-to-video-382_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Kling O1 Reference Video To Video API Documentation
+https://gateway.pixazo.ai/kling-o1-reference-video-to-video-315/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - Kling O1 Reference Video to Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-o1-reference-video-to-video-315/v1/kling-o1-reference-video-to-video-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Based on @Video1, generate the next shot. Keep the style of the video.",
+"video_url": "https://example.com/media/scene1.mp4",
+"elements": [
+{
+"reference_image_urls": [
+"https://example.com/images/style_frame_1.png"
+],
+"frontal_image_url": "https://example.com/images/frontal_pose.png"
+}
+],
+"aspect_ratio": "16:9",
+"duration": "5"
+}
+```
+**Output**
+```
+{
+"request_id": "kling-o1-reference-video-to-video-315_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-reference-video-to-video-315_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description guiding the generation of the next shot. Should reference the reference video and desired style or action. |
+| video_url | Yes | string | Publicly accessible URL to the input reference video. Must be a stable link (e.g., HTTPS). |
+| image_urls | No | array of strings | Array of image URLs to supplement visual context. These are ignored if `elements` is provided. |
+| elements | No | array of objects | Array of element objects for advanced control over specific regions. Each element defines a reference image and frontal view. This overrides `image_urls`. |
+| elements.reference_image_urls | Yes (within elements) | array of strings | Array of reference images to guide the visual style of the generated segment. Used in conjunction with `frontal_image_url`. |
+| elements.frontal_image_url | Yes (within elements) | string | Frontal view image of a subject to maintain consistency in pose or facial appearance. |
+| aspect_ratio | No | string | Desired aspect ratio of the output video. "auto" scales to match the input video. Values: "auto", "1:1", "16:9", "9:16". |
+| duration | No | string | Desired duration of the generated video in seconds. Accepts integer values as strings (e.g., "5", "10"). |
+**Example Request**
+```
+{
+"prompt": "Based on @Video1, generate the next shot. Keep the style of the video.",
+"video_url": "https://example.com/media/scene1.mp4",
+"elements": [
+{
+"reference_image_urls": [
+"https://example.com/images/style_frame_1.png"
+],
+"frontal_image_url": "https://example.com/images/frontal_pose.png"
+}
+],
+"aspect_ratio": "16:9",
+"duration": "5"
+}
+```
+**Response**
+```
+{
+"request_id": "kling-o1-reference-video-to-video-315_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-o1-reference-video-to-video-315_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 8. Kling v1
+#### Kling v1 Virtual Try-On API Documentation
+https://gateway.pixazo.ai/kling-ai-vton/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Image Request - Kling Virtual Try On API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/kling-ai-vton/v1/getVirtualTryOnTask
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"human_image": "https://storage.googleapis.com/imagesai.appypie.com/testing/00034_00.jpg",
+"image_tail": "https://storage.googleapis.com/imagesai.appypie.com/testing/04469_00.jpg",
+"callback_url": ""
+}
+```
+**Output**
+```
+{
+"request_id": "kling-virtual-try-on_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-virtual-try-on_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Image Request
+| Parameter | Required | Type | Description |
+| human_image | Yes | string | Support inputting image Base64 encoding or image URL (ensure accessibility). Ex: https://storage.googleapis.com/imagesai.appypie.com/testing/00034_00.jpg. Please note, if you use the Base64 method, make sure all image data parameters you pass are in Base64 encoding format. When submitting data, do not add any prefixes to the Base64-encoded string, such as data:image/png;base64. The correct parameter format should be the Base64-encoded string itself. Supported image formats include.jpg / .jpeg / .png . The image file size cannot exceed 10MB, and the image resolution should not be less than 300*300px |
+| image_tail | No | string | Default: null, Support inputting image Base64 encoding or image URL (ensure accessibility). Ex: https://storage.googleapis.com/imagesai.appypie.com/testing/04469_00.jpg. Please note, if you use the Base64 method, make sure all image data parameters you pass are in Base64 encoding format. When submitting data, do not add any prefixes to the Base64-encoded string, such as data:image/png;base64. The correct parameter format should be the Base64-encoded string itself. Supported image formats include.jpg / .jpeg / .png . The image file size cannot exceed 10MB, and the image resolution should not be less than 300*300px |
+| callback_url | No | string | Default: None. The callback notification address for the result of this task. If configured, the server will actively notify when the task status changes. The specific message schema of the notification can be found in "Callback Protocol" |
+**Example Request**
+```
+{
+"human_image": "https://storage.googleapis.com/imagesai.appypie.com/testing/00034_00.jpg",
+"image_tail": "https://storage.googleapis.com/imagesai.appypie.com/testing/04469_00.jpg",
+"callback_url": ""
+}
+```
+**Response**
+```
+{
+"request_id": "kling-virtual-try-on_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/kling-virtual-try-on_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your subscription key
+```
 
 ---
 
-### Additional Image-to-Video Models
+### Pika API - AI Video Generation APIs
+**Page:** https://www.pixazo.ai/models/pika
 
-| Model | API ID | Page |
-|-------|--------|------|
-| Baidu GenFlare 2.0 | `baidu-genflare-2-0` | [Link](https://www.pixazo.ai/models/image-to-video/baidu-genflare-2-0-api) |
-| Hailuo 2.3 Fast | `hailuo-2-3-fast` | [Link](https://www.pixazo.ai/models/image-to-video/hailuo-2-3-fast-api) |
-| Kandinsky 5.0 Pro | `kandinsky-5-0-pro` | [Link](https://www.pixazo.ai/models/image-to-video/kandinsky-5-0-pro-api) |
-| Kling AI Avatar V2 Pro | `kling-ai-avatar-v2-pro` | [Link](https://www.pixazo.ai/models/image-to-video/kling-ai-avatar-v2-pro-api) |
-| Kling O1 | `kling-o1` | [Link](https://www.pixazo.ai/models/image-to-video/kling-o1-api) |
-| Kling Video 2.6 | `kling-video-2-6` | [Link](https://www.pixazo.ai/models/image-to-video/kling-video-2-6-api) |
-| Kling Video 2.6 Motion Control | `kling-video-v2-6-motion-control` | [Link](https://www.pixazo.ai/models/image-to-video/kling-video-v2-6-motion-control-api) |
-| LTX 2 19B | `ltx-2-19b` | [Link](https://www.pixazo.ai/models/image-to-video/ltx-2-19b-api) |
-| LTX 2 Video I2V | `ltx-2-video` | [Link](https://www.pixazo.ai/models/image-to-video/ltx-2-video-api) |
-| Seedance 1.5 | `seedance-1-5` | [Link](https://www.pixazo.ai/models/image-to-video/seedance-1-5-api) |
-| Seedance Pro I2V | `seedance-pro` | [Link](https://www.pixazo.ai/models/image-to-video/seedance-pro-api) |
-| Sora 2 I2V | `sora-2` | [Link](https://www.pixazo.ai/models/image-to-video/sora-2-api) |
-| Veed Fabric 1.0 | `veed-fabric-1-0` | [Link](https://www.pixazo.ai/models/image-to-video/veed-fabric-1-0-api) |
-| Veo 3.1 I2V | `veo3-1` | [Link](https://www.pixazo.ai/models/image-to-video/veo3-1-api) |
-| Wan 2.1 I2V | `wan2-1` | [Link](https://www.pixazo.ai/models/image-to-video/wan2.1-api) |
-| Wan 2.2 I2V | `wan2-2` | [Link](https://www.pixazo.ai/models/image-to-video/wan2.2-api) |
-| Wan 2.2 Animate | `wan-2-2-animate` | [Link](https://www.pixazo.ai/models/image-to-video/wan-2-2-animate-api) |
-| Wan 2.5 I2V | `wan-2-5` | [Link](https://www.pixazo.ai/models/image-to-video/wan-2.5-api) |
-| Wan 2.6 | `wan2-6` | [Link](https://www.pixazo.ai/models/image-to-video/wan2.6-api) |
+
+by Pika Labs
+
+Pika API, developers can harness Pika's unique artistic capabilities for generating videos with distinctive visual styles. The API excels at creative video generation, making it popular among artists, content creators, and brands seeking unique video content.
+
+#### API Documentation Coming Soon
+
+Comprehensive API documentation for Pika is currently being prepared. Check back soon for detailed endpoint information, code examples, and integration guides.
+
+Stay Updated
+
+Get notified when documentation is available.
 
 ---
 
-## Video Editor
+## Image Generation & Editing
 
-| Model | API ID | Description | Page |
-|-------|--------|-------------|------|
-| Lucy Edit Fast | `lucy-edit-fast` | Fast video editing | [Link](https://www.pixazo.ai/models/video-editor/lucy-edit-fast-api) |
-| Luma Modify Video | `luma-modify-video` | AI video modification | [Link](https://www.pixazo.ai/models/video-editor/luma-modify-video-api) |
-| Luma Reframe Video | `luma-reframe-video` | Video reframing | [Link](https://www.pixazo.ai/models/video-editor/luma-reframe-video-api) |
-| Runway Gen4 Aleph | `runwayml-gen4-aleph` | Next-gen video editing | [Link](https://www.pixazo.ai/models/video-editor/runwayml-gen4-aleph-api) |
+### Flux 2 Pro API, Flux 2 Klein, Flux 1.1 Pro, 2 Dev, 1.0 (Free) API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/flux
+
+
+by Black Forest Labs
+
+Flux 2 Pro API, developers can access all Flux versions for generating highly detailed, photorealistic images from text prompts. The API supports advanced features like image-to-image transformation, style control, and batch processing for production workflows.
+
+Models Version
+Flux Fill Dev
+Flux 2 Pro
+Flux 2 Klein
+Flux 2 Dev
+Flux Pro 1.1
+Flux 1 Schnell - FREE
+Flux Pro
+Flux Dev
+Image Inpainting
+Image Inpainting
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### Flux Fill Dev Image Inpainting API Documentation
+https://gateway.pixazo.ai/flux-fill-dev/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image Generation Request - Flux Fill Dev API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-fill-dev/v1/flux-fill/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "a futuristic spaceship with neon lights",
+"image": "https://example.com/photo.png",
+"mask": "https://example.com/mask.png"
+}
+```
+**Output**
+```
+{
+"request_id": "flux-fill-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-fill-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image Generation Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of what to generate in the masked area |
+| image | Yes | string | URL of the source image to inpaint. Must be publicly accessible |
+| mask | Yes | string | URL of the mask image. White areas = fill/regenerate, black areas = preserve |
+| seed | No | integer | Random seed for reproducible results |
+| guidance | No | number | Guidance scale for prompt adherence (default: 30) |
+| num_outputs | No | integer | Number of output images to generate (1-4, default: 1) |
+| num_inference_steps | No | integer | Number of denoising steps (default: 28). Higher = better quality but slower |
+| megapixels | No | string | Output resolution. Values: "0.25", "1" (default), "match_input" |
+| output_format | No | string | Output format: "webp" (default), "jpg", "png" |
+| output_quality | No | integer | Output quality 0-100 (default: 80) |
+| lora_scale | No | number | LoRA adapter strength (default: 1) |
+| disable_safety_checker | No | boolean | Disable NSFW filter (default: false) |
+**Example Request**
+```
+{
+"prompt": "a futuristic spaceship with neon lights",
+"image": "https://example.com/photo.png",
+"mask": "https://example.com/mask.png",
+"seed": 42,
+"guidance": 35,
+"num_outputs": 2,
+"num_inference_steps": 35,
+"output_format": "png",
+"output_quality": 95
+}
+```
+**Response**
+```
+{
+"request_id": "flux-fill-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-fill-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 2. Flux 2 Pro
+#### Flux 2 Pro Image To Image API Documentation
+https://gateway.pixazo.ai/flux-2-pro-image-to-image-866/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - flux 2 pro Image to Image API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-2-pro-image-to-image-866/v1/flux-2-pro-image-to-image-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Place realistic flames emerging from the top of the coffee cup, dancing above the rim",
+"image_size": "auto",
+"safety_tolerance": "2",
+"enable_safety_checker": true,
+"output_format": "jpeg",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/nano-banana/nano-banana-a382a80b-f8df-4de1-a0c1-a5dcfd42dae4-1758783383399.jpg"
+]
+}
+```
+**Output**
+```
+{
+"request_id": "flux-2-pro-image-to-image-866_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-2-pro-image-to-image-866_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | A descriptive text prompt guiding the image transformation (e.g., style, lighting, elements to add or remove) |
+| image_urls | Yes | array[string] | One or more publicly accessible image URLs to be edited. Only the first image will be processed if multiple are provided. |
+| image_size | No | string | Dimensions of the output image. Use "auto" to preserve input dimensions, or specify "512x512", "1024x1024", etc. |
+| safety_tolerance | No | string | Controls sensitivity of content moderation. Higher values allow more permissive outputs. Accepts "1" (strict), "2" (moderate), "3" (relaxed). |
+| enable_safety_checker | No | boolean | Enables or disables content safety filtering. When false, safety checks are bypassed (use with caution). |
+| output_format | No | string | Format of the generated image output. Supported values: "jpeg", "png", "webp" |
+**Example Request**
+```
+{
+"prompt": "Place realistic flames emerging from the top of the coffee cup, dancing above the rim",
+"image_size": "auto",
+"safety_tolerance": "2",
+"enable_safety_checker": true,
+"output_format": "jpeg",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/nano-banana/nano-banana-a382a80b-f8df-4de1-a0c1-a5dcfd42dae4-1758783383399.jpg"
+]
+}
+```
+**Response**
+```
+{
+"request_id": "flux-2-pro-image-to-image-866_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-2-pro-image-to-image-866_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Flux 2 Pro Image To Image Trainer API Documentation
+https://gateway.pixazo.ai/flux-2-pro-image-to-image-trainer-831/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - flux 2 pro Image to Image Trainer API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-2-pro-image-to-image-trainer-831/v1/flux-2-pro-image-to-image-trainer-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"image_data_url": "https://example.com/images/reference_style.jpg",
+"steps": 1200,
+"learning_rate": 0.00007
+}
+```
+**Output**
+```
+{
+"request_id": "flux-2-pro-image-to-image-trainer-831_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-2-pro-image-to-image-trainer-831_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| image_data_url | Yes | string | Base64-encoded URL or public HTTP/S URL pointing to a reference image used for training. Must be a high-resolution, high-quality image representative of the desired style or domain. |
+| steps | No | integer | Number of training steps to perform. Higher values yield more refined models but require longer processing time. |
+| learning_rate | No | number | Learning rate for the LoRA fine-tuning process. A lower value provides more stable training; higher values may converge faster but risk overfitting. |
+**Example Request**
+```
+{
+"image_data_url": "https://example.com/images/reference_style.jpg",
+"steps": 1200,
+"learning_rate": 0.00007
+}
+```
+**Response**
+```
+{
+"request_id": "flux-2-pro-image-to-image-trainer-831_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-2-pro-image-to-image-trainer-831_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Flux 2 Pro Text To Image API Documentation
+https://gateway.pixazo.ai/flux-2-pro-text-to-image-799/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - flux 2 pro Text to Image API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-2-pro-text-to-image-799/v1/flux-2-pro-text-to-image-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "An intense close-up of knight's visor reflecting battle, sword raised, flames in background, chiaroscuro helmet shadows, hyper-detailed armor, square medieval, cinematic lighting",
+"image_size": "landscape_4_3",
+"safety_tolerance": 2,
+"enable_safety_checker": true,
+"output_format": "jpeg"
+}
+```
+**Output**
+```
+{
+"request_id": "flux-2-pro-text-to-image-799_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-2-pro-text-to-image-799_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | A detailed text description of the desired image. Be specific about subject, style, lighting, composition, and mood. |
+| image_size | No | string | The aspect ratio and dimensions of the generated image. Supported values: portrait_4_5, portrait_9_16, square_1_1, landscape_3_2, landscape_4_3, landscape_16_9, landscape_21_9. |
+| safety_tolerance | No | integer | Controls sensitivity of the safety filter. Lower values (1-2) are more restrictive; higher values (3-4) allow more expressive content. |
+| enable_safety_checker | No | boolean | Whether to enable content safety filtering. Disabling may expose you to inappropriate content and is not recommended for public applications. |
+| output_format | No | string | The file format of the generated image. Supported values: jpeg, png, webp. |
+**Example Request**
+```
+{
+"prompt": "An intense close-up of knight's visor reflecting battle, sword raised, flames in background, chiaroscuro helmet shadows, hyper-detailed armor, square medieval, cinematic lighting",
+"image_size": "landscape_4_3",
+"safety_tolerance": 2,
+"enable_safety_checker": true,
+"output_format": "jpeg"
+}
+```
+**Response**
+```
+{
+"request_id": "flux-2-pro-text-to-image-799_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-2-pro-text-to-image-799_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Flux 2 Pro Text To Image Trainer API Documentation
+https://gateway.pixazo.ai/flux-2-pro-text-to-image-trainer-712/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - flux 2 pro Text to Image Trainer API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-2-pro-text-to-image-trainer-712/v1/flux-2-pro-text-to-image-trainer-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"image_data_url": "https://example.com/dataset.zip",
+"steps": 1500,
+"learning_rate": 0.00003
+}
+```
+**Output**
+```
+{
+"request_id": "flux-2-pro-text-to-image-trainer-712_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-2-pro-text-to-image-trainer-712_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Parameter | Required | Type | Description |
+| image_data_url | Yes | string | Base64-encoded URL or HTTP(S) endpoint pointing to a dataset of training images (PNG/JPG). Must include multiple samples (minimum 10 recommended) to train a robust LoRA model. |
+| steps | No | integer | Number of training steps to perform. Higher values improve model quality but increase training time. |
+| learning_rate | No | number | Learning rate for the LoRA adapter training process. Lower values ensure stable convergence; higher values may speed up training but risk instability. |
+**Example Request**
+```
+{
+"image_data_url": "https://example.com/dataset.zip",
+"steps": 1500,
+"learning_rate": 0.00003
+}
+```
+**Response**
+```
+{
+"request_id": "flux-2-pro-text-to-image-trainer-712_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-2-pro-text-to-image-trainer-712_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 3. Flux 2 Klein
+#### Flux 2 Klein Text To Image API Documentation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-2-klein-4b/v1/generateImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A sunset with a dog playing on the beach, golden light reflecting on the water, photorealistic, highly detailed",
+"steps": 25,
+"width": 1024,
+"height": 1024
+}
+```
+**Output**
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/flux-2-klein-4b/1768578707564-851083.png"
+}
+```
+Request Parameters - Text to Image
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The text query that instructs the AI model on what kind of content to generate. |
+| steps | No | integer | The number of diffusion steps; higher values can improve quality but take longer. Default: 25 |
+| width | No | integer | The desired width of the generated image, specified in pixels. Default: 1024. Supported sizes: 512, 1024, 1448, 2048 |
+| height | No | integer | The desired height of the generated image, specified in pixels. Default: 1024. Supported sizes: 512, 1024, 1448, 2048 |
+**Example Request**
+```
+{
+"prompt": "A sunset with a dog playing on the beach, golden light reflecting on the water, photorealistic, highly detailed",
+"steps": 25,
+"width": 1024,
+"height": 1024
+}
+```
+**Response**
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/flux-2-klein-4b/1768578707564-851083.png"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 4. Flux 2 Dev
+#### Flux 2 Dev Text To Image API Documentation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/generateT2I
+Content-Type: application/json
+X-Secret-Key: YOUR_SECRET_KEY
+{
+"prompt": "a sunset at the alps",
+"steps": 25,
+"width": 1024,
+"height": 1024
+}
+```
+**Output**
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/flux-2-dev-cf/1762439647765-844809.png"
+}
+```
+Request Parameters - generateT2I
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The text prompt used to generate the image. Describes the style and content for the generated image. The prompt is automatically sanitized to avoid content moderation false positives (e.g., "fingers brushing lips" is converted to "hand near face"). |
+| steps | No | integer | Number of inference steps for image generation. Controls the quality and detail level of the generated image. Higher values may produce more refined results but take longer to generate. |
+| width | No | integer | Width of the generated image in pixels. Must be a positive integer. Recommended values: 512, 768, 1024, 1280, 1536, 2048. |
+| height | No | integer | Height of the generated image in pixels. Must be a positive integer. Recommended values: 512, 768, 1024, 1280, 1536, 2048. |
+**Example Request**
+```
+{
+"prompt": "a sunset at the alps",
+"steps": 25,
+"width": 1024,
+"height": 1024
+}
+```
+**Response**
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/flux-2-dev-cf/1762439647765-844809.png"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+X-Secret-Key	YOUR_SECRET_KEY
+```
+#### 5. Flux Pro 1.1
+#### Flux Pro 1.1 Text To Image API Documentation
+https://gateway.pixazo.ai/pro1.1/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Pro1.1 Ultra generateRequest - Flux pro 1.1
+**Request Code**
+```
+POST https://gateway.pixazo.ai/pro1.1/v1/pro1.1ultra/generateRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A futuristic cityscape at sunset",
+"seed": 43,
+"output_format": "jpeg",
+"aspect_ratio": "16:9"
+}
+```
+**Output**
+```
+{
+"request_id": "flux-pro-1-1_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-pro-1-1_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Pro1.1 Ultra generateRequest
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The instruction or description for the image to be generated. FLUX1.1 [pro] ultra delivers professional-grade image quality with enhanced photo realism and up to 2K resolution |
+| seed | Optional | integer | The same seed and prompt will output the same image every time |
+| sync_mode | Optional | boolean | If true, waits for image generation and upload before returning response. Increases latency but provides direct image access without CDN |
+| num_images | Optional | integer | The number of images to generate |
+| enable_safety_checker | Optional | boolean | Whether to enable the safety checker to filter NSFW content |
+| output_format | Optional | string | The format of the generated image. Values: "jpeg", "png" |
+| safety_tolerance | Optional | string | The safety tolerance level for generated images. 1 is most strict, 6 is most permissive. Values: "1", "2", "3", "4", "5", "6" |
+| enhance_prompt | Optional | boolean | Whether to enhance the prompt for better results |
+| aspect_ratio | Optional | string | The aspect ratio of the generated image. Values: "21:9", "16:9", "4:3", "3:2", "1:1", "2:3", "3:4", "9:16", "9:21" |
+| raw | Optional | boolean | Generate less processed, more natural-looking images |
+**Example Request**
+```
+{
+"prompt": "A futuristic cityscape at sunset",
+"seed": 43,
+"output_format": "jpeg",
+"aspect_ratio": "16:9"
+}
+```
+**Response**
+```
+{
+"request_id": "flux-pro-1-1_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-pro-1-1_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 6. Flux 1 Schnell
+#### Flux 1 Schnell Text To Image API Documentation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-1-schnell/v1/getData
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Picture a sleek, futuristic car racing through a neon-lit cityscape, its engine humming efficiently as it blurs past digital billboards. The driver skillfully navigates the glowing streets, aiming for victory in this high-tech, adrenaline-fueled race of tomorrow.",
+"num_steps": 4,
+"seed": 15,
+"height": 512,
+"width": 512
+}
+```
+**Output**
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/flux-schnell-cf/prompt-1768311018384-879091.png"
+}
+```
+Request Parameters - Get Image
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The text query that instructs the AI model on what kind of content to generate. |
+| num_steps | No | integer | The number of diffusion steps; higher values can improve quality but take longer. Default: 4, Maximum: 8 |
+| seed | No | integer | A "seed" is used to generate a consistent sequence of pseudo-random numbers, aiding reproducibility. |
+| height | No | integer | The desired height of the generated image, specified in pixels. Default: 1024 |
+| width | No | integer | The desired width of the generated image, specified in pixels. Default: 1024 |
+**Example Request**
+```
+{
+"prompt": "Picture a sleek, futuristic car racing through a neon-lit cityscape, its engine humming efficiently as it blurs past digital billboards. The driver skillfully navigates the glowing streets, aiming for victory in this high-tech, adrenaline-fueled race of tomorrow.",
+"num_steps": 4,
+"seed": 15,
+"height": 512,
+"width": 512
+}
+```
+**Response**
+```
+{
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/flux-schnell-cf/prompt-1768311018384-879091.png"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Flux 1 Schnell Text To Image(Batch) API Documentation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-1-schnell/v1/getDataBatch
+Content-Type: application/json
+X-Secret-Key: YOUR_SECRET_KEY
+Cache-Control: no-cache
+{
+"prompt": "Picture a handsome man dancing",
+"num_steps": 4,
+"seed": 15,
+"height": 512,
+"width": 512,
+"webhook_url": "https://your-domain.com/webhook"
+}
+```
+**Output**
+```
+{
+"requestId": "18a36237-f8b2-4c8d-9a3b-d5e8a9f12c45",
+"status": "queued",
+"message": "Request queued. Result will be sent to the provided webhook URL.",
+"pollingEndpoint": "/checkStatus",
+"pollingInstructions": "POST to /checkStatus with {...}"
+}
+```
+Request Parameters - Get Image Batch
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The text prompt used to generate the image. Describes the style and content for the generated image. The prompt is automatically sanitized to avoid content moderation false positives. |
+| num_steps | No | integer | Number of inference steps for image generation. FLUX-1-Schnell is optimized for speed, so values between 1-4 are typical. |
+| seed | No | integer | Random seed for reproducible image generation. Use the same seed to generate similar images. If not provided, a random seed is generated. |
+| width | No | integer | Width of the generated image in pixels. Recommended values: 512, 768, 1024, 1280, 1536, 1920. |
+| height | No | integer | Height of the generated image in pixels. Recommended values: 512, 768, 1024, 1280, 1536, 1920. |
+| webhook_url | No | string | URL to receive the result via HTTP POST when processing completes. If provided, the API returns immediately with status 202. If omitted, the API attempts internal polling for up to 60 seconds. |
+**Example Request**
+```
+{
+"prompt": "Picture a handsome man dancing",
+"num_steps": 4,
+"seed": 15,
+"height": 512,
+"width": 512,
+"webhook_url": "https://your-domain.com/webhook"
+}
+```
+**Response**
+```
+{
+"requestId": "18a36237-f8b2-4c8d-9a3b-d5e8a9f12c45",
+"status": "queued",
+"message": "Request queued. Result will be sent to the provided webhook URL.",
+"pollingEndpoint": "/checkStatus",
+"pollingInstructions": "POST to /checkStatus with {\"requestId\": \"18a36237-f8b2-4c8d-9a3b-d5e8a9f12c45\"}"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+X-Secret-Key	YOUR_SECRET_KEY
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 7. Flux Pro
+#### Flux Pro Text To Image API Documentation
+https://gateway.pixazo.ai/flux-pro/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text To Image - Flux Pro API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-pro/v1/pro/textToImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A futuristic cityscape at sunset with flying cars",
+"image_size": "landscape_4_3"
+}
+```
+**Output**
+```
+{
+"request_id": "flux-pro_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-pro_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Text To Image
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The instruction or description for the image to be generated |
+| image_size | Optional | string | The aspect ratio of the generated image, Possible enum values: square_hd, square, portrait_4_3, portrait_16_9, landscape_4_3, landscape_16_9 |
+| num_inference_steps | Optional | integer | The number of denoising steps. Higher values result in higher quality images but take longer to generate |
+| guidance_scale | Optional | float | Controls how closely the model follows the prompt. Higher values make the model adhere more closely to the prompt |
+| num_images | Optional | integer | The number of images to generate |
+| enable_safety_checker | Optional | boolean | Whether to enable the safety checker to filter NSFW content |
+| output_format | Optional | string | The format of the generated image. Values: "jpeg", "png" |
+**Example Request**
+```
+{
+"prompt": "A futuristic cityscape at sunset with flying cars",
+"image_size": "landscape_4_3"
+}
+```
+**Response**
+```
+{
+"request_id": "flux-pro_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-pro_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 8. Flux Dev
+#### Flux Dev Image To Image API Documentation
+https://gateway.pixazo.ai/flux-dev/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image To Image - flux Dev API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-dev/v1/dev/imageToImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png",
+"prompt": "Editorial rooftop shot, woman in peach tee and denim, modern urban backdrop, bold blue tones, polished aesthetic."
+}
+```
+**Output**
+```
+{
+"request_id": "flux-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image To Image
+| Parameter | Required | Type | Description |
+| image_url | Yes | string | The URL of the source image to transform |
+| prompt | Yes | string | The instruction or description for how to transform the image |
+| strength | Optional | float | The strength of the transformation. Higher values result in more dramatic changes |
+| num_inference_steps | Optional | integer | The number of denoising steps. Higher values result in higher quality images but take longer to generate |
+| guidance_scale | Optional | float | Controls how closely the model follows the prompt. Higher values make the model adhere more closely to the prompt |
+| num_images | Optional | integer | The number of images to generate |
+| enable_safety_checker | Optional | boolean | Whether to enable the safety checker to filter NSFW content |
+| output_format | Optional | string | The format of the generated image. Values: "jpeg", "png" |
+| acceleration | Optional | string | The speed of generation. Values: "none", "regular", "high" |
+**Example Request**
+```
+{
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png",
+"prompt": "Editorial rooftop shot, woman in peach tee and denim, modern urban backdrop, bold blue tones, polished aesthetic."
+}
+```
+**Response**
+```
+{
+"request_id": "flux-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Flux Dev Text To Image API Documentation
+https://gateway.pixazo.ai/flux-dev/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text To Image - flux Dev API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/flux-dev/v1/dev/textToImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A futuristic city skyline at sunset with flying cars",
+"image_size": "landscape_4_3"
+}
+```
+**Output**
+```
+{
+"request_id": "flux-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Text To Image
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The instruction or description for the image to be generated |
+| image_size | No | string | The aspect ratio of the generated image, Possible enum values: square_hd, square, portrait_4_3, portrait_16_9, landscape_4_3, landscape_16_9 |
+| num_inference_steps | No | integer | The number of denoising steps. Higher values result in higher quality images but take longer to generate |
+| guidance_scale | No | float | Controls how closely the model follows the prompt. Higher values make the model adhere more closely to the prompt |
+| num_images | No | integer | The number of images to generate |
+| enable_safety_checker | No | boolean | Whether to enable the safety checker to filter NSFW content |
+| output_format | No | string | The format of the generated image. Values: "jpeg", "png" |
+| acceleration | No | string | The speed of generation. Values: "none", "regular", "high" |
+**Example Request**
+```
+{
+"prompt": "A futuristic city skyline at sunset with flying cars",
+"image_size": "landscape_4_3"
+}
+```
+**Response**
+```
+{
+"request_id": "flux-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/flux-dev_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
 
 ---
 
-## Speech-to-Video
+### GPT Image 1.5 API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/gpt-image
 
-| Model | API ID | Description | Page |
-|-------|--------|-------------|------|
-| Wan 2.2 14B | `wan-2-2-14b` | 14B parameter multimodal speech-to-video | [Link](https://www.pixazo.ai/models/speech-to-video/wan-2-2-14b-api) |
+
+by OpenAI
+
+GPT Image 1.5 API, developers can create images that accurately reflect complex prompts, edit existing images with natural language instructions, and generate variations. The API combines GPT's language understanding with powerful image generation for intuitive creative workflows.
+
+Models Version
+GPT Image v1.5
+Text To Image
+Text To Image
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### GPT Image v1.5 Text To Image API Documentation
+https://gateway.pixazo.ai/gpt-image-1-5-api-923/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+GPT-Image 1.5 API generate request - GPT Image 1.5 API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/gpt-image-1-5-api-923/v1/gpt-image-1-5-api-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "create a realistic image taken with iphone at these coordinates 41°43′32″N 49°56′49″W 15 April 1912",
+"image_size": "1024x1024",
+"background": "auto",
+"quality": "high",
+"num_images": 1,
+"output_format": "png"
+}
+```
+**Output**
+```
+{
+"request_id": "gpt-image-1-5-api-923_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/gpt-image-1-5-api-923_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - GPT-Image 1.5 API generate request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | A detailed text description of the desired image. The model interprets this prompt to generate visuals with high fidelity. |
+| image_size | Optional | string | Dimensions of the generated image. Supports standard aspect ratios. |
+| background | Optional | string | Background handling mode. Use "auto" for intelligent background inference, or specify a color/texture if supported. |
+| quality | Optional | string | Rendering quality level. "high" produces more detailed outputs with longer processing. "standard" is faster but less detailed. |
+| num_images | Optional | integer | Number of distinct images to generate in a single request. |
+| output_format | Optional | string | File format of the generated image. Supported formats: "png", "jpeg", "webp". |
+**Example Request**
+```
+{
+"prompt": "create a realistic image taken with iphone at these coordinates 41°43′32″N 49°56′49″W 15 April 1912",
+"image_size": "1024x1024",
+"background": "auto",
+"quality": "high",
+"num_images": 1,
+"output_format": "png"
+}
+```
+**Response**
+```
+{
+"request_id": "gpt-image-1-5-api-923_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/gpt-image-1-5-api-923_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
 
 ---
 
-## Reference-to-Image
+### Seedream 5.0 API, Seedream 4.5 API, Seedream 4.0 API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/seedream
 
-| Model | API ID | Description | Page |
-|-------|--------|-------------|------|
-| Reve Remix | `reve-remix` | Remix images with reference styles | [Link](https://www.pixazo.ai/models/reference-to-image/reve-remix-api) |
-| Seedream Edit Multi-Image | `seedream-edit-multi-image` | Multi-reference image editing | [Link](https://www.pixazo.ai/models/reference-to-image/seedream-edit-multi-image) |
+
+by BytePlus
+
+Seedream 5.0 API, developers can access text-to-image generation and advanced image editing features including multi-image editing. The API leverages ByteDance's extensive AI research to deliver high-quality visuals suitable for content creation and commercial applications.
+
+Models Version
+Seedream 5
+Seedream 4.5
+Seedream 4
+Image To Image
+Text To Image
+Image To Image
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+Text To Image
+#### Seedream 5 Image To Image API Documentation
+https://gateway.pixazo.ai/seedream-5-0-lite-image/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Seedream 5.0 Lite Image generate request - Seedream 5.0 Lite Image
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedream-5-0-lite-image/v1/seedream-5-0-lite-image-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Transform the snowy winter tree in Figure 1 to match the blooming floral style of the tree in Figure 2. Keep the tree structure and composition but replace the snow with vibrant flowers and lush green foliage.",
+"image_size": "auto_2K",
+"num_images": 1,
+"max_images": 1,
+"enable_safety_checker": true,
+"enhance_prompt_mode": "standard",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png"
+]
+}
+```
+**Output**
+```
+{
+"request_id": "seedream-5-0-lite-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedream-5-0-lite-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Seedream 5.0 Lite Image generate request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Detailed text instruction describing the desired transformation, including references to input images (e.g., "Figure 1", "Figure 2"). |
+| image_size | No | string | Target image resolution. Supported values: `square_hd`, `square`, `portrait_4_3`, `portrait_16_9`, `landscape_4_3`, `landscape_16_9`, `auto_2K`, `auto_3K`. |
+| num_images | No | integer | Number of output images to generate. Must be between 1 and 6. |
+| max_images | No | integer | Maximum number of images to return. Must be equal to or greater than `num_images`. |
+| enable_safety_checker | No | boolean | Enables content safety filtering to block inappropriate outputs. |
+| enhance_prompt_mode | No | string | Prompt enhancement strategy. Accepts: "none", "standard", "aggressive". |
+| image_urls | Yes | array of strings | Array of HTTPS URLs pointing to reference images (up to 10). Images must be publicly accessible. |
+**Example Request**
+```
+{
+"prompt": "Transform the snowy winter tree in Figure 1 to match the blooming floral style of the tree in Figure 2. Keep the tree structure and composition but replace the snow with vibrant flowers and lush green foliage.",
+"image_size": "auto_2K",
+"num_images": 1,
+"max_images": 1,
+"enable_safety_checker": true,
+"enhance_prompt_mode": "standard",
+"image_urls": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f2.png"
+]
+}
+```
+**Response**
+```
+{
+"request_id": "seedream-5-0-lite-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedream-5-0-lite-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+Seedream 5.0 Lite Image check status - Seedream 5.0 Lite Image
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedream-5-0-lite-image/v1/seedream-5-0-lite-image-request-result
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"request_id": "abc123-def456-7890"
+}
+```
+**Output**
+```
+{
+"images": [
+{
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/seedream-5-0-lite-edit/xvbT7A5LsRoFTWSmUXCtX_e9fa2bcda22249488eb78daa1fbe401d.png",
+"content_type": "image/png",
+"file_name": "e9fa2bcda22249488eb78daa1fbe401d.png",
+"file_size": 6361422,
+"width": null,
+"height": null
+}
+]
+}
+```
+Request Parameters - Seedream 5.0 Lite Image check status
+| Parameter | Required | Type | Description |
+| request_id | Yes | string | The request_id returned from the initial submission endpoint. |
+**Example Request**
+```
+{
+"request_id": "abc123-def456-7890"
+}
+```
+**Response**
+```
+{
+"images": [
+{
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/seedream-5-0-lite-edit/xvbT7A5LsRoFTWSmUXCtX_e9fa2bcda22249488eb78daa1fbe401d.png",
+"content_type": "image/png",
+"file_name": "e9fa2bcda22249488eb78daa1fbe401d.png",
+"file_size": 6361422,
+"width": null,
+"height": null
+}
+]
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Seedream 5 Text To Image API Documentation
+https://gateway.pixazo.ai/seedream-5-0-lite-text-to-image/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Seedream 5.0 Lite Text to Image generate request - Seedream 5.0 Lite Text to Image
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedream-5-0-lite-text-to-image/v1/seedream-5-0-lite-text-to-image-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Realistic DSLR photograph of an anthropomorphic sparrow sitting on a house roof beside a small bowl of water. The sparrow is holding a leaf in a natural pose. The text 'Seedream 5.0 Lite available on Pixazo AI' is clearly visible at the top of the image.",
+"image_size": "auto_2K",
+"num_images": 1,
+"max_images": 1,
+"enable_safety_checker": true,
+"enhance_prompt_mode": "standard"
+}
+```
+**Output**
+```
+{
+"request_id": "seedream-5-0-lite-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedream-5-0-lite-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Seedream 5.0 Lite Text to Image generate request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description for image generation. Use detailed, descriptive language for best results. |
+| image_size | No | string | Target image resolution. Supported values: `square_hd`, `square`, `portrait_4_3`, `portrait_16_9`, `landscape_4_3`, `landscape_16_9`, `auto_2K`, `auto_3K`. |
+| num_images | No | integer | Number of images to generate per request. Must be between 1 and 6. |
+| max_images | No | integer | Maximum number of images to return. Must be equal to or greater than `num_images`. |
+| enable_safety_checker | No | boolean | Enables content safety filtering to block inappropriate or harmful outputs. |
+| enhance_prompt_mode | No | string | Prompt enhancement strategy. Options: `none`, `standard`, `creative`, `photorealistic`. |
+**Example Request**
+```
+{
+"prompt": "Realistic DSLR photograph of an anthropomorphic sparrow sitting on a house roof beside a small bowl of water. The sparrow is holding a leaf in a natural pose. The text 'Seedream 5.0 Lite available on Pixazo AI' is clearly visible at the top of the image.",
+"image_size": "auto_2K",
+"num_images": 1,
+"max_images": 1,
+"enable_safety_checker": true,
+"enhance_prompt_mode": "standard"
+}
+```
+**Response**
+```
+{
+"request_id": "seedream-5-0-lite-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/seedream-5-0-lite-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+Seedream 5.0 Lite Text to Image check status - Seedream 5.0 Lite Text to Image
+**Request Code**
+```
+POST https://gateway.pixazo.ai/seedream-5-0-lite-text-to-image/v1/seedream-5-0-lite-text-to-image-request-result
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"request_id": "abc123-def456-7890"
+}
+```
+**Output**
+```
+{
+"images": [
+{
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/seedream-5-0-lite-edit/xvbT7A5LsRoFTWSmUXCtX_e9fa2bcda22249488eb78daa1fbe401d.png",
+"content_type": "image/png",
+"file_name": "e9fa2bcda22249488eb78daa1fbe401d.png",
+"file_size": 6361422,
+"width": null,
+"height": null
+}
+]
+}
+```
+Request Parameters - Seedream 5.0 Lite Text to Image check status
+| Parameter | Required | Type | Description |
+| request_id | Yes | string | Unique identifier of the generation request to check status for. |
+**Example Request**
+```
+{
+"request_id": "abc123-def456-7890"
+}
+```
+**Response**
+```
+{
+"images": [
+{
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/seedream-5-0-lite-edit/xvbT7A5LsRoFTWSmUXCtX_e9fa2bcda22249488eb78daa1fbe401d.png",
+"content_type": "image/png",
+"file_name": "e9fa2bcda22249488eb78daa1fbe401d.png",
+"file_size": 6361422,
+"width": null,
+"height": null
+}
+]
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 2. Seedream 4.5
+#### Seedream 4.5 Image To Image API Documentation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/byteplus/v1/getEditImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model": "seededit-3-0-i2i-250628",
+"prompt": "Make the cat eye blue",
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/byteplus/1757499948018-hntkjsg9kj.jpg",
+"guidance_scale": 6,
+"seed": 42
+}
+```
+**Output**
+```
+{
+"created": 1757499942,
+"data": [{
+"url": "https://..../byteplus/XXXXXXXXXXXXXXX-hntkjsg9kj.jpg"
+}],
+"usage": {
+"generated_images": 1,
+"output_tokens": 4096,
+"total_tokens": 4096
+}
+}
+```
+Request Parameters - Seededit Edit Image
+| Parameter | Required | Type | Description |
+| model | No | string | The ID of the model to call. You can activate a model service and query the model ID. An endpoint ID can also be used to call a model. |
+| prompt | Yes | string | Text description (prompt) used to edit images. Describes the desired changes to be made to the input image. |
+| image | Yes | string | The image to be edited. Accepts either Base64 encoding or an accessible URL. |
+**Image URL**: Ensure the URL is accessible.
+**Base64**: Must be in the format `data:image/;base64,` (format in lowercase, e.g., `data:image/png;base64,...`).
+| response_format | No | string | Format of the returned image. |
+Options: `"url"` (downloadable JPEG link), `"b64_json"` (Base64-encoded JSON string).
+| size | No | string | Dimensions of the generated image. Currently only **adaptive** is supported. The system compares the input image size with predefined sizes and selects the closest match, prioritizing minimal aspect ratio differences. **For Model seedream-4-5-251128, Size supported 2K, 4k.** Total pixel range: seedream 4.5：[2560x1440=3686400, 4096x4096=16777216] |
+| seed | No | integer | Random seed to control generation randomness. Range: **[-1, 2147483647]**. If `-1` or not set, a random seed is generated automatically. Use the same seed for consistent results. |
+| guidance_scale | No | float | Controls how much the text prompt vs. input image influences the output. Range: **[1, 10]**. Higher values = stronger text prompt influence, weaker input image influence. |
+| watermark | No | boolean | Whether to add a watermark. |
+`false`: No watermark.
+`true`: Adds "AI-generated" watermark in the bottom-right corner.
+**Example Request**
+```
+{
+"model": "seededit-3-0-i2i-250628",
+"prompt": "Make the cat eye blue",
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/byteplus/1757499948018-hntkjsg9kj.jpg",
+"guidance_scale": 6,
+"seed": 42
+}
+```
+**Response**
+```
+{
+"created": 1757499942,
+"data": [{
+"url": "https://..../byteplus/XXXXXXXXXXXXXXX-hntkjsg9kj.jpg"
+}],
+"usage": {
+"generated_images": 1,
+"output_tokens": 4096,
+"total_tokens": 4096
+}
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Seedream 4.5 Text To Image API Documentation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/byteplus/v1/getTextToImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A fisheye lens close-up of a cat’s head, where the unique distortion of the lens exaggerates and warps the cat’s facial features for a playful, dramatic effect."
+}
+```
+**Output**
+```
+{
+"created": 1757499942,
+"data": [{
+"url": "https://..../byteplus/XXXXXXXXXXXXXXX-hntkjsg9kj.jpg"
+}],
+"usage": {
+"generated_images": 1,
+"output_tokens": 4096,
+"total_tokens": 4096
+}
+}
+```
+Request Parameters - Seedream Text to Image
+| Parameter | Required | Type | Description |
+| model | No | string | The ID of the model to call. You can activate a model service and query the model ID. An endpoint ID can also be used to call a |
+| prompt | Yes | string | The text prompt used to generate the image. Describes the style and content for the generated image. |
+| response_format | No | string | Specifies the format of the generated image returned in the response. Supported values: "url" (downloadable JPEG image link), "b64_json" (Base64-encoded JSON string). |
+| size | No(Yes for seedream 4.5) | string | Specifies the dimensions (width x height in pixels) of the generated image. Must be between **512x512** and **2048x2048**. Recommended: 1024x1024 (1:1), 864x1152 (3:4), 1152x864 (4:3), 1280x720 (16:9), 720x1280 (9:16), 832x1248 (2:3), 1248x832 (3:2), 1512x648 (21:9). **For Model seedream-4-5-251128, Size supported 2K, 4k.** Total pixel range: seedream 4.5：[2560x1440=3686400, 4096x4096=16777216], seedream 4.0：[1280x720=921600, 4096x4096=16777216] |
+| seed | No | integer | Random seed to control stochasticity. Range: **[-1, 2147483647]**. `-1` or unset means auto-generated. Use the same seed to reproduce results. |
+| guidance_scale | No | float | Controls how closely the output matches the prompt. Higher values = stronger prompt adherence, less freedom. Range: **[1, 10]**. |
+| watermark | No | boolean | Whether to add a watermark. `false`: No watermark. `true`: Adds "AI generated" in bottom-right corner. |
+**Example Request**
+```
+{
+"model": "seedream-3-0-t2i-250415",
+"prompt": "A fisheye lens close-up of a cat’s head, where the unique distortion of the lens exaggerates and warps the cat’s facial features for a playful, dramatic effect."
+}
+```
+**Response**
+```
+{
+"created": 1757499942,
+"data": [{
+"url": "https://..../byteplus/XXXXXXXXXXXXXXX-hntkjsg9kj.jpg"
+}],
+"usage": {
+"generated_images": 1,
+"output_tokens": 4096,
+"total_tokens": 4096
+}
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 3. Seedream 4
+#### Seedream 4 Multi Image Edit API Documentation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/byteplus/v1/getEditMultiImage
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Girl holding the cat",
+"image": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/byteplus/1757499948018-hntkjsg9kj.jpg",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png"
+]
+}
+```
+**Output**
+```
+{
+"created": 1757585224,
+"data": [{
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/byteplus/1757585229985-y9119xs25t-1.jpg"
+}],
+"usage": {
+"generated_images": 1,
+"output_tokens": 4096,
+"total_tokens": 4096
+}
+}
+```
+Request Parameters - Seedream Edit Multi Image
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description for image generation. Describes the desired images to be generated based on reference images. |
+Auto-enhanced: When num_images > 1, the prompt is automatically enhanced to encourage multiple variations.
+| image | No | string[] | Array of 1–10 reference image URLs or Base64-encoded images. Used as reference for generating related images. |
+URLs: Must be accessible.
+Base64: Format data:image/<format>;base64,<content>.
+| response_format | No | string | Format of generated images. |
+Options: "url" (downloadable JPEG links), "b64_json" (Base64-encoded JSON).
+| size | No | string | Resolution of generated images. Supports various sizes including 1024x1024, 1280x720, etc. |
+| watermark | No | boolean | Whether to add an AI watermark to generated images. |
+Options: false (no watermark), true (adds watermark).
+| sequential_image_generation | No | string | Generation mode for batch processing. |
+Options: "auto" (sequential related images), "disabled" (independent generation).
+Auto-override: Automatically set to "auto" when num_images > 1.
+| stream | No | boolean | Whether to stream the response. *(Currently not applicable for this implementation.)* |
+| num_images | No | integer | Key Parameter: Number of images to generate. When > 1, automatically enables sequential generation mode and enhances the prompt. |
+*Note: Actual number may vary based on model decision and prompt complexity.*
+**Example Request**
+```
+{
+"prompt": "Girl holding the cat",
+"image": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/byteplus/1757499948018-hntkjsg9kj.jpg",
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png"
+]
+}
+```
+**Response**
+```
+{
+"created": 1757585224,
+"data": [{
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/byteplus/1757585229985-y9119xs25t-1.jpg"
+}],
+"usage": {
+"generated_images": 1,
+"output_tokens": 4096,
+"total_tokens": 4096
+}
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
 
 ---
 
-## Reference-to-Video
+### Hunyuan 3.0 API - AI Image & 3D Model Generation APIs
+**Page:** https://www.pixazo.ai/models/hunyuan
 
-| Model | API ID | Description | Page |
-|-------|--------|-------------|------|
-| Seedance Frame-to-Video | `seedance-frame-to-video` | Reference frames to video | [Link](https://www.pixazo.ai/models/reference-to-video/seedance-frame-to-video-api) |
-| Veo 3.1 Ref-to-Video | `veo3-1-ref` | Reference-guided video | [Link](https://www.pixazo.ai/models/reference-to-video/veo3-1-api) |
+
+by Tencent
+
+Hunyuan 3.0 API, developers can access Hunyuan's capabilities for generating detailed images and converting them into 3D models. The API leverages Tencent's extensive AI research to deliver high-quality outputs suitable for gaming, virtual worlds, and digital content production.
+
+Models Version
+Hunyuan v3.0
+Hunyuan Image 3.0 Instruct
+Text To Image
+3D Generation
+Text To Image
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+3D Generation
+#### Hunyuan v3.0 Text To Image API Documentation
+https://gateway.pixazo.ai/hunyuan-image/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate image request - Hunyuan Image API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/hunyuan-image/v1/hunyuan-image/generateRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A vibrant sunflower field at golden hour, with bees hovering above, soft wind rustling petals, ultra-detailed, photorealistic",
+"negative_prompt": "blurry, cartoon, low quality, watermark",
+"image_size": "landscape_16_9",
+"num_images": 1,
+"num_inference_steps": 28,
+"guidance_scale": 7.5,
+"enable_safety_checker": true,
+"output_format": "png",
+"enable_prompt_expansion": true
+}
+```
+**Output**
+```
+{
+"request_id": "hunyuan-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/hunyuan-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate image request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The text prompt for image generation |
+| negative_prompt | No | string | Default: "". The negative prompt to guide the image generation away from certain concepts |
+| image_size | No | string | Default: "square_hd". The desired size of the generated image. Available values: "square_hd", "square", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9" |
+| num_images | No | integer | Default: 1. The number of images to generate. Max 4 |
+| num_inference_steps | No | integer | Default: 28. Number of denoising steps. Higher values result in higher quality images but take longer to generate |
+| guidance_scale | No | float | Default: 7.5. Controls how much the model adheres to the prompt. Higher values mean stricter adherence |
+| seed | No | integer | Default: null. Random seed for reproducible results. If None, a random seed is used |
+| enable_safety_checker | No | boolean | Default: true. Whether to enable the safety checker to filter NSFW content |
+| sync_mode | No | boolean | Default: null. If true, the media will be returned as a data URI and the output data won't be available in the request history |
+| output_format | No | string | Default: "png". The format of the generated image. Values: "jpeg", "png" |
+| enable_prompt_expansion | No | boolean | Default: null. Whether to enable prompt expansion using a large language model to expand the prompt with additional details |
+**Example Request**
+```
+{
+"prompt": "A vibrant sunflower field at golden hour, with bees hovering above, soft wind rustling petals, ultra-detailed, photorealistic",
+"negative_prompt": "blurry, cartoon, low quality, watermark",
+"image_size": "landscape_16_9",
+"num_images": 1,
+"num_inference_steps": 28,
+"guidance_scale": 7.5,
+"enable_safety_checker": true,
+"output_format": "png",
+"enable_prompt_expansion": true
+}
+```
+**Response**
+```
+{
+"request_id": "hunyuan-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/hunyuan-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your subscription key
+```
+#### Hunyuan v3.0 3D Generation API Documentation
+https://gateway.pixazo.ai/hunyuan3d-3-0-api-294/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Hunyuan3D 3.0 API generate request - Hunyuan 3D 3.0 API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/hunyuan3d-3-0-api-294/v1/hunyuan3d-3-0-api-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"input_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/cat-vector.png",
+"prompt": "orange cat",
+"face_count": 500000
+}
+```
+**Output**
+```
+{
+"request_id": "hunyuan3d-3-0-api-294_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/hunyuan3d-3-0-api-294_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Hunyuan3D 3.0 API generate request
+| Field | Type | Required | Default | Description |
+| input_image_url | string | Yes | — | URL of the input image or sketch to convert into a 3D model. Must be publicly accessible. |
+| prompt | string | No | "" (empty string) | Text prompt to guide the 3D generation process. Used to refine or enhance the model when an image is provided. |
+| face_count | integer | No | 500000 | Target number of polygon faces in the output 3D mesh. Higher values yield higher detail but longer processing times. |
+Minimum Request
+```
+{
+"input_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/cat-vector.png"
+}
+```
+Full Request (all options)
+```
+{
+"input_image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/cat-vector.png",
+"prompt": "orange cat",
+"face_count": 500000
+}
+```
+**Response**
+```
+{
+"request_id": "hunyuan3d-3-0-api-294_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/hunyuan3d-3-0-api-294_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your subscription key
+```
+#### 2. Hunyuan Image 3.0 Instruct
+#### Hunyuan Image 3.0 Instruct Text To Image API Documentation
+https://gateway.pixazo.ai/hunyuan-image-3-0-instruct/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Hunyuan Image 3.0 Instruct generate request - Hunyuan Image 3.0 Instruct
+**Request Code**
+```
+POST https://gateway.pixazo.ai/hunyuan-image-3-0-instruct/v1/hunyuan-image-3-0-instruct-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A detailed watercolor painting of a Japanese garden in autumn, with a red wooden bridge over a koi pond, falling maple leaves, and soft morning mist",
+"image_size": "auto",
+"num_images": 1,
+"guidance_scale": 3.5,
+"enable_safety_checker": true,
+"output_format": "png"
+}
+```
+**Output**
+```
+{
+"request_id": "hunyuan-image-3-0-instruct_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/hunyuan-image-3-0-instruct_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Hunyuan Image 3.0 Instruct generate request
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | A detailed textual description of the desired image. Use specific visual elements, styles, lighting, and composition for best results. |
+| image_size | string | No | auto | Target output resolution. Accepts "auto", "512x512", "1024x1024", "768x1344", "1344x768". |
+| num_images | integer | No | 1 | Number of images to generate per request. Maximum value is 4. |
+| guidance_scale | number | No | 3.5 | Controls how closely the generated image follows the prompt. Values typically range from 1.0 to 10.0. Higher values increase prompt adherence but may reduce creativity. |
+| enable_safety_checker | boolean | No | true | Enables content filtering to block inappropriate or harmful outputs. Disable only if you are certain your prompts are safe. |
+| output_format | string | No | png | Output image format. Accepts "png", "jpeg", or "webp". |
+Minimum Request
+```
+{
+"prompt": "A detailed watercolor painting of a Japanese garden in autumn, with a red wooden bridge over a koi pond, falling maple leaves, and soft morning mist"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "A detailed watercolor painting of a Japanese garden in autumn, with a red wooden bridge over a koi pond, falling maple leaves, and soft morning mist",
+"image_size": "auto",
+"num_images": 1,
+"guidance_scale": 3.5,
+"enable_safety_checker": true,
+"output_format": "png"
+}
+```
+**Response**
+```
+{
+"request_id": "hunyuan-image-3-0-instruct_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/hunyuan-image-3-0-instruct_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
 
 ---
 
-## Consistent Character
+### FireRed Image Edit API - AI Image Editing APIs
+**Page:** https://www.pixazo.ai/models/firered-image-edit
 
-| Model | API ID | Description | Page |
-|-------|--------|-------------|------|
-| Higgsfield Soul ID | `soul-id` | Turn photos into consistent high-fashion AI characters | [Link](https://www.pixazo.ai/models/consistent-character/soul-id-api) |
+
+by FireRed Image Edit
+
+FireRed Image Edit API, developers can access advanced editing features including intelligent modifications, style adjustments, and creative transformations. The API is designed for content creators, designers, and developers who need fast, high-quality image editing without complex workflows.
+
+Models Version
+FireRed Image Edit v1
+Image Edit
+Image Edit
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### FireRed Image Edit v1 Image Edit API Documentation
+https://gateway.pixazo.ai/firered-image-edit/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image Edit Request - FireRed Image Edit
+**Request Code**
+```
+POST https://gateway.pixazo.ai/firered-image-edit/v1/firered-image-edit/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "The woman's dress is changed to black",
+"image": ["https://example.com/photo.jpg"]
+}
+```
+**Output**
+```
+{
+"request_id": "firered-image-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/firered-image-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image Edit Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text instruction describing the requested image edit |
+| image | Yes | array | Input image URLs to edit or use as references. Must be jpeg, png, gif, or webp |
+| seed | No | integer | Default: null. Random seed for reproducibility. Leave blank for a random seed |
+| go_fast | No | boolean | Default: true. Use optimized cache scheduling for faster generation |
+| aspect_ratio | No | string | Default: "match_input_image". Values: "1:1", "16:9", "9:16", "4:3", "3:4", "match_input_image" |
+| output_format | No | string | Default: "webp". Output image format. Values: "webp", "jpg", "png" |
+| output_quality | No | integer | Default: 95. Image quality from 0 (lowest) to 100 (highest) |
+| true_cfg_scale | No | number | Default: 4. True CFG guidance scale. Valid range: 0-20. Higher values follow the prompt more closely |
+| num_inference_steps | No | integer | Default: 40. Number of denoising steps. Valid range: 1-100. More steps = better quality but slower |
+| webhook | No | string | Default: null. Callback URL for completion notification |
+| webhook_events_filter | No | array | Default: ["*"]. Events that trigger webhook. Values: ["*"] (all), ["completed"] (success/failure only) |
+**Example Request**
+```
+{
+"prompt": "The woman's dress is changed to black",
+"image": ["https://example.com/photo.jpg"],
+"output_format": "png",
+"output_quality": 100
+}
+```
+**Response**
+```
+{
+"request_id": "firered-image-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/firered-image-edit_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+Image Edit Status - FireRed Image Edit
+**Request Code**
+```
+POST https://gateway.pixazo.ai/firered-image-edit/v1/firered-image-edit/prediction
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prediction_id": "w974cvx49hrmy0cwdfzv180nm8"
+}
+```
+**Output**
+```
+{
+"success": true,
+"id": "w974cvx49hrmy0cwdfzv180nm8",
+"status": "succeeded",
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/..."
+}
+```
+Request Parameters - Image Edit Status
+| Parameter | Required | Type | Description |
+| prediction_id | Yes | string | The unique identifier returned from the initial image edit request |
+**Example Request**
+```
+{
+"prediction_id": "w974cvx49hrmy0cwdfzv180nm8"
+}
+```
+**Response**
+```
+{
+"success": true,
+"id": "w974cvx49hrmy0cwdfzv180nm8",
+"status": "succeeded",
+"input": {
+"prompt": "The woman's dress is changed to black",
+"image": ["https://example.com/photo.jpg"],
+"go_fast": true,
+"aspect_ratio": "match_input_image",
+"output_format": "webp",
+"output_quality": 95,
+"true_cfg_scale": 4,
+"num_inference_steps": 40
+},
+"output": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/firered-image-edit/w974cvx49hrmy0cwdfzv180nm8_output_0.webp",
+"created_at": "2026-02-17T14:27:21.804Z"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+
+---
+
+### P-Image API - AI Image Editing & Transformation APIs
+**Page:** https://www.pixazo.ai/models/p-image
+
+
+by Pruna AI
+
+P Image by Pruna AI provides advanced AI-powered image editing and transformation capabilities. Through Pixazo's API, developers can integrate intelligent image editing features that enable precise modifications, creative transformations, and image-to-image generation. The API supports versatile editing workflows for content creators, designers, and developers seeking high-quality AI image processing.
+
+Models Version
+P Image Upscale
+P Image v1
+Image Edit
+Image Edit
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### P Image Upscale Image Edit API Documentation
+https://gateway.pixazo.ai/p-image-upscale/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+P Image Upscale Request - P Image Upscale API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/p-image-upscale/v1/p-image-upscale/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+}
+```
+**Output**
+```
+{
+"request_id": "p-image-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/p-image-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - P Image Upscale Request
+| Parameter | Required | Type | Description |
+| image | Yes | string (URI) | Input image URL to upscale. Must be publicly accessible. |
+| upscale_mode | No | string | Upscale mode: "target" (scales to fixed megapixel resolution) or "factor" (multiplies each side by factor). Default: "target". |
+| target | No | integer | Target resolution in megapixels (1-8). Used when upscale_mode is "target". Default: 4. |
+| factor | No | number | Scaling factor applied to each side (1-8). Used when upscale_mode is "factor". Output capped at 8 MP. Default: 2. |
+| enhance_details | No | boolean | Enhance fine textures and small details. May increase contrast. Default: false. |
+| enhance_realism | No | boolean | Improve realism. Recommended for AI-generated images. Default: true. |
+| output_format | No | string | Output format: "webp", "jpg", or "png". Default: "jpg". |
+| output_quality | No | integer | Output quality (0-100). 100 is best. Not relevant for PNG. Default: 80. |
+| disable_safety_checker | No | boolean | Disable safety checker. Default: false. |
+**Example Request**
+```
+{
+"image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"upscale_mode": "target",
+"target": 4,
+"enhance_details": true,
+"enhance_realism": true,
+"output_format": "jpg",
+"output_quality": 90
+}
+```
+**Response**
+```
+{
+"request_id": "p-image-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/p-image-upscale_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 2. P Image v1
+#### P Image v1 Image Edit API Documentation
+https://gateway.pixazo.ai/p-image/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Image Request - P Image
+**Request Code**
+```
+POST https://gateway.pixazo.ai/p-image/v1/p-image-edit/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"prompt": "The woman dress is changed to black",
+"images": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+]
+}
+```
+**Output**
+```
+{
+"request_id": "p-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/p-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Image Request
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | Text prompt describing the desired image edit. You can refer to images as "image 1", "image 2", etc. |
+| images | array of strings (URI) | Yes | — | Input image URLs. For editing tasks, provide the main image as the first image |
+| turbo | boolean | No | true | Faster generation with additional optimizations. Turn off for complicated tasks |
+| seed | integer | No | — | Random seed for reproducible generation |
+| aspect_ratio | string | No | "match_input_image" | Aspect ratio for the generated image. Valid values: "match_input_image", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3" |
+| disable_safety_checker | boolean | No | false | Disable safety checker for generated images |
+| webhook | string | No | — | Webhook URL for async notifications when generation completes |
+| webhook_events_filter | array | No | — | Event types to receive (e.g. ["completed"]) |
+Minimum Request
+```
+{
+"prompt": "The woman dress is changed to black",
+"images": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+]
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "The woman dress is changed to black",
+"images": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+],
+"turbo": true,
+"seed": 42,
+"aspect_ratio": "1:1",
+"disable_safety_checker": false,
+"webhook": "https://your-webhook.com/callback",
+"webhook_events_filter": [
+"completed"
+]
+}
+```
+**Response**
+```
+{
+"request_id": "p-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/p-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+
+---
+
+### Wan 2.7 Pro API, Wan 2.6 API, Wan 2.5 API, Wan 2.2 API - AI Video & Image Generation APIs
+**Page:** https://www.pixazo.ai/models/wan
+
+
+by Alibaba
+
+Wan 2.7 Pro API, developers can access multiple Wan versions (2.2, 2.5, 2.6) for text-to-video, image-to-video, speech-to-video, and image generation. The API provides extensive capabilities including animation and flash video generation, making it one of the most versatile video AI solutions available.
+
+Models Version
+Wan 2.7
+Wan 2.7 Pro
+Wan 2.6
+Wan 2.5
+Wan 2.2
+Text To Image
+Edit Image
+Edit Video (Video to Video)
+Edit Video (Video With Reference Image to Video)
+Text To Image
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+Edit Image
+Edit Video (Video to Video)
+Edit Video (Video With Reference Image to Video)
+#### Wan 2.7 Text To Image API Documentation
+https://gateway.pixazo.ai/wan-2-7-api/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan 2.7 Text to Image Request - Wan 2.7 API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-2-7-api/v1/generateWan27TextToImageRequest
+Content-Type: application/json
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"prompt": "A charming flower shop with beautiful window displays filled with colorful flowers"
+}
+```
+**Output**
+```
+{
+"status": "QUEUED",
+"request_id": "wan-2-7-api_019d4e3f-83c5-719c-dbba-039df43078184",
+"message": "Request accepted and queued for processing"
+}
+```
+**Webhook (Optional)**
+
+You can optionally provide a webhook_url in your request body. When the request completes (success or failure), a POST request will be sent to your webhook URL with the result payload.
+
+Webhook Payload (Success)
+```
+{
+"request_id": "wan-2-7-api_019d4e3f-83c5-719c-dbba-039df43078184",
+"status": "COMPLETED",
+"result": {
+"images": [
+{
+"file_name": "output.png",
+"content_type": "image/png",
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/wan-2-7-api_019d4e3f-83c5-719c-dbba-039df43078184/output.png"
+}
+],
+"description": ""
+}
+}
+```
+Webhook Payload (Failure)
+```
+{
+"request_id": "wan-2-7-api_019d4e3f-83c5-719c-dbba-039df43078184",
+"status": "FAILED",
+"error": "Processing failed: upstream provider returned an error"
+}
+```
+Request Parameters - Wan 2.7 Text to Image Request
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | Text description of the image to generate. Supports Chinese and English, max 5000 characters. |
+| size | string | No | "2K" | Output resolution: "1K", "2K" (default). No 4K for standard model. |
+| n | integer | No | 4 | Number of images to generate, 1-4. |
+| thinking_mode | boolean | No | true | Enables thinking mode for better quality. Increases generation time. |
+| watermark | boolean | No | false | Adds "AI Generated" watermark. |
+| seed | integer | No | — | Random seed [0, 2147483647]. Same seed yields similar outputs. |
+| enable_sequential | boolean | No | false | Enables image set output mode. |
+| color_palette | array | No | — | Custom color theme. Array of objects with hex (string) and ratio (string, e.g. "25.00%"). 3-10 colors. |
+| webhook_url | string | No | — | URL to receive a POST callback when the request completes. Must be a publicly accessible HTTPS endpoint. |
+Minimum Request
+```
+{
+"prompt": "A charming flower shop with beautiful window displays filled with colorful flowers"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "A charming flower shop with beautiful window displays filled with colorful flowers",
+"size": "2K",
+"n": 2,
+"thinking_mode": true,
+"watermark": false,
+"seed": 12345
+}
+```
+**Response**
+```
+{
+"status": "QUEUED",
+"request_id": "wan-2-7-api_019d4e3f-83c5-719c-dbba-039df43078184",
+"message": "Request accepted and queued for processing"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+#### Wan 2.7 Edit Image API Documentation
+https://gateway.pixazo.ai/wan-2-7-api/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan 2.7 Edit Image Request - Wan 2.7 API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-2-7-api/v1/generateWan27EditImageRequest
+Content-Type: application/json
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"images": ["https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"],
+"prompt": "Transform the tree into a lush green tree with vibrant flowers"
+}
+```
+**Output**
+```
+{
+"status": "QUEUED",
+"request_id": "wan-2-7-api_019d4e44-7a8e-7df1-fad0-926fa428ca293",
+"message": "Request accepted and queued for processing"
+}
+```
+**Webhook (Optional)**
+
+You can optionally provide a webhook_url in your request body. When the request completes (success or failure), a POST request will be sent to your webhook URL with the result payload.
+
+Webhook Payload (Success)
+```
+{
+"request_id": "wan-2-7-api_019d4e44-7a8e-7df1-fad0-926fa428ca293",
+"status": "COMPLETED",
+"result": {
+"images": [
+{
+"file_name": "output.png",
+"content_type": "image/png",
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/wan-2-7-api_019d4e44-7a8e-7df1-fad0-926fa428ca293/output.png"
+}
+],
+"description": ""
+}
+}
+```
+Webhook Payload (Failure)
+```
+{
+"request_id": "wan-2-7-api_019d4e44-7a8e-7df1-fad0-926fa428ca293",
+"status": "FAILED",
+"error": "Processing failed: upstream provider returned an error"
+}
+```
+Request Parameters - Wan 2.7 Edit Image Request
+| Field | Type | Required | Default | Description |
+| images | array | Yes | — | Array of image URLs to edit. Supports 1-9 images. URLs must be publicly accessible. Supported formats: JPEG, JPG, PNG, BMP, WEBP. Max 20MB per image. Resolution: 240-8000px, aspect ratio 1:8 to 8:1. |
+| prompt | string | Yes | — | Text description of the desired edit. Max 5000 characters. |
+| size | string | No | "2K" | Output resolution: "1K", "2K" (default). |
+| n | integer | No | 4 | Number of images to generate, 1-4. |
+| watermark | boolean | No | false | Adds "AI Generated" watermark. |
+| seed | integer | No | — | Random seed [0, 2147483647]. |
+| bbox_list | array | No | — | Selected areas for interactive editing. Array of arrays matching input image count. Each image supports up to 2 bounding boxes as [x1, y1, x2, y2] pixel coordinates. |
+| enable_sequential | boolean | No | false | Enables image set output mode. |
+| webhook_url | string | No | — | URL to receive a POST callback when the request completes. Must be a publicly accessible HTTPS endpoint. |
+Minimum Request
+```
+{
+"images": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+],
+"prompt": "Transform the tree into a lush green tree with vibrant flowers"
+}
+```
+Full Request (all options)
+```
+{
+"images": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+],
+"prompt": "Transform the tree into a lush green tree with vibrant flowers",
+"size": "2K",
+"n": 1,
+"watermark": false,
+"seed": 42
+}
+```
+**Response**
+```
+{
+"status": "QUEUED",
+"request_id": "wan-2-7-api_019d4e44-7a8e-7df1-fad0-926fa428ca293",
+"message": "Request accepted and queued for processing"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+#### Wan 2.7 Edit Video (Video to Video) API Documentation
+https://gateway.pixazo.ai/wan-2-7-video-api/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan 2.7 Video Style Transfer Request - Wan 2.7 Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-2-7-video-api/v1/generateWan27VideoStyleRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2v/wan-t2v-6421dc79-417c-445c-96e3-65c333aeafb9.mp4",
+"prompt": "Convert to claymation style"
+}
+```
+**Output**
+```
+{
+"request_id": "wan-2-7-video-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-7-video-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Wan 2.7 Video Style Transfer Request
+| Parameter | Required | Type | Description |
+| video_url | Yes | string | URL of the video to edit. Format: MP4, MOV. Duration: 2-10s. Max 100MB. |
+| reference_images | Yes | array | Array of reference image URLs (1-3 images). Format: JPEG, JPG, PNG, BMP, WEBP. Max 20MB each. |
+| prompt | Yes | string | Text description of the desired edit. Max 5,000 characters. |
+| negative_prompt | No | string | Describes content you do not want in the video. Max 500 characters. |
+| resolution | No | string | Resolution of the output video. Supported: "720P", "1080P". Default: "1080P". |
+| ratio | No | string | Aspect ratio. Supported: "16:9", "9:16", "1:1", "4:3", "3:4". |
+| duration | No | integer | Duration in seconds. Set only to truncate. Range: 2-10. |
+| audio_setting | No | string | "auto" (model decides) or "origin" (retains original audio). Default: "auto". |
+| prompt_extend | No | boolean | Enables prompt rewriting using LLM. Default: true. |
+| watermark | No | boolean | Whether to add "AI-generated" watermark. Default: false. |
+| seed | No | integer | Random seed for reproducible results. Range: 0-2147483647. |
+**Example Request**
+```
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2v/wan-t2v-6421dc79-417c-445c-96e3-65c333aeafb9.mp4",
+"prompt": "Convert to claymation style",
+"negative_prompt": "low quality, blurry",
+"resolution": "1080P",
+"ratio": "16:9",
+"duration": 5,
+"audio_setting": "origin",
+"prompt_extend": false,
+"watermark": true,
+"seed": 12345
+}
+```
+**Response**
+```
+{
+"request_id": "wan-2-7-video-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-7-video-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.7 Edit Video (Video With Reference Image to Video) API Documentation
+https://gateway.pixazo.ai/wan-2-7-video-api/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan 2.7 Video Edit By Reference Request - Wan 2.7 Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-2-7-video-api/v1/generateWan27VideoEditRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan2.7-video.mp4",
+"reference_images": ["https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan2.7-videoedit-change-clothes.png"],
+"prompt": "Replace the clothes with the ones from the image"
+}
+```
+**Output**
+```
+{
+"request_id": "wan-2-7-video-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-7-video-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Wan 2.7 Video Edit By Reference Request
+| Parameter | Required | Type | Description |
+| video_url | Yes | string | URL of the video to edit. Format: MP4, MOV. Duration: 2-10s. Max 100MB. |
+| reference_images | Yes | array | Array of reference image URLs (1-3 images). Format: JPEG, JPG, PNG, BMP, WEBP. Max 20MB each. |
+| prompt | Yes | string | Text description of the desired edit. Max 5,000 characters. |
+| negative_prompt | No | string | Describes content you do not want in the video. Max 500 characters. |
+| resolution | No | string | Resolution of the output video. Supported: "720P", "1080P". Default: "1080P". |
+| ratio | No | string | Aspect ratio. Supported: "16:9", "9:16", "1:1", "4:3", "3:4". |
+| duration | No | integer | Duration in seconds. Set only to truncate. Range: 2-10. |
+| audio_setting | No | string | "auto" (model decides) or "origin" (retains original audio). Default: "auto". |
+| prompt_extend | No | boolean | Enables prompt rewriting using LLM. Default: true. |
+| watermark | No | boolean | Whether to add "AI-generated" watermark. Default: false. |
+| seed | No | integer | Random seed for reproducible results. Range: 0-2147483647. |
+**Example Request**
+```
+{
+"video_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan2.7-video.mp4",
+"reference_images": ["https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan2.7-videoedit-change-clothes.png"],
+"prompt": "Replace the clothes with the ones from the image",
+"negative_prompt": "low quality, blurry",
+"resolution": "1080P",
+"ratio": "16:9",
+"duration": 5,
+"audio_setting": "origin",
+"prompt_extend": false,
+"watermark": true,
+"seed": 12345
+}
+```
+**Response**
+```
+{
+"request_id": "wan-2-7-video-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-7-video-api_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 2. Wan 2.7 Pro
+#### Wan 2.7 Pro Text To Image API Documentation
+https://gateway.pixazo.ai/wan-2-7-pro-api/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan 2.7 Pro Text to Image Request - Wan 2.7 Pro API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-2-7-pro-api/v1/generateWan27ProTextToImageRequest
+Content-Type: application/json
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"prompt": "A charming flower shop with beautiful window displays filled with colorful flowers"
+}
+```
+**Output**
+```
+{
+"status": "QUEUED",
+"request_id": "wan-2-7-pro-api_019d4e4b-b2da-7a82-ecae-994db4acea2c6",
+"message": "Request accepted and queued for processing"
+}
+```
+**Webhook (Optional)**
+
+You can optionally provide a webhook_url in your request body. When the request completes (success or failure), a POST request will be sent to your webhook URL with the result payload.
+
+Webhook Payload (Success)
+```
+{
+"request_id": "wan-2-7-pro-api_019d4e4b-b2da-7a82-ecae-994db4acea2c6",
+"status": "COMPLETED",
+"result": {
+"images": [
+{
+"file_name": "output.png",
+"content_type": "image/png",
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/wan-2-7-pro-api_019d4e4b-b2da-7a82-ecae-994db4acea2c6/output.png"
+}
+],
+"description": ""
+}
+}
+```
+Webhook Payload (Failure)
+```
+{
+"request_id": "wan-2-7-pro-api_019d4e4b-b2da-7a82-ecae-994db4acea2c6",
+"status": "FAILED",
+"error": "Processing failed: upstream provider returned an error"
+}
+```
+Request Parameters - Wan 2.7 Pro Text to Image Request
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | Text description of the image to generate. Supports Chinese and English, max 5000 characters. |
+| size | string | No | "2K" | Output resolution: "1K", "2K" (default), "4K". |
+| n | integer | No | 4 | Number of images to generate, 1-4. |
+| thinking_mode | boolean | No | true | Enables thinking mode for better quality. Increases generation time. |
+| watermark | boolean | No | false | Adds "AI Generated" watermark. |
+| seed | integer | No | — | Random seed [0, 2147483647]. Same seed yields similar outputs. |
+| enable_sequential | boolean | No | false | Enables image set output mode. |
+| color_palette | array | No | — | Custom color theme. Array of objects with hex (string) and ratio (string, e.g. "25.00%"). 3-10 colors. |
+| webhook_url | string | No | — | URL to receive a POST callback when the request completes. Must be a publicly accessible HTTPS endpoint. |
+Minimum Request
+```
+{
+"prompt": "A charming flower shop with beautiful window displays filled with colorful flowers"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "A charming flower shop with beautiful window displays filled with colorful flowers",
+"size": "2K",
+"n": 2,
+"thinking_mode": true,
+"watermark": false,
+"seed": 12345
+}
+```
+**Response**
+```
+{
+"status": "QUEUED",
+"request_id": "wan-2-7-pro-api_019d4e4b-b2da-7a82-ecae-994db4acea2c6",
+"message": "Request accepted and queued for processing"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+#### Wan 2.7 Pro Edit Image API Documentation
+https://gateway.pixazo.ai/wan-2-7-pro-api/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan 2.7 Pro Edit Image Request - Wan 2.7 Pro API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-2-7-pro-api/v1/generateWan27ProEditImageRequest
+Content-Type: application/json
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"images": ["https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"],
+"prompt": "Transform the tree into a lush green tree with vibrant flowers"
+}
+```
+**Output**
+```
+{
+"status": "QUEUED",
+"request_id": "wan-2-7-pro-api_019d4e48-893e-7582-850a-9be6943bebe13",
+"message": "Request accepted and queued for processing"
+}
+```
+**Webhook (Optional)**
+
+You can optionally provide a webhook_url in your request body. When the request completes (success or failure), a POST request will be sent to your webhook URL with the result payload.
+
+Webhook Payload (Success)
+```
+{
+"request_id": "wan-2-7-pro-api_019d4e48-893e-7582-850a-9be6943bebe13",
+"status": "COMPLETED",
+"result": {
+"images": [
+{
+"file_name": "output.png",
+"content_type": "image/png",
+"url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/v1/wan-2-7-pro-api_019d4e48-893e-7582-850a-9be6943bebe13/output.png"
+}
+],
+"description": ""
+}
+}
+```
+Webhook Payload (Failure)
+```
+{
+"request_id": "wan-2-7-pro-api_019d4e48-893e-7582-850a-9be6943bebe13",
+"status": "FAILED",
+"error": "Processing failed: upstream provider returned an error"
+}
+```
+Request Parameters - Wan 2.7 Pro Edit Image Request
+| Field | Type | Required | Default | Description |
+| images | array | Yes | — | Array of image URLs to edit. Supports 1-9 images. URLs must be publicly accessible. Supported formats: JPEG, JPG, PNG, BMP, WEBP. Max 20MB per image. Resolution: 240-8000px, aspect ratio 1:8 to 8:1. |
+| prompt | string | Yes | — | Text description of the desired edit. Max 5000 characters. |
+| size | string | No | "2K" | Output resolution: "1K", "2K" (default). Note: 4K is only available for text-to-image. |
+| n | integer | No | 4 | Number of images to generate, 1-4. |
+| watermark | boolean | No | false | Adds "AI Generated" watermark. |
+| seed | integer | No | — | Random seed [0, 2147483647]. |
+| bbox_list | array | No | — | Selected areas for interactive editing. Array of arrays matching input image count. Each image supports up to 2 bounding boxes as [x1, y1, x2, y2] pixel coordinates. |
+| enable_sequential | boolean | No | false | Enables image set output mode. |
+| webhook_url | string | No | — | URL to receive a POST callback when the request completes. Must be a publicly accessible HTTPS endpoint. |
+Minimum Request
+```
+{
+"images": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+],
+"prompt": "Transform the tree into a lush green tree with vibrant flowers"
+}
+```
+Full Request (all options)
+```
+{
+"images": [
+"https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png"
+],
+"prompt": "Transform the tree into a lush green tree with vibrant flowers",
+"size": "2K",
+"n": 1,
+"watermark": false,
+"seed": 42
+}
+```
+**Response**
+```
+{
+"status": "QUEUED",
+"request_id": "wan-2-7-pro-api_019d4e48-893e-7582-850a-9be6943bebe13",
+"message": "Request accepted and queued for processing"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+#### 3. Wan 2.6
+#### Wan 2.6 Image To Video API Documentation
+https://gateway.pixazo.ai/wan-2-6-image-to-video-477/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan 2.6 Image to Video generate request - Wan 2.6 Image to Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-2-6-image-to-video-477/v1/wan-2-6-image-to-video-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A serene mountain lake at sunrise, with gently flowing water and birds flying overhead",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"aspect_ratio": "16:9",
+"resolution": "1080p",
+"duration": "10",
+"enable_prompt_expansion": true,
+"multi_shots": true,
+"enable_safety_checker": true
+}
+```
+**Output**
+```
+{
+"request_id": "wan-2-6-image-to-video-477_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-6-image-to-video-477_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Wan 2.6 Image to Video generate request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text prompt describing the desired motion, mood, or style for the generated video. Enhances visual storytelling. |
+| image_url | Yes | string | Publicly accessible URL of the source image to convert into video. Must be reachable by the API server. |
+| aspect_ratio | No | string | Aspect ratio of the output video. Supported values: "16:9", "9:16", "1:1", "4:3", "3:4". |
+| resolution | No | string | Resolution of the output video. Supported values: "720p", "1080p". |
+| duration | No | string | Duration of the generated video in seconds. Supported values: "5", "10", "15". |
+| enable_prompt_expansion | No | boolean | When true, the API will enhance and expand the provided prompt for richer, more descriptive video generation. |
+| multi_shots | No | boolean | When true, enables multiple camera shots and transitions within the video for dynamic, cinematic output. |
+| enable_safety_checker | No | boolean | When true, activates content safety filtering to block inappropriate or harmful outputs. |
+**Example Request**
+```
+{
+"prompt": "A serene mountain lake at sunrise, with gently flowing water and birds flying overhead",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/f1.png",
+"aspect_ratio": "16:9",
+"resolution": "1080p",
+"duration": "10",
+"enable_prompt_expansion": true,
+"multi_shots": true,
+"enable_safety_checker": true
+}
+```
+**Response**
+```
+{
+"request_id": "wan-2-6-image-to-video-477_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-6-image-to-video-477_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.6 Text To Video API Documentation
+https://gateway.pixazo.ai/wan-2-6-text-to-video-569/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan 2.6 Text to Video generate request - Wan 2.6 Text to Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-2-6-text-to-video-569/v1/wan-2-6-text-to-video-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Create a cinematic video with multiple scenes showing a fox director making a movie, transitioning between different environments.",
+"aspect_ratio": "16:9",
+"resolution": "1080p",
+"duration": "10",
+"negative_prompt": "low resolution, error, worst quality, low quality, defects",
+"enable_prompt_expansion": true,
+"multi_shots": true,
+"enable_safety_checker": true
+}
+```
+**Output**
+```
+{
+"request_id": "wan-2-6-text-to-video-569_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-6-text-to-video-569_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Wan 2.6 Text to Video generate request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | A detailed text description of the desired video content. Include scenes, actions, lighting, and mood for optimal results. |
+| aspect_ratio | No | string | The aspect ratio of the output video. Supported values: "16:9", "9:16", "1:1", "4:3", "3:4". |
+| resolution | No | string | The output video resolution. Supported values: "720p", "1080p". |
+| duration | No | string | The length of the generated video in seconds. Supported values: "5", "10", "15". |
+| negative_prompt | No | string | Description of elements to avoid in the video. Helps improve output quality by excluding undesired visuals. |
+| enable_prompt_expansion | No | boolean | Enables intelligent prompting expansion to enhance scene richness and detail. When enabled, the model may augment your prompt with contextual enhancements. |
+| multi_shots | No | boolean | Enables multi-shot generation, allowing the model to segment the video into multiple cohesive scenes based on the prompt. |
+| enable_safety_checker | No | boolean | Activates content safety filtering to block inappropriate or harmful outputs. |
+**Example Request**
+```
+{
+"prompt": "Create a cinematic video with multiple scenes showing a fox director making a movie, transitioning between different environments.",
+"aspect_ratio": "16:9",
+"resolution": "1080p",
+"duration": "10",
+"negative_prompt": "low resolution, error, worst quality, low quality, defects",
+"enable_prompt_expansion": true,
+"multi_shots": true,
+"enable_safety_checker": true
+}
+```
+**Response**
+```
+{
+"status": "IN_QUEUE",
+"request_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+"response_url": "[RESPONSE_URL]"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.6 Image To Video(Flash) API Documentation
+https://gateway.pixazo.ai/wan-2-6-image-to-video-flash-api-353/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan 2.6 Image-to-Video Flash API generate request - Wan 2.6 Image-to-Video Flash API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-2-6-image-to-video-flash-api-353/v1/wan-2-6-image-to-video-flash-api-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A cinematic beach portrait that evolves into an energy-charged scene. Photorealistic, stable identity matching the reference image, natural lighting, smooth cinematic motion, no subtitles.\n\nShot 1 [0-4s] Continue from the first frame of the reference image. The man stands on a sunny beach wearing a black t-shirt with glowing blue flame graphics. Gentle ocean waves move behind him and wind lightly moves his hair and shirt. The blue flame design on the shirt begins to softly glow and flicker like living energy.\n\nShot 2 [4-8s] Slow cinematic push-in toward the subject. The glowing blue flames on the shirt animate and flow upward like magical energy. Subtle particles and light streaks appear around the flame pattern. The ocean sparkles in the sunlight while waves roll naturally in the background.\n\nShot 3 [8-12s] Hard cinematic cut to a slightly closer angle. The blue flames briefly expand outward as luminous energy patterns around the torso before settling back onto the shirt. The wind becomes slightly stronger, moving the shirt fabric and hair while the beach environment remains realistic.\n\nShot 4 [12-15s] Final cinematic close shot. The flames stabilize into a calm glowing pattern on the shirt while the subject stands confidently against the horizon. The camera slowly drifts sideways with warm sunlight reflecting off the ocean, ending in a clean photorealistic frame.",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png"
+}
+```
+**Output**
+```
+{
+"request_id": "wan-2-6-image-to-video-flash-api-353_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-6-image-to-video-flash-api-353_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Wan 2.6 Image-to-Video Flash API generate request
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | A detailed narrative describing the desired video sequence, including shot-by-shot instructions, timing cues, and emotional tone. Must specify transitions, camera movement, and scene changes for best results. |
+| image_url | string | Yes | — | Publicly accessible URL of the input image to animate. Must be a stable, direct link (e.g., PNG, JPG). Supports HTTPS. |
+| resolution | string | No | 1080p | Output video resolution. Supported values: "720p", "1080p", "2160p". |
+| duration | string | No | 5 | Desired video duration in seconds. Accepts integer values from 5 to 15. Longer durations may incur higher processing time. |
+| negative_prompt | string | No | "" | A description of elements to avoid in the generated video. Helps exclude artifacts, distortions, or unwanted visual elements. |
+| enable_prompt_expansion | boolean | No | true | When true, the model enhances the provided prompt with contextual details for richer output. Disable if you require strict prompt adherence. |
+| enable_safety_checker | boolean | No | true | When true, enables content safety filtering to block inappropriate or harmful output. Disable only in controlled environments. |
+Minimum Request
+```
+{
+"prompt": "A cinematic beach portrait that evolves into an energy-charged scene. Photorealistic, stable identity matching the reference image, natural lighting, smooth cinematic motion, no subtitles.\n\nShot 1 [0-4s] Continue from the first frame of the reference image. The man stands on a sunny beach wearing a black t-shirt with glowing blue flame graphics. Gentle ocean waves move behind him and wind lightly moves his hair and shirt. The blue flame design on the shirt begins to softly glow and flicker like living energy.\n\nShot 2 [4-8s] Slow cinematic push-in toward the subject. The glowing blue flames on the shirt animate and flow upward like magical energy. Subtle particles and light streaks appear around the flame pattern. The ocean sparkles in the sunlight while waves roll naturally in the background.\n\nShot 3 [8-12s] Hard cinematic cut to a slightly closer angle. The blue flames briefly expand outward as luminous energy patterns around the torso before settling back onto the shirt. The wind becomes slightly stronger, moving the shirt fabric and hair while the beach environment remains realistic.\n\nShot 4 [12-15s] Final cinematic close shot. The flames stabilize into a calm glowing pattern on the shirt while the subject stands confidently against the horizon. The camera slowly drifts sideways with warm sunlight reflecting off the ocean, ending in a clean photorealistic frame.",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "A cinematic beach portrait that evolves into an energy-charged scene. Photorealistic, stable identity matching the reference image, natural lighting, smooth cinematic motion, no subtitles.\n\nShot 1 [0-4s] Continue from the first frame of the reference image. The man stands on a sunny beach wearing a black t-shirt with glowing blue flame graphics. Gentle ocean waves move behind him and wind lightly moves his hair and shirt. The blue flame design on the shirt begins to softly glow and flicker like living energy.\n\nShot 2 [4-8s] Slow cinematic push-in toward the subject. The glowing blue flames on the shirt animate and flow upward like magical energy. Subtle particles and light streaks appear around the flame pattern. The ocean sparkles in the sunlight while waves roll naturally in the background.\n\nShot 3 [8-12s] Hard cinematic cut to a slightly closer angle. The blue flames briefly expand outward as luminous energy patterns around the torso before settling back onto the shirt. The wind becomes slightly stronger, moving the shirt fabric and hair while the beach environment remains realistic.\n\nShot 4 [12-15s] Final cinematic close shot. The flames stabilize into a calm glowing pattern on the shirt while the subject stands confidently against the horizon. The camera slowly drifts sideways with warm sunlight reflecting off the ocean, ending in a clean photorealistic frame.",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png",
+"resolution": "1080p",
+"duration": "15",
+"negative_prompt": "low resolution, error, worst quality, low quality, defects, distorted face, extra limbs, flickering, unstable identity",
+"enable_prompt_expansion": true,
+"enable_safety_checker": true
+}
+```
+**Response**
+#### 4. Wan 2.5
+#### Wan 2.5 Image To Image API Documentation
+https://gateway.pixazo.ai/wan-image-2-5/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Image to Image - Wan 2.5 Image Generation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-image-2-5/v1/generateEditImage2-5Request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Replace the floral dress with a vintage-style lace gown that has delicate embroidery on the collar and cuffs",
+"images": [
+"https://example.com/images/woman-in-dress.jpg"
+],
+"size": "1280*1280"
+}
+```
+**Output**
+```
+{
+"request_id": "wan-2-5-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-5-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Image to Image
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of the editing operation to perform. |
+| images | Yes | array | Array of image URLs. Single image for editing, multiple images for fusion. |
+| negative_prompt | No | string | Default: null. Elements to exclude from the edited image. |
+| size | No | string | Default: "1280*1280". Output image dimensions in width*height format. |
+| n | No | integer | Default: 1. Number of images to generate. Currently only 1 is supported. |
+| seed | No | integer | Random seed for reproducible results |
+**Example Request**
+```
+{
+"prompt": "Replace the floral dress with a vintage-style lace gown that has delicate embroidery on the collar and cuffs",
+"images": [
+"https://example.com/images/woman-in-dress.jpg"
+],
+"size": "1280*1280"
+}
+```
+**Response**
+```
+{
+"request_id": "wan-2-5-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-5-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.5 Text To Image API Documentation
+https://gateway.pixazo.ai/wan-image-2-5/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Text to Image - Wan 2.5 Image Generation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-image-2-5/v1/generateTextToImage2-5Request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A beautiful flower shop with exquisite windows, a beautiful wooden door, and flowers on display",
+"size": "1024*1024",
+"prompt_extend": true,
+"watermark": false
+}
+```
+**Output**
+```
+{
+"request_id": "wan-2-5-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-5-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Text to Image
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of the image to generate. Supports English and Chinese. |
+| negative_prompt | No | string | Default: null. Elements to exclude from the image. |
+| size | No | string | Default: "1024*1024". Image dimensions in width*height format. |
+| n | No | integer | Default: 1. Number of images to generate. Currently only 1 is supported. |
+| prompt_extend | No | boolean | Default: false. Enable intelligent prompt rewriting |
+| watermark | No | boolean | Default: false. Add watermark to image |
+| seed | No | integer | Random seed for reproducible results |
+**Example Request**
+```
+{
+"prompt": "A majestic mountain landscape at sunset, snow-capped peaks, golden light, photorealistic",
+"size": "1440*960",
+"prompt_extend": true,
+"watermark": false
+}
+```
+**Response**
+```
+{
+"request_id": "wan-2-5-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-5-image-generation_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.5 Image To Video API Documentation
+https://gateway.pixazo.ai/wan-video-2-5/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Image To Video - Wan 2.5 Video Generation API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-video-2-5/v1/generateImageToVideo2-5Request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"img_url": "https://example.com/images/cat.png",
+"prompt": "A cat running on the grass",
+"resolution": "480P",
+"duration": 5,
+"audio": false,
+"prompt_extend": true,
+"watermark": false
+}
+```
+**Output**
+```
+{
+"request_id": "wan-image-to-video-2-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-image-to-video-2-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Image To Video
+| Parameter | Required | Type | Description |
+| img_url | Yes | string | URL to the first-frame image. Supports public URLs, Base64 encoding, or local file paths. |
+| prompt | No | string | Text description of the video to generate. Supports English and Chinese. |
+| negative_prompt | No | string | Default: null. Elements to exclude from the video. |
+| audio_url | No | string | URL to custom audio file (overrides audio parameter). Takes priority over `audio` setting. |
+| resolution | No | string | Default: "480P". Available resolutions: "480P", "720P", "1080P". Internally converted to size format. |
+| duration | No | integer | Default: 5. Video length in seconds. Available values: 5, 10 |
+| audio | No | boolean | Default: false. Audio behavior: false (silent), true (auto-generate audio) |
+| prompt_extend | No | boolean | Default: true. Enable intelligent prompt rewriting |
+| watermark | No | boolean | Default: false. Add watermark to video |
+| seed | No | integer | Random seed for reproducible results |
+**Example Request**
+```
+{
+"img_url": "https://example.com/images/battle-scene.png",
+"prompt": "An epic battle scene with dramatic music and sound effects",
+"negative_prompt": "blurry, low quality, distorted",
+"resolution": "1080P",
+"duration": 10,
+"audio": true,
+"prompt_extend": true,
+"watermark": false,
+"seed": 98765
+}
+```
+**Response**
+```
+{
+"request_id": "wan-image-to-video-2-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-image-to-video-2-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.5 Text To Video API Documentation
+https://gateway.pixazo.ai/wan-video-2-5/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Text To Video Request - Wan 2.5 Video Generation API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-video-2-5/v1/generateTextToVideo2-5Request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A beautiful sunset over a calm ocean with gentle waves",
+"size": "832*480",
+"duration": 5,
+"audio": false,
+"prompt_extend": true,
+"watermark": false
+}
+```
+**Output**
+```
+{
+"request_id": "wan-image-to-video-2-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-image-to-video-2-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Text To Video Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text description of the video to generate. Supports English and Chinese. |
+| negative_prompt | No | string | Default: null. Elements to exclude from the video. |
+| audio_url | No | string | URL to custom audio file (overrides audio parameter). Takes priority over `audio` setting. |
+| size | No | string | Default: "832*480". Available resolutions: "832*480", "1280*720", "1920*1080" |
+| duration | No | integer | Default: 5. Video length in seconds. Available values: 5, 10 |
+| audio | No | boolean | Default: false. Audio behavior: false (silent), true (auto-generate audio) |
+| prompt_extend | No | boolean | Default: true. Enable intelligent prompt rewriting |
+| watermark | No | boolean | Default: false. Add watermark to video |
+| seed | No | integer | Random seed for reproducible results |
+**Example Request**
+```
+{
+"prompt": "A beautiful sunset over a calm ocean with gentle waves",
+"size": "832*480",
+"duration": 5,
+"audio": false,
+"prompt_extend": true,
+"watermark": false
+}
+```
+**Response**
+```
+{
+"request_id": "wan-image-to-video-2-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-image-to-video-2-5_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.5 Pixazo Image To Video API Documentation
+https://gateway.pixazo.ai/pixazo-wan-image-to-video-1763709522/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - Pixazo Wan Image to Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/pixazo-wan-image-to-video-1763709522/v1/pixazo-wan-image-to-video-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A stylish man walks down a sea side",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png"
+}
+```
+**Output**
+```
+{
+"request_id": "pixazo-wan-image-to-video-1763709522_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixazo-wan-image-to-video-1763709522_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Field | Type | Required | Default | Description |
+| prompt | string | Yes | — | A detailed text description of the desired motion and scene context. The model uses this to animate the image. |
+| image_url | string | Yes | — | Publicly accessible HTTPS URL pointing to a static image (JPEG, PNG, WebP). The image will be animated according to the prompt. |
+Minimum Request
+```
+{
+"prompt": "A stylish man walks down a sea side",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png"
+}
+```
+Full Request (all options)
+```
+{
+"prompt": "A stylish man walks down a sea side",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png"
+}
+```
+**Response**
+```
+{
+"request_id": "pixazo-wan-image-to-video-1763709522_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/pixazo-wan-image-to-video-1763709522_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your subscription key
+```
+#### 5. Wan 2.2
+#### Wan 2.2 Speech To Video API Documentation
+https://gateway.pixazo.ai/wan2.2-s2v/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Speech to Video Request - Wan 2.2 14B Speech to Video
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan2.2-s2v/v1/generateSpeechToVideoRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Summer beach vacation style, a man wearing sunglasses Blue Tshirt.",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png",
+"audio_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_music.mp3"
+}
+```
+**Output**
+```
+{
+"request_id": "wan-2-2-14b-speech-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-2-14b-speech-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Speech to Video Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | The text prompt used for video generation. Describes the style and content for the generated video. |
+| image_url | Yes | string | URL of the input image. If the input image does not match the chosen aspect ratio, it is resized and center cropped. |
+| audio_url | Yes | string | The URL of the audio file that will be used to generate lip-sync and facial expressions in the video. |
+| negative_prompt | No | string | Negative prompt for video generation. Default: "". Used to steer the generation away from unwanted features. |
+| seed | No | integer | Random seed for reproducibility. If not provided, a random seed is chosen. |
+| resolution | No | string | Resolution of the generated video. Default: "480p". Available values: "480p", "580p", "720p". |
+| num_inference_steps | No | integer | Number of inference steps for sampling. Higher values give better quality but take longer. Default: 27. |
+| enable_safety_checker | No | boolean | If set to true, input data will be checked for safety before processing. |
+| guidance_scale | No | float | Classifier-free guidance scale. Higher values give better adherence to the prompt but may decrease quality. Default: 3.5. |
+| shift | No | float | Shift value for the video. Must be between 1.0 and 10.0. Default: 5. |
+| video_quality | No | string | The quality of the output video. Higher quality means better visual quality but larger file size. Default: "high". Values: "low", "medium", "high", "maximum". |
+| video_write_mode | No | string | The write mode of the output video. Default: "balanced". Values: "fast" (faster results, larger file), "balanced" (compromise), "small" (slowest, smallest file). |
+**Example Request**
+```
+{
+"prompt": "Summer beach vacation style, a man wearing sunglasses Blue Tshirt.",
+"image_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_model.png",
+"audio_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/input_music.mp3"
+}
+```
+**Response**
+```
+{
+"request_id": "wan-2-2-14b-speech-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-2-14b-speech-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.2 Animate API Documentation
+https://gateway.pixazo.ai/wan-2-2-animate-api-524/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Request - Wan 2.2 Animate
+**Request Code**
+```
+POST /wan-2-2-animate-api-request HTTP/1.1
+```
+Host: gateway.pixazo.ai
+```
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"video_url": "https://example.com/motion-source.mp4",
+"image_url": "https://example.com/target-image.png"
+}
+```
+**Output**
+```
+{
+"request_id": "wan-2-2-animate-api-524_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-2-animate-api-524_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Request
+| Field | Type | Required | Default | Description |
+| video_url | string | Yes | — | URL pointing to a video file that will serve as the motion source. The API extracts motion patterns from this video to animate the target image. |
+| image_url | string | Yes | — | URL pointing to a static image that will be animated using the motion from the video. Must be a valid, publicly accessible image (PNG, JPEG, etc.). |
+Minimum Request
+```
+{
+"video_url": "https://example.com/motion-source.mp4",
+"image_url": "https://example.com/target-image.png"
+}
+```
+Full Request (all options)
+```
+{
+"video_url": "https://example.com/motion-source.mp4",
+"image_url": "https://example.com/target-image.png"
+}
+```
+**Response**
+```
+{
+"request_id": "wan-2-2-animate-api-524_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-2-2-animate-api-524_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+#### Wan 2.2 Image To Video(First Frame) API Documentation
+https://gateway.pixazo.ai/wan-i2v/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan Image to Video First Frame - Wan Image to Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-i2v/v1/generateImageToVideoRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model": "wan2.2-i2v-plus",
+"input": {
+"prompt": "Banana dancing in a traditional dress",
+"negative_prompt": "flowers, blur",
+"img_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/nano-banana.jpeg"
+},
+"parameters": {
+"resolution": "1080P",
+"duration": 5,
+"prompt_extend": true,
+"watermark": false,
+"seed": 12345
+}
+}
+```
+**Output**
+```
+{
+"request_id": "wan-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Wan Image to Video First Frame
+| Parameter | Required | Type | Description |
+| model | Yes | string | Model to use. Available values: "wan2.2-i2v-flash", "wan2.2-i2v-plus" (recommended), "wan2.1-i2v-plus", "wan2.1-i2v-turbo". |
+| input.img_url | Yes | string | URL of the first frame image. Must be publicly accessible HTTP/HTTPS URL. Supports JPEG, JPG, PNG, BMP, WEBP. Max size: 10MB. Image resolution: 360-2000 pixels. |
+| input.prompt | No | string | Default: null. Text description to guide video generation. Supports English and Chinese, up to 800 characters. |
+| input.negative_prompt | No | string | Default: null. Elements to exclude from the video. Up to 500 characters. |
+| parameters.resolution | No | string | Default varies by model: |
+- wan2.2-i2v-plus: "480P" or "1080P" (default: "1080P")
+- wan2.2-i2v-flash: "480P" or "720P" (default: "720P")
+- wan2.1-i2v-plus: only "720P"
+- wan2.1-i2v-turbo: "480P" or "720P" (default: "720P")
+| parameters.duration | No | integer | Default: 5. Video duration in seconds. For wan2.1-i2v-turbo: 3, 4, or 5. Other models fixed at 5. |
+| parameters.prompt_extend | No | boolean | Default: true. When enabled, uses LLM to enhance the prompt. Improves quality but adds processing time. |
+| parameters.watermark | No | boolean | Default: false. When true, adds "Generated by AI" watermark at bottom-right. |
+| parameters.seed | No | integer | Default: null. Random seed for reproducible results. Range: 0-2147483647. |
+**Example Request**
+```
+{
+"model": "wan2.2-i2v-plus",
+"input": {
+"prompt": "Banana dancing in a traditional dress",
+"negative_prompt": "flowers, blur",
+"img_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/nano-banana.jpeg"
+},
+"parameters": {
+"resolution": "1080p",
+"duration": 5,
+"prompt_extend": true,
+"watermark": false,
+"seed": 12345
+}
+}
+```
+**Response**
+```
+{
+"request_id": "wan-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.2 Keyframe To Video API Documentation
+https://gateway.pixazo.ai/wan-image-to-video/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Wan Keyframe to Video - Wan Image to Video API
+**Request Code**
+```
+POST https://gateway.appypie.com/wan-i2v/v1/generateImageToVideoFrameRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model": "wan2.1-kf2v-plus",
+"input": {
+"first_frame_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2i/wan-t2i-75d44f7d-a954-46b0-a603-10c09cb5df84-0.png",
+"last_frame_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2i/wan-t2i-47c06b16-ce7f-4977-8f7c-a04384409934-0.png",
+"prompt": "Realistic style. Aeroplane from takeoff to fly captured in camera",
+"negative_prompt": "person, text"
+},
+"parameters": {
+"resolution": "720P",
+"prompt_extend": true,
+"watermark": false,
+"seed": 12345
+}
+}
+```
+**Output**
+```
+{
+"request_id": "wan-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Wan Keyframe to Video
+| Parameter | Required | Type | Description |
+| model | Yes | string | Model to use. Available value: "wan2.1-kf2v-plus" (keyframe-to-video model). |
+| input.first_frame_url | Yes | string | URL of the first frame image. Must be a publicly accessible HTTP/HTTPS URL. Supports JPEG, JPG, PNG, BMP, WEBP. Max size: 10MB. Resolution: 360–2000 pixels. |
+| input.last_frame_url | Yes | string | URL of the last frame image. Must be a publicly accessible HTTP/HTTPS URL. Supports JPEG, JPG, PNG, BMP, WEBP. Max size: 10MB. Resolution: 360–2000 pixels. |
+| input.prompt | No | string | Default: null. Text description to guide video transition between frames. Supports English and Chinese, up to 800 characters. Useful for camera/subject changes. |
+| input.negative_prompt | No | string | Default: null. Elements to exclude from the video. Up to 500 characters. |
+| parameters.resolution | No | string | Default: "720P". Currently only "720P" is supported. Typical resolution is 1280×720 with 16:9 aspect ratio. |
+| parameters.duration | No | integer | Default: 5. Video duration in seconds. Fixed at 5 seconds and cannot be changed. |
+| parameters.prompt_extend | No | boolean | Default: true. When enabled, uses LLM to enhance the prompt. Improves quality but adds processing time. |
+| parameters.watermark | No | boolean | Default: false. When true, adds an "AI-generated" watermark at the bottom-right corner. |
+| parameters.seed | No | integer | Default: null. Random seed for reproducible results. Range: 0–2147483647. |
+**Example Request**
+```
+{
+"model": "wan2.1-kf2v-plus",
+"input": {
+"first_frame_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2i/wan-t2i-75d44f7d-a954-46b0-a603-10c09cb5df84-0.png",
+"last_frame_url": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/wan-t2i/wan-t2i-47c06b16-ce7f-4977-8f7c-a04384409934-0.png",
+"prompt": "Realistic style. Aeroplane from takeoff to fly captured in camera",
+"negative_prompt": "person, text"
+},
+"parameters": {
+"resolution": "720P",
+"prompt_extend": true,
+"watermark": false,
+"seed": 12345
+}
+}
+```
+**Response**
+```
+{
+"request_id": "wan-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-image-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.2 Edit Image API Documentation
+https://gateway.pixazo.ai/wan-t2i/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Edit Image Request - Wan Text to Image API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-t2i/v1/generateEditImageRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model": "wanx2.1-imageedit",
+"input": {
+"function": "stylization_all",
+"prompt": "A dreamy watercolor style",
+"base_image_url": "https://example.com/image.jpg"
+},
+"parameters": {
+"n": 1
+}
+}
+```
+**Output**
+```
+{
+"request_id": "wan-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Edit Image Request
+| Parameter | Required | Type | Description |
+| model | Yes | string | Model to use. Available value: "wanx2.1-imageedit". |
+| input.function | Yes | string | Function to apply. Example: "stylization_all". |
+| input.prompt | Yes | string | Text prompt describing the desired edit. Supports English and Chinese. |
+| input.base_image_url | Yes | string | URL of the base image to edit. |
+| parameters.n | No | integer | Number of images to generate (default: 1). |
+**Example Request**
+```
+{
+"model": "wanx2.1-imageedit",
+"input": {
+"function": "stylization_all",
+"prompt": "A dreamy watercolor style",
+"base_image_url": "https://example.com/image.jpg"
+},
+"parameters": {
+"n": 1
+}
+}
+```
+**Response**
+```
+{
+"request_id": "wan-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.2 Text To Image API Documentation
+https://gateway.pixazo.ai/wan-t2i/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Text To Image Request - Wan Text to Image API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-t2i/v1/generateTextToImageRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model": "wan2.2-t2i-flash",
+"input": {
+"prompt": "A beautiful mountain landscape at sunset"
+}
+}
+```
+**Output**
+```
+{
+"request_id": "wan-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Text To Image Request
+| Parameter | Required | Type | Description |
+| model | Yes | string | Model to use. Available values: "wan2.2-t2i-flash", "wan2.2-t2i-plus", "wan2.1-t2i-turbo", "wan2.1-t2i-plus". |
+| input.prompt | Yes | string | Positive prompt describing the image. Supports English and Chinese, up to 800 characters. |
+| input.negative_prompt | No | string | Default: null. Elements to exclude from the image (up to 500 characters). |
+| parameters.size | No | string | Default: "1024x1024". Resolution in widthxheight, range 512–1440, max 2M pixels. |
+| parameters.n | No | integer | Default: 1. Number of images (1–4). |
+| parameters.seed | No | integer | Default: null. Random seed for reproducible results (0–2147483647). |
+| parameters.prompt_extend | No | boolean | Default: false. Enhances the prompt using LLM. Adds 3–4s processing time. |
+| parameters.watermark | No | boolean | Default: false. Adds "AI Generated" watermark at bottom-right. |
+**Example Request**
+```
+{
+"model": "wan2.2-t2i-flash",
+"input": {
+"prompt": "A beautiful mountain landscape at sunset",
+"negative_prompt": "people, buildings, text, watermark, signature"
+},
+"parameters": {
+"size": "1024*1024",
+"n": 1,
+"seed": 42,
+"prompt_extend": false,
+"watermark": false
+}
+}
+```
+**Response**
+```
+{
+"request_id": "wan-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-text-to-image_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Wan 2.2 Text To Video API Documentation
+https://gateway.pixazo.ai/wan-video/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Generate Text To Video Request - Wan Text to Video API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/wan-video/v1/generateTextToVideoRequest
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model": "wan2.2-t2v-plus",
+"input": {
+"prompt": "A kitten running in the moonlight",
+"negative_prompt": "flowers, people, text"
+},
+"parameters": {
+"size": "1920*1080"
+}
+}
+```
+**Output**
+```
+{
+"request_id": "wan-text-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-text-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Generate Text To Video Request
+| Parameter | Required | Type | Description |
+| model | Yes | string | Model to use. Available values: "wan2.2-t2v-plus" (recommended), "wanx2.1-t2v-turbo", "wanx2.1-t2v-plus". |
+| input.prompt | Yes | string | Text description of the video to generate. Supports English and Chinese. |
+| input.negative_prompt | No | string | Default: null. Elements to exclude from the video. |
+| parameters.size | No | string | Default: "1280*720". Available resolutions vary by model. |
+| parameters.n | No | integer | Default: 1. Number of videos to generate. Currently only 1 is supported. |
+**Example Request**
+```
+{
+"model": "wan2.2-t2v-plus",
+"input": {
+"prompt": "A kitten running in the moonlight",
+"negative_prompt": "flowers, people, text"
+},
+"parameters": {
+"size": "1920*1080"
+}
+}
+```
+**Response**
+```
+{
+"request_id": "wan-text-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/wan-text-to-video_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+
+---
+
+## Audio & Music
+
+### ElevenLabs API - AI Voice & Music Generation APIs
+**Page:** https://www.pixazo.ai/models/elevenlabs
+
+
+by ElevenLabs
+
+ElevenLabs API, developers can generate lifelike speech in multiple languages, clone voices from short audio samples, and create original music tracks. The API powers applications ranging from audiobook narration and podcast production to real-time voice assistants and multilingual content localization with human-quality audio output.
+
+Models Version
+ElevenLabs v3
+ElevenLabs v1
+V3 Alpha
+V3 Alpha
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### ElevenLabs v3 V3 Alpha API Documentation
+https://gateway.pixazo.ai/eleven-v3-alpha-954/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Eleven v3 Alpha generate request - Eleven v3 Alpha
+**Request Code**
+```
+POST https://gateway.pixazo.ai/eleven-v3-alpha-954/v1/eleven-v3-alpha-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"text": "Hello! This is a test of the text to speech system, powered by ElevenLabs. How does it sound?",
+"voice": "Aria",
+"stability": 0.5,
+"similarity_boost": 0.75,
+"speed": 1
+}
+```
+**Output**
+```
+{
+"request_id": "eleven-v3-alpha-954_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/eleven-v3-alpha-954_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Eleven v3 Alpha generate request
+| Parameter | Required | Type | Description |
+| text | Yes | string | The input text to be converted into speech. Must be non-empty and within the model's length limits. |
+| voice | Yes | string | Name of the ElevenLabs voice preset to use for synthesis. Valid values include: "Aria", "Domi", "Bella", "Rachel", "Antoni", etc. |
+| stability | Optional | number | Controls the voice's stability and consistency. Lower values increase variability; higher values produce more consistent, robotic tones. Range: 0.0–1.0. |
+| similarity_boost | Optional | number | Enhances the voice’s similarity to the original training sample. Higher values yield more natural voice characteristics; lower values improve clarity and flexibility. Range: 0.0–1.0. |
+| speed | Optional | number | Adjusts the playback speed of the generated audio. Values less than 1.0 slow down speech; values greater than 1.0 speed it up. Recommended range: 0.5–2.0. |
+**Example Request**
+```
+{
+"text": "Hello! This is a test of the text to speech system, powered by ElevenLabs. How does it sound?",
+"voice": "Aria",
+"stability": 0.5,
+"similarity_boost": 0.75,
+"speed": 1
+}
+```
+**Response**
+```
+{
+"request_id": "eleven-v3-alpha-954_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/eleven-v3-alpha-954_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 2. ElevenLabs v1
+#### ElevenLabs v1 Music Generation API Documentation
+https://gateway.pixazo.ai/elevenlabs-music-api-368/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+ElevenLabs Music API generate request - ElevenLabs Music API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/elevenlabs-music-api-368/v1/elevenlabs-music-api-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "Mysterious original soundtrack, themes of jungle, rainforest, nature, woodwinds, busy rhythmic tribal percussion.",
+"respect_sections_durations": true,
+"output_format": "mp3_44100_128"
+}
+```
+**Output**
+```
+{
+"request_id": "elevenlabs-music-api-368_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/elevenlabs-music-api-368_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - ElevenLabs Music API generate request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | A detailed textual description of the desired music style, mood, instruments, and structure. Example: “Mysterious original soundtrack, themes of jungle, rainforest, nature, woodwinds, busy rhythmic tribal percussion.” |
+| respect_sections_durations | No | boolean | If true, the system will preserve duration timing cues embedded in the prompt (e.g., “45-second loop”, “30-second intro”). If false, duration is determined automatically. |
+| output_format | No | string | The audio file format and quality specification. Supported values: `mp3_22050_32, mp3_44100_32, mp3_44100_64, mp3_44100_96, mp3_44100_128, mp3_44100_192, pcm_8000, pcm_16000, pcm_22050, pcm_24000, pcm_44100, pcm_48000, ulaw_8000, alaw_8000, opus_48000_32, opus_48000_64, opus_48000_96, opus_48000_128, opus_48000_192`. |
+**Example Request**
+```
+{
+"prompt": "Mysterious original soundtrack, themes of jungle, rainforest, nature, woodwinds, busy rhythmic tribal percussion.",
+"respect_sections_durations": true,
+"output_format": "mp3_44100_128"
+}
+```
+**Response**
+```
+{
+"request_id": "elevenlabs-music-api-368_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/elevenlabs-music-api-368_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+
+---
+
+### Lyria 3 Pro API, Lyria 2 API - AI Music Generation
+**Page:** https://www.pixazo.ai/models/lyria
+
+
+by Google
+
+Lyria 3 Pro API is Google's advanced AI music generation model, designed to create high-quality, expressive audio content. Powered by cutting-edge deep learning, Lyria enables developers to generate music compositions through a simple API call.
+
+Models Version
+Lyria 3 Pro
+Lyria 3
+Lyria 2
+Music Generation
+Music Generation
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### Lyria 3 Pro Music Generation API Documentation
+https://gateway.pixazo.ai/lyria-3-pro/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Music generate request - Lyria 3 Pro API
+**Request Code**
+```
+POST https://gateway.pixazo.ai/lyria-3-pro/v1/lyria-3-pro/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"prompt": "A calm acoustic folk song with gentle guitar and soft strings. Instrumental only."
+}
+```
+**Output**
+```
+{
+"request_id": "lyria-3-pro_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/lyria-3-pro_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Music generate request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text prompt describing the song to generate. Include details like genre, instruments, mood, tempo, lyrics, and song structure (e.g. [Verse], [Chorus], [Bridge]). Use timestamps like [0:00 - 0:30] to control timing. |
+| images | No | array | Input images to inspire the music composition (up to 10 images). Array of URL strings. |
+| webhook | No | string | Webhook URL for async notifications when generation completes. |
+| webhook_events_filter | No | array | Filter for webhook event types to receive (e.g. ["completed"]). |
+**Example Request**
+```
+{
+"prompt": "[Verse 1]\nWalking through the neon glow,\ncity lights reflect below,\nevery shadow tells a story,\nevery corner, fading glory.\n\n[Chorus]\nWe are the echoes in the night,\nburning brighter than the light,\nhold on tight, don't let me go,\nwe are the echoes down below.\n\n[Verse 2]\nFootsteps lost on empty streets,\nrhythms sync to heartbeats,\nwhispers carried by the breeze,\ndancing through the autumn leaves.\n\nGenre: Dreamy indie pop. Mood: Nostalgic and uplifting. Tempo: 110 BPM.",
+"images": [
+"https://example.com/sunset-beach.jpg",
+"https://example.com/forest-path.jpg"
+]
+}
+```
+**Response**
+```
+{
+"request_id": "lyria-3-pro_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/lyria-3-pro_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 2. Lyria 3
+
+Documentation coming soon!
+
+apiId: lyria-3 and operation: music-request
+
+#### 3. Lyria 2
+#### Lyria 2 Music Generation API Documentation
+https://gateway.pixazo.ai/lyria-2/v1
+**Authentication**
+
+All requests require an API key passed via header.
+
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Music Request - Lyria 2
+**Request Code**
+```
+POST https://gateway.pixazo.ai/lyria-2/v1/lyria-2/generate
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"prompt": "Futuristic country music, steel guitar, huge 808s"
+}
+```
+**Output**
+```
+{
+"request_id": "lyria-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/lyria-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Music Request
+| Parameter | Required | Type | Description |
+| prompt | Yes | string | Text prompt describing the music to generate |
+| negative_prompt | No | string | Description of what to exclude from the generated audio |
+| seed | No | integer | Random seed for reproducible generation |
+| webhook | No | string | Webhook URL for async notifications when generation completes |
+| webhook_events_filter | No | array | Event types to receive (e.g. ["completed"]) |
+**Example Request**
+```
+{
+"prompt": "Futuristic country music, steel guitar, huge 808s, synth wave elements space western cosmic twang soaring vocals",
+"negative_prompt": "low quality, distorted, noise, static, vocals out of tune",
+"seed": 42,
+"webhook": "https://your-webhook.com/callback",
+"webhook_events_filter": ["completed"]
+}
+```
+**Response**
+```
+{
+"request_id": "lyria-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/lyria-2_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
+Music Status - Lyria 2
+**Request Code**
+```
+POST https://gateway.pixazo.ai/lyria-2/v1/lyria-2/prediction
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_API_KEY
+{
+"prediction_id": "abc123def456"
+}
+```
+**Output**
+```
+{
+"success": true,
+"request_id": "abc123def456",
+"status": "succeeded",
+"audio": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/lyria-2/abc123def456_output_0.wav",
+"created_at": "2026-02-25T10:00:00.000Z"
+}
+```
+Request Parameters - Music Status
+| Parameter | Required | Type | Description |
+| prediction_id | Yes | string | The prediction ID returned from the generate endpoint |
+**Example Request**
+```
+{
+"prediction_id": "abc123def456"
+}
+```
+**Response**
+```
+{
+"audio": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/lyria-2/abc123def456_output_0.wav",
+"success": true,
+"request_id": "abc123def456",
+"status": "succeeded",
+"input": {
+"prompt": "Futuristic country music, steel guitar, huge 808s"
+},
+"created_at": "2026-02-25T10:00:00.000Z"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	Your API subscription key
+```
 
 ---
 
 ## Virtual Try-On
 
-### IDM-VTON
+### Fashn Virtual Try On API - AI Virtual Try-On APIs
+**Page:** https://www.pixazo.ai/models/fashn-virtual-try-on
 
-| Field | Value |
-|-------|-------|
-| Provider | IDM |
-| API ID | `idm-vton-api` |
-| Endpoint | `POST https://gateway.pixazo.ai/idm-vton-api/v1/r-idm-vton` |
-| Type | Async |
 
-**Parameters:**
+by Fashn
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| garm_img | string | Yes | URL of the garment image |
-| human_img | string | Yes | URL of the person image |
-| garment_des | string | No | Description of the garment |
-| category | string | No | e.g., "upper_body", "lower_body", "dresses" |
+Fashn Virtual Try On API, e-commerce platforms and fashion retailers can enable customers to visualize how garments will look on them before purchasing. The API handles complex fabric physics, body positioning, and lighting to create convincing virtual fitting experiences that reduce returns and increase conversion.
 
-<details>
-<summary>Python</summary>
+Models Version
+Fashn v1.6
+Glass v1
+Virtual Try-On
+Virtual Try-On
+**Request Code**
+**Request Parameters**
+**Example Request**
+**Response**
+**Request Headers**
+**Response Handling**
+**Pricing**
+#### Fashn v1.6 Virtual Try-On API Documentation
+https://gateway.pixazo.ai/fashn-virtual-try-on/v1
+**Authentication**
 
-```python
-import requests
+All requests require an API key passed via header.
 
-url = "https://gateway.pixazo.ai/idm-vton-api/v1/r-idm-vton"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {
-    "garm_img": "https://example.com/garment.jpg",
-    "human_img": "https://example.com/person.jpg",
-    "garment_des": "red summer dress",
-    "category": "dresses"
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
+| Header | Type | Required | Description |
+| Ocp-Apim-Subscription-Key | string | Yes | Your API subscription key |
+Fashn Virtual Try-On generate request - Fashn Virtual Try-On API
+**Request Code**
 ```
-</details>
-
----
-
-### Kolors Virtual Try-On
-
-| Field | Value |
-|-------|-------|
-| Provider | Kling AI |
-| API ID | `kling-ai-vton` |
-| Endpoint | `POST https://gateway.pixazo.ai/kling-ai-vton/v1/getVirtualTryOnTask` |
-| Type | Async |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| human_image | string | Yes | URL of the person image |
-| cloth_image | string | Yes | URL of the clothing image |
-| callback_url | string | No | Webhook callback URL |
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/kling-ai-vton/v1/getVirtualTryOnTask"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
+POST https://gateway.pixazo.ai/fashn-virtual-try-on/v1/fashn-virtual-try-on-request
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model_image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/vt_human.jpg",
+"garment_image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/vt_top.jpeg",
+"category": "auto",
+"mode": "balanced",
+"garment_photo_type": "auto",
+"moderation_level": "permissive",
+"num_samples": 1,
+"segmentation_free": true,
+"output_format": "png"
 }
-data = {
-    "human_image": "https://example.com/person.jpg",
-    "cloth_image": "https://example.com/top.jpeg",
-    "callback_url": ""
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
 ```
-</details>
-
----
-
-### Pixelforge Clothing VTON
-
-| Field | Value |
-|-------|-------|
-| Provider | Pixazo AI |
-| API ID | `virtual-tryon` |
-| Endpoint | `POST https://gateway.pixazo.ai/virtual-tryon/v1/r-vton` |
-| Type | Synchronous |
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| category | string | Yes | "upper_body", "lower_body", "dresses" |
-| garm_img | string | Yes | URL of garment image |
-| human_img | string | Yes | URL of person image |
-| garment_des | string | No | Garment description |
-| crop | boolean | No | Auto-crop (default: true) |
-| seed | integer | No | Random seed |
-| steps | integer | No | Inference steps (default: 30) |
-| force_dc | boolean | No | Force DensePose (default: false) |
-| mask_only | boolean | No | Return mask only (default: false) |
-
-<details>
-<summary>Python</summary>
-
-```python
-import requests
-
-url = "https://gateway.pixazo.ai/virtual-tryon/v1/r-vton"
-headers = {
-    "Content-Type": "application/json",
-    "Ocp-Apim-Subscription-Key": "YOUR_API_KEY"
-}
-data = {
-    "category": "upper_body",
-    "garm_img": "https://example.com/tshirt.jpg",
-    "human_img": "https://example.com/model.png",
-    "crop": True,
-    "seed": 40,
-    "steps": 30,
-    "garment_des": "cute pink top"
-}
-
-response = requests.post(url, json=data, headers=headers)
-print(response.json())
+**Output**
 ```
-</details>
+{
+"request_id": "fashn-virtual-try-on_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/fashn-virtual-try-on_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Webhook (Optional)**
+
+Add the X-Webhook-URL header to your generate request to receive a POST callback instead of polling.
+
+X-Webhook-URL: https://your-server.com/webhook/callback
+Request Parameters - Fashn Virtual Try-On generate request
+| Parameter | Required | Type | Description |
+| model_image | Yes | string | URL to a human model image (full body or upper body). Must be accessible via public HTTP/HTTPS endpoint. |
+| garment_image | Yes | string | URL to a garment image (on-model or flat-lay). Must be a public HTTP/HTTPS endpoint. |
+| category | No | string | Specifies garment category to improve segmentation. Values: auto, top, bottom, dress, outerwear. |
+| mode | No | string | Processing mode balancing speed and quality. Values: fast, balanced, high_quality. |
+| garment_photo_type | No | string | Specifies the type of garment image provided. Values: auto, on_model, flat_lay. |
+| moderation_level | No | string | Content moderation sensitivity. Values: strict, moderate, permissive. |
+| num_samples | No | integer | Number of try-on variations to generate. Maximum value: 5. |
+| segmentation_free | No | boolean | When true, bypasses detailed segmentation for faster processing (may reduce accuracy on complex garments). |
+| output_format | No | string | Output image format. Values: png, jpeg. |
+**Example Request**
+```
+{
+"model_image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/vt_human.jpg",
+"garment_image": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/vt_top.jpeg",
+"category": "auto",
+"mode": "balanced",
+"garment_photo_type": "auto",
+"moderation_level": "permissive",
+"num_samples": 1,
+"segmentation_free": true,
+"output_format": "png"
+}
+```
+**Response**
+```
+{
+"request_id": "fashn-virtual-try-on_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+"status": "QUEUED",
+"polling_url": "https://gateway.pixazo.ai/v2/requests/status/fashn-virtual-try-on_019dxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### 2. Glass v1
+#### Glass v1 Text To Image API Documentation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/glass-virtual-try-on/v1/api/glass-virtual-tryon
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model_image_path": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png",
+"glass_image_path": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Capturade-tela-2025-07-17%20171034.png"
+}
+```
+**Output**
+```
+{
+"success": true,
+"request_id": "abc-123-xyz",
+"status": "submitted"
+}
+```
+Request Parameters - Generate
+| Parameter | Required | Type | Description |
+| model_image_path | Yes | string | Support inputting image Base64 encoding or image URL (ensure accessibility). Ex: https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png. Please note, if you use the Base64 method, make sure all image data parameters you pass are in Base64 encoding format. When submitting data, do not add any prefixes to the Base64-encoded string, such as data:image/png;base64. The correct parameter format should be the Base64-encoded string itself. Supported image formats include .jpg / .jpeg / .png. The image file size cannot exceed 10MB, and the image resolution should not be less than 300*300px |
+| glass_image_path | No | string | Default: null. Support inputting image Base64 encoding or image URL (ensure accessibility). Ex: https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Capturade-tela-2025-07-17%20171034.png. Please note, if you use the Base64 method, make sure all image data parameters you pass are in Base64 encoding format. When submitting data, do not add any prefixes to the Base64-encoded string, such as data:image/png;base64. The correct parameter format should be the Base64-encoded string itself. Supported image formats include .jpg / .jpeg / .png. The image file size cannot exceed 10MB, and the image resolution should not be less than 300*300px |
+| num_images | No | number | Default: 1. Number of images to generate |
+| output_format | No | string | Default: "jpeg". Output format for the images. Possible values: "jpeg", "png" |
+**Example Request**
+```
+{
+"model_image_path": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png",
+"glass_image_path": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Capturade-tela-2025-07-17%20171034.png"
+}
+```
+**Response**
+```
+{
+"success": true,
+"request_id": "abc-123-xyz",
+"status": "submitted",
+"message": "Request submitted"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
+#### Glass v1 Virtual Try-On API Documentation
+**Request Code**
+```
+POST https://gateway.pixazo.ai/glass-virtual-try-on/v1/api/glass-virtual-tryon
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+{
+"model_image_path": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png",
+"glass_image_path": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Capturade-tela-2025-07-17%20171034.png",
+"num_images": 1,
+"output_format": "jpeg"
+}
+```
+**Output**
+```
+{
+"success": true,
+"request_id": "abc-123-xyz",
+"status": "submitted",
+"message": "Request submitted"
+}
+```
+Request Parameters - Glass Virtual Try On
+| Parameter | Required | Type | Description |
+| model_image_path | Yes | string | Support inputting image Base64 encoding or image URL (ensure accessibility). Ex: https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png. Please note, if you use the Base64 method, make sure all image data parameters you pass are in Base64 encoding format. When submitting data, do not add any prefixes to the Base64-encoded string, such as data:image/png;base64. The correct parameter format should be the Base64-encoded string itself. Supported image formats include .jpg / .jpeg / .png. The image file size cannot exceed 10MB, and the image resolution should not be less than 300*300px |
+| glass_image_path | No | string | Default: null. Support inputting image Base64 encoding or image URL (ensure accessibility). Ex: https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Capturade-tela-2025-07-17%20171034.png. Please note, if you use the Base64 method, make sure all image data parameters you pass are in Base64 encoding format. When submitting data, do not add any prefixes to the Base64-encoded string, such as data:image/png;base64. The correct parameter format should be the Base64-encoded string itself. Supported image formats include .jpg / .jpeg / .png. The image file size cannot exceed 10MB, and the image resolution should not be less than 300*300px |
+| num_images | No | number | Default: 1. Number of images to generate |
+| output_format | No | string | Default: "jpeg". Output format for the images. Possible values: "jpeg", "png" |
+**Example Request**
+```
+{
+"model_image_path": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/model.png",
+"glass_image_path": "https://pub-582b7213209642b9b995c96c95a30381.r2.dev/Capturade-tela-2025-07-17%20171034.png",
+"num_images": 1,
+"output_format": "jpeg"
+}
+```
+**Response**
+```
+{
+"success": true,
+"request_id": "abc-123-xyz",
+"status": "submitted",
+"message": "Request submitted"
+}
+```
+**Request Headers**
+| Header | Value |
+```
+Content-Type	application/json
+Cache-Control	no-cache
+Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
+```
 
 ---
-
-### Additional Virtual Try-On Models
-
-| Model | API ID | Page |
-|-------|--------|------|
-| FASHN Virtual Try-On v1.6 | `fashn-virtual-try-on-v1-6` | [Link](https://www.pixazo.ai/models/virtual-try-on/fashn-virtual-try-on-v1-6-api) |
-| Kling VTON | `kling-vton` | [Link](https://www.pixazo.ai/models/virtual-try-on/kling-api) |
-| Pixelforge Accessories VTON | `pixelforge-accessories-vton` | [Link](https://www.pixazo.ai/models/virtual-try-on/pixelforge-accessories-vton-api) |
-
----
-
-## Lipsync
-
-| Model | Provider | API ID | Description | Page |
-|-------|----------|--------|-------------|------|
-| ByteDance LatentSync | ByteDance | `bytedance-latentsync` | Audio-to-video lip sync using latent diffusion | [Link](https://www.pixazo.ai/models/lipsync/bytedance-latentsync-api) |
-| ByteDance OmniHuman | ByteDance | `bytedance-omni-human` | Full-body human animation from audio | [Link](https://www.pixazo.ai/models/lipsync/bytedance-omni-human-api) |
-| Kling Lipsync | Kling AI | `kling-lipsync` | Kling-powered lip synchronization | [Link](https://www.pixazo.ai/models/lipsync/kling-lipsync-api) |
-| PixVerse Lipsync | PixVerse | `pixverse-lipsync` | PixVerse lip sync model | [Link](https://www.pixazo.ai/models/lipsync/pixverse-lipsync-api) |
-| Sync Lipsync 2 | Sync | `sync-lipsync-2` | Standard lip sync | [Link](https://www.pixazo.ai/models/lipsync/sync-lipsync-2-api) |
-| Sync Lipsync 2 Pro | Sync | `sync-lipsync-2-pro` | Pro lip sync with enhanced quality | [Link](https://www.pixazo.ai/models/lipsync/sync-lipsync-2-pro-api) |
-
----
-
-## Text-to-Speech
-
-| Model | Provider | API ID | Description | Page |
-|-------|----------|--------|-------------|------|
-| Chatterbox | Resemble AI | `chatterbox` | Expressive text-to-speech | [Link](https://www.pixazo.ai/models/text-to-speech/chatterbox-api) |
-| Resemble AI Chatterbox | Resemble AI | `resemble-ai-chatterbox` | High-quality voice synthesis | [Link](https://www.pixazo.ai/models/text-to-speech/resemble-ai-chatterbox-api) |
-| Kokoro-82M | Open Source | `kokoro-82m` | Lightweight 82M-param TTS, fast & efficient | [Link](https://www.pixazo.ai/models/text-to-speech/kokoro-82m-api) |
-| MiniMax Speech 02 HD | MiniMax | `minimax-speech-02-hd` | HD quality speech synthesis | [Link](https://www.pixazo.ai/models/text-to-speech/minimax-speech-02-hd-api) |
-| MiniMax Speech 02 Turbo | MiniMax | `minimax-speech-02-turbo` | Fast speech synthesis | [Link](https://www.pixazo.ai/models/text-to-speech/minimax-speech-02-turbo-api) |
-| MiniMax Voice Design | MiniMax | `minimax-voice-design` | Custom voice creation | [Link](https://www.pixazo.ai/models/text-to-speech/minimax-voice-design-api) |
-| VibeVoice Realtime 0.5B | VibeVoice | `vibevoice-realtime-0-5b` | Realtime low-latency TTS | [Link](https://www.pixazo.ai/models/text-to-speech/vibevoice-realtime-0-5b-api) |
-
----
-
-## Audio & Music Generation
-
-| Model | Provider | API ID | Description | Page |
-|-------|----------|--------|-------------|------|
-| Google Lyria 2 | Google | `google-lyria-2` | Studio-quality 48kHz music from text, genre/tempo/key control | [Link](https://www.pixazo.ai/models/audio-generation/google-lyria-2-api) |
-| Meta MusicGen | Meta | `meta-musicgen` | Open-source music generation | [Link](https://www.pixazo.ai/models/audio-generation/meta-musicgen-api) |
-| MiniMax Music 01 | MiniMax | `minimax-music-01` | Music generation | [Link](https://www.pixazo.ai/models/audio-generation/minimax-music-01-api) |
-| MiniMax Music 2.0 | MiniMax | `minimax-music-2-0` | Advanced music generation | [Link](https://www.pixazo.ai/models/audio-generation/minimax-music-2-0-api) |
-| MMAudio | Open Source | `mmaudio` | Multi-modal audio generation | [Link](https://www.pixazo.ai/models/audio-generation/mmaudio-api) |
-| Stable Audio 2.5 | Stability AI | `stable-audio-2-5` | Text-to-audio and music | [Link](https://www.pixazo.ai/models/audio-generation/stable-audio-2-5-api) |
-| ACE Step | ACE | `ace-step` | Audio generation | [Link](https://www.pixazo.ai/models/ace-step) |
-| Tracks | Various | `tracks` | Music tracks | [Link](https://www.pixazo.ai/models/tracks) |
-| ElevenLabs | ElevenLabs | `elevenlabs` | Audio synthesis | [Link](https://www.pixazo.ai/models/elevenlabs) |
-
----
-
-## Voice Cloning
-
-| Model | API ID | Description | Page |
-|-------|--------|-------------|------|
-| XTTS-v2 | `xtts-v2` | Voice cloning from reference audio | [Link](https://www.pixazo.ai/models/voice-cloning/xtts-v2-api) |
-
----
-
-## 3D Models
-
-| Model | Provider | API ID | Description | Page |
-|-------|----------|--------|-------------|------|
-| Hunyuan3D-2 | Tencent | `hunyuan3d-2` | Image/text to textured 3D mesh (PBR-ready) | [Link](https://www.pixazo.ai/models/3d-models/hunyuan3d-2-api) |
-| Hunyuan3D-2.1 | Tencent | `hunyuan3d-2-1` | Enhanced 3D generation | [Link](https://www.pixazo.ai/models/3d-models/hunyuan3d-2-1-api) |
-| Hunyuan3D-2 MV | Tencent | `hunyuan3d-2mv` | Multi-view 3D generation | [Link](https://www.pixazo.ai/models/3d-models/hunyuan3d-2mv-api) |
-| Hunyuan3D-3.0 | Tencent | `hunyuan3d-3-0` | Latest 3D generation | [Link](https://www.pixazo.ai/models/3d-models/hunyuan3d-3-0-api) |
-| MVDream | Open Source | `mvdream` | Multi-view diffusion for 3D | [Link](https://www.pixazo.ai/models/3d-models/mvdream-api) |
-| Trellis 2 | Trellis | `trellis-2` | 3D generation | [Link](https://www.pixazo.ai/models/3d-models/trellis-2-api) |
-| Trellis3D | Trellis | `trellis3d` | 3D modeling | [Link](https://www.pixazo.ai/models/trellis3d) |
-| Tripo3D | Tripo | `tripo3d` | 3D generation | [Link](https://www.pixazo.ai/models/tripo3d) |
-| Hyper3D | Hyper | `hyper3d` | Fast 3D generation | [Link](https://www.pixazo.ai/models/hyper3d) |
-
----
-
-## Background Remover
-
-| Model | API ID | Description | Page |
-|-------|--------|-------------|------|
-| BRIA RMBG 2.0 | `bria-rmbg-2-0` | AI background removal | [Link](https://www.pixazo.ai/models/background-remover/bria-rmbg-2-0-api) |
-
----
-
-## Tools & Training
-
-| Model | API ID | Description | Page |
-|-------|--------|-------------|------|
-| Flux 2 Trainer | `flux-2-trainer` | Train custom Flux 2 models | [Link](https://www.pixazo.ai/models/tools/flux-2-trainer-api) |
-| Flux LoRA Fast Training | `flux-lora-fast-training` | Fast LoRA fine-tuning for Flux | [Link](https://www.pixazo.ai/models/tools/flux-lora-fast-training-api) |
-| LoRA | `lora` | Custom LoRA adapter | [Link](https://www.pixazo.ai/models/lora-api) |
-| Qwen Image Edit Plus Trainer | `qwen-image-edit-plus-trainer` | Train Qwen image editing models | [Link](https://www.pixazo.ai/models/tools/qwen-image-edit-plus-trainer-api) |
-| Pixelforge Relighting | `pixelforge-relighting` | AI relighting tool | [Link](https://www.pixazo.ai/models/tools/pixelforge-relighting-api) |
-| AI Face to Sticker | `ai-face-to-sticker` | Convert faces to stickers | [Link](https://www.pixazo.ai/models/tools/ai-face-to-sticker-api) |
-| AI Sticker Maker | `ai-sticker-maker` | Generate AI stickers | [Link](https://www.pixazo.ai/models/tools/ai-sticker-maker-api) |
-
----
-
-## Additional Brand Pages
-
-These pages list all models from a given provider/brand:
-
-| Brand | Pixazo Page |
-|-------|-------------|
-| Black Forest Labs (Flux) | [/models/flux](https://www.pixazo.ai/models/flux) |
-| Kling AI | [/models/kling](https://www.pixazo.ai/models/kling) |
-| MiniMax / Hailuo | [/models/hailuo](https://www.pixazo.ai/models/hailuo) |
-| Wan (Alibaba) | [/models/wan](https://www.pixazo.ai/models/wan) |
-| Sora (OpenAI) | [/models/sora](https://www.pixazo.ai/models/sora) |
-| Veo (Google) | [/models/veo](https://www.pixazo.ai/models/veo) |
-| Ideogram | [/models/ideogram](https://www.pixazo.ai/models/ideogram) |
-| Qwen | [/models/qwen](https://www.pixazo.ai/models/qwen) |
-| LTX | [/models/ltx](https://www.pixazo.ai/models/ltx) |
-| Hunyuan | [/models/hunyuan](https://www.pixazo.ai/models/hunyuan) |
-| Reve Image | [/models/reve-image](https://www.pixazo.ai/models/reve-image) |
-| Seedance | [/models/seedance](https://www.pixazo.ai/models/seedance) |
-| Seedream | [/models/seedream](https://www.pixazo.ai/models/seedream) |
-| SeedVR | [/models/seedvr](https://www.pixazo.ai/models/seedvr) |
-| Runway | [/models/runway](https://www.pixazo.ai/models/runway) |
-| Luma | [/models/luma](https://www.pixazo.ai/models/luma) |
-| Pika | [/models/pika](https://www.pixazo.ai/models/pika) |
-| PixVerse | [/models/pixverse](https://www.pixazo.ai/models/pixverse) |
-| DALL-E | [/models/dalle](https://www.pixazo.ai/models/dalle) |
-| GPT Image | [/models/gpt-image](https://www.pixazo.ai/models/gpt-image) |
-| Grok Imagine | [/models/grok-imagine](https://www.pixazo.ai/models/grok-imagine) |
-| Stability AI | [/models/stability-ai](https://www.pixazo.ai/models/stability-ai) |
-| SDXL | [/models/sdxl](https://www.pixazo.ai/models/sdxl) |
-| Stable Diffusion | [/models/stable-diffusion](https://www.pixazo.ai/models/stable-diffusion) |
-| Nano Banana | [/models/nano-banana](https://www.pixazo.ai/models/nano-banana) |
-| PixelForge | [/models/pixelforge](https://www.pixazo.ai/models/pixelforge) |
-| IDM-VTON | [/models/idm-vton](https://www.pixazo.ai/models/idm-vton) |
-| FASHN VTON | [/models/fashn-vton](https://www.pixazo.ai/models/fashn-vton) |
-| OmniHuman | [/models/omnihuman](https://www.pixazo.ai/models/omnihuman) |
-| Vidu | [/models/vidu](https://www.pixazo.ai/models/vidu) |
-| Veed | [/models/veed](https://www.pixazo.ai/models/veed) |
-| Mochi | [/models/mochi](https://www.pixazo.ai/models/mochi) |
-| Recraft | [/models/recraft](https://www.pixazo.ai/models/recraft) |
-| AuraFlow | [/models/auraflow](https://www.pixazo.ai/models/auraflow) |
-| Bria | [/models/bria](https://www.pixazo.ai/models/bria) |
-| Chatterbox | [/models/chatterbox](https://www.pixazo.ai/models/chatterbox) |
-| Crystal Upscaler | [/models/crystal-upscaler](https://www.pixazo.ai/models/crystal-upscaler) |
-| ElevenLabs | [/models/elevenlabs](https://www.pixazo.ai/models/elevenlabs) |
-| GenFlare | [/models/genflare](https://www.pixazo.ai/models/genflare) |
-| Higgsfield | [/models/higgsfield](https://www.pixazo.ai/models/higgsfield) |
-| Longcat Image | [/models/longcat-image](https://www.pixazo.ai/models/longcat-image) |
-| Lyria | [/models/lyria](https://www.pixazo.ai/models/lyria) |
-| P-Video | [/models/p-video](https://www.pixazo.ai/models/p-video) |
-| RunDiffusion | [/models/rundiffusion](https://www.pixazo.ai/models/rundiffusion) |
-| Studio Ghibli | [/models/studio-ghibli](https://www.pixazo.ai/models/studio-ghibli) |
-| Topaz | [/models/topaz](https://www.pixazo.ai/models/topaz) |
-| VibeVoice | [/models/vibevoice](https://www.pixazo.ai/models/vibevoice) |
-| Qwen Image | [/models/qwen-image](https://www.pixazo.ai/models/qwen-image) |
-
----
-
-## API ID Quick Reference
-
-| Category | Model | API ID | Gateway Endpoint |
-|----------|-------|--------|------------------|
-| **Text-to-Image** | Flux Schnell | `flux-1-schnell` | `/flux-1-schnell/v1/getData` |
-| | Flux Dev | `flux-dev` | `/flux-dev/v1/getData` |
-| | Flux Pro | `flux-pro` | `/flux-pro/v1/getData` |
-| | Flux 1.1 Pro Ultra | `flux-1-1-ultra` | `/flux-1-1-ultra/v1/getData` |
-| | Flux 2 | `flux-2` | `/flux-2/v1/generate` |
-| | Ideogram V2 | `ideogramV_2` | `/ideogramV_2/v1/generate` |
-| | Kling AI Image | `kling-ai-image` | `/kling-ai-image/v1/getImageTask` |
-| | SDXL | `getImage` | `/getImage/v1/getSDXLImage` |
-| | SDXL Lightning | `sdxl_lightning/getImage` | `/sdxl_lightning/getImage/v1/getSDXLImage` |
-| | Stable Diffusion | `getImage` | `/getImage/v1/getSDXLImage` |
-| | SD Inpainting | `inpainting` | `/inpainting/v1/getImage` |
-| **Image-to-Image** | Nano Banana Pro | `nano-banana-pro-770` | `/nano-banana-pro-770/v1/nano-banana-pro-request` |
-| **Text-to-Video** | Kling AI T2V | `kling-ai-video` | `/kling-ai-video/v1/generateVideoTask` |
-| | MiniMax Hailuo T2V | `minimax-hailuo-ai` | `/minimax-hailuo-ai/v1/generate` |
-| **Image-to-Video** | Kling AI I2V | `kling-ai-video` | `/kling-ai-video/v1/getImageToVideoTask` |
-| | MiniMax Hailuo I2V | `minimax-hailuo-ai` | `/minimax-hailuo-ai/v1/generate` |
-| | Higgsfield DoP | `dop` | `/dop/v1/generate` |
-| **Virtual Try-On** | IDM-VTON | `idm-vton-api` | `/idm-vton-api/v1/r-idm-vton` |
-| | Kolors VTON | `kling-ai-vton` | `/kling-ai-vton/v1/getVirtualTryOnTask` |
-| | Pixelforge Clothing | `virtual-tryon` | `/virtual-tryon/v1/r-vton` |
-
----
-
-## PawFlow Model ID Mapping
-
-PawFlow tools map to Pixazo models as follows:
-
-| PawFlow Tool | PawFlow Model ID | Pixazo API ID | Pixazo Endpoint |
-|-------------|-----------------|---------------|------------------|
-| `generate_image` | `flux-schnell` | `flux-1-schnell` | `/flux-1-schnell/v1/getData` |
-| `generate_image` | `flux-dev` | `flux-dev` | `/flux-dev/v1/getData` |
-| `generate_image` | `flux-pro` | `flux-pro` | `/flux-pro/v1/getData` |
-| `generate_image` | `sdxl` | `getImage` | `/getImage/v1/getSDXLImage` |
-| `generate_image` | `sdxl-lightning` | `sdxl_lightning/getImage` | `/sdxl_lightning/getImage/v1/getSDXLImage` |
-| `generate_image` | `ideogram` | `ideogramV_2` | `/ideogramV_2/v1/generate` |
-| `generate_image` | `kling` | `kling-ai-image` | `/kling-ai-image/v1/getImageTask` |
-| `edit_image` | `nano-banana-pro` | `nano-banana-pro-770` | `/nano-banana-pro-770/v1/nano-banana-pro-request` |
-| `edit_image` | `inpainting` | `inpainting` | `/inpainting/v1/getImage` |
-| `generate_video` | `kling` | `kling-ai-video` | `/kling-ai-video/v1/generateVideoTask` |
-| `generate_video` | `hailuo` | `minimax-hailuo-ai` | `/minimax-hailuo-ai/v1/generate` |
-| `generate_audio` | `lyria` | `google-lyria-2` | see audio section |
-| `generate_audio` | `stable-audio` | `stable-audio-2-5` | see audio section |

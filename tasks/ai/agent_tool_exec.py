@@ -220,12 +220,15 @@ class AgentToolExecMixin:
 
         from concurrent.futures import ThreadPoolExecutor, wait
         import core.background_tool as _bg
+        import time as _time_mod
 
         # Always use thread pool (even for single tool) so user can background it
         pool = ThreadPoolExecutor(max_workers=max(len(tool_calls), 1))
         futures = {pool.submit(_exec_one, tc): tc for tc in tool_calls}
         results_map = {}
         pending = set(futures.keys())
+        _started_at = {tc.id: _time_mod.time() for tc in tool_calls}
+        _auto_bg_after = 300.0  # 5 min — matches tool-relay auto-BG
 
         _cancelled = False
         while pending:
@@ -247,13 +250,27 @@ class AgentToolExecMixin:
                         results_map[tc.id] = (tc, "[Cancelled — agent was interrupted]")
                     pending.clear()
                     break
-            # Check if any pending tools were backgrounded by user
+            # Check if any pending tools were backgrounded by user, OR
+            # auto-background after 5 minutes (project rule: long-running
+            # tools must not block the agent loop forever).
+            _now = _time_mod.time()
             for f in list(pending):
                 tc = futures[f]
-                if _bg.is_backgrounded(tc.id):
+                _user_bg = _bg.is_backgrounded(tc.id)
+                _auto_bg = (_now - _started_at.get(tc.id, _now)) >= _auto_bg_after
+                if _user_bg or _auto_bg:
+                    if _auto_bg and not _user_bg:
+                        logger.info("[agent-tool] auto-background after %ds for tc_id=%s",
+                                    int(_auto_bg_after), tc.id)
                     _bg.register(tc.id, f, conversation_id, agent_name,
-                                 tool_name=tc.name, is_claude_code=is_claude_code)
-                    results_map[tc.id] = (tc, f"[Running in background (tool_call_id={tc.id}) — result will appear as a system message when done]")
+                                 tool_name=tc.name, is_claude_code=is_claude_code,
+                                 user_id=getattr(self, '_user_id', '') or '')
+                    results_map[tc.id] = (tc, (
+                        f"[Running in background (tc_id={tc.id})]\n"
+                        f"The actual result will be delivered in a separate "
+                        f"user message once the tool completes. Continue "
+                        f"your work — do not wait for it."
+                    ))
                     pending.discard(f)
 
         pool.shutdown(wait=False)

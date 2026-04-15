@@ -26,6 +26,7 @@ Protocol:
 import json
 import logging
 import threading
+import time
 from typing import Any, Dict, Optional
 
 from core import ServiceFactory
@@ -157,15 +158,50 @@ class ToolRelayService(BaseService):
     _inflight_lock = threading.Lock()
 
     @classmethod
-    def cancel_request(cls, request_id: str):
-        """Cancel a single in-flight tool request by its request/tc id."""
+    def cancel_request(cls, request_id: str) -> bool:
+        """Cancel a single in-flight tool request by its request/tc id.
+
+        `request_id` may be the MCP request_id (internal) OR the CC
+        tool_use id (UI-visible) — we try both so kill works regardless
+        of which one the caller knows. Returns True if a matching
+        in-flight entry was found and cancelled.
+        """
         with cls._inflight_lock:
             info = cls._inflight.get(request_id)
+            if info is None:
+                # Fallback: search by cc_tc_id (what the UI sends)
+                for _rid, _info in cls._inflight.items():
+                    if isinstance(_info, dict) and _info.get("cc_tc_id") == request_id:
+                        info = _info
+                        break
         if info and isinstance(info, dict):
             cancel_evt = info.get("cancel")
             if cancel_evt:
                 cancel_evt.set()
-                logger.info("[tool-relay] cancelled request %s", request_id)
+                logger.info("[tool-relay] cancelled request (cc_tc=%s)",
+                            info.get("cc_tc_id") or request_id)
+                return True
+        return False
+
+    @classmethod
+    def background_by_tc_id(cls, tc_id: str) -> bool:
+        """Flag an in-flight tool call for backgrounding by its CC tc_id.
+
+        Sets the per-inflight background_event; the wait loop in
+        _handle_execute returns the placeholder to CC immediately and
+        lets the daemon thread continue. When the thread finishes,
+        _inject_result publishes the actual result as a user message.
+        """
+        with cls._inflight_lock:
+            for _rid, info in cls._inflight.items():
+                if isinstance(info, dict) and info.get("cc_tc_id") == tc_id:
+                    bg_evt = info.get("background")
+                    if bg_evt and not bg_evt.is_set():
+                        bg_evt.set()
+                        logger.info("[tool-relay] backgrounded tc_id=%s (request_id=%s)",
+                                    tc_id, _rid)
+                        return True
+        return False
 
     @classmethod
     def cancel_agent(cls, conversation_id: str, agent_name: str):
@@ -622,9 +658,24 @@ class ToolRelayService(BaseService):
             return {"type": "result", "request_id": request_id,
                     "data": "Error: in-flight request timed out"}
 
-        # Mark as executing — cancel_event can be set to abort immediately
+        # Match CC tool_use id (enqueued by claude_code provider when it
+        # emitted the tool_call SSE event). Matching lets background /
+        # kill actions, keyed by UI-visible tc_id, reach this request.
+        cc_tc_id = ""
+        try:
+            from core.background_tool import pop_cc_tc, _args_hash
+            cc_tc_id = pop_cc_tc(
+                conversation_id, agent_name, tool_name,
+                _args_hash(arguments))
+        except Exception as _me:
+            logger.debug("[tool-relay] cc_tc match skipped: %s", _me)
+
+        # Mark as executing — cancel_event can abort, background_event
+        # detaches the call (returns placeholder, thread keeps running).
         evt = threading.Event()
         cancel_event = threading.Event()
+        background_event = threading.Event()
+        started_at = time.time()
         with self._cache_lock:
             self._executing[request_id] = evt
         with self._inflight_lock:
@@ -632,9 +683,13 @@ class ToolRelayService(BaseService):
                 "conv": conversation_id,
                 "agent": agent_name,
                 "cancel": cancel_event,
+                "background": background_event,
+                "cc_tc_id": cc_tc_id,
+                "tool_name": tool_name,
+                "started_at": started_at,
             }
 
-        # Execute in a daemon thread so cancel can abandon it
+        # Execute in a daemon thread so cancel/background can let it run on.
         _result_holder = [None]
 
         def _exec():
@@ -651,12 +706,93 @@ class ToolRelayService(BaseService):
         exec_thread = threading.Thread(target=_exec, daemon=True)
         exec_thread.start()
 
-        # Wait for completion OR cancellation
+        # Wait for completion, cancel, or background (including auto-BG
+        # after 5 minutes — project rule: long-running tools must not
+        # block the agent loop).
+        _auto_bg_after = 300.0  # 5 min — matches UI expectation
         while not evt.is_set():
             if cancel_event.wait(timeout=0.5):
-                # Cancelled — return interrupt result immediately
+                # Cancelled — return interrupt result immediately. The
+                # daemon thread is abandoned; best-effort subprocess kill
+                # is the relay's responsibility.
                 result = {"type": "result", "request_id": request_id,
                           "data": "[Interrupted by user — stop current work and respond to the new message]"}
+                with self._cache_lock:
+                    self._result_cache[request_id] = result
+                    self._executing.pop(request_id, None)
+                with self._inflight_lock:
+                    self._inflight.pop(request_id, None)
+                return result
+
+            # Auto-BG after 5 minutes — only meaningful when we have a
+            # cc_tc_id (LLM-API providers have their own backgrounding
+            # via agent_tool_exec.py).
+            if (cc_tc_id and not background_event.is_set()
+                    and time.time() - started_at >= _auto_bg_after):
+                logger.info("[tool-relay] auto-background after %ds for tc_id=%s",
+                            int(_auto_bg_after), cc_tc_id)
+                background_event.set()
+
+            if background_event.is_set():
+                # Return placeholder now; spawn a watcher to inject the
+                # real result (or kill notice) as a user message when
+                # the daemon thread finishes.
+                placeholder = (
+                    f"[Running in background (tc_id={cc_tc_id})]\n"
+                    f"The actual result will be delivered in a separate "
+                    f"user message once the tool completes. Continue your "
+                    f"work — do not wait for it."
+                )
+                result = {"type": "result", "request_id": request_id,
+                          "data": placeholder}
+
+                def _watch_bg_completion(_evt, _holder, _tc, _conv, _agent,
+                                         _tool, _uid, _cancel):
+                    # Wake up on either exec-done or user-kill, whichever
+                    # comes first. Hard 8h ceiling guards against a stuck
+                    # subprocess on a crashed relay.
+                    _deadline = time.time() + 8 * 3600
+                    while time.time() < _deadline:
+                        if _evt.wait(timeout=0.5):
+                            break
+                        if _cancel.is_set():
+                            break
+                    _was_cancelled = _cancel.is_set() and not _evt.is_set()
+                    _res = _holder[0] or {}
+                    _payload = _res.get("data", "") if isinstance(_res, dict) else str(_res)
+                    if _was_cancelled and not _payload:
+                        _payload = "[Cancelled before any output]"
+                    try:
+                        import core.background_tool as _bg
+                        # Register lazily so _inject_result has context
+                        # (we don't use a real Future here — the exec is
+                        # already captured in _holder).
+                        with _bg._lock:
+                            _bg._backgrounded[_tc] = {
+                                "future": None,
+                                "conversation_id": _conv,
+                                "agent_name": _agent,
+                                "tool_name": _tool,
+                                "user_id": _uid,
+                                "is_claude_code": True,
+                                "started_at": started_at,
+                                "status": "cancelled" if _was_cancelled else "done",
+                                "result": _payload,
+                            }
+                        _bg._inject_result(_tc, _payload, is_cancel=_was_cancelled)
+                    except Exception as _ie:
+                        logger.error("[tool-relay] bg inject failed for %s: %s",
+                                     _tc, _ie)
+
+                if cc_tc_id:
+                    threading.Thread(
+                        target=_watch_bg_completion,
+                        args=(evt, _result_holder, cc_tc_id, conversation_id,
+                              agent_name, tool_name, user_id, cancel_event),
+                        daemon=True,
+                        name=f"bg-watch-{cc_tc_id[:12]}",
+                    ).start()
+
                 with self._cache_lock:
                     self._result_cache[request_id] = result
                     self._executing.pop(request_id, None)

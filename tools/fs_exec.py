@@ -234,16 +234,20 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
     sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
 
     import time as _time
-    deadline = _time.monotonic() + timeout
+    # timeout=None → no deadline, run forever (project rule: no arbitrary timeouts).
+    deadline = _time.monotonic() + timeout if timeout is not None else None
     open_streams = 2
 
     while open_streams > 0:
-        remaining = deadline - _time.monotonic()
-        if remaining <= 0:
-            proc.kill()
-            proc.wait()
-            raise TimeoutError(f"Command timed out after {timeout}s")
-        events = sel.select(timeout=min(remaining, 1.0))
+        if deadline is not None:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                proc.wait()
+                raise TimeoutError(f"Command timed out after {timeout}s")
+            events = sel.select(timeout=min(remaining, 1.0))
+        else:
+            events = sel.select(timeout=1.0)
         for key, _ in events:
             stream_name = key.data
             line = key.fileobj.readline()

@@ -596,7 +596,7 @@ function connectSSE(cid, onReady) {
           resDiv.className = 'delegate-tool-result';
           const firstLine = data.result.split('\n')[0].substring(0, 120);
           resDiv.innerHTML = '<details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
-            + '<pre class="tc-output">' + escapeHtml(data.result) + '</pre></details>';
+            + '<pre class="tc-output">' + renderTextWithInlineMedia(data.result) + '</pre></details>';
           tcEl.appendChild(resDiv);
         }
       }

@@ -31,11 +31,97 @@ _completed: Dict[str, str] = {}  # "conv_id:tc_id" → result (pending agent pic
 _pending_bg: set = set()  # tc_ids flagged for backgrounding (before registered)
 
 
-def background(tc_id: str):
-    """Flag a tool_call for backgrounding. The agent loop picks this up."""
+# ── Claude-code tc_id → MCP request_id bridge ───────────────────────────
+# The MCP bridge generates its own request_id (a UUID) that is NOT the
+# Claude-code tool_use id the UI sees. When the streaming provider emits
+# a tool_call SSE event, it enqueues the CC tc_id + args_hash here;
+# tool_relay_service consumes it when the matching MCP request arrives
+# and stores the association on its _inflight entry. This lets
+# background / kill actions (keyed by the UI-visible tc_id) reach the
+# actual in-flight MCP request.
+#
+# CC runs tools in parallel — we match by (conv, agent, tool_name,
+# args_hash) with FIFO fallback on hash collisions.
+_cc_pending_tcs_lock = threading.Lock()
+_cc_pending_tcs: Dict[tuple, list] = {}  # (conv_id, agent_name) → [entry...]
+
+
+def _args_hash(args) -> str:
+    """Stable hash of tool arguments for tc_id ↔ request_id matching."""
+    import hashlib
+    import json
+    try:
+        canonical = json.dumps(args, sort_keys=True, default=str, ensure_ascii=False)
+    except Exception:
+        canonical = repr(args)
+    return hashlib.md5(canonical.encode("utf-8", errors="replace")).hexdigest()[:12]
+
+
+def enqueue_cc_tc(conv_id: str, agent_name: str, tc_id: str,
+                   tool_name: str, args_hash: str) -> None:
+    """Register a Claude-code tool_use id awaiting matching in tool_relay."""
+    import time as _time
+    key = (conv_id, agent_name)
+    with _cc_pending_tcs_lock:
+        queue = _cc_pending_tcs.setdefault(key, [])
+        queue.append({
+            "tc_id": tc_id,
+            "tool_name": tool_name,
+            "args_hash": args_hash,
+            "ts": _time.time(),
+        })
+        # Drop stale entries (older than 60s) — protects against leaks if
+        # a tool_call SSE event never gets a matching MCP request.
+        cutoff = _time.time() - 60
+        _cc_pending_tcs[key] = [e for e in queue if e["ts"] >= cutoff]
+
+
+def pop_cc_tc(conv_id: str, agent_name: str, tool_name: str,
+               args_hash: str) -> str:
+    """Find and remove the matching CC tc_id. Returns '' if no match.
+
+    Matches on (tool_name, args_hash) FIFO-within-collision. When two
+    parallel calls have identical args, the first pop wins — acceptable
+    since BG/kill on one of two truly-identical calls is ambiguous
+    anyway.
+    """
+    key = (conv_id, agent_name)
+    with _cc_pending_tcs_lock:
+        queue = _cc_pending_tcs.get(key)
+        if not queue:
+            return ""
+        for i, entry in enumerate(queue):
+            if entry["tool_name"] == tool_name and entry["args_hash"] == args_hash:
+                queue.pop(i)
+                if not queue:
+                    _cc_pending_tcs.pop(key, None)
+                return entry["tc_id"]
+    return ""
+
+
+def background(tc_id: str) -> bool:
+    """Flag a tool_call for backgrounding.
+
+    Tries three paths in order so this works for all providers:
+      1. LLM API (Anthropic/OpenAI direct): the agent loop polls
+         is_backgrounded(tc_id) in agent_tool_exec.py — just flag
+         _pending_bg and it picks up on the next tick.
+      2. Already-registered future: we know the tc_id and can set its
+         background event directly.
+      3. Claude-code via MCP: no direct future, look up the in-flight
+         MCP request by CC tc_id and set its background event (handled
+         by ToolRelayService.background_by_tc_id).
+    """
     with _lock:
         _pending_bg.add(tc_id)
+    # Tool-relay path (Claude-code via MCP bridge)
+    try:
+        from services.tool_relay_service import ToolRelayService
+        ToolRelayService.background_by_tc_id(tc_id)
+    except Exception as e:
+        logger.debug("[bg-tool] tool-relay bg routing skipped: %s", e)
     logger.info("[bg-tool] flagged %s for background", tc_id)
+    return True
 
 
 def is_backgrounded(tc_id: str) -> bool:
@@ -46,7 +132,7 @@ def is_backgrounded(tc_id: str) -> bool:
 
 def register(tc_id: str, future, conversation_id: str,
              agent_name: str = "", tool_name: str = "",
-             is_claude_code: bool = False):
+             is_claude_code: bool = False, user_id: str = ""):
     """Register a backgrounded tool with its running future."""
     with _lock:
         _pending_bg.discard(tc_id)
@@ -56,6 +142,7 @@ def register(tc_id: str, future, conversation_id: str,
             "agent_name": agent_name,
             "tool_name": tool_name,
             "is_claude_code": is_claude_code,
+            "user_id": user_id,
             "started_at": time.time(),
             "status": "running",
             "result": None,
@@ -272,15 +359,46 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
             from core.conversation_writer import ConversationWriter
             if is_cancel:
                 content = (
-                    f"[System: Background task {tool_name} (tool_call_id={tc_id}) was cancelled by user. "
-                    f"The tool_call returned a placeholder — ignore its result.]"
+                    f"Your tool call {tc_id} ({tool_name}) was cancelled by "
+                    f"the user.\n"
+                    f"Partial output (if any):\n{_result_content or '[Cancelled before any output]'}"
                 )
             else:
-                content = (
-                    f"[System: Background task {tool_name} (tool_call_id={tc_id}) has completed. "
-                    f"The earlier tool_call returned '[Running in background]' as placeholder. "
-                    f"Here is the actual result:\n\n{_result_content}]"
-                )
+                # Offload large outputs to FileStore so BG injection does
+                # not flood CC's context. Keep the first 500 chars inline
+                # as a preview, same pattern as ToolRegistry.execute.
+                _payload = _result_content or ""
+                _offload_threshold = 50_000
+                if len(_payload) > _offload_threshold:
+                    try:
+                        from core.file_store import FileStore
+                        _fid = FileStore.instance().store(
+                            f"bg_result_{tc_id}.txt",
+                            _payload.encode("utf-8", errors="replace"),
+                            "text/plain",
+                            category="tool_result",
+                            user_id=task.get("user_id", "") or "",
+                            conversation_id=conv_id,
+                            ttl=4 * 3600,
+                        )
+                        content = (
+                            f"Here is the result of your tool call {tc_id} "
+                            f"({tool_name}):\n"
+                            f"Full output stored at fs://filestore/{_fid}/bg_result_{tc_id}.txt "
+                            f"({len(_payload):,} chars).\n"
+                            f"Preview:\n{_payload[:500]}\n..."
+                        )
+                    except Exception as _fe:
+                        logger.warning("[bg-tool] FileStore offload failed: %s", _fe)
+                        content = (
+                            f"Here is the result of your tool call {tc_id} "
+                            f"({tool_name}):\n{_payload}"
+                        )
+                else:
+                    content = (
+                        f"Here is the result of your tool call {tc_id} "
+                        f"({tool_name}):\n{_payload}"
+                    )
             from core.llm_client import stamp_message
             msg = stamp_message({
                 "role": "user",

@@ -1014,6 +1014,25 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 _tc_event["parent_tc_id"] = _parent_tc_id
                             _pub("tool_call", _tc_event)
                             _emitted_sse_tcs.add(_block_id)
+                            # Register the CC tool_use id so tool_relay_service
+                            # can match it when the MCP bridge forwards the
+                            # same call (its request_id is a different uuid).
+                            # Required for kill / background to target the
+                            # right in-flight call when CC runs tools in //.
+                            try:
+                                from core.background_tool import (
+                                    enqueue_cc_tc, _args_hash,
+                                )
+                                from core.llm_client import unwrap_mcp_tool
+                                _match_name, _match_args = unwrap_mcp_tool(
+                                    _tc_name, _tc_args or {})
+                                enqueue_cc_tc(
+                                    conversation_id, agent_name, _block_id,
+                                    _match_name, _args_hash(_match_args))
+                            except Exception as _ee:
+                                logger.debug(
+                                    "[claude-code] enqueue_cc_tc skipped: %s",
+                                    _ee)
                         elif btype == "thinking":
                             thinking = block.get("thinking", "")
                             if thinking:

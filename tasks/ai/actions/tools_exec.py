@@ -61,16 +61,18 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         if not tc_id:
             flowfile.set_content(json.dumps({"error": "Missing tc_id"}).encode())
             return [flowfile]
-        # Cancel in-flight tool via relay (sets cancel_event → tool returns [Interrupted])
+        # Try targeted kill first — cancel_request matches on the CC
+        # tc_id (via cc_tc_id fallback inside) so a single tool in a
+        # parallel batch gets killed, not all of them.
         from services.tool_relay_service import ToolRelayService
-        ToolRelayService.cancel_request(tc_id)
-        # Also try background tool cancel
+        _targeted = ToolRelayService.cancel_request(tc_id)
+        # Always run background cancel (no-op if tc_id isn't backgrounded).
         import core.background_tool as _bg
         _bg.cancel(tc_id)
-        # For MCP tools (executed via tool relay with a random request_id,
-        # NOT the tc_id), cancel by (conversation_id) — kills only the
-        # in-flight relay tool, not the Claude Code subprocess.
-        if conv_id:
+        # Only fall back to broad agent-level cancel if the targeted
+        # kill found no matching in-flight. Prevents killing sibling
+        # tools when CC runs several in parallel.
+        if not _targeted and conv_id:
             ToolRelayService.cancel_agent(conv_id, agent_name="")
         flowfile.set_content(json.dumps({"ok": True, "tc_id": tc_id}).encode())
         return [flowfile]

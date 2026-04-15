@@ -158,14 +158,28 @@ class LLMMessage:
     seq: int = 0  # process-global monotonic creation order — tiebreaker when ts collides
 
     def __post_init__(self):
+        # Invariant: every non-system message carries msg_id + timestamp + seq,
+        # both fresh and reconstructed. The one-shot migration in
+        # scripts/migrate_msg_seq_ts.py guarantees on-disk entries always
+        # have them. System prompts are ephemeral (rebuilt from the agent
+        # definition at each load) and exempt — if missing, they get fresh
+        # stamps here since they'll never be persisted as the source of
+        # truth anyway.
         if not self.msg_id:
             import uuid
             self.msg_id = uuid.uuid4().hex[:12]
         if not self.timestamp:
             import time
             self.timestamp = time.time()
-        if not self.seq:
             self.seq = _next_msg_seq()
+        elif not self.seq:
+            if self.role == "system":
+                self.seq = _next_msg_seq()
+            else:
+                raise ValueError(
+                    f"LLMMessage reconstructed with timestamp={self.timestamp} "
+                    f"but no seq (role={self.role}) "
+                    f"— run scripts/migrate_msg_seq_ts.py")
 
     @property
     def text_content(self) -> str:
@@ -243,23 +257,26 @@ def stamp_message(msg: Dict[str, Any]) -> Dict[str, Any]:
     """Set ts + seq + msg_id on a message dict at CREATION time.
 
     Use this at every site that builds a raw dict instead of going
-    through LLMMessage. Returns the same dict for chaining. Idempotent
-    only if all three fields are already set — otherwise mints fresh
-    values (creation order is decided by the FIRST stamp call).
+    through LLMMessage. Returns the same dict for chaining.
+
+    Every message MUST have all three fields. A message that is missing
+    even one is treated as freshly-created and gets fresh values for
+    the three — there is no "partial" state, no "already stamped once"
+    compromise. On-disk invariant: every persisted message has ts+seq+msg_id.
 
     Producer rule: stamp at the moment the message is conceptually
     created, NOT at enqueue. Otherwise (ts, seq) ordering on disk
-    diverges from the real creation order — exactly the bug this
-    helper exists to prevent.
+    diverges from the real creation order.
     """
     import time as _time
     import uuid as _uuid
-    if not msg.get("ts") and not msg.get("timestamp"):
-        msg["ts"] = _time.time()
-    if not msg.get("seq"):
-        msg["seq"] = _next_msg_seq()
-    if not msg.get("msg_id"):
-        msg["msg_id"] = _uuid.uuid4().hex[:12]
+    # Treat partial state as fresh: stamp everything atomically so we
+    # never end up with (ts set, seq unset) or similar impossible states.
+    if not (msg.get("ts") or msg.get("timestamp")) or not msg.get("seq") \
+            or not msg.get("msg_id"):
+        msg["ts"] = msg.get("ts") or msg.get("timestamp") or _time.time()
+        msg["seq"] = msg.get("seq") or _next_msg_seq()
+        msg["msg_id"] = msg.get("msg_id") or _uuid.uuid4().hex[:12]
     return msg
 
 

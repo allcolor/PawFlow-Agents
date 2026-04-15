@@ -435,102 +435,30 @@ class AgentCoreMixin:
                     else:
                         _max_ctx = ctx.get("max_context_size", 64000)
                         _cpt = ctx.get("chars_per_token", 0)
-                        _est = self._estimate_tokens(messages, tool_defs=tool_defs,
-                                                     chars_per_token=_cpt)
                         _threshold = ctx.get("context_compact_threshold", 0.75)
-                        _precompact = ctx.get("_precompact_snapshot")
 
                         # Microcompaction: clear old tool results after idle gap
                         if iteration == 1:
                             self._microcompact_time_based(messages)
 
-                        # Precompact at 40%: start background summarization
-                        if (_est > _max_ctx * 0.4
-                                and not _precompact
-                                and not ctx.get("_precompact_running")):
-                            _snap_msgs = copy.deepcopy(messages)
-                            _snap_last_id = messages[-1].msg_id if messages else ""
-                            ctx["_precompact_running"] = True
-
-                            def _bg_precompact():
-                                try:
-                                    logger.info("[precompact:%s] starting at %.0f%% (%d tokens)",
-                                                conversation_id[:8], (_est / _max_ctx) * 100, _est)
-                                    result = self._compact(
-                                        _snap_msgs, compact_client, _max_ctx,
-                                        threshold=0.0, force=True,
-                                        conversation_id="",  # no SSE events for bg precompact
-                                        agent_name=ctx.get("active_agent_name") or "",
-                                        tool_defs=ctx.get("tool_defs"),
-                                        chars_per_token=_cpt,
-                                        user_id=user_id,
-                                    )
-                                    _snap_data = {
-                                        "messages": result,
-                                        "last_msg_id": _snap_last_id,
-                                        "original_count": len(_snap_msgs),
-                                    }
-                                    ctx["_precompact_snapshot"] = _snap_data
-                                    # Also store at class level so /compact can use it
-                                    _snap_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}"
-                                    self._precompact_snapshots[_snap_key] = _snap_data
-                                    logger.info("[precompact:%s] ready: %d → %d messages",
-                                                conversation_id[:8], len(_snap_msgs), len(result))
-                                except Exception as e:
-                                    logger.warning("[precompact:%s] failed: %s", conversation_id[:8], e)
-                                finally:
-                                    ctx["_precompact_running"] = False
-
-                            import threading as _threading
-                            _threading.Thread(target=_bg_precompact, daemon=True,
-                                              name=f"precompact-{conversation_id[:8]}").start()
-
-                        # At threshold: use precompact snapshot if available
-                        if _est > _max_ctx * _threshold and _precompact:
-                            _snap = _precompact
-                            _snap_last_id = _snap["last_msg_id"]
-                            # Find where the snapshot ends in current messages
-                            _split = len(messages)
-                            for _si in range(len(messages)):
-                                if messages[_si].msg_id == _snap_last_id:
-                                    _split = _si + 1
-                                    break
-                            # Merge: precompact summary + messages after snapshot
-                            _after = messages[_split:]
-                            llm_context = list(_snap["messages"]) + _after
-                            # Check if this fits — if not, compact the remainder
-                            _merged_est = self._estimate_tokens(
-                                llm_context, tool_defs=tool_defs, chars_per_token=_cpt)
-                            if _merged_est > _max_ctx * _threshold:
-                                llm_context = self._compact(
-                                    copy.deepcopy(llm_context), compact_client, _max_ctx,
-                                    threshold=_threshold,
-                                    conversation_id=conversation_id,
-                                    agent_name=ctx.get("active_agent_name") or "",
-                                    tool_defs=ctx.get("tool_defs"),
-                                    chars_per_token=_cpt,
-                                    user_id=user_id,
-                                )
-                            logger.info("[precompact:%s] applied: snapshot(%d) + after(%d) = %d msgs",
-                                        conversation_id[:8], len(_snap["messages"]),
-                                        len(_after), len(llm_context))
-                            ctx["_precompact_snapshot"] = None  # consumed
-                            _snap_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}"
-                            self._precompact_snapshots.pop(_snap_key, None)
+                        # Threshold-triggered compact. No more 40% precompact
+                        # snapshot mechanism — the BucketStore pyramidal cache
+                        # now makes _compact O(tail since last bucket) instead
+                        # of O(full transcript), so doing it inline when needed
+                        # is cheap and always up-to-date. The prior snapshot
+                        # lived in memory only, was discarded on restart, and
+                        # duplicated what buckets now persist.
+                        llm_context = self._compact(
+                            copy.deepcopy(messages), compact_client, _max_ctx,
+                            threshold=_threshold,
+                            conversation_id=conversation_id,
+                            agent_name=ctx.get("active_agent_name") or "",
+                            tool_defs=ctx.get("tool_defs"),
+                            chars_per_token=_cpt,
+                            user_id=user_id,
+                        )
+                        if len(llm_context) < len(messages):
                             ctx["_context_diverged"] = True
-                        else:
-                            # Normal path: compact if over threshold
-                            llm_context = self._compact(
-                                copy.deepcopy(messages), compact_client, _max_ctx,
-                                threshold=_threshold,
-                                conversation_id=conversation_id,
-                                agent_name=ctx.get("active_agent_name") or "",
-                                tool_defs=ctx.get("tool_defs"),
-                                chars_per_token=_cpt,
-                                user_id=user_id,
-                            )
-                            if len(llm_context) < len(messages):
-                                ctx["_context_diverged"] = True
 
                     # Pre-injection char count for CPT calibration
                     _pre_inject_chars = self._estimate_tokens(

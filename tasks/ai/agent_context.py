@@ -481,9 +481,17 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             existing = flowfile.get_attribute(conv_attr)
             if existing:
                 try:
-                    messages = self._deserialize_messages(json.loads(existing))
-                    # Filter out display-only messages (sub-agent traces)
-                    # display_only messages already filtered by _deserialize_messages
+                    _raw = json.loads(existing)
+                    # Ingress from an external flow attribute: the caller
+                    # doesn't know about seq/ts, so we stamp each entry
+                    # here before deserialization. This is the system
+                    # boundary where "outside message" becomes "PawFlow
+                    # message" with the invariant (ts+seq+msg_id set).
+                    from core.llm_client import stamp_message as _stamp
+                    for _e in _raw:
+                        if isinstance(_e, dict):
+                            _stamp(_e)
+                    messages = self._deserialize_messages(_raw)
                 except (json.JSONDecodeError, KeyError):
                     pass
 

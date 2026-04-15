@@ -8,7 +8,7 @@
 //
 //   fireAction('compact', {conversation_id: cid});  // fire-and-forget, no result needed
 
-const { Subject, filter, take, map, timeout, catchError, of, EMPTY, first, tap } = rxjs;
+const { Subject, filter, take, map, catchError, of, EMPTY, first, tap } = rxjs;
 
 // Central subject — all SSE command_result events flow through here
 const _commandResult$ = new rxjs.Subject();
@@ -24,15 +24,16 @@ function _updateLoadingState() {
 /**
  * Fire an action and return an Observable of the result.
  * The Observable emits once (the result) then completes.
- * Times out after 120s with an error.
+ * NO timeout: long-running actions (compact, context rebuild, media gen)
+ * can take minutes. The only timeout in PawFlow is the LLM watchdog.
+ * If a result never arrives, the page reload clears it.
  *
  * @param {string} actionName - Server action name
  * @param {object} params - Action parameters (conversation_id, etc.)
- * @param {object} opts - Options: {silent: bool, timeout: ms}
+ * @param {object} opts - Options: {silent: bool}
  * @returns {rxjs.Observable} Observable that emits the parsed result
  */
 function action$(actionName, params = {}, opts = {}) {
-  const _timeout = opts.timeout || 120000;
 
   // Fire the fetch (no await)
   const body = { action: actionName, ...params };
@@ -79,14 +80,7 @@ function action$(actionName, params = {}, opts = {}) {
       }
       return r.result || r;
     }),
-    timeout({ each: _timeout }),
-    catchError(err => {
-      if (err.name === 'TimeoutError') {
-        console.warn('[action$] timeout for', actionName);
-        return of({ error: `Action '${actionName}' timed out` });
-      }
-      return of({ error: err.message || String(err) });
-    }),
+    catchError(err => of({ error: err.message || String(err) })),
     tap(() => {
       _pendingActions = Math.max(0, _pendingActions - 1);
       _updateLoadingState();

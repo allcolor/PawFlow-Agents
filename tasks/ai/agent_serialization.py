@@ -91,6 +91,20 @@ class AgentSerializationMixin:
                     )
                     for tc in (entry["tool_calls"] or [])
                 ]
+            # seq + ts are mandatory on disk for every non-system message —
+            # migration ensures this. If either is missing on a normal
+            # message, the entry is corrupt; fail loud. System prompts
+            # are ephemeral (rebuilt from the agent definition at every
+            # load) and exempt from the invariant, matching the store's
+            # _validate_message exemption.
+            _role = entry.get("role")
+            _ts = entry.get("ts") or entry.get("timestamp")
+            _seq = entry.get("seq")
+            if _role != "system" and (not _ts or not _seq):
+                raise ValueError(
+                    f"Message missing ts/seq on disk "
+                    f"(msg_id={entry.get('msg_id')}, role={_role}) "
+                    f"— run scripts/migrate_msg_seq_ts.py")
             messages.append(LLMMessage(
                 role=entry["role"],
                 content=entry.get("content", ""),
@@ -100,8 +114,8 @@ class AgentSerializationMixin:
                 msg_id=entry.get("msg_id", ""),
                 display_only=entry.get("display_only", False),
                 thinking=entry.get("thinking", ""),
-                timestamp=entry.get("ts", 0) or entry.get("timestamp", 0),
-                seq=entry.get("seq", 0),
+                timestamp=_ts,
+                seq=_seq,
             ))
         return messages
 

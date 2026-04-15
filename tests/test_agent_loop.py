@@ -394,7 +394,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 81  # capability handlers added: 3D, upscale, try_on, lipsync, trainer
+        assert len(registry.list_tools()) == 86  # + upscale_video, remove_background, describe_image, remix_image, speech_to_video
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})

@@ -398,6 +398,63 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         except Exception as e:
             logger.debug("[compact] LLM auto-extract failed: %s", e)
 
+    def _consolidate_buckets(self, bucket_docs: list, client: LLMClient,
+                              user_id: str = "", conversation_id: str = "",
+                              agent_name: str = "") -> str:
+        """Consolidate K bucket summaries into one super-bucket summary.
+
+        Unlike a regular compact (which summarizes raw conversation), this
+        takes N already-compacted summaries and produces a tighter
+        super-summary. Goal: drop work that was started AND finished within
+        this window, collapse redundant threads, preserve only decisions
+        still in force. Target output ≤ 1/3 of combined input.
+        """
+        if not bucket_docs:
+            return ""
+        # Build the concatenated input
+        parts = []
+        for d in bucket_docs:
+            parts.append(
+                f"\n=== Bucket {d.get('bucket_id')} "
+                f"(seq {d.get('first_seq')}..{d.get('last_seq')}) ===\n"
+                f"{d.get('summary', '')}\n"
+            )
+        combined = "".join(parts)
+        total_len = len(combined)
+        target_tokens = max(1000, total_len // (3 * 4))  # ~1/3 length, 4 chars/tok
+
+        instructions = (
+            "You are consolidating several bucket summaries into ONE "
+            "super-summary. Each bucket follows the 7-section structure "
+            "(USER_INTENT, DECISIONS, FILES_MODIFIED, ERRORS, "
+            "CURRENT_STATE, PENDING, CONTEXT).\n\n"
+            "RULES:\n"
+            "- Preserve concrete facts, file paths, and decisions that "
+            "are still in force at the END of the window.\n"
+            "- DROP topics that were started AND finished within this "
+            "window (a feature planned → designed → shipped should only "
+            "mention 'shipped').\n"
+            "- DROP abandoned or superseded lines of work entirely.\n"
+            "- Collapse redundant bullets across buckets.\n"
+            f"- Output must be at most {target_tokens} tokens (~1/3 of input)."
+        )
+        # Reuse _summarize_messages — it handles the file-based tool loop
+        # for CC and the direct path for API providers.
+        from core.llm_client import LLMMessage
+        synth = [LLMMessage(role="user", content=combined)]
+        try:
+            return self._summarize_messages(
+                synth, client, max_tokens=target_tokens * 4,
+                target_tokens=target_tokens,
+                conversation_id=conversation_id,
+                agent_name=agent_name,
+                compact_instructions=instructions,
+                user_id=user_id,
+            )
+        except Exception as e:
+            logger.error("[compact] super-bucket consolidation failed: %s", e)
+            return ""
+
     def _compact(
         self,
         messages: List[LLMMessage],
@@ -425,6 +482,43 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         Phase 4: Persist + notify
         """
         _cpt = chars_per_token if chars_per_token > 0 else 3.5
+
+        # ── Phase -1: Bucket-store pre-filter ──
+        # Hierarchical cache: messages already covered by an existing bucket
+        # never need to be re-summarized. Drop them from the input so the
+        # summarizer only sees the new tail since the last bucket.
+        _bucket_store = None
+        _historical_header = ""
+        if conversation_id and agent_name:
+            try:
+                from core.bucket_store import BucketStore
+                from core.conversation_store import ConversationStore
+                _conv_dir = ConversationStore.instance()._conv_dir(conversation_id)
+                _bucket_store = BucketStore.get(_conv_dir, agent_name)
+                _historical_header = _bucket_store.assemble_summary_header()
+                # Pre-filter by seq. seq is a strictly-monotonic global
+                # counter (bootstrap from disk + monotonic per-process +
+                # on-disk invariant enforced by the migration) — filtering
+                # by seq alone is correct and unambiguous.
+                _last_seq = _bucket_store.last_seq
+                if _last_seq > 0:
+                    _before = len(messages)
+                    messages = [
+                        m for m in messages
+                        if m.role == "system" or m.seq > _last_seq
+                    ]
+                    _dropped = _before - len(messages)
+                    if _dropped:
+                        logger.info(
+                            "[compact] bucket pre-filter: dropped %d msgs "
+                            "already covered by buckets (last_seq=%d)",
+                            _dropped, _last_seq)
+            except Exception as _bs_err:
+                logger.warning("[compact] bucket store init failed: %s — "
+                                "falling back to full-transcript compact",
+                                _bs_err)
+                _bucket_store = None
+                _historical_header = ""
 
         # ── Phase 0: Cleanup ──
         messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
@@ -588,6 +682,44 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     f"Compaction failed: summarizer returned {len(summary or '')} chars")
             summary = f"[Summary unavailable — {len(old_messages)} earlier messages dropped]"
 
+        # ── Persist fresh summary as a new bucket ──
+        # Immutable — this summary will be reused verbatim at every future
+        # compact of this agent instead of regenerated from raw messages.
+        if (_bucket_store is not None and summary
+                and not summary.startswith("[")
+                and old_messages):
+            try:
+                # Every message must have seq + timestamp (invariant enforced
+                # by the migration + LLMMessage). No defensive fallbacks.
+                _seqs = [m.seq for m in old_messages]
+                _tss = [m.timestamp for m in old_messages]
+                _model = getattr(client, "default_model", "") or ""
+                _bucket_store.add_bucket(
+                    first_seq=min(_seqs), last_seq=max(_seqs),
+                    first_ts=min(_tss), last_ts=max(_tss),
+                    summary=summary, model=_model,
+                )
+                # Rollup: K buckets → 1 super-bucket (delete the K originals)
+                if _bucket_store.should_rollup():
+                    try:
+                        _sb_inputs = _bucket_store.get_consolidation_input()
+                        _sb_text = self._consolidate_buckets(
+                            _sb_inputs, client, user_id=user_id,
+                            conversation_id=conversation_id,
+                            agent_name=agent_name)
+                        if _sb_text and len(_sb_text.strip()) >= 20:
+                            _bucket_store.rollup(_sb_text, model=_model)
+                    except Exception as _sb_err:
+                        logger.warning(
+                            "[compact] super-bucket rollup failed "
+                            "(buckets kept, will retry next compact): %s",
+                            _sb_err)
+                # Rebuild header with the new bucket (and SB if rolled up)
+                _historical_header = _bucket_store.assemble_summary_header()
+            except Exception as _bs_err:
+                logger.warning("[compact] bucket persistence failed: %s",
+                                _bs_err)
+
         # Auto-extract memories from compaction summary
         if user_id and summary and not summary.startswith("["):
             _extract_client = client
@@ -607,15 +739,24 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         compacted: List[LLMMessage] = []
         if system_msg:
             compacted.append(system_msg)
-        compacted.append(LLMMessage(
-            role="user",
-            content=(
+        # If a historical header exists (bucket store), it already contains
+        # the new bucket we just added. Use it as-is. Otherwise fall back to
+        # the standalone fresh summary (cold start, bucket store disabled).
+        if _historical_header:
+            _body = (
+                f"{_historical_header}\n"
+                f"The recent messages below are the current state. "
+                f"Do NOT restart or re-propose completed work. "
+                f"Use read_history tool to access older messages if needed."
+            )
+        else:
+            _body = (
                 f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
                 f"The recent messages below are the current state. "
                 f"Do NOT restart or re-propose completed work. "
                 f"Use read_history tool to access older messages if needed."
-            ),
-        ))
+            )
+        compacted.append(LLMMessage(role="user", content=_body))
         compacted.append(LLMMessage(
             role="assistant",
             content="Understood. I have the summary and will continue from the recent messages.",

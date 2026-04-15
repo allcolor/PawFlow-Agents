@@ -240,10 +240,10 @@
     },
     "luma-dream-machine": {
       "label": "Luma Dream Machine (Luma AI)",
-      "category": "image",
+      "category": "video",
       "operations": {
-        "text_to_image": {
-          "endpoint": "/luma-dream-machine/v1/luma-dream-machine/generateTextToImageRequest",
+        "text_to_video": {
+          "endpoint": "/luma-dream-machine/v1/luma-dream-machine/generateTextToVideoRequest",
           "poll_endpoint": "/luma-dream-machine-polling/luma-dream-machine/getStatus",
           "convention": "legacy_poll",
           "id_field": "request_id"
@@ -382,7 +382,6 @@
         }
       }
     },
-
     "sora-video": {
       "label": "Sora (OpenAI)",
       "category": "video",
@@ -474,18 +473,6 @@
         }
       }
     },
-    "luma-dream-machine": {
-      "label": "Luma Dream Machine (Luma AI)",
-      "category": "video",
-      "operations": {
-        "text_to_video": {
-          "endpoint": "/luma-dream-machine/v1/luma-dream-machine/generateTextToVideoRequest",
-          "poll_endpoint": "/luma-dream-machine-polling/luma-dream-machine/getStatus",
-          "convention": "legacy_poll",
-          "id_field": "request_id"
-        }
-      }
-    },
     "hailuo": {
       "label": "Hailuo (MiniMax)",
       "category": "video",
@@ -498,7 +485,6 @@
         }
       }
     },
-
     "minimax-music": {
       "label": "MiniMax Music 2.0 (Hailuo AI)",
       "category": "audio",
@@ -560,7 +546,6 @@
         }
       }
     },
-
     "hunyuan3d-3-0": {
       "label": "Hunyuan3D 3.0 (Tencent)",
       "category": "3d",
@@ -614,7 +599,6 @@
         }
       }
     },
-
     "seedvr-upscale-image": {
       "label": "SeedVR Image Upscaler (ByteDance)",
       "category": "upscale",
@@ -663,7 +647,6 @@
         }
       }
     },
-
     "fashn-virtual-try-on": {
       "label": "Fashn Virtual Try-On",
       "category": "try_on",
@@ -690,7 +673,6 @@
         }
       }
     },
-
     "omnihuman": {
       "label": "OmniHuman 1.5 (ByteDance Lipsync)",
       "category": "lipsync",
@@ -702,6 +684,1187 @@
           "video_field": "video_url",
           "image_field": "image_url",
           "audio_field": "audio_url"
+        }
+      }
+    },
+    "seedance-2-0-fast": {
+      "label": "Seedance 2 0 Fast",
+      "category": "video",
+      "operations": {
+        "video_edit": {
+          "endpoint": "/seedance-2-0-fast/v1/edit-video-fast",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_video": {
+          "endpoint": "/seedance-2-0-fast/v1/text-to-video-fast",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "seedance-2-0": {
+      "label": "Seedance 2 0",
+      "category": "video",
+      "operations": {
+        "video_edit": {
+          "endpoint": "/seedance-2-0/v1/edit-video",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_video": {
+          "endpoint": "/seedance-2-0/v1/text-to-video",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "byteplus": {
+      "label": "Byteplus",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/byteplus/v1/generateFrame2VideoTask",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_video": {
+          "endpoint": "/byteplus/v1/generateVideoTask",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "edit_image": {
+          "endpoint": "/byteplus/v1/getEditImage",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_image": {
+          "endpoint": "/byteplus/v1/getTextToImage",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "veo31f": {
+      "label": "Veo31F",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/veo31f/v1/veo-3.1-fast/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "runway-gen-4-5": {
+      "label": "Runway Gen 4 5",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/runway-gen-4-5/v1/gen-4.5/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-image": {
+      "label": "Kling Image",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/kling-image/v1/kling-image-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-image-o3-i2i": {
+      "label": "Kling Image O3 I2I",
+      "category": "video",
+      "operations": {
+        "edit_image": {
+          "endpoint": "/kling-image-o3-i2i/v1/kling-image-o3-i2i-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-3-0-text-to-video-standard": {
+      "label": "Kling 3 0 Text To Video Standard",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/kling-3-0-text-to-video-standard/v1/kling-3-0-text-to-video-standard-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-3-0-image-to-video-standard": {
+      "label": "Kling 3 0 Image To Video Standard",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/kling-3-0-image-to-video-standard/v1/kling-3-0-image-to-video-standard-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-image-t2i": {
+      "label": "Kling Image T2I",
+      "category": "video",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/kling-image-t2i/v1/kling-image-t2i-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-video-v2-6-standard-motion-control": {
+      "label": "Kling Video V2 6 Standard Motion Control",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/kling-video-v2-6-standard-motion-control/v1/kling-video-v2-6-standard-motion-control-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-ai-avatar-v2-pro-789": {
+      "label": "Kling Ai Avatar V2 Pro 789",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/kling-ai-avatar-v2-pro-789/v1/kling-ai-avatar-v2-pro-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-ai-video": {
+      "label": "Kling Ai Video",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/kling-ai-video/v1/generateVideoTask",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "image_to_video": {
+          "endpoint": "/kling-ai-video/v1/getImageToVideoTask",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-o1-edit-video-video-to-video-634": {
+      "label": "Kling O1 Edit Video Video To Video 634",
+      "category": "video",
+      "operations": {
+        "video_edit": {
+          "endpoint": "/kling-o1-edit-video-video-to-video-634/v1/kling-o1-edit-video-video-to-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-o1-first-frame-last-frame-to-video-857": {
+      "label": "Kling O1 First Frame Last Frame To Video 857",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/kling-o1-first-frame-last-frame-to-video-857/v1/kling-o1-first-frame-last-frame-to-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-o1-image-208": {
+      "label": "Kling O1 Image 208",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/kling-o1-image-208/v1/kling-o1-image-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-o1-reference-image-to-video-382": {
+      "label": "Kling O1 Reference Image To Video 382",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/kling-o1-reference-image-to-video-382/v1/kling-o1-reference-image-to-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-o1-reference-video-to-video-315": {
+      "label": "Kling O1 Reference Video To Video 315",
+      "category": "video",
+      "operations": {
+        "video_edit": {
+          "endpoint": "/kling-o1-reference-video-to-video-315/v1/kling-o1-reference-video-to-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kling-ai-vton": {
+      "label": "Kling Ai Vton",
+      "category": "try_on",
+      "operations": {
+        "try_on": {
+          "endpoint": "/kling-ai-vton/v1/getVirtualTryOnTask",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "minimax-hailuo-ai": {
+      "label": "Minimax Hailuo Ai",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/minimax-hailuo-ai/v1/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "image_to_video": {
+          "endpoint": "/minimax-hailuo-ai/v1/imageToVideo",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "luma-dream-machine-ray-2-flash-image-to-video": {
+      "label": "Luma Dream Machine Ray 2 Flash Image To Video",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/luma-dream-machine-ray-2-flash-image-to-video/v1/luma-dream-machine-ray-2-flash-image-to-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "flux-fill-dev": {
+      "label": "Flux Fill Dev",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/flux-fill-dev/v1/flux-fill/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "flux-2-pro-image-to-image-866": {
+      "label": "Flux 2 Pro Image To Image 866",
+      "category": "image",
+      "operations": {
+        "edit_image": {
+          "endpoint": "/flux-2-pro-image-to-image-866/v1/flux-2-pro-image-to-image-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "flux-2-pro-image-to-image-trainer-831": {
+      "label": "Flux 2 Pro Image To Image Trainer 831",
+      "category": "image",
+      "operations": {
+        "train": {
+          "endpoint": "/flux-2-pro-image-to-image-trainer-831/v1/flux-2-pro-image-to-image-trainer-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "flux-2-pro-text-to-image-799": {
+      "label": "Flux 2 Pro Text To Image 799",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/flux-2-pro-text-to-image-799/v1/flux-2-pro-text-to-image-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "flux-2-pro-text-to-image-trainer-712": {
+      "label": "Flux 2 Pro Text To Image Trainer 712",
+      "category": "image",
+      "operations": {
+        "train": {
+          "endpoint": "/flux-2-pro-text-to-image-trainer-712/v1/flux-2-pro-text-to-image-trainer-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "flux-2-klein-4b": {
+      "label": "Flux 2 Klein 4B",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/flux-2-klein-4b/v1/generateImage",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "flux-1-schnell": {
+      "label": "Flux 1 Schnell",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/flux-1-schnell/v1/getData",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "flux-pro": {
+      "label": "Flux Pro",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/flux-pro/v1/pro/textToImage",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "gpt-image-1-5-api-923": {
+      "label": "Gpt Image 1 5 Api 923",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/gpt-image-1-5-api-923/v1/gpt-image-1-5-api-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "seedream-5-0-lite-image": {
+      "label": "Seedream 5 0 Lite Image",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/seedream-5-0-lite-image/v1/seedream-5-0-lite-image-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "seedream-5-0-lite-text-to-image": {
+      "label": "Seedream 5 0 Lite Text To Image",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/seedream-5-0-lite-text-to-image/v1/seedream-5-0-lite-text-to-image-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "hunyuan-image": {
+      "label": "Hunyuan Image",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/hunyuan-image/v1/hunyuan-image/generateRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "hunyuan3d-3-0-api-294": {
+      "label": "Hunyuan3D 3 0 Api 294",
+      "category": "3d",
+      "operations": {
+        "image_to_3d": {
+          "endpoint": "/hunyuan3d-3-0-api-294/v1/hunyuan3d-3-0-api-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "hunyuan-image-3-0-instruct": {
+      "label": "Hunyuan Image 3 0 Instruct",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/hunyuan-image-3-0-instruct/v1/hunyuan-image-3-0-instruct-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "p-image-upscale": {
+      "label": "P Image Upscale",
+      "category": "image",
+      "operations": {
+        "upscale": {
+          "endpoint": "/p-image-upscale/v1/p-image-upscale/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-2-7-api": {
+      "label": "Wan 2 7 Api",
+      "category": "video",
+      "operations": {
+        "edit_image": {
+          "endpoint": "/wan-2-7-api/v1/generateWan27EditImageRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_image": {
+          "endpoint": "/wan-2-7-api/v1/generateWan27TextToImageRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-2-7-video-api": {
+      "label": "Wan 2 7 Video Api",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/wan-2-7-video-api/v1/generateWan27VideoEditRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-2-7-pro-api": {
+      "label": "Wan 2 7 Pro Api",
+      "category": "video",
+      "operations": {
+        "edit_image": {
+          "endpoint": "/wan-2-7-pro-api/v1/generateWan27ProEditImageRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_image": {
+          "endpoint": "/wan-2-7-pro-api/v1/generateWan27ProTextToImageRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-2-6-image-to-video-477": {
+      "label": "Wan 2 6 Image To Video 477",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/wan-2-6-image-to-video-477/v1/wan-2-6-image-to-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-2-6-text-to-video-569": {
+      "label": "Wan 2 6 Text To Video 569",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/wan-2-6-text-to-video-569/v1/wan-2-6-text-to-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-2-6-image-to-video-flash-api-353": {
+      "label": "Wan 2 6 Image To Video Flash Api 353",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/wan-2-6-image-to-video-flash-api-353/v1/wan-2-6-image-to-video-flash-api-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-image-2-5": {
+      "label": "Wan Image 2 5",
+      "category": "image",
+      "operations": {
+        "edit_image": {
+          "endpoint": "/wan-image-2-5/v1/generateEditImage2-5Request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_image": {
+          "endpoint": "/wan-image-2-5/v1/generateTextToImage2-5Request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-video-2-5": {
+      "label": "Wan Video 2 5",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/wan-video-2-5/v1/generateImageToVideo2-5Request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_video": {
+          "endpoint": "/wan-video-2-5/v1/generateTextToVideo2-5Request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "pixazo-wan-image-to-video-1763709522": {
+      "label": "Pixazo Wan Image To Video 1763709522",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/pixazo-wan-image-to-video-1763709522/v1/pixazo-wan-image-to-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-i2v": {
+      "label": "Wan I2V",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/wan-i2v/v1/generateImageToVideoRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-t2i": {
+      "label": "Wan T2I",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/wan-t2i/v1/generateEditImageRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "wan-video": {
+      "label": "Wan Video",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/wan-video/v1/generateTextToVideoRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "eleven-v3-alpha-954": {
+      "label": "Eleven V3 Alpha 954",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/eleven-v3-alpha-954/v1/eleven-v3-alpha-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "elevenlabs-music-api-368": {
+      "label": "Elevenlabs Music Api 368",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/elevenlabs-music-api-368/v1/elevenlabs-music-api-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "lyria-3-pro": {
+      "label": "Lyria 3 Pro",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/lyria-3-pro/v1/lyria-3-pro/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "lyria-2": {
+      "label": "Lyria 2",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/lyria-2/v1/lyria-2/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "vibevoice": {
+      "label": "Vibevoice",
+      "category": "audio",
+      "operations": {
+        "text_to_speech": {
+          "endpoint": "/vibevoice/v1/vibevoice/generateRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "vibevoice-realtime-0-5b-135": {
+      "label": "Vibevoice Realtime 0 5B 135",
+      "category": "audio",
+      "operations": {
+        "text_to_speech": {
+          "endpoint": "/vibevoice-realtime-0-5b-135/v1/vibevoice-realtime-0-5b-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "glass-virtual-try-on": {
+      "label": "Glass Virtual Try On",
+      "category": "try_on",
+      "operations": {
+        "try_on": {
+          "endpoint": "/glass-virtual-try-on/v1/api/glass-virtual-tryon",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "recraft": {
+      "label": "Recraft",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/recraft/v3/generate",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        },
+        "edit_image": {
+          "endpoint": "/recraft/v3/image-to-image",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "nano-banana-pro-770": {
+      "label": "Nano Banana Pro 770",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/nano-banana-pro-770/v1/nano-banana-pro-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "nano-banana-pro-async": {
+      "label": "Nano Banana Pro Async",
+      "category": "image",
+      "operations": {
+        "edit_image": {
+          "endpoint": "/nano-banana-pro-async/v1/nano-banana-pro-image-to-image",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_image": {
+          "endpoint": "/nano-banana-pro-async/v1/nano-banana-pro-text-to-image",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "nano-banana-async": {
+      "label": "Nano Banana Async",
+      "category": "image",
+      "operations": {
+        "edit_image": {
+          "endpoint": "/nano-banana-async/v1/nano-banana-image-to-image",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "auraflow-v0-3-512": {
+      "label": "Auraflow V0 3 512",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/auraflow-v0-3-512/v1/auraflow-v0-3-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "grok-imagine-api-641": {
+      "label": "Grok Imagine Api 641",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/grok-imagine-api-641/v1/grok-imagine-api-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "grok-imagine-video": {
+      "label": "Grok Imagine Video",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/grok-imagine-video/v1/grok-imagine-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "kandinsky-5-0-pro-953": {
+      "label": "Kandinsky 5 0 Pro 953",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/kandinsky-5-0-pro-953/v1/kandinsky-5-0-pro-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "longcat-image-498": {
+      "label": "Longcat Image 498",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/longcat-image-498/v1/longcat-image-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "pixelforge-image": {
+      "label": "Pixelforge Image",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/pixelforge-image/v1/qwen_image_gen/serve_image",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "pixelforge-relighting-api": {
+      "label": "Pixelforge Relighting Api",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/pixelforge-relighting-api/v1/relighting/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "qwen-image-max-edit": {
+      "label": "Qwen Image Max Edit",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/qwen-image-max-edit/v1/qwen-image-max-edit-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "qwen-image-max": {
+      "label": "Qwen Image Max",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/qwen-image-max/v1/qwen-image-max-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "qwen-image-edit-plus": {
+      "label": "Qwen Image Edit Plus",
+      "category": "image",
+      "operations": {
+        "edit_image": {
+          "endpoint": "/qwen-image-edit-plus/v1/qwen-image-edit-plus-lora/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "qwen-image-edit-plus-trainer": {
+      "label": "Qwen Image Edit Plus Trainer",
+      "category": "image",
+      "operations": {
+        "train": {
+          "endpoint": "/qwen-image-edit-plus-trainer/v1/qwen-image-edit-plus-trainer/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "qwen-image-layered": {
+      "label": "Qwen Image Layered",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/qwen-image-layered/v1/qwen-image-layered-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "sd3-5": {
+      "label": "Sd3 5",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/sd3-5/v1/r-sd-3-5-large",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "sd3": {
+      "label": "Sd3",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/sd3/v1/getData",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "inpainting": {
+      "label": "Inpainting",
+      "category": "image",
+      "operations": {
+        "edit_image": {
+          "endpoint": "/inpainting/v1/getImage",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "z-image-turbo-834": {
+      "label": "Z Image Turbo 834",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/z-image-turbo-834/v1/z-image-turbo-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "z-image-base": {
+      "label": "Z Image Base",
+      "category": "image",
+      "operations": {
+        "text_to_image": {
+          "endpoint": "/z-image-base/v1/z-image-base-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "baidu-genflare-2-0-api": {
+      "label": "Baidu Genflare 2 0 Api",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/baidu-genflare-2-0-api/v1/generateImageToVideo2-5Request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "ai-model-api": {
+      "label": "Ai Model Api",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/ai-model-api/v1/generateImageToVideoRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        },
+        "text_to_video": {
+          "endpoint": "/ai-model-api/v1/generateSoul",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "lightricks": {
+      "label": "Lightricks",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/lightricks/v1/ltx/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "ltx-2-19b-api-513": {
+      "label": "Ltx 2 19B Api 513",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/ltx-2-19b-api-513/v1/ltx-2-19b-api-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "ltx-2-video-api-581": {
+      "label": "Ltx 2 Video Api 581",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/ltx-2-video-api-581/v1/ltx-2-video-api-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "decart-lucy-edit-video-fast-142": {
+      "label": "Decart Lucy Edit Video Fast 142",
+      "category": "video",
+      "operations": {
+        "video_edit": {
+          "endpoint": "/decart-lucy-edit-video-fast-142/v1/decart-lucy-edit-video-fast-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "mochi-v1-clone": {
+      "label": "Mochi V1 Clone",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/mochi-v1-clone/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "pixverse-i2v": {
+      "label": "Pixverse I2V",
+      "category": "video",
+      "operations": {
+        "image_to_video": {
+          "endpoint": "/pixverse-i2v/v1/pixverse-i2v-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "topaz-upscale-video-753": {
+      "label": "Topaz Upscale Video 753",
+      "category": "video",
+      "operations": {
+        "upscale": {
+          "endpoint": "/topaz-upscale-video-753/v1/topaz-upscale-video-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "veed-video-background-remover-541": {
+      "label": "Veed Video Background Remover 541",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/veed-video-background-remover-541/v1/veed-video-background-remover-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "vidu": {
+      "label": "Vidu",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/vidu/v1/vidu-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "vidu-q2-reference-to-video-pro-api-454": {
+      "label": "Vidu Q2 Reference To Video Pro Api 454",
+      "category": "video",
+      "operations": {
+        "text_to_video": {
+          "endpoint": "/vidu-q2-reference-to-video-pro-api-454/v1/vidu-q2-reference-to-video-pro-api-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "ace-step-xl": {
+      "label": "Ace Step Xl",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/ace-step-xl/v1/submitMusicGenerationRequest",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "chatterbox-text-to-speech": {
+      "label": "Chatterbox Text To Speech",
+      "category": "audio",
+      "operations": {
+        "text_to_speech": {
+          "endpoint": "/chatterbox-text-to-speech/v1/chatterbox-text-to-speech-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "minimax-hailuo-ai-music": {
+      "label": "Minimax Hailuo Ai Music",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/minimax-hailuo-ai-music/v1/getAudio",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "tracks": {
+      "label": "Tracks",
+      "category": "audio",
+      "operations": {
+        "music_generation": {
+          "endpoint": "/tracks/v1/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "voice-clone": {
+      "label": "Voice Clone",
+      "category": "audio",
+      "operations": {
+        "text_to_speech": {
+          "endpoint": "/voice-clone/v1/xtts-v2/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "hyper3d-rodin-259": {
+      "label": "Hyper3D Rodin 259",
+      "category": "3d",
+      "operations": {
+        "image_to_3d": {
+          "endpoint": "/hyper3d-rodin-259/v1/hyper3d-rodin-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "trellis-2-image-to-3d": {
+      "label": "Trellis 2 Image To 3D",
+      "category": "3d",
+      "operations": {
+        "image_to_3d": {
+          "endpoint": "/trellis-2-image-to-3d/v1/trellis-2-image-to-3d-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "tripo3d-v2-5-413": {
+      "label": "Tripo3D V2 5 413",
+      "category": "3d",
+      "operations": {
+        "image_to_3d": {
+          "endpoint": "/tripo3d-v2-5-413/v1/tripo3d-v2-5-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "bria-rmbg-2-0-682": {
+      "label": "Bria Rmbg 2 0 682",
+      "category": "upscale",
+      "operations": {
+        "remove_background": {
+          "endpoint": "/bria-rmbg-2-0-682/v1/bria-rmbg-2-0-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "upscaler": {
+      "label": "Upscaler",
+      "category": "upscale",
+      "operations": {
+        "upscale": {
+          "endpoint": "/upscaler/v1/crystal-upscaler/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "seedvr-upscale": {
+      "label": "Seedvr Upscale",
+      "category": "upscale",
+      "operations": {
+        "upscale": {
+          "endpoint": "/seedvr-upscale/v1/upscale-image/generate",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "idm-vton-api": {
+      "label": "Idm Vton Api",
+      "category": "try_on",
+      "operations": {
+        "try_on": {
+          "endpoint": "/idm-vton-api/v1/r-idm-vton",
+          "convention": "legacy_poll",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "bytedance-omnihuman-v1-5-290": {
+      "label": "Bytedance Omnihuman V1 5 290",
+      "category": "lipsync",
+      "operations": {
+        "lipsync": {
+          "endpoint": "/bytedance-omnihuman-v1-5-290/v1/bytedance-omnihuman-v1-5-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
         }
       }
     }

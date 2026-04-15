@@ -32,12 +32,12 @@ class Pixazo3DService(_PixazoBaseService, BaseImage3DService):
     CATEGORY = "3d"
 
     def generate_3d(self, prompt: str = "", image_url: str = "",
-                    **kwargs) -> dict:
+                    model: str = "", **kwargs) -> dict:
         if not prompt and not image_url:
             raise ServiceError(
                 "generate_3d requires `image_url` or `prompt`.")
-        op_name = self._pick_op("image_to_3d", "text_to_3d")
-        op = self._op(op_name)
+        op_name = self._pick_op(["image_to_3d", "text_to_3d"], model_id=model)
+        op = self._op(op_name, model_id=model)
         input_field = op.get("input_field", "image_url")
         body: Dict[str, Any] = {}
         if image_url:
@@ -45,20 +45,20 @@ class Pixazo3DService(_PixazoBaseService, BaseImage3DService):
         if prompt:
             body["prompt"] = prompt
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
-        r = self._invoke(op_name, body)
+        r = self._invoke(op_name, body, model_id=model)
         return {"bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
 
-    def _pick_op(self, *names: str) -> str:
-        ops = self._model().get("operations") or {}
+    def _pick_op(self, names, *, model_id: str = "") -> str:
+        ops = self._model(model_id).get("operations") or {}
         for n in names:
             if n in ops:
                 return n
         raise ServiceError(
-            f"Model '{self._model_id}' has no op among {names}. "
+            f"Model '{model_id or self._model_id}' has no op among {list(names)}. "
             f"Supported: {sorted(ops.keys())}.")
 
 
@@ -73,19 +73,19 @@ class PixazoUpscaleService(_PixazoBaseService, BaseImageUpscaleService):
     CATEGORY = "upscale"
 
     def upscale(self, image_url: str = "", scale: int = 2,
-                **kwargs) -> dict:
+                model: str = "", **kwargs) -> dict:
         if not image_url:
             raise ServiceError("upscale requires `image_url`.")
-        op = self._op("upscale")
+        op = self._op("upscale", model_id=model)
         input_field = op.get("input_field", "image_url")
         body: Dict[str, Any] = {
             input_field: image_url,
             "scale": int(scale),
         }
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
-        r = self._invoke("upscale", body)
+        r = self._invoke("upscale", body, model_id=model)
         return {"bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
@@ -101,11 +101,11 @@ class PixazoTryOnService(_PixazoBaseService, BaseTryOnService):
     CATEGORY = "try_on"
 
     def try_on(self, person_image: str = "", garment_image: str = "",
-               **kwargs) -> dict:
+               model: str = "", **kwargs) -> dict:
         if not person_image or not garment_image:
             raise ServiceError(
                 "try_on requires both `person_image` and `garment_image`.")
-        op = self._op("try_on")
+        op = self._op("try_on", model_id=model)
         person_field = op.get("person_field", "person_image")
         garment_field = op.get("garment_field", "garment_image")
         body: Dict[str, Any] = {
@@ -113,9 +113,9 @@ class PixazoTryOnService(_PixazoBaseService, BaseTryOnService):
             garment_field: garment_image,
         }
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
-        r = self._invoke("try_on", body)
+        r = self._invoke("try_on", body, model_id=model)
         return {"bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
@@ -131,12 +131,12 @@ class PixazoLipsyncService(_PixazoBaseService, BaseLipsyncService):
     CATEGORY = "lipsync"
 
     def lipsync(self, video_url: str = "", image_url: str = "",
-                audio_url: str = "", **kwargs) -> dict:
+                audio_url: str = "", model: str = "", **kwargs) -> dict:
         if not audio_url or not (video_url or image_url):
             raise ServiceError(
                 "lipsync requires `audio_url` and either `video_url` or "
                 "`image_url`.")
-        op = self._op("lipsync")
+        op = self._op("lipsync", model_id=model)
         video_field = op.get("video_field", "video_url")
         image_field = op.get("image_field", "image_url")
         audio_field = op.get("audio_field", "audio_url")
@@ -146,9 +146,9 @@ class PixazoLipsyncService(_PixazoBaseService, BaseLipsyncService):
         if image_url:
             body[image_field] = image_url
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
-        r = self._invoke("lipsync", body)
+        r = self._invoke("lipsync", body, model_id=model)
         return {"bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
@@ -164,19 +164,19 @@ class PixazoTrainerService(_PixazoBaseService, BaseImageTrainerService):
     CATEGORY = "trainer"
 
     def train(self, dataset_url: str = "", base_model: str = "",
-              **kwargs) -> dict:
+              model: str = "", **kwargs) -> dict:
         if not dataset_url:
             raise ServiceError("train requires `dataset_url`.")
-        op = self._op("train")
+        op = self._op("train", model_id=model)
         input_field = op.get("input_field", "image_data_url")
         body: Dict[str, Any] = {input_field: dataset_url}
         if base_model:
             body["base_model"] = base_model
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
         # Trainers return a LoRA / checkpoint URL — alias into our std shape.
-        r = self._invoke("train", body)
+        r = self._invoke("train", body, model_id=model)
         return {"lora_url": r["source_url"],
                 "content_type": r["content_type"],
                 "status": "done"}

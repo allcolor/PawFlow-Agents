@@ -28,12 +28,8 @@ class PixazoAudioService(_PixazoBaseService, BaseAudioGenerationService):
 
     def generate(self, prompt: str = "", lyrics: str = "",
                  duration: int = 30, instrumental: bool = False,
-                 style: str = "", **kwargs) -> dict:
-        """Music generation — calls operation 'music_generation' by default.
-
-        If the active model declares `text_to_speech` instead, callers
-        should use `text_to_speech()` which targets that op explicitly.
-        """
+                 style: str = "", model: str = "", **kwargs) -> dict:
+        """Music generation. `model` overrides the service default."""
         if not prompt:
             raise ServiceError("No prompt provided")
         body: Dict[str, Any] = {"prompt": prompt}
@@ -46,45 +42,42 @@ class PixazoAudioService(_PixazoBaseService, BaseAudioGenerationService):
         if style:
             body["style"] = style
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service", "_service"):
+            if k not in body and k not in ("destination", "path", "service", "_service", "model"):
                 body[k] = v
-        # Pick the first matching audio op the model supports so the
-        # caller doesn't need to care whether it's "music_generation"
-        # or "text_to_audio".
         op_name = self._pick_op(
-            "music_generation", "text_to_audio", "text_to_music")
-        r = self._invoke(op_name, body)
+            ["music_generation", "text_to_audio", "text_to_music"],
+            model_id=model)
+        r = self._invoke(op_name, body, model_id=model)
         return {"audio_bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
 
     def text_to_speech(self, text: str = "", voice: str = "",
-                        **kwargs) -> dict:
-        """Text-to-speech — calls operation 'text_to_speech'."""
+                        model: str = "", **kwargs) -> dict:
         if not text:
             raise ServiceError("No text provided")
-        op = self._op("text_to_speech")
+        op = self._op("text_to_speech", model_id=model)
         input_field = op.get("input_field", "text")
         body: Dict[str, Any] = {input_field: text}
         if voice:
             body["voice"] = voice
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
-        r = self._invoke("text_to_speech", body)
+        r = self._invoke("text_to_speech", body, model_id=model)
         return {"audio_bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
 
-    def _pick_op(self, *candidates: str) -> str:
+    def _pick_op(self, candidates, *, model_id: str = "") -> str:
         """Return the first op in `candidates` declared by the active model."""
-        ops = self._model().get("operations") or {}
+        ops = self._model(model_id).get("operations") or {}
         for c in candidates:
             if c in ops:
                 return c
         raise ServiceError(
-            f"Model '{self._model_id}' does not declare any of "
-            f"{candidates}. Supported: {sorted(ops.keys())}.")
+            f"Model '{model_id or self._model_id}' does not declare any of "
+            f"{list(candidates)}. Supported: {sorted(ops.keys())}.")
 
 
 ServiceFactory.register(PixazoAudioService)

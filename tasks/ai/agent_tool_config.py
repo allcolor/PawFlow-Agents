@@ -98,6 +98,8 @@ class AgentToolConfigMixin:
                     h.set_base_url(file_base_url)
                 if user_id and hasattr(h, 'set_user_id'):
                     h.set_user_id(user_id)
+                if conversation_id and hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
                 h.set_service_resolver(self._make_image_resolver(
                     user_id, conversation_id, agent_name,
                 ))
@@ -106,6 +108,8 @@ class AgentToolConfigMixin:
                     h.set_base_url(file_base_url)
                 if user_id:
                     h.set_user_id(user_id)
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
                 h.set_service_resolver(self._make_video_resolver(
                     user_id, conversation_id, agent_name,
                 ))
@@ -114,6 +118,8 @@ class AgentToolConfigMixin:
                     h.set_base_url(file_base_url)
                 if user_id:
                     h.set_user_id(user_id)
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
                 h.set_service_resolver(self._make_audio_resolver(
                     user_id, conversation_id, agent_name,
                 ))

@@ -117,6 +117,7 @@ class Generate3DHandler(_CapabilityHandlerBase):
                 "image_url": {"type": "string", "description": "Source image URL for image-to-3D (HTTP or fs://filestore/<id>/<name>)"},
                 "destination": {"type": "string", "description": "'filestore' (default) or relay service name"},
                 "path": {"type": "string", "description": "Filename when saving to a filesystem service"},
+                "model": {"type": "string", "description": "Override the active 3D model (e.g. 'hyper3d-rodin-259', 'tripo3d-v2-5-413', 'hunyuan3d-3-0-api-294')."},
             },
         }
 
@@ -169,6 +170,7 @@ class UpscaleImageHandler(_CapabilityHandlerBase):
                 "scale": {"type": "integer", "description": "Upscale factor (2, 4 — default 2)"},
                 "destination": {"type": "string"},
                 "path": {"type": "string"},
+                "model": {"type": "string", "description": "Override the upscale model (e.g. 'seedvr-upscale', 'crystal-upscaler', 'topaz-upscale-video-753', 'bria-rmbg-2-0-682')."},
             },
             "required": ["image_url"],
         }
@@ -222,6 +224,7 @@ class TryOnHandler(_CapabilityHandlerBase):
                 "garment_image": {"type": "string", "description": "URL of the garment image"},
                 "destination": {"type": "string"},
                 "path": {"type": "string"},
+                "model": {"type": "string", "description": "Override the try-on model (e.g. 'fashn-virtual-try-on', 'idm-vton-api', 'kling-ai-vton', 'glass-virtual-try-on')."},
             },
             "required": ["person_image", "garment_image"],
         }
@@ -277,6 +280,7 @@ class LipsyncHandler(_CapabilityHandlerBase):
                 "audio_url": {"type": "string", "description": "Audio track (URL) to drive the face"},
                 "destination": {"type": "string"},
                 "path": {"type": "string"},
+                "model": {"type": "string", "description": "Override the lipsync model (e.g. 'omnihuman', 'bytedance-omnihuman-v1-5-290', 'kling-ai-avatar-v2-pro-789')."},
             },
             "required": ["audio_url"],
         }
@@ -333,6 +337,7 @@ class TrainImageModelHandler(_CapabilityHandlerBase):
                 "steps": {"type": "integer", "description": "Training steps (provider-dependent default)"},
                 "learning_rate": {"type": "number"},
                 "trigger_word": {"type": "string"},
+                "model": {"type": "string", "description": "Override the trainer model (e.g. 'flux-2-pro-text-to-image-trainer-712', 'flux-2-pro-image-to-image-trainer-831', 'qwen-image-edit-plus-trainer')."},
             },
             "required": ["dataset_url"],
         }

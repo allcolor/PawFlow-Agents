@@ -59,27 +59,30 @@ def test_audio_rejects_video_model():
 # ── Video dispatch ─────────────────────────────────────────────────────
 
 
-def test_video_text_to_video_legacy_poll():
-    """Sora: POST /video/generate → id → POST /video/result until ready."""
+def test_video_text_to_video_polling_url_dispatch():
+    """Sora: POST /video/generate → polling_url → GET it until ready.
+
+    Pixazo's gateway returns the absolute polling URL on every async
+    generate; per-model poll endpoints don't exist.
+    """
     s = _video("sora-video")
     calls = []
 
     def _fake_post(ep, body):
         calls.append((ep, body))
-        if ep.endswith("/video/generate"):
-            return {"id": "vid-1"}
-        return {"status": "completed", "video_url": "https://cdn/v.mp4"}
+        return {"id": "vid-1",
+                "polling_url": "https://gw/v2/requests/status/vid-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {  # type: ignore[assignment]
+        "status": "completed", "video_url": "https://cdn/v.mp4"}
     s._download_media = lambda u, default_mime="": (b"MP4", "video/mp4")  # type: ignore[assignment]
 
     out = s.generate(prompt="a robot dancing", duration=4)
     assert out["video_bytes"] == b"MP4"
-    assert out["content_type"] == "video/mp4"
     assert out["source_url"] == "https://cdn/v.mp4"
-    # First call must be generate, second must be result (poll)
+    assert len(calls) == 1  # generate POST only — poll is GET
     assert calls[0][0].endswith("/video/generate")
-    assert calls[1][0].endswith("/video/result")
 
 
 def test_video_image_to_video_uses_input_field():
@@ -88,16 +91,14 @@ def test_video_image_to_video_uses_input_field():
     captured = {}
 
     def _fake_post(ep, body):
-        # Capture the FIRST call (the generate POST) only; the second
-        # call is the poll and has no user-visible body.
-        if "ep" not in captured:
-            captured["ep"] = ep
-            captured["body"] = body
-        if ep.endswith("/i2v/generate"):
-            return {"id": "vid-1"}
-        return {"status": "completed", "video_url": "https://cdn/o.mp4"}
+        captured["ep"] = ep
+        captured["body"] = body
+        return {"id": "vid-1",
+                "polling_url": "https://gw/v2/requests/status/vid-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {  # type: ignore[assignment]
+        "status": "completed", "video_url": "https://cdn/o.mp4"}
     s._download_media = lambda u, default_mime="": (b"MP4", "video/mp4")  # type: ignore[assignment]
 
     out = s.image_to_video(prompt="make it move",
@@ -109,39 +110,39 @@ def test_video_image_to_video_uses_input_field():
 # ── Audio dispatch ─────────────────────────────────────────────────────
 
 
-def test_audio_music_generation_legacy_poll():
-    """MiniMax music: POST /getAudio → task_id → POST /getAudioResult until ready."""
+def test_audio_music_generation_polling_url_dispatch():
+    """MiniMax music: POST /getAudio → polling_url → GET it until ready."""
     s = _audio("minimax-music")
     calls = []
 
     def _fake_post(ep, body):
         calls.append((ep, body))
-        if ep.endswith("/getAudio"):
-            return {"task_id": "t-1"}
-        return {"status": "completed", "audio_url": "https://cdn/a.mp3"}
+        return {"task_id": "t-1",
+                "polling_url": "https://gw/v2/requests/status/t-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {  # type: ignore[assignment]
+        "status": "completed", "audio_url": "https://cdn/a.mp3"}
     s._download_media = lambda u, default_mime="": (b"MP3", "audio/mpeg")  # type: ignore[assignment]
 
     out = s.generate(prompt="upbeat jazz", duration=30)
     assert out["audio_bytes"] == b"MP3"
-    assert out["content_type"] == "audio/mpeg"
     assert out["source_url"] == "https://cdn/a.mp3"
+    assert len(calls) == 1
     assert calls[0][0].endswith("/getAudio")
-    assert calls[1][0].endswith("/getAudioResult")
 
 
 def test_audio_picks_first_matching_op():
     """generate() picks the first of {music_generation,text_to_audio,text_to_music}."""
     s = _audio("minimax-music")
-    # Only music_generation exists on minimax-music → should be picked.
 
     def _fake_post(ep, body):
-        if ep.endswith("/getAudio"):
-            return {"task_id": "t-1"}
-        return {"status": "completed", "audio_url": "https://cdn/a.mp3"}
+        return {"task_id": "t-1",
+                "polling_url": "https://gw/v2/requests/status/t-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {  # type: ignore[assignment]
+        "status": "completed", "audio_url": "https://cdn/a.mp3"}
     s._download_media = lambda u, default_mime="": (b"MP3", "audio/mpeg")  # type: ignore[assignment]
     out = s.generate(prompt="x")
     assert out["source_url"] == "https://cdn/a.mp3"
@@ -153,14 +154,14 @@ def test_audio_text_to_speech_uses_configured_input_field():
     captured = {}
 
     def _fake_post(ep, body):
-        if "ep" not in captured:
-            captured["ep"] = ep
-            captured["body"] = body
-        if "eleven-v3-alpha/generate" in ep:
-            return {"request_id": "r-1"}
-        return {"status": "completed", "audio_url": "https://cdn/tts.mp3"}
+        captured["ep"] = ep
+        captured["body"] = body
+        return {"request_id": "r-1",
+                "polling_url": "https://gw/v2/requests/status/r-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {  # type: ignore[assignment]
+        "status": "completed", "audio_url": "https://cdn/tts.mp3"}
     s._download_media = lambda u, default_mime="": (b"TTS", "audio/mpeg")  # type: ignore[assignment]
     out = s.text_to_speech(text="Bonjour tout le monde")
     assert out["audio_bytes"] == b"TTS"

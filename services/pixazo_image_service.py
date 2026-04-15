@@ -42,8 +42,12 @@ class PixazoImageService(_PixazoBaseService, BaseImageGenerationService):
 
     def generate(self, prompt: str = "", negative_prompt: str = "",
                  width: int = 1024, height: int = 1024, steps: int = 20,
-                 **kwargs) -> dict:
-        """Text-to-image — calls operation 'text_to_image' on the active model."""
+                 model: str = "", **kwargs) -> dict:
+        """Text-to-image — calls operation 'text_to_image'.
+
+        `model` overrides the service's default for this call (lets one
+        service instance dispatch any image model in the catalog).
+        """
         if not prompt:
             raise ServiceError("No prompt provided")
         body: Dict[str, Any] = {"prompt": prompt}
@@ -61,15 +65,15 @@ class PixazoImageService(_PixazoBaseService, BaseImageGenerationService):
         body["num_images"] = 1
         body["output_format"] = kwargs.get("output_format", "png")
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
-        r = self._invoke("text_to_image", body)
-        # Alias bytes → image_bytes for callers that already use the old key
+        r = self._invoke("text_to_image", body, model_id=model)
         return {"image_bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
 
-    def edit_image(self, prompt: str = "", image_urls=None, **kwargs) -> dict:
+    def edit_image(self, prompt: str = "", image_urls=None,
+                   model: str = "", **kwargs) -> dict:
         """Edit one or more source images per the prompt."""
         if not prompt:
             raise ServiceError("No prompt provided")
@@ -78,7 +82,7 @@ class PixazoImageService(_PixazoBaseService, BaseImageGenerationService):
                 "edit_image requires at least one source URL in `image_urls`.")
         if isinstance(image_urls, str):
             image_urls = [image_urls]
-        op = self._op("edit_image")
+        op = self._op("edit_image", model_id=model)
         input_field = op.get("input_field", "image_urls")
         body: Dict[str, Any] = {
             "prompt": prompt,
@@ -87,9 +91,9 @@ class PixazoImageService(_PixazoBaseService, BaseImageGenerationService):
             "output_format": kwargs.get("output_format", "png"),
         }
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
-        r = self._invoke("edit_image", body)
+        r = self._invoke("edit_image", body, model_id=model)
         return {"image_bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}

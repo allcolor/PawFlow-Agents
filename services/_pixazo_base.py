@@ -259,26 +259,28 @@ class _PixazoBaseService(BaseService):
 
     # ── Catalog accessors ─────────────────────────────────────────────
 
-    def _model(self) -> Dict[str, Any]:
+    def _model(self, model_id: str = "") -> Dict[str, Any]:
+        """Resolve a model entry. Per-call `model_id` overrides config default."""
+        mid = (model_id or self._model_id or "").strip()
         catalog = _load_catalog()
-        if self._model_id not in catalog:
+        if mid not in catalog:
             raise ServiceError(
-                f"Unknown Pixazo model '{self._model_id}'. Known in "
+                f"Unknown Pixazo model '{mid}'. Known in "
                 f"category={self.CATEGORY}: {models_for_category(self.CATEGORY)}")
-        m = catalog[self._model_id]
+        m = catalog[mid]
         _cat = m.get("category", "image")
         if _cat != self.CATEGORY:
             raise ServiceError(
-                f"Model '{self._model_id}' is category '{_cat}', not "
+                f"Model '{mid}' is category '{_cat}', not "
                 f"'{self.CATEGORY}'. Use the matching Pixazo service.")
         return m
 
-    def _op(self, op_name: str) -> Dict[str, Any]:
-        m = self._model()
+    def _op(self, op_name: str, model_id: str = "") -> Dict[str, Any]:
+        m = self._model(model_id)
         ops = m.get("operations") or {}
         if op_name not in ops:
             raise ServiceError(
-                f"Model '{self._model_id}' does not support operation "
+                f"Model '{model_id or self._model_id}' does not support operation "
                 f"'{op_name}'. Supported: {sorted(ops.keys())}.")
         return ops[op_name]
 
@@ -504,15 +506,20 @@ class _PixazoBaseService(BaseService):
 
     # ── Generic operation dispatch ─────────────────────────────────────
 
-    def _invoke(self, op_name: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    def _invoke(self, op_name: str, body: Dict[str, Any],
+                *, model_id: str = "") -> Dict[str, Any]:
         """Run one operation end-to-end: POST → (sync | poll) → download.
+
+        `model_id` overrides the service's default model for this call —
+        lets a single PixazoXxxService dispatch every catalog model in
+        its category without spinning up one service per model.
 
         Returns {bytes, content_type, source_url} — the category-level
         public API (generate, generate_video, …) aliases `bytes` to
         `image_bytes` / `video_bytes` / `audio_bytes` for caller clarity.
         """
         self.ensure_connected()
-        op = self._op(op_name)
+        op = self._op(op_name, model_id=model_id)
         endpoint = op.get("endpoint", "")
         if not endpoint:
             raise ServiceError(f"Operation '{op_name}' has no endpoint configured")
@@ -524,7 +531,7 @@ class _PixazoBaseService(BaseService):
         multipart = bool(op.get("multipart_form_data", False))
 
         logger.info("[PIXAZO] %s/%s (%s) → POST %s",
-                    self._model_id, op_name, convention, endpoint)
+                    model_id or self._model_id, op_name, convention, endpoint)
         # Stay call-compatible with patched _post(endpoint, body) in tests:
         # only pass multipart kwarg when actually needed.
         if multipart:

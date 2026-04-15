@@ -61,11 +61,18 @@ def test_sdxl_is_sync():
     assert op["url_field"] == "imageUrl"
 
 
-def test_flux_dev_is_legacy_poll():
+def test_flux_dev_is_polling_url():
+    """Pixazo's API standardized on polling_url — no per-model poll_endpoint
+    exists on the gateway. Verified empirically: any /<model>-polling/...
+    URL returns 'Model not found' (400). The catalog reflects this; this
+    test pins the convention so a regression flips us back into the
+    broken state."""
     catalog = _load_catalog()
     op = catalog["flux-dev"]["operations"]["text_to_image"]
-    assert op["convention"] == "legacy_poll"
-    assert op["poll_endpoint"] == "/flux-dev-polling/dev/getFluxDevStatus"
+    assert op["convention"] == "polling_url"
+    # No poll_endpoint should leak — the polling_url comes back in the
+    # generate response and we GET it directly.
+    assert "poll_endpoint" not in op
 
 
 # ── Convention dispatch ────────────────────────────────────────────────
@@ -98,25 +105,30 @@ def test_text_to_image_polling_url_follows_url():
     assert out["source_url"] == "https://cdn/done.png"
 
 
-def test_text_to_image_legacy_poll():
-    """flux-dev: POST → request_id → POST poll_endpoint → imageUrl."""
+def test_text_to_image_polling_url_dispatch():
+    """flux-dev: POST → polling_url → GET that URL → imageUrl.
+
+    Pixazo doesn't expose per-model poll_endpoint anymore — every
+    response carries an absolute polling_url that we GET to fetch the
+    status, same as nano-banana-pro.
+    """
     s = _svc("flux-dev")
     posts = []
 
     def _fake_post(ep, body):
         posts.append((ep, body))
-        if ep.endswith("/textToImage"):
-            return {"requestId": "rid-1"}
-        # polling
-        return {"status": "completed", "imageUrl": "https://cdn/legacy.png"}
+        return {"requestId": "rid-1",
+                "polling_url": "https://gw/v2/requests/status/rid-1"}
 
     s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {  # type: ignore[assignment]
+        "status": "completed", "imageUrl": "https://cdn/flux.png"}
     s._download_image = lambda u: (b"FLX", "image/png")  # type: ignore[assignment]
     out = s.generate(prompt="x")
-    assert out["source_url"] == "https://cdn/legacy.png"
+    assert out["source_url"] == "https://cdn/flux.png"
+    # Single POST (the generate); polling is GET on polling_url.
+    assert len(posts) == 1
     assert posts[0][0] == "/flux-dev/v1/dev/textToImage"
-    assert posts[1][0] == "/flux-dev-polling/dev/getFluxDevStatus"
-    assert posts[1][1]["request_id"] == "rid-1" or posts[1][1]["requestId"] == "rid-1"
 
 
 def test_polling_status_uppercase_treated_as_completed():
@@ -230,3 +242,39 @@ def test_extract_url_from_configured_url_field():
     url = PixazoImageService._extract_image_url(
         {"customField": "https://cdn/z.png"}, url_field="customField")
     assert url == "https://cdn/z.png"
+
+
+# ── Per-call model override ─────────────────────────────────────────────
+
+
+def test_per_call_model_override_dispatches_to_other_model():
+    """generate(model='X') dispatches to model X regardless of the
+    service's configured default. One service handles every catalog
+    entry in its category — no need to spin up one service per model.
+    """
+    s = _svc("sdxl")  # default model = sdxl (sync convention)
+    captured = {}
+
+    def _fake_post(ep, body):
+        captured["ep"] = ep
+        return {"requestId": "rid",
+                "polling_url": "https://gw/v2/requests/status/rid"}
+
+    s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {  # type: ignore[assignment]
+        "status": "completed", "imageUrl": "https://cdn/override.png"}
+    s._download_image = lambda u: (b"X", "image/png")  # type: ignore[assignment]
+
+    # Per-call override: ask flux-dev instead of the configured sdxl
+    out = s.generate(prompt="x", model="flux-dev")
+    assert out["source_url"] == "https://cdn/override.png"
+    # Endpoint hit must be flux-dev's, not sdxl's.
+    assert captured["ep"] == "/flux-dev/v1/dev/textToImage"
+    # And the service's default model_id is unchanged for next calls.
+    assert s._model_id == "sdxl"
+
+
+def test_per_call_model_unknown_raises_clear_error():
+    s = _svc("sdxl")
+    with pytest.raises(Exception, match="Unknown Pixazo model"):
+        s.generate(prompt="x", model="does-not-exist")

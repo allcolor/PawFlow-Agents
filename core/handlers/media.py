@@ -23,6 +23,7 @@ class ImageGenerationHandler(ToolHandler):
     _base_url: str = "http://localhost:9090"
     _service_resolver = None  # () -> (service, error_msg)
     _user_id: str = ""
+    _conversation_id: str = ""
 
     @property
     def name(self) -> str:
@@ -91,6 +92,10 @@ class ImageGenerationHandler(ToolHandler):
                     "type": "number",
                     "description": "Guidance scale / CFG (higher = more prompt adherence, default 5)",
                 },
+                "model": {
+                    "type": "string",
+                    "description": "Override the active service's default image model for this call (e.g. 'nano-banana-pro', 'flux-2-pro-text-to-image-799'). Use get_image_model_info to list available models.",
+                },
             },
             "required": ["prompt"],
         }
@@ -100,6 +105,9 @@ class ImageGenerationHandler(ToolHandler):
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id
 
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""
@@ -158,6 +166,7 @@ class EditImageHandler(ToolHandler):
     _base_url: str = "http://localhost:9090"
     _service_resolver = None  # () -> (service, error_msg)
     _user_id: str = ""
+    _conversation_id: str = ""
 
     @property
     def name(self) -> str:
@@ -206,6 +215,10 @@ class EditImageHandler(ToolHandler):
                     "type": "integer",
                     "description": "Number of variants to produce (default 1).",
                 },
+                "model": {
+                    "type": "string",
+                    "description": "Override the active edit model for this call (e.g. 'nano-banana', 'qwen-image-edit-plus'). Must declare an edit_image op.",
+                },
             },
             "required": ["prompt", "image_urls"],
         }
@@ -215,6 +228,9 @@ class EditImageHandler(ToolHandler):
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id
 
     def set_service_resolver(self, resolver):
         """Set a resolver: () -> (service, error_msg). Same shape as ImageGenerationHandler."""
@@ -301,6 +317,7 @@ class VideoGenerationHandler(ToolHandler):
     _base_url: str = "http://localhost:9090"
     _service_resolver = None  # () -> (service, error_msg)
     _user_id: str = ""
+    _conversation_id: str = ""
 
     @property
     def name(self) -> str:
@@ -357,6 +374,10 @@ class VideoGenerationHandler(ToolHandler):
                     "type": "string",
                     "description": "File path when destination is a filesystem service",
                 },
+                "model": {
+                    "type": "string",
+                    "description": "Override the active video model for this call (e.g. 'sora-video', 'veo', 'kling-video', 'wan-2-7-api'). One service handles every catalog video model.",
+                },
             },
             "required": ["prompt"],
         }
@@ -366,6 +387,9 @@ class VideoGenerationHandler(ToolHandler):
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id
 
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""
@@ -419,6 +443,7 @@ class AudioGenerationHandler(ToolHandler):
     _base_url: str = "http://localhost:9090"
     _service_resolver = None
     _user_id: str = ""
+    _conversation_id: str = ""
 
     @property
     def name(self) -> str:
@@ -465,6 +490,10 @@ class AudioGenerationHandler(ToolHandler):
                     "type": "string",
                     "description": "File path when destination is a filesystem service (e.g. 'assets/music.mp3')",
                 },
+                "model": {
+                    "type": "string",
+                    "description": "Override the active audio model for this call (e.g. 'lyria-2', 'minimax-music', 'eleven-v3-alpha-954', 'chatterbox-text-to-speech').",
+                },
             },
             "required": ["prompt"],
         }
@@ -474,6 +503,9 @@ class AudioGenerationHandler(ToolHandler):
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id
 
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""

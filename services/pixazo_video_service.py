@@ -32,8 +32,8 @@ class PixazoVideoService(_PixazoBaseService, BaseVideoGenerationService):
 
     def generate(self, prompt: str = "", negative_prompt: str = "",
                  duration: int = 8, width: int = 1280, height: int = 720,
-                 **kwargs) -> dict:
-        """Text-to-video. Calls operation 'text_to_video' on the active model."""
+                 model: str = "", **kwargs) -> dict:
+        """Text-to-video. `model` overrides the service default for this call."""
         if not prompt:
             raise ServiceError("No prompt provided")
         body: Dict[str, Any] = {"prompt": prompt}
@@ -48,32 +48,27 @@ class PixazoVideoService(_PixazoBaseService, BaseVideoGenerationService):
             body["size"] = f"{int(width)}x{int(height)}"
         body["seed"] = kwargs.get("seed", int(time.time()) % 1_000_000)
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
-        r = self._invoke("text_to_video", body)
+        r = self._invoke("text_to_video", body, model_id=model)
         return {"video_bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}
 
     def image_to_video(self, prompt: str = "", image_url: str = "",
-                        duration: int = 8, **kwargs) -> dict:
-        """Image-to-video. Calls operation 'image_to_video'."""
+                        duration: int = 8, model: str = "", **kwargs) -> dict:
         if not image_url:
-            raise ServiceError(
-                "image_to_video requires `image_url`.")
-        op = self._op("image_to_video")
+            raise ServiceError("image_to_video requires `image_url`.")
+        op = self._op("image_to_video", model_id=model)
         input_field = op.get("input_field", "image_url")
-        body: Dict[str, Any] = {
-            "prompt": prompt,
-            input_field: image_url,
-        }
+        body: Dict[str, Any] = {"prompt": prompt, input_field: image_url}
         if duration:
             body["duration"] = int(duration)
             body["seconds"] = int(duration)
         for k, v in kwargs.items():
-            if k not in body and k not in ("destination", "path", "service"):
+            if k not in body and k not in ("destination", "path", "service", "model"):
                 body[k] = v
-        r = self._invoke("image_to_video", body)
+        r = self._invoke("image_to_video", body, model_id=model)
         return {"video_bytes": r["bytes"],
                 "content_type": r["content_type"],
                 "source_url": r["source_url"]}

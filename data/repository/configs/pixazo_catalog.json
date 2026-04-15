@@ -25,8 +25,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/flux-dev/v1/dev/textToImage",
-          "poll_endpoint": "/flux-dev-polling/dev/getFluxDevStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "requestId",
           "params": {
             "image_size": "e.g. 'landscape_4_3', 'square_hd', 'portrait_4_3'",
@@ -44,8 +43,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/nano-banana/v1/nano-banana/generateTextToImageRequest",
-          "poll_endpoint": "/nano-banana-polling/nano-banana/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id",
           "params": {
             "aspect_ratio": "1:1, 4:3, 3:2, 16:9, 9:16, 21:9, 2:3, 3:4, 4:5, 5:4",
@@ -136,8 +134,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/ideogram/v1/ideogram/generateTextToImageRequest",
-          "poll_endpoint": "/ideogram-polling/ideogram/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -148,8 +145,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/gpt-image/v1/gpt-image/generateTextToImageRequest",
-          "poll_endpoint": "/gpt-image-polling/gpt-image/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -160,8 +156,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/sd35/v1/sd35/generateTextToImageRequest",
-          "poll_endpoint": "/sd35-polling/sd35/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -172,8 +167,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/dalle/v1/dalle/generateTextToImageRequest",
-          "poll_endpoint": "/dalle-polling/dalle/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -184,8 +178,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/seedream/v1/seedream/generateTextToImageRequest",
-          "poll_endpoint": "/seedream-polling/seedream/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -196,8 +189,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/bria/v1/bria/generateTextToImageRequest",
-          "poll_endpoint": "/bria-polling/bria/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -208,8 +200,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/grok/v1/grok/generateTextToImageRequest",
-          "poll_endpoint": "/grok-polling/grok/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -220,8 +211,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/hunyuan/v1/hunyuan/generateTextToImageRequest",
-          "poll_endpoint": "/hunyuan-polling/hunyuan/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -232,8 +222,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/longcat-image/v1/longcat-image/generateTextToImageRequest",
-          "poll_endpoint": "/longcat-image-polling/longcat-image/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -244,8 +233,7 @@
       "operations": {
         "text_to_video": {
           "endpoint": "/luma-dream-machine/v1/luma-dream-machine/generateTextToVideoRequest",
-          "poll_endpoint": "/luma-dream-machine-polling/luma-dream-machine/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -256,8 +244,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/minimax/v1/minimax/generateTextToImageRequest",
-          "poll_endpoint": "/minimax-polling/minimax/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -268,8 +255,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/pixelforge/v1/pixelforge/generateTextToImageRequest",
-          "poll_endpoint": "/pixelforge-polling/pixelforge/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -280,8 +266,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/qwen-image/v1/qwen-image/generateTextToImageRequest",
-          "poll_endpoint": "/qwen-image-polling/qwen-image/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -292,8 +277,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/reve-image/v1/reve-image/generateTextToImageRequest",
-          "poll_endpoint": "/reve-image-polling/reve-image/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -304,8 +288,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/studio-ghibli/v1/studio-ghibli/generateTextToImageRequest",
-          "poll_endpoint": "/studio-ghibli-polling/studio-ghibli/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -316,8 +299,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/z-image/v1/z-image/generateTextToImageRequest",
-          "poll_endpoint": "/z-image-polling/z-image/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -328,8 +310,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/auraflow/v1/auraflow/generateTextToImageRequest",
-          "poll_endpoint": "/auraflow-polling/auraflow/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -340,8 +321,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/p-image/v1/p-image/generateTextToImageRequest",
-          "poll_endpoint": "/p-image-polling/p-image/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -352,8 +332,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/firered-image-edit/v1/firered-image-edit/generateTextToImageRequest",
-          "poll_endpoint": "/firered-image-edit-polling/firered-image-edit/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -364,8 +343,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/wan/v1/wan/generateTextToImageRequest",
-          "poll_endpoint": "/wan-polling/wan/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -376,8 +354,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/kling/v1/kling/generateTextToImageRequest",
-          "poll_endpoint": "/kling-polling/kling/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -388,14 +365,12 @@
       "operations": {
         "text_to_video": {
           "endpoint": "/sora-video/v1/video/generate",
-          "poll_endpoint": "/sora-video/v1/video/result",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "id"
         },
         "image_to_video": {
           "endpoint": "/sora-video/v1/video/i2v/generate",
-          "poll_endpoint": "/sora-video/v1/video/result",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "id",
           "input_field": "image_url"
         }
@@ -407,8 +382,7 @@
       "operations": {
         "text_to_video": {
           "endpoint": "/p-video/v1/p-video/generateTextToVideoRequest",
-          "poll_endpoint": "/p-video-polling/p-video/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -419,8 +393,7 @@
       "operations": {
         "text_to_video": {
           "endpoint": "/seedance/v1/seedance/generateTextToVideoRequest",
-          "poll_endpoint": "/seedance-polling/seedance/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -431,8 +404,7 @@
       "operations": {
         "text_to_video": {
           "endpoint": "/veo/v1/veo/generateTextToVideoRequest",
-          "poll_endpoint": "/veo-polling/veo/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -443,8 +415,7 @@
       "operations": {
         "text_to_video": {
           "endpoint": "/runway/v1/runway/generateTextToVideoRequest",
-          "poll_endpoint": "/runway-polling/runway/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -455,8 +426,7 @@
       "operations": {
         "text_to_video": {
           "endpoint": "/kling/v1/kling/generateTextToVideoRequest",
-          "poll_endpoint": "/kling-polling/kling/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -467,8 +437,7 @@
       "operations": {
         "text_to_video": {
           "endpoint": "/pika/v1/pika/generateTextToVideoRequest",
-          "poll_endpoint": "/pika-polling/pika/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -479,8 +448,7 @@
       "operations": {
         "text_to_video": {
           "endpoint": "/hailuo/v1/hailuo/generateTextToVideoRequest",
-          "poll_endpoint": "/hailuo-polling/hailuo/getStatus",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -491,8 +459,7 @@
       "operations": {
         "music_generation": {
           "endpoint": "/minimax-hailuo-ai-music/v1/getAudio",
-          "poll_endpoint": "/minimax-hailuo-ai-music/v1/getAudioResult",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "task_id"
         }
       }
@@ -503,8 +470,7 @@
       "operations": {
         "music_generation": {
           "endpoint": "/ace-step/v1/generate",
-          "poll_endpoint": "/ace-step/v1/status",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "task_id"
         }
       }
@@ -515,8 +481,7 @@
       "operations": {
         "music_generation": {
           "endpoint": "/lyria-2/v1/lyria-2/generate",
-          "prediction_endpoint": "/lyria-2/v1/lyria-2/prediction",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "prediction_id"
         }
       }
@@ -527,8 +492,7 @@
       "operations": {
         "music_generation": {
           "endpoint": "/elevenlabs-music-api-368/v1/elevenlabs-music-api-request",
-          "poll_endpoint": "/elevenlabs-music-api-368/v1/elevenlabs-music-api-request-result",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -539,8 +503,7 @@
       "operations": {
         "text_to_speech": {
           "endpoint": "/eleven-v3-alpha-954/v1/eleven-v3-alpha/generate",
-          "poll_endpoint": "/eleven-v3-alpha-954/v1/eleven-v3-alpha/prediction",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id",
           "input_field": "text"
         }
@@ -1353,12 +1316,12 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/recraft/v3/generate",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         },
         "edit_image": {
           "endpoint": "/recraft/v3/image-to-image",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -1539,7 +1502,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/sd3-5/v1/r-sd-3-5-large",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -1550,7 +1513,7 @@
       "operations": {
         "text_to_image": {
           "endpoint": "/sd3/v1/getData",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -1561,7 +1524,7 @@
       "operations": {
         "edit_image": {
           "endpoint": "/inpainting/v1/getImage",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }
@@ -1852,7 +1815,7 @@
       "operations": {
         "try_on": {
           "endpoint": "/idm-vton-api/v1/r-idm-vton",
-          "convention": "legacy_poll",
+          "convention": "polling_url",
           "id_field": "request_id"
         }
       }

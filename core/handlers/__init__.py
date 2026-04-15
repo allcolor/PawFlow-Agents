@@ -50,6 +50,13 @@ from core.handlers.media import (  # noqa: F401
     VideoGenerationHandler,
     AudioGenerationHandler,
 )
+from core.handlers.capabilities import (  # noqa: F401
+    Generate3DHandler,
+    UpscaleImageHandler,
+    TryOnHandler,
+    LipsyncHandler,
+    TrainImageModelHandler,
+)
 from core.handlers.memory import (  # noqa: F401
     RememberHandler,
     SemanticRecallHandler,

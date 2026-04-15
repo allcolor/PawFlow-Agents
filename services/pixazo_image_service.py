@@ -35,10 +35,7 @@ class PixazoImageService(_PixazoBaseService, BaseImageGenerationService):
     CATEGORY = "image"
 
     def _download_image(self, url: str):
-        """Back-compat alias: tests monkey-patch this name.
-
-        Returns (bytes, content_type) — same shape as _download_media.
-        """
+        """Fetch an image from a Pixazo CDN URL. (bytes, content_type)."""
         return self._download_media(url, default_mime="image/png")
 
     # ── Public ops ─────────────────────────────────────────────────────
@@ -101,14 +98,12 @@ class PixazoImageService(_PixazoBaseService, BaseImageGenerationService):
 ServiceFactory.register(PixazoImageService)
 
 
-# Back-compat re-exports for code that imports internals from here.
-from services._pixazo_base import _extract_media_url as _PixazoBaseService_extract_url  # noqa: E402, F401
-
-
-# Legacy API used by tests: PixazoImageService._extract_image_url(data, url_field="")
-def _legacy_extract_image_url(data, url_field: str = ""):
+# Expose the URL extractor as a static method so callers and tests can
+# use `PixazoImageService._extract_image_url(data, url_field="foo")`
+# directly without poking at the private module.
+def _extract_image_url(data, url_field: str = ""):
     from services._pixazo_base import _extract_media_url as _em
     return _em(data, url_field=url_field)
 
 
-PixazoImageService._extract_image_url = staticmethod(_legacy_extract_image_url)
+PixazoImageService._extract_image_url = staticmethod(_extract_image_url)

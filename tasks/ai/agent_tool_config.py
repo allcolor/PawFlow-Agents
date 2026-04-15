@@ -117,6 +117,23 @@ class AgentToolConfigMixin:
                 h.set_service_resolver(self._make_audio_resolver(
                     user_id, conversation_id, agent_name,
                 ))
+            elif h.name in ("generate_3d", "upscale_image", "try_on",
+                             "lipsync", "train_image_model"):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                if user_id and hasattr(h, 'set_user_id'):
+                    h.set_user_id(user_id)
+                if conversation_id and hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
+                _maker = {
+                    "generate_3d": self._make_3d_resolver,
+                    "upscale_image": self._make_upscale_resolver,
+                    "try_on": self._make_tryon_resolver,
+                    "lipsync": self._make_lipsync_resolver,
+                    "train_image_model": self._make_trainer_resolver,
+                }[h.name]
+                h.set_service_resolver(_maker(
+                    user_id, conversation_id, agent_name))
             elif isinstance(h, ScheduleRecheckHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)

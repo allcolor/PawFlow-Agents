@@ -489,9 +489,10 @@ class _PixazoBaseService(BaseService):
             "audio": "audio/mpeg",
             "3d": "model/gltf-binary",
         }.get(self.CATEGORY, "image/png")
-        # Back-compat: image subclass exposes `_download_image` with a
-        # (bytes, mime) return. Prefer it when present so tests that
-        # monkey-patch the old name keep working.
+        # Image subclass exposes a category-named convenience
+        # `_download_image(url) → (bytes, mime)`; use it when defined so
+        # a subclass can intercept the download (e.g. to apply a custom
+        # User-Agent). Falls through to _download_media otherwise.
         _dl = getattr(self, "_download_image", None)
         if callable(_dl) and self.CATEGORY == "image":
             content_bytes, content_type = _dl(url)

@@ -61,6 +61,9 @@ def _register_all_services():
     import services.grok_video_service        # noqa: F401
     import services.sora_video_service        # noqa: F401
 
+    # Extra Pixazo capability services (3D, upscale, try-on, lipsync, trainer)
+    import services.pixazo_capability_services  # noqa: F401
+
     # Relay & filesystem services
     import services.filesystem_service         # noqa: F401  — relay service (WS)
     import services.tool_relay_service         # noqa: F401  — MCP bridge tool relay

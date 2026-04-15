@@ -351,6 +351,46 @@ class AgentUtilsMixin:
             "audio generation", "/audioservice",
         )
 
+    def _make_3d_resolver(self, user_id, conversation_id, agent_name):
+        from services.base_capabilities import BaseImage3DService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseImage3DService, "threed_services",
+            "3D generation", "/threedservice",
+        )
+
+    def _make_upscale_resolver(self, user_id, conversation_id, agent_name):
+        from services.base_capabilities import BaseImageUpscaleService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseImageUpscaleService, "upscale_services",
+            "image upscaling", "/upscaleservice",
+        )
+
+    def _make_tryon_resolver(self, user_id, conversation_id, agent_name):
+        from services.base_capabilities import BaseTryOnService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseTryOnService, "tryon_services",
+            "virtual try-on", "/tryonservice",
+        )
+
+    def _make_lipsync_resolver(self, user_id, conversation_id, agent_name):
+        from services.base_capabilities import BaseLipsyncService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseLipsyncService, "lipsync_services",
+            "lipsync", "/lipsyncservice",
+        )
+
+    def _make_trainer_resolver(self, user_id, conversation_id, agent_name):
+        from services.base_capabilities import BaseImageTrainerService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseImageTrainerService, "trainer_services",
+            "image-model training", "/trainerservice",
+        )
+
 
     def _decrement_active(self, conversation_id: str, ctx: dict = None):
         """Decrement the active-conversation refcount and clean up tracking.

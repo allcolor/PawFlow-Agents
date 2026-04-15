@@ -1027,7 +1027,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 _match_name, _match_args = unwrap_mcp_tool(
                                     _tc_name, _tc_args or {})
                                 enqueue_cc_tc(
-                                    conversation_id, agent_name, _block_id,
+                                    conv_id, agent_name, _block_id,
                                     _match_name, _args_hash(_match_args))
                             except Exception as _ee:
                                 logger.debug(

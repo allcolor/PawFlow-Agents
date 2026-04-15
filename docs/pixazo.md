@@ -1,7 +1,7 @@
 # Pixazo API — Complete Model Reference
 
 > Auto-generated from [pixazo.ai/models](https://www.pixazo.ai/models) on 2026-04-15.
-> 17 models, ~130 API endpoints.
+> 22 models, ~138 API endpoints.
 
 ## Common API Patterns
 
@@ -43,7 +43,14 @@ GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
 | GPT Image 1.5 | Text to Image | - | not listed |
 | Hunyuan 3.0 | Text to Image | varies | $0.11-0.40 |
 | Hunyuan 3D | 3D Generation | - | $0.20 |
-| Ideogram v2/Turbo | Text to Image | - | see page |
+| Ideogram v2 | Text to Image | all res | $0.20 |
+| Ideogram v2 | Describe Image | all res | $0.20 |
+| Ideogram v2 | Edit Image | all res | $0.20 |
+| Ideogram v2 | Remix Image | all res | $0.20 |
+| Ideogram Turbo | Text to Image | all res | $0.20 |
+| Ideogram Turbo | Describe Image | all res | $0.20 |
+| Ideogram Turbo | Edit Image | all res | $0.20 |
+| Ideogram Turbo | Remix Image | all res | $0.20 |
 | Kling O3 | Text/Image to Image | 1-2K | $0.028 |
 | Kling O3 | Text/Image to Image | 4K | $0.056 |
 | Kling 3.0 | Text/Image to Video | 1s (no audio) | $0.168 |
@@ -181,6 +188,14 @@ GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
 | lyria | `lyria-3-pro` | `lyria-3-pro/generate` | POST |
 | fashn-virtual-try-on | `fashn-virtual-try-on` | `fashn-virtual-try-on-request` | POST |
 | fashn-virtual-try-on | `glass-virtual-try-on` | `api/glass-virtual-tryon` | POST |
+| ideogram v2 | `ideogramV_2` | `generate` | POST |
+| ideogram v2 | `ideogramV_2` | `describe` | POST |
+| ideogram v2 | `ideogramV_2` | `edit` | POST |
+| ideogram v2 | `ideogramV_2` | `remix` | POST |
+| ideogram turbo | `ideogramV_2_Turbo` | `generate` | POST |
+| ideogram turbo | `ideogramV_2_Turbo` | `describe` | POST |
+| ideogram turbo | `ideogramV_2_Turbo` | `edit` | POST |
+| ideogram turbo | `ideogramV_2_Turbo` | `remix` | POST |
 
 ---
 
@@ -3847,6 +3862,423 @@ Content-Type	application/json
 Cache-Control	no-cache
 Ocp-Apim-Subscription-Key	YOUR_SUBSCRIPTION_KEY
 ```
+
+---
+
+### Ideogram 2.0 API, Ideogram Turbo API - AI Image Generation APIs
+**Page:** https://www.pixazo.ai/models/ideogram
+
+> Ideogram 2.0 creates images with accurate text rendering — logos, signs, typography. Offers standard (V_2) and turbo (V_2_TURBO) variants, plus editing, remixing, and image description.
+
+#### 1. Ideogram v2 — Text To Image
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/ideogramV_2/v1/generate
+```
+
+**Headers:**
+```
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+```
+
+**Request Body:**
+```json
+{
+    "image_request": {
+        "prompt": "A serene tropical beach scene with tall palm trees...",
+        "negative_prompt": "blur",
+        "model": "V_2",
+        "aspect_ratio": "ASPECT_10_16",
+        "magic_prompt_option": "AUTO",
+        "seed": 212,
+        "style_type": "AUTO",
+        "color_palette": {
+            "name": "JUNGLE"
+        }
+    }
+}
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| prompt | Yes | string | Text describing the scene or image to generate |
+| negative_prompt | No | string | Elements or features to avoid |
+| model | Yes | string | `V_2` |
+| aspect_ratio | No | enum | Default: `ASPECT_1_1`. Options: `ASPECT_10_16`, `ASPECT_16_10`, `ASPECT_9_16`, `ASPECT_16_9`, `ASPECT_3_2`, `ASPECT_2_3`, `ASPECT_4_3`, `ASPECT_3_4`, `ASPECT_1_3`, `ASPECT_3_1` |
+| seed | No | integer | Random seed (1–9999999999) |
+| magic_prompt_option | No | enum | Default: `AUTO`. Options: `ON`, `OFF` |
+| style_type | No | enum | Default: `AUTO`. Options: `GENERAL`, `REALISTIC`, `DESIGN`, `RENDER_3D`, `ANIME` |
+| color_palette | No | object | Preset name: `EMBER`, `FRESH`, `JUNGLE`, `MAGIC`, `MELON`, `MOSAIC`, `PASTEL`, `ULTRAMARINE` |
+
+**Response:**
+```json
+{
+    "created": "2024-11-01T10:06:14.744267+00:00",
+    "data": [
+        {
+            "is_image_safe": true,
+            "prompt": "A serene tropical beach scene...",
+            "resolution": "800x1280",
+            "seed": 212,
+            "style_type": "REALISTIC",
+            "url": "https://ideogram.ai/api/images/ephemeral/...png"
+        }
+    ]
+}
+```
+
+**Pricing:** $0.20 per generation (all resolutions)
+
+---
+
+#### 2. Ideogram v2 — Describe Image
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/ideogramV_2/v1/describe
+```
+
+**Headers:**
+```
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+Content-Type: multipart/form-data
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| image_file | Yes | File | The image file to describe |
+
+**Example:**
+```
+--form 'image_file=@/path/to/your/image.png'
+```
+
+**Response:**
+```json
+{
+    "created": "2024-11-01T10:06:14.744267+00:00",
+    "data": {
+        "description": "The image depicts a serene tropical beach scene with tall palm trees and azure waters."
+    }
+}
+```
+
+**Pricing:** $0.20 per request
+
+---
+
+#### 3. Ideogram v2 — Edit Image
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/ideogramV_2/v1/edit
+```
+
+**Headers:**
+```
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+Content-Type: multipart/form-data
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| image_file | Yes | File | The image file to edit |
+| mask | No | File | Mask determining which parts of the image to affect |
+| prompt | Yes | string | Text description of transformations to apply |
+| model | Yes | string | `V_2` |
+
+**Example:**
+```http
+POST https://gateway.pixazo.ai/ideogramV_2/v1/edit
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+Content-Type: multipart/form-data
+
+--boundary
+Content-Disposition: form-data; name="image_file"; filename="image.png"
+Content-Type: image/png
+[File content]
+--boundary
+Content-Disposition: form-data; name="mask"; filename="mask.png"
+Content-Type: image/png
+[File content]
+--boundary
+Content-Disposition: form-data; name="prompt"
+Enhance brightness and remove text
+--boundary
+Content-Disposition: form-data; name="model"
+V_2
+--boundary--
+```
+
+**Response:**
+```json
+{
+    "created": "2024-11-01T10:06:14.744267+00:00",
+    "data": [
+        {
+            "is_image_safe": true,
+            "prompt": "Enhance brightness and remove text",
+            "edited_image": "https://ideogram.ai/api/images/ephemeral/...png"
+        }
+    ]
+}
+```
+
+**Pricing:** $0.20 per edit
+
+---
+
+#### 4. Ideogram v2 — Remix Image
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/ideogramV_2/v1/remix
+```
+
+**Headers:**
+```
+Ocp-Apim-Subscription-Key: YOUR_Subscription_KEY
+Content-Type: multipart/form-data
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| image_request | Yes | JSON | JSON string with prompt, aspect_ratio, image_weight, magic_prompt_option, model |
+| image_file | Yes | File | The image file to remix |
+
+**Example (image_request JSON):**
+```json
+{
+    "prompt": "A serene tropical beach scene...",
+    "aspect_ratio": "ASPECT_10_16",
+    "image_weight": 50,
+    "magic_prompt_option": "ON",
+    "model": "V_2"
+}
+```
+
+**Response:**
+```json
+{
+    "created": "2024-11-01T10:06:14.744267+00:00",
+    "data": [
+        {
+            "is_image_safe": true,
+            "prompt": "A serene tropical beach scene...",
+            "resolution": "800x1280",
+            "image_url": "https://ideogram.ai/api/images/ephemeral/...png"
+        }
+    ]
+}
+```
+
+**Pricing:** $0.20 per remix
+
+---
+
+#### 5. Ideogram Turbo — Text To Image
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/ideogramV_2_Turbo/v1/generate
+```
+
+**Headers:**
+```
+Content-Type: application/json
+Cache-Control: no-cache
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+```
+
+**Request Body:**
+```json
+{
+    "image_request": {
+        "prompt": "A serene tropical beach scene...",
+        "negative_prompt": "blur",
+        "model": "V_2_TURBO",
+        "aspect_ratio": "ASPECT_10_16",
+        "magic_prompt_option": "AUTO",
+        "seed": 212,
+        "style_type": "AUTO",
+        "color_palette": {
+            "name": "JUNGLE"
+        }
+    }
+}
+```
+
+**Parameters:** Same as Ideogram v2 Text To Image, except `model` must be `V_2_TURBO`.
+
+**Response:**
+```json
+{
+    "created": "2024-11-01T10:06:14.744267+00:00",
+    "data": [
+        {
+            "is_image_safe": true,
+            "prompt": "A serene tropical beach scene...",
+            "resolution": "800x1280",
+            "seed": 212,
+            "style_type": "REALISTIC",
+            "url": "https://ideogram.ai/api/images/ephemeral/...png"
+        }
+    ]
+}
+```
+
+**Pricing:** $0.20 per generation (all resolutions)
+
+---
+
+#### 6. Ideogram Turbo — Describe Image
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/ideogramV_2_Turbo/v1/describe
+```
+
+**Headers:**
+```
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+Content-Type: multipart/form-data
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| image_file | Yes | File | The image file to describe |
+
+**Response:**
+```json
+{
+    "created": "2024-11-01T10:06:14.744267+00:00",
+    "data": {
+        "description": "The image depicts a serene tropical beach scene..."
+    }
+}
+```
+
+**Pricing:** $0.20 per request
+
+---
+
+#### 7. Ideogram Turbo — Edit Image
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/ideogramV_2_Turbo/v1/edit
+```
+
+**Headers:**
+```
+Ocp-Apim-Subscription-Key: YOUR_SUBSCRIPTION_KEY
+Content-Type: multipart/form-data
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| image_file | Yes | File | The image file to edit |
+| mask | No | File | Mask determining which parts to affect |
+| prompt | Yes | string | Text description of transformations |
+| model | Yes | string | `V_2` |
+
+**Response:**
+```json
+{
+    "created": "2024-11-01T11:46:02.294543+00:00",
+    "data": [
+        {
+            "is_image_safe": true,
+            "prompt": "replace some text",
+            "resolution": "1216x704",
+            "seed": 875575135,
+            "style_type": "GENERAL",
+            "url": "https://ideogram.ai/api/images/ephemeral/...png"
+        }
+    ]
+}
+```
+
+**Pricing:** $0.20 per edit
+
+---
+
+#### 8. Ideogram Turbo — Remix Image
+
+**Endpoint:**
+```
+POST https://gateway.pixazo.ai/ideogramV_2_Turbo/v1/remix
+```
+
+**Headers:**
+```
+Ocp-Apim-Subscription-Key: YOUR_Subscription_KEY
+Content-Type: multipart/form-data
+```
+
+**Parameters:**
+
+| Parameter | Required | Type | Description |
+|-----------|----------|------|-------------|
+| image_request | Yes | JSON | JSON string with prompt, aspect_ratio, image_weight, magic_prompt_option, model (`V_2_TURBO`) |
+| image_file | Yes | File | The image file to remix |
+
+**Example (image_request JSON):**
+```json
+{
+    "prompt": "A serene tropical beach scene...",
+    "aspect_ratio": "ASPECT_10_16",
+    "image_weight": 50,
+    "magic_prompt_option": "ON",
+    "model": "V_2_TURBO"
+}
+```
+
+**Response:**
+```json
+{
+    "created": "2000-01-23T04:56:07Z",
+    "data": [
+        {
+            "prompt": "A serene tropical beach scene...",
+            "resolution": "1024x1024",
+            "is_image_safe": true,
+            "seed": 12345,
+            "url": "https://ideogram.ai/api/images/direct/...png",
+            "style_type": "REALISTIC"
+        }
+    ]
+}
+```
+
+**Pricing:** $0.20 per remix
+
+**Status Codes (all Ideogram endpoints):**
+
+| Code | Meaning |
+|------|---------|
+| 200 | Success |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 429 | Too Many Requests |
+| 500 | Internal Server Error |
 
 ---
 

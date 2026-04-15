@@ -314,10 +314,25 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     with self._active_contexts_lock:
                         self._active_claude_client.pop(_agent_key, None)
 
-            flowfile.set_attribute("_queued_user_text", _user_text)
-            _queued_key = f"_queued_msgs:{_agent_key}"
-            with self._active_lock:
-                self._pending_user_msgs.setdefault(_queued_key, []).append(flowfile)
+            # Queue this user message in the agent's PendingQueue —
+            # the active turn will drain at its end, or a wake will
+            # fire if the turn somehow ended before we got here.
+            from core.pending_queue import PendingQueue
+            from core.llm_client import stamp_message
+            _uid = flowfile.get_attribute("http.auth.principal") or ""
+            _queued_msg = stamp_message({
+                "role": "user",
+                "content": _user_text,
+                "source": {"type": "user", "name": _uid,
+                           "target_agent": _target or None},
+                "msg_id": _user_msg_id or None,
+                "channel": "web",
+            })
+            _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
+            if _attachments_body:
+                _queued_msg["attachments"] = _attachments_body
+            PendingQueue.for_agent(conversation_id, _target or "").enqueue(
+                _queued_msg, source="http")
             bus.publish_event(conversation_id, "message_queued", {"conversation_id": conversation_id})
             ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
                               "message_count": ConversationStore.instance().message_count(conversation_id)})
@@ -432,22 +447,19 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _bg.pop_completed(conversation_id, t["tc_id"])
             except Exception:
                 pass
-            # Final safety net: check for in-memory queued messages right before exit
+            # Final safety net: wake if PendingQueue has anything before we exit
             _agent_n2 = ctx.get("active_agent_name", "") or ""
-            _ak2 = f"{conversation_id}:{_agent_n2}" if _agent_n2 else conversation_id
-            _qk2 = f"_queued_msgs:{_ak2}"
-            with self._active_lock:
-                _has_queued2 = bool(self._pending_user_msgs.get(_qk2))
-            if _has_queued2:
-                try:
-                    from core.poll_scheduler import PollScheduler
-                    PollScheduler.instance().schedule_delay(
-                        conversation_id, 1,
-                        key=f"{conversation_id}::pending_msg",
-                        reason="[pending_message] final safety-net check",
-                        user_id=ctx.get("user_id", ""))
-                except Exception:
-                    pass
+            try:
+                from core.pending_queue import PendingQueue
+                if PendingQueue.for_agent(conversation_id, _agent_n2).peek_count():
+                    from tasks.ai.agent_loop import AgentLoopTask
+                    AgentLoopTask.wake_agent(
+                        conversation_id, _agent_n2,
+                        reason="[pending] safety-net wake",
+                        user_id=ctx.get("user_id", ""),
+                    )
+            except Exception:
+                pass
             self._decrement_active(conversation_id, ctx)
 
     def _streaming_agent_loop_inner(self, ctx: Dict, conversation_id: str, bus) -> None:
@@ -509,28 +521,26 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
             _was_interrupted = not self._is_current_generation(gen_key, my_generation)
             _is_cc = ctx.get("_is_claude_code", False)
-            # NOTE: transcript-tail detection removed — it could not
-            # distinguish a preempt already delivered to the LLM (which
-            # will get its response next, no reschedule needed) from one
-            # that arrived after the turn was wrapping up (undelivered,
-            # needs a new turn). The in-memory queue below is the single
-            # source of truth: a preempt is enqueued only when its
-            # delivery to the active session failed (send_user_message
-            # returned False, mode mismatch, or no active client).
-            # Check in-memory pending queue (messages queued while agent was busy)
+            # PendingQueue is the single source of truth for pending work.
+            # If anything is in it at end of turn (because the drain_pending
+            # call was skipped on this code path, e.g. error exit), schedule
+            # a wake so it's picked up.
             _agent_n = ctx.get("active_agent_name", "") or ""
-            _ak = f"{conversation_id}:{_agent_n}" if _agent_n else conversation_id
-            _qk = f"_queued_msgs:{_ak}"
-            with self._active_lock:
-                _has_queued = bool(self._pending_user_msgs.get(_qk))
-            if _has_queued and not _was_interrupted:
+            try:
+                from core.pending_queue import PendingQueue
+                _pending_count = PendingQueue.for_agent(
+                    conversation_id, _agent_n).peek_count()
+            except Exception:
+                _pending_count = 0
+            if _pending_count and not _was_interrupted:
                 try:
-                    from core.poll_scheduler import PollScheduler
-                    PollScheduler.instance().schedule_delay(
-                        conversation_id, 1,
-                        key=f"{conversation_id}::pending_msg",
-                        reason="[pending_message] queued in-memory message(s)",
-                        user_id=ctx.get("user_id", ""))
+                    from tasks.ai.agent_loop import AgentLoopTask
+                    AgentLoopTask.wake_agent(
+                        conversation_id, _agent_n,
+                        reason=f"[pending] {_pending_count} queued msg(s)",
+                        user_id=ctx.get("user_id", ""),
+                        delay=1.0,
+                    )
                 except Exception:
                     pass
 

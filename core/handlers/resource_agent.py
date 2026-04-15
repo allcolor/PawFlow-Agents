@@ -1061,17 +1061,19 @@ class SpawnAgentsHandler(ToolHandler):
 
     @staticmethod
     def _preempt_caller(inst, conv_id, caller_agent, text, msg_id, source):
-        """Append the result to the caller's pending queue (running loop
-        will pick it up on its next iteration)."""
+        """Append the delegate result to the caller's PendingQueue — the
+        running agent loop will drain it at its next turn boundary."""
         try:
-            from core import FlowFile
-            _ff = FlowFile(text.encode("utf-8"))
-            _ff.set_attribute("conversation_id", conv_id)
-            _ff.set_attribute("msg_id", msg_id)
-            _ff.set_attribute("agent_name", caller_agent)
-            _ff.set_attribute("message_source", json.dumps(source))
-            _qk = f"{conv_id}:{caller_agent}" if caller_agent else conv_id
-            inst._pending_user_msgs.setdefault(_qk, []).append(_ff)
+            from core.pending_queue import PendingQueue
+            from core.llm_client import stamp_message
+            msg = stamp_message({
+                "role": "user",
+                "content": text,
+                "source": source or {"type": "agent_delegate"},
+                "msg_id": msg_id or None,
+            })
+            PendingQueue.for_agent(conv_id, caller_agent or "").enqueue(
+                msg, source="delegate_reply")
         except Exception as e:
             logger.error("[bg-delegate] preempt failed: %s", e)
 

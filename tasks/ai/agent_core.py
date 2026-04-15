@@ -352,15 +352,6 @@ class AgentCoreMixin:
             nonlocal new_messages
             emitter.flush(new_messages)
             new_messages = []
-        # Track known message count
-        if use_conv_store and conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                ctx["_last_known_msg_count"] = ConversationStore.instance().message_count(
-                    conversation_id)
-            except Exception:
-                ctx["_last_known_msg_count"] = 0
-
         # Repair orphan tool_calls — assistant messages with tool_calls
         # whose tool results are missing (broken by compact/clear)
         _repaired = False

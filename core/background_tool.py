@@ -405,19 +405,27 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
                 "content": content,
                 "source": {"type": "system", "name": "background"},
             })
+            # 1. Transcript (history)
             ConversationWriter.for_conversation(conv_id).enqueue([msg])
+            # 2. PendingQueue (agent-visible ingress) + wake.
+            # Routes through the same single path every other source
+            # uses — no more "BG tool injected but agent never woke"
+            # special-casing.
+            try:
+                from core.pending_queue import PendingQueue
+                PendingQueue.for_agent(conv_id, agent_name or "").enqueue(
+                    msg, source=f"bg_tool:{tool_name}")
+            except Exception as _qe:
+                logger.warning("[bg-tool] PendingQueue.enqueue failed: %s", _qe)
         except Exception as e:
             logger.error("[bg-tool] failed to inject CC system message: %s", e)
 
-        # Wake the agent. The end-of-turn pending-message reschedule in
-        # agent_streaming skips CC on purpose (CC handles preempted msgs
-        # inline), so BG injections for CC would sit in the transcript
-        # forever with no new turn. Schedule one explicitly.
+        # 3. Wake the agent (no-op if already running — current turn
+        # will drain the queue; otherwise schedule a fresh turn).
         try:
-            from core.poll_scheduler import PollScheduler
-            PollScheduler.instance().schedule_delay(
-                conv_id, 1,
-                key=f"{conv_id}::bg_injected::{tc_id}",
+            from tasks.ai.agent_loop import AgentLoopTask
+            AgentLoopTask.wake_agent(
+                conv_id, agent_name or "",
                 reason=f"[bg-tool] CC result injected ({tool_name})",
                 user_id=task.get("user_id", "") or "",
             )

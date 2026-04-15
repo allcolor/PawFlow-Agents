@@ -260,6 +260,28 @@ def cmd_start(args):
     logger.info(f"  Chat:  http://{args.host}:{args.port}/chat")
     logger.info(f"  Admin: http://{args.host}:{args.port}/admin")
 
+    # Boot recovery: scan every conv/{agent}/pending.jsonl and wake agents
+    # that had undelivered messages when the previous process died. Without
+    # this, a message enqueued just before a crash would sit on disk with
+    # nobody polling for it.
+    try:
+        from core.pending_queue import PendingQueue
+        from tasks.ai.agent_loop import AgentLoopTask
+        _recovered = PendingQueue.all_nonempty()
+        if _recovered:
+            logger.info(f"[boot-recovery] {len(_recovered)} agent(s) have "
+                        f"pending messages — scheduling wake")
+            for conv_id, agent, count in _recovered:
+                logger.info(f"[boot-recovery] waking {conv_id[:8]}/{agent or '_shared'} "
+                            f"({count} pending)")
+                AgentLoopTask.wake_agent(
+                    conv_id, agent,
+                    reason=f"[boot-recovery] {count} pending msg(s)",
+                    delay=2.0,
+                )
+    except Exception as _re:
+        logger.warning(f"[boot-recovery] scan failed: {_re}")
+
     # 2. Keep main thread alive, handle Ctrl+C gracefully
     _shutting_down = False
 

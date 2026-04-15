@@ -440,83 +440,40 @@ class StreamEmitter(AgentEmitter):
             except Exception as _e:
                 logger.debug(f"Queue drain failed: {_e}")
 
-        # Source 2: internal "already active" queue (FlowFiles queued while agent was busy)
-        _agent_key = f"{self.conversation_id}:{self._agent_name}" if self._agent_name else self.conversation_id
-        _queued_key = f"_queued_msgs:{_agent_key}"
-        with self.agent._active_lock:
-            _queued = self.agent._pending_user_msgs.pop(_queued_key, [])
-        if _queued:
-            for _qff in _queued:
-                # _qff is a FlowFile — extract user text
-                _parsed = {}
-                try:
-                    # Prefer the preserved attribute (set before ack overwrites content)
-                    _text = (_qff.get_attribute("_queued_user_text")
-                             if hasattr(_qff, "get_attribute") else "") or ""
-                    if not _text:
-                        _raw = _qff.get_content().decode("utf-8") if hasattr(_qff, "get_content") else str(_qff)
-                        _parsed = json.loads(_raw) if _raw.strip().startswith("{") else {}
-                        _text = _parsed.get("message", "") or _parsed.get("text", "") or ""
-                    _uid = (_qff.get_attribute("http.auth.principal")
-                            if hasattr(_qff, "get_attribute") else "") or self._user_id
-                except Exception:
-                    _text = ""
-                    _uid = self._user_id
-                    _parsed = {}
-                if _text:
-                    _qmid = (_qff.get_attribute("_user_msg_id")
-                             if hasattr(_qff, "get_attribute") else "") or (_parsed.get("msg_id", "") if _parsed else "")
-                    _msg = LLMMessage(
-                        role="user", content=_text,
-                        source={"type": "user", "name": _uid},
-                    )
-                    if _qmid:
-                        _msg.msg_id = _qmid
-                    append_fn(_msg)
+        # Source 2: PendingQueue (persistent per-(conv, agent) disk-backed queue)
+        # — the single source of truth for messages that arrived while this
+        # agent was busy. Replaces the old in-memory _pending_user_msgs dict
+        # AND the old transcript-scan Source 3 (which drifted via
+        # _last_known_msg_count and produced phantom retriggers).
+        try:
+            from core.pending_queue import PendingQueue
+            _queued_msgs = PendingQueue.for_agent(
+                self.conversation_id, self._agent_name or "").drain()
+        except Exception as _qe:
+            logger.warning("[drain] PendingQueue read failed: %s", _qe)
+            _queued_msgs = []
+        for _qmsg in _queued_msgs:
+            if not isinstance(_qmsg, dict):
+                continue
+            _role = _qmsg.get("role", "user")
+            _content = _qmsg.get("content", "")
+            if not _content:
+                continue
+            _src = _qmsg.get("source") or {}
+            _mid = _qmsg.get("msg_id", "")
+            _ts = _qmsg.get("ts") or _qmsg.get("timestamp")
+            _seq = _qmsg.get("seq")
+            _msg = LLMMessage(
+                role=_role, content=_content, source=_src,
+                msg_id=_mid, timestamp=_ts or 0.0, seq=_seq or 0,
+            )
+            append_fn(_msg)
 
-        # Source 3: conversation store (cross-channel messages)
-        if self._use_conv_store and self.conversation_id and iteration > 1:
-            try:
-                from core.conversation_store import ConversationStore
-                _cs = ConversationStore.instance()
-                _my_agent = self.ctx.get("active_agent_name") or ""
-                _current = _cs.message_count(self.conversation_id)
-                _known = self.ctx.get("_last_known_msg_count", 0)
-                if _current > _known:
-                    _page = _cs.load_page(self.conversation_id,
-                                          limit=_current - _known, offset=_known)
-                    _tail = _page["messages"] if _page else []
-                    # Collect msg_ids already in context to avoid duplicates
-                    _existing_ids = {m.msg_id for m in messages if m.msg_id}
-                    for m in (_tail or []):
-                        if not isinstance(m, dict):
-                            continue
-                        _mid = m.get("msg_id", "")
-                        if _mid and _mid in _existing_ids:
-                            continue
-                        _role = m.get("role", "")
-                        if _role not in ("user", "assistant"):
-                            continue
-                        _content = m.get("content", "")
-                        if isinstance(_content, str) and _content.startswith("[System:"):
-                            continue
-                        _src = m.get("source") or {}
-                        if _src.get("type") == "context":
-                            continue
-                        # Skip own messages (already in context)
-                        if _src.get("type") == "agent" and _src.get("name") == _my_agent:
-                            continue
-                        # Transform for this agent's perspective
-                        _xf = _cs._transform_for_other_agent(m, _my_agent)
-                        messages.append(LLMMessage(
-                            role=_xf.get("role", "user"),
-                            content=_xf.get("content", ""),
-                            source=_xf.get("source"),
-                            msg_id=_mid,
-                        ))
-                    self.ctx["_last_known_msg_count"] = _current
-            except Exception as e:
-                logger.debug(f"Message checkpoint failed: {e}")
+        # Source 3 (transcript scan) removed. Cross-channel and cross-agent
+        # messages are routed through PendingQueue at their ingress — see
+        # core/pending_queue.py. The old scan-the-tail approach drifted
+        # against `_last_known_msg_count` and produced phantom retriggers
+        # every time a compaction wrote messages outside the enqueue path.
 
     # ── Persistence ───────────────────────────────────────────────────
 
@@ -597,10 +554,8 @@ class StreamEmitter(AgentEmitter):
                 ConversationWriter.for_conversation(_parent).enqueue(
                     _task_msgs, user_id=self._user_id)
 
-        # Update known count: add the number of public messages we just enqueued
-        # (don't re-read from store — the async writer may not have written yet)
-        _public_count = len(public)
-        self.ctx["_last_known_msg_count"] = self.ctx.get("_last_known_msg_count", 0) + _public_count
+        # _last_known_msg_count removed — no more transcript-scan drain,
+        # no need to track what we've seen on disk.
 
     def on_no_pending_work(self, content: str, ctx: dict) -> Optional[str]:
         """Handle [NO_PENDING_WORK] / [RECHECK_IN:N] tags from poller responses."""

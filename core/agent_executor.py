@@ -1208,7 +1208,12 @@ def resolve_agent_task(
 
     # 2) Get instance config and load definition from repo
     acfg = get_agent_config(conversation_id, agent_name)
-    _def_name = acfg["definition"]
+    _def_name = acfg.get("definition") or ""
+    if not _def_name:
+        raise KeyError(
+            f"Agent '{agent_name}' is in conversation "
+            f"'{conversation_id}' but has no `definition` configured. "
+            f"Every instance must explicitly reference a definition.")
     llm_svc = resolve_value(acfg.get("llm_service", ""), owner=user_id) or ""
     if not llm_svc:
         raise KeyError(

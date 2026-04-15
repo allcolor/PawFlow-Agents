@@ -234,7 +234,9 @@ class TestResolveAgentTask(unittest.TestCase):
         })
         from unittest.mock import patch
         from core.conv_agent_config import CONV_AGENTS_KEY
-        _fake_extras = {CONV_AGENTS_KEY: {"researcher": {"llm_service": "grok"}}}
+        _fake_extras = {CONV_AGENTS_KEY: {"researcher": {
+            "definition": "researcher", "llm_service": "grok",
+        }}}
         with patch("core.conversation_store.ConversationStore.instance") as mock_cs:
             mock_cs.return_value.get_extra.side_effect = lambda cid, key: _fake_extras.get(key, {})
             from core.agent_executor import resolve_agent_task
@@ -295,24 +297,34 @@ class TestMessageSerializationSource(unittest.TestCase):
 
     def test_deserialize_with_source(self):
         from tasks.ai.agent_loop import AgentLoopTask
+        from core.llm_client import stamp_message
         task = AgentLoopTask.__new__(AgentLoopTask)
         data = [
-            {"role": "user", "content": "hi",
-             "source": {"type": "user", "name": "alice"}},
-            {"role": "assistant", "content": "hello",
-             "source": {"type": "agent", "name": "bot"}},
+            stamp_message({"role": "user", "content": "hi",
+                           "source": {"type": "user", "name": "alice"}}),
+            stamp_message({"role": "assistant", "content": "hello",
+                           "source": {"type": "agent", "name": "bot"}}),
         ]
         msgs = task._deserialize_messages(data)
         self.assertEqual(msgs[0].source["type"], "user")
         self.assertEqual(msgs[1].source["name"], "bot")
 
     def test_deserialize_without_source(self):
-        """Backward compat: old messages without source."""
+        """Messages without source deserialize cleanly (source is optional)."""
         from tasks.ai.agent_loop import AgentLoopTask
+        from core.llm_client import stamp_message
         task = AgentLoopTask.__new__(AgentLoopTask)
-        data = [{"role": "user", "content": "hi"}]
+        data = [stamp_message({"role": "user", "content": "hi"})]
         msgs = task._deserialize_messages(data)
         self.assertIsNone(msgs[0].source)
+
+    def test_deserialize_unstamped_raises(self):
+        """Unstamped on-disk message = corrupt state → hard error."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        data = [{"role": "user", "content": "hi"}]  # no ts/seq
+        with self.assertRaises(ValueError):
+            task._deserialize_messages(data)
 
 
 class TestClassifyMessagesSource(unittest.TestCase):

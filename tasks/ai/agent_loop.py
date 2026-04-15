@@ -120,7 +120,8 @@ class AgentLoopTask(
         # Claude Code client references — keyed by conv_id:agent_name
         self._active_claude_client: Dict[str, Any] = {}
         # Pending user messages queued while agent is busy — keyed by _queued_msgs:{agent_key}
-        self._pending_user_msgs: Dict[str, list] = {}
+        # Pending user messages now live in core.pending_queue.PendingQueue
+        # (persistent, per-(conv, agent), disk-backed). No in-memory dict here.
         # Context operation locks — prevents FlowFile processing during context mutations
         # conv_id -> threading.Event (set = free, cleared = blocked)
         self._context_op_events: Dict[str, threading.Event] = {}
@@ -159,6 +160,40 @@ class AgentLoopTask(
         inst = cls._live_instance
         if inst and hasattr(inst, '_poller_wake'):
             inst._poller_wake.set()
+
+    @classmethod
+    def is_agent_active(cls, conversation_id: str, agent_name: str) -> bool:
+        """True if an agent turn is currently running for (conv, agent)."""
+        inst = cls._live_instance
+        if not inst:
+            return False
+        key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+        with inst._active_contexts_lock:
+            return key in inst._active_contexts
+
+    @classmethod
+    def wake_agent(cls, conversation_id: str, agent_name: str,
+                   reason: str = "", user_id: str = "", delay: float = 1.0):
+        """Trigger an agent turn — no-op if it's already running.
+
+        When the agent is active, the PendingQueue is drained at the end
+        of the current turn; no external wake needed. When idle, schedule
+        a turn so the queued messages are picked up.
+        """
+        if cls.is_agent_active(conversation_id, agent_name):
+            return  # current turn will drain pending at its end
+        try:
+            from core.poll_scheduler import PollScheduler
+            key = f"{conversation_id}::pending::{(agent_name or '').lower()}"
+            PollScheduler.instance().schedule_delay(
+                conversation_id, delay, key=key,
+                reason=reason or f"[pending] wake {agent_name or 'default'}",
+                user_id=user_id or "",
+            )
+            cls.wake_poller()
+        except Exception as e:
+            logger.warning("[wake-agent] failed for %s/%s: %s",
+                            conversation_id[:8], agent_name, e)
 
     @classmethod
     def force_stop_agent(cls, conversation_id: str, agent_name: str):

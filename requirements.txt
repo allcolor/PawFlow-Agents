@@ -14,11 +14,6 @@ sqlalchemy>=2.0.0
 # HTTP
 requests>=2.31.0
 httpx>=0.25.0
-# Pixazo's gateway sits behind Cloudflare; the polling endpoint
-# (/v2/requests/status/...) returns a JS challenge for any client
-# whose TLS fingerprint doesn't match a real browser. cloudscraper
-# solves the challenge transparently so async ops can poll for results.
-cloudscraper>=1.2.71
 
 # Authentication
 pyjwt>=2.8.0

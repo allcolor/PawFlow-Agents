@@ -61,6 +61,10 @@ def _register_all_services():
     import services.grok_video_service        # noqa: F401
     import services.sora_video_service        # noqa: F401
 
+    # Audio generation services
+    import services.pixazo_audio_service       # noqa: F401
+    import services.suno_audio_service         # noqa: F401  — sunoapi.org wrapper
+
     # Extra Pixazo capability services (3D, upscale, try-on, lipsync, trainer)
     import services.pixazo_capability_services  # noqa: F401
 

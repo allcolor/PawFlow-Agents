@@ -105,13 +105,17 @@ class HTTPReceiverTask(BaseTask):
                 method, pattern, self._owner_id, make_callback(relationship),
                 public=_public, private_only=_private_only,
             )
-            logger.info(
+            logger.debug(
                 "httpReceiver registered %s %s -> %s%s%s",
                 method, pattern, relationship,
                 " [public]" if _public else "",
                 " [private_only]" if _private_only else "",
             )
 
+        # One summary line at INFO instead of N per-route lines.
+        if routes:
+            logger.info("httpReceiver registered %d route(s) on %s",
+                        len(routes), self.config.get("service_id", "?"))
         self._registered = True
 
     def _on_request(self, pending_req, relationship: str):

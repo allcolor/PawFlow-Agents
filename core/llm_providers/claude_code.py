@@ -882,7 +882,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
                 etype = event.get("type", "")
                 _parent_tc_id = event.get("parent_tool_use_id") or ""
-                logger.info("[claude-code] %s %.200s", etype, json.dumps(event))
+                # Raw event dump — too chatty for INFO (every assistant
+                # delta, every tool_use block, every rate_limit_event…).
+                # Stays at debug so anyone diagnosing CC behavior can
+                # re-enable it via log level.
+                logger.debug("[claude-code] %s %.200s", etype, json.dumps(event))
 
                 if etype == "system":
                     # Capture AND persist session_id from init event immediately.
@@ -952,7 +956,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 if callback:
                                     callback(text)
                         elif btype == "tool_use":
-                            logger.info("[CC-RAW-TOOL] block=%s", json.dumps(block, default=str, ensure_ascii=False))
+                            logger.debug("[CC-RAW-TOOL] block=%s", json.dumps(block, default=str, ensure_ascii=False))
                             _block_id = block.get("id", "")
                             _block_entry = {
                                 "name": block.get("name", ""),
@@ -1054,7 +1058,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     msg = event.get("message", {})
                     for block in msg.get("content", []):
                         if block.get("type") == "tool_result":
-                            logger.info("[CC-RAW-RESULT] block=%s", json.dumps(block, default=str, ensure_ascii=False)[:2000])
+                            logger.debug("[CC-RAW-RESULT] block=%s", json.dumps(block, default=str, ensure_ascii=False)[:2000])
                             tc_id = block.get("tool_use_id", "")
                             result_text = block.get("content", "")
                             if isinstance(result_text, list):

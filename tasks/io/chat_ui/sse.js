@@ -597,11 +597,6 @@ function connectSSE(cid, onReady) {
           const firstLine = data.result.split('\n')[0].substring(0, 120);
           resDiv.innerHTML = '<details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
             + '<pre class="tc-output">' + renderTextWithInlineMedia(data.result) + '</pre></details>';
-          // Also drop a standalone media block so the user sees the
-          // image/video/audio directly in the conversation flow.
-          if (typeof appendMediaBlocksFromText === 'function') {
-            appendMediaBlocksFromText(data.result || '');
-          }
           tcEl.appendChild(resDiv);
         }
       }
@@ -761,14 +756,6 @@ function connectSSE(cid, onReady) {
     // Suppress delegate tool_result — the delegate block shows the response
     const tcId = data.tc_id || '';
     if (tcId && _delegateGroups['__tc__' + tcId]) return;
-    // Media side-effect: for any tool that returns an image/audio/video
-    // URL (generate_image, screen, see, generate_video, generate_audio,
-    // edit_image…), drop a standalone block into the conversation so the
-    // user sees the media directly, independent of the tool-result
-    // details block (which stays collapsed for quick scanning).
-    if (typeof appendMediaBlocksFromText === 'function') {
-      appendMediaBlocksFromText(data.result || '');
-    }
     // Try to attach to matching tool_call element
     if (tcId) {
       const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');

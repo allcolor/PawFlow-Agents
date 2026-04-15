@@ -397,6 +397,11 @@ class _PixazoBaseService(BaseService):
             raise ServiceError(f"Pixazo API error ({resp_status}): {resp_body[:300]}")
         return json.loads(resp_body) if resp_body.strip() else {}
 
+    @staticmethod
+    def _short_url(url: str) -> str:
+        """Trim a polling URL to its tail for compact log lines."""
+        return url.rsplit("/", 1)[-1][:32] if url else url
+
     def _try_get_via_relay(self, url: str,
                             headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
         """Route a GET through the first connected relay (Linux TCP
@@ -433,17 +438,17 @@ class _PixazoBaseService(BaseService):
                 if relay:
                     break
             if not relay:
-                logger.info("[PIXAZO] no live relay found across "
-                            "%d scope(s) — falling back to urllib",
-                            len(instances))
+                logger.debug("[PIXAZO] no live relay across %d scope(s) — urllib",
+                             len(instances))
                 return None
         except Exception as e:
             logger.debug("[PIXAZO] relay lookup skipped: %s", e)
             return None
 
         try:
-            logger.info("[PIXAZO] GET via relay '%s' %s",
-                        getattr(relay, "_service_id", "?"), url)
+            logger.debug("[PIXAZO] GET via relay '%s' %s",
+                          getattr(relay, "_service_id", "?"),
+                          self._short_url(url))
             r = relay.http_fetch(url, method="GET", headers=headers,
                                   timeout=self.timeout)
         except Exception as e:
@@ -473,8 +478,8 @@ class _PixazoBaseService(BaseService):
             except Exception as de:
                 logger.warning("[PIXAZO] deflate decode failed: %s", de)
         body = body_bytes.decode("utf-8", errors="replace")
-        logger.info("[PIXAZO] relay GET %d, encoding=%r, body[:200]=%r",
-                    status, _enc, body[:200])
+        logger.debug("[PIXAZO] relay GET %d enc=%r body[:120]=%r",
+                      status, _enc, body[:120])
         if status >= 400:
             if "Just a moment" in body or "Un instant" in body:
                 logger.warning("[PIXAZO] relay also got CF challenge — falling back")
@@ -497,7 +502,7 @@ class _PixazoBaseService(BaseService):
         IP is the user's regardless; only the client fingerprint
         differs.
         """
-        logger.info("[PIXAZO] GET %s", url)
+        logger.debug("[PIXAZO] GET %s", self._short_url(url))
         headers = {
             "Cache-Control": "no-cache",
             "Ocp-Apim-Subscription-Key": self.api_key,
@@ -588,8 +593,15 @@ class _PixazoBaseService(BaseService):
                 })
             status = (data.get("status", "") or "").lower()
             elapsed = int(time.time() - start)
-            logger.info("[PIXAZO] Poll %s (%ds): status=%s",
-                        polling_url or poll_endpoint, elapsed, status)
+            # Polling is chatty (1 line every poll_interval s for the
+            # whole job duration). Demoted to debug — INFO only fires
+            # on terminal states and on the very first iteration so
+            # the operator still sees that polling is alive without
+            # 50+ lines per generation.
+            (logger.info if elapsed <= self.poll_interval else logger.debug)(
+                "[PIXAZO] Poll %s (%ds): status=%s",
+                self._short_url(polling_url or poll_endpoint),
+                elapsed, status)
             if status in ("completed", "done", "success", "ready"):
                 u = _extract_media_url(
                     data, output_path=output_path, url_field=url_field)
@@ -633,15 +645,16 @@ class _PixazoBaseService(BaseService):
         status_url_field = op.get("status_url_field", "polling_url")
         multipart = bool(op.get("multipart_form_data", False))
 
-        logger.info("[PIXAZO] %s/%s (%s) → POST %s",
-                    model_id or self._model_id, op_name, convention, endpoint)
+        logger.info("[PIXAZO] %s/%s → %s",
+                    model_id or self._model_id, op_name,
+                    self._short_url(endpoint))
         # Stay call-compatible with patched _post(endpoint, body) in tests:
         # only pass multipart kwarg when actually needed.
         if multipart:
             data = self._post(endpoint, body, multipart=True)
         else:
             data = self._post(endpoint, body)
-        logger.info("[PIXAZO] Response: %s", json.dumps(data, default=str)[:300])
+        logger.debug("[PIXAZO] Response: %s", json.dumps(data, default=str)[:300])
 
         if convention == "sync":
             url = _extract_media_url(

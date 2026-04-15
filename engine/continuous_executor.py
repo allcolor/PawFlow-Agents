@@ -175,7 +175,7 @@ class ContinuousFlowExecutor:
             try:
                 if hasattr(task, 'initialize'):
                     task.initialize()
-                    logger.info(f"Task '{task_id}' initialized")
+                    logger.debug(f"Task '{task_id}' initialized")
             except Exception as e:
                 logger.error(f"Task '{task_id}' initialization failed: {e}")
 

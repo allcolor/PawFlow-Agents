@@ -198,7 +198,6 @@ async function newChat() {
   var result = await _pickAgentsForNewConv();
   if (!result || !result.agents || result.agents.length === 0) return;
   var params = { agents: result.agents };
-  if (result.agent_configs) params.agent_configs = result.agent_configs;
   if (result.title) params.title = result.title;
   if (result.relays && result.relays.length) params.relays = result.relays;
   if (result.default_relay) params.default_relay = result.default_relay;
@@ -284,10 +283,10 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 
-  // State: agent configs keyed by name
-  var agentConfigs = {};  // {name: {llm_service: "..."}}
-  var checkedAgents = new Set();
-  var focusedAgent = '';
+  // State: agent instances keyed by instance_name
+  // Each: {definition, llm_service, params: {key: val}}
+  var agentInstances = {};  // {instance_name: {definition, llm_service, params}}
+  var focusedDef = '';
   var selRelays = [], defaultRelay = '';
 
   // Guess LLM service for an agent: try {name}_llm_service, else first service
@@ -304,10 +303,12 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
     return llmServices.length ? llmServices[0].service_id : '';
   }
 
+  function _instanceCount() { return Object.keys(agentInstances).length; }
+
   function _renderTree() {
     var tree = document.getElementById('_ncAgentTree');
     tree.innerHTML = '';
-    // Group by scope
+    // Group definitions by scope
     var scopes = {};
     repoAgents.forEach(function(a) {
       var s = a.scope || 'global';
@@ -319,40 +320,27 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
     scopeOrder.forEach(function(scope) {
       var items = scopes[scope];
       if (!items || !items.length) return;
-      // Scope header
       var hdr = document.createElement('div');
       hdr.style.cssText = 'font-size:10px;color:#666;padding:2px 4px;margin-top:4px;';
       hdr.textContent = scopeLabels[scope] || scope;
       tree.appendChild(hdr);
-      // Agent rows
       items.forEach(function(a) {
-        var row = document.createElement('label');
+        var row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12px;';
-        row.dataset.agent = a.name;
-        var cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = checkedAgents.has(a.name);
-        cb.style.cssText = 'accent-color:#7c6af7;margin:0;';
-        cb.onchange = function() {
-          if (cb.checked) {
-            checkedAgents.add(a.name);
-            if (!agentConfigs[a.name]) agentConfigs[a.name] = { llm_service: _guessLlm(a.name) };
-          } else {
-            checkedAgents.delete(a.name);
-          }
-          _updateCreateBtn();
-          if (focusedAgent === a.name) _renderDetail();
-        };
+        row.dataset.def = a.name;
         var label = document.createElement('span');
         label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
         label.textContent = a.name;
         if (a.description) label.title = a.description;
-        row.appendChild(cb);
+        // Count instances from this definition
+        var count = Object.values(agentInstances).filter(function(i) { return i.definition === a.name; }).length;
+        var badge = document.createElement('span');
+        badge.style.cssText = 'font-size:10px;color:#6c5ce7;min-width:16px;text-align:center;';
+        badge.textContent = count ? '(' + count + ')' : '';
         row.appendChild(label);
-        // Click row (not checkbox) to focus
-        row.onclick = function(e) {
-          if (e.target === cb) return;
-          focusedAgent = a.name;
+        row.appendChild(badge);
+        row.onclick = function() {
+          focusedDef = a.name;
           _highlightFocused();
           _renderDetail();
         };
@@ -363,47 +351,110 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
 
   function _highlightFocused() {
     var tree = document.getElementById('_ncAgentTree');
-    tree.querySelectorAll('label').forEach(function(row) {
-      row.style.background = row.dataset.agent === focusedAgent ? 'rgba(124,106,247,0.15)' : '';
+    tree.querySelectorAll('[data-def]').forEach(function(row) {
+      row.style.background = row.dataset.def === focusedDef ? 'rgba(124,106,247,0.15)' : '';
     });
+  }
+
+  function _nextInstanceName(defName) {
+    var base = defName;
+    if (!agentInstances[base]) return base;
+    var n = 2;
+    while (agentInstances[base + '_' + n]) n++;
+    return base + '_' + n;
   }
 
   function _renderDetail() {
     var panel = document.getElementById('_ncAgentDetail');
-    if (!focusedAgent) {
-      panel.innerHTML = '<span style="color:#666;">Select an agent to see details</span>';
+    if (!focusedDef) {
+      panel.innerHTML = '<span style="color:#666;">Select a definition to add agents</span>';
       panel.style.display = 'flex'; panel.style.alignItems = 'center'; panel.style.justifyContent = 'center';
       return;
     }
     panel.style.display = 'block'; panel.style.alignItems = ''; panel.style.justifyContent = '';
-    var agent = repoAgents.find(function(a) { return a.name === focusedAgent; });
+    var agent = repoAgents.find(function(a) { return a.name === focusedDef; });
     if (!agent) return;
-    var isChecked = checkedAgents.has(focusedAgent);
-    var cfg = agentConfigs[focusedAgent] || { llm_service: _guessLlm(focusedAgent) };
-    var html = '<div style="font-weight:600;font-size:13px;color:#fff;margin-bottom:6px;">' + escapeHtml(agent.name) + '</div>';
+    var paramSchema = agent.parameters || {};
+    var paramKeys = Object.keys(paramSchema);
+
+    var html = '<div style="font-weight:600;font-size:13px;color:#fff;margin-bottom:4px;">' + escapeHtml(agent.name) + '</div>';
     if (agent.description) {
       html += '<div style="color:#aaa;margin-bottom:8px;font-size:11px;">' + escapeHtml(agent.description) + '</div>';
     }
-    html += '<div style="margin-bottom:4px;"><label style="font-size:10px;color:#888;">LLM Service</label>';
-    html += '<select id="_ncLlmSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;"' + (isChecked ? '' : ' disabled') + '>';
-    html += svcOpts;
-    html += '</select></div>';
-    panel.innerHTML = html;
-    // Set selected value
-    var sel = document.getElementById('_ncLlmSelect');
-    if (sel) {
-      sel.value = cfg.llm_service || '';
-      sel.onchange = function() {
-        if (!agentConfigs[focusedAgent]) agentConfigs[focusedAgent] = {};
-        agentConfigs[focusedAgent].llm_service = sel.value;
-      };
+
+    // Existing instances for this definition
+    var defInstances = [];
+    Object.keys(agentInstances).forEach(function(k) {
+      if (agentInstances[k].definition === focusedDef) defInstances.push(k);
+    });
+    if (defInstances.length) {
+      html += '<div style="margin-bottom:8px;">';
+      defInstances.forEach(function(iname) {
+        html += '<div style="display:flex;align-items:center;gap:4px;padding:3px 6px;background:rgba(124,106,247,0.1);border-radius:3px;margin-bottom:3px;font-size:11px;">';
+        html += '<span style="flex:1;color:#e0e0e0;">' + escapeHtml(iname) + '</span>';
+        html += '<span style="color:#888;font-size:10px;">' + escapeHtml(agentInstances[iname].llm_service) + '</span>';
+        html += '<span data-remove-inst="' + escapeHtml(iname) + '" style="cursor:pointer;color:#e94560;font-size:13px;" title="Remove">\u2715</span>';
+        html += '</div>';
+      });
+      html += '</div>';
     }
+
+    // Add-instance form
+    html += '<div style="border-top:1px solid var(--border,#444);padding-top:8px;margin-top:4px;">';
+    html += '<div style="font-size:10px;color:#6c5ce7;margin-bottom:6px;font-weight:600;">Add Instance</div>';
+    html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">Instance Name *</label>';
+    html += '<input id="_ncInstName" value="' + escapeHtml(_nextInstanceName(focusedDef)) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
+    html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">LLM Service *</label>';
+    html += '<select id="_ncLlmSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;">' + svcOpts + '</select></div>';
+    // Params
+    if (paramKeys.length) {
+      html += '<div style="margin-bottom:6px;"><div style="font-size:10px;color:#888;margin-bottom:4px;">Parameters</div>';
+      paramKeys.forEach(function(k) {
+        var spec = paramSchema[k] || {};
+        var defVal = k === 'name' ? _nextInstanceName(focusedDef) : (spec.default || '');
+        html += '<div style="margin-bottom:4px;"><label style="font-size:10px;color:#888;">' + escapeHtml(k + (spec.required ? ' *' : '')) + '</label>';
+        html += '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(defVal)) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
+      });
+      html += '</div>';
+    }
+    html += '<button id="_ncAddInstBtn" style="width:100%;padding:5px;border-radius:4px;border:1px solid #6c5ce7;background:transparent;color:#6c5ce7;cursor:pointer;font-size:11px;font-weight:600;">+ Add Instance</button>';
+    html += '</div>';
+
+    panel.innerHTML = html;
+
+    // Set LLM select default
+    var sel = document.getElementById('_ncLlmSelect');
+    if (sel) sel.value = _guessLlm(focusedDef);
+
+    // Remove instance buttons
+    panel.querySelectorAll('[data-remove-inst]').forEach(function(btn) {
+      btn.onclick = function() {
+        delete agentInstances[btn.dataset.removeInst];
+        _renderTree(); _highlightFocused(); _renderDetail(); _updateCreateBtn();
+      };
+    });
+
+    // Add instance button
+    document.getElementById('_ncAddInstBtn').onclick = function() {
+      var iname = (document.getElementById('_ncInstName').value || '').trim();
+      var llm = (document.getElementById('_ncLlmSelect') || {}).value || '';
+      if (!iname) { alert('Instance name is required.'); return; }
+      if (agentInstances[iname]) { alert('Instance "' + iname + '" already exists.'); return; }
+      if (!llm) { alert('LLM Service is required.'); return; }
+      var params = {};
+      panel.querySelectorAll('[data-param]').forEach(function(inp) {
+        params[inp.dataset.param] = inp.value;
+      });
+      agentInstances[iname] = { definition: focusedDef, llm_service: llm, params: params };
+      _renderTree(); _highlightFocused(); _renderDetail(); _updateCreateBtn();
+    };
   }
 
   function _updateCreateBtn() {
     var btn = document.getElementById('_ncCreateBtn');
-    btn.disabled = checkedAgents.size === 0;
-    btn.style.opacity = checkedAgents.size === 0 ? '0.4' : '1';
+    var count = _instanceCount();
+    btn.disabled = count === 0;
+    btn.style.opacity = count === 0 ? '0.4' : '1';
   }
 
   function _makeRelayItem(text, id) {
@@ -464,15 +515,18 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
   document.getElementById('_ncCancelBtn').onclick = function() { cleanup(null); };
   overlay.addEventListener('click', function(e) { if (e.target === overlay) cleanup(null); });
   document.getElementById('_ncCreateBtn').onclick = function() {
-    if (checkedAgents.size === 0) return;
-    var agents = Array.from(checkedAgents);
-    var configs = {};
-    agents.forEach(function(name) {
-      configs[name] = agentConfigs[name] || { llm_service: _guessLlm(name) };
+    if (_instanceCount() === 0) return;
+    var agents = Object.keys(agentInstances).map(function(iname) {
+      var inst = agentInstances[iname];
+      return {
+        instance_name: iname,
+        definition: inst.definition,
+        llm_service: inst.llm_service,
+        params: inst.params || {},
+      };
     });
     cleanup({
       agents: agents,
-      agent_configs: configs,
       relays: selRelays,
       default_relay: defaultRelay,
       title: (document.getElementById('_ncTitle').value || '').trim(),

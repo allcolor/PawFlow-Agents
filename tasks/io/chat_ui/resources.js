@@ -784,6 +784,8 @@ function _showAgentConvConfigDialog(agentName) {
   action$('get_agent_conv_config', { name: agentName, conversation_id: conversationId }).subscribe(function(data) {
     if (data.error) { addMsg('error', data.error); return; }
     var cfg = data.config || {};
+    var paramsSchema = data.parameters_schema || {};
+    var instParams = cfg.params || {};
     var services = data.available_services || [];
     var serviceOpts = services.map(function(s) {
       var sel = s.id === cfg.llm_service ? ' selected' : '';
@@ -796,11 +798,31 @@ function _showAgentConvConfigDialog(agentName) {
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
     var panel = document.createElement('div');
     panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:520px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
-    panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-      + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">Configure agent in conversation: ' + escapeHtml(agentName) + '</h3>'
+    var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+      + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">Configure: ' + escapeHtml(agentName) + '</h3>'
       + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>'
-      + '</div>'
-      + '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">LLM Service *</label>'
+      + '</div>';
+    // Definition info
+    if (cfg.definition) {
+      html += '<div style="margin-bottom:10px;padding:6px 8px;background:#0f0f23;border-radius:4px;font-size:11px;">'
+        + '<span style="color:#888;">Definition:</span> <span style="color:#6c5ce7;">' + escapeHtml(cfg.definition) + '</span></div>';
+    }
+    // Instance parameters
+    var paramKeys = Object.keys(paramsSchema);
+    if (paramKeys.length) {
+      html += '<div style="margin-bottom:10px;padding:8px;border:1px solid #333;border-radius:4px;">'
+        + '<div style="font-size:11px;color:#6c5ce7;margin-bottom:6px;font-weight:600;">Instance Parameters</div>';
+      paramKeys.forEach(function(k) {
+        var spec = paramsSchema[k] || {};
+        var val = instParams[k] || spec.default || '';
+        var label = k + (spec.required ? ' *' : '');
+        html += '<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">' + escapeHtml(label) + '</label>'
+          + '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(val)) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
+      });
+      html += '</div>';
+    }
+    // Runtime config
+    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">LLM Service *</label>'
       + '<select id="acc-llm" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
       + serviceOpts + '</select></div>'
       + '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Model (override)</label>'
@@ -815,6 +837,7 @@ function _showAgentConvConfigDialog(agentName) {
       + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
       + '<button id="acc-save" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
       + '</div>';
+    panel.innerHTML = html;
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
     document.getElementById('acc-save').onclick = function() {
@@ -823,10 +846,15 @@ function _showAgentConvConfigDialog(agentName) {
       var tools = document.getElementById('acc-tools').value
         .split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
       var depth = parseInt(document.getElementById('acc-depth').value) || 1000;
+      // Collect params
+      var params = {};
+      panel.querySelectorAll('[data-param]').forEach(function(inp) {
+        params[inp.dataset.param] = inp.value;
+      });
       action$('update_agent_conv_config', {
         name: agentName, conversation_id: conversationId,
         config: { llm_service: llm, model: model, tools: tools,
-                   max_depth: depth },
+                   max_depth: depth, params: params },
       }).subscribe(function(r) {
         if (r.error) { addMsg('error', r.error); return; }
         addMsg('system', agentName + ' config updated for this conversation.');
@@ -1150,16 +1178,16 @@ async function showAddAgentToConvDialog() {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
   var panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:460px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid #333;';
   panel.innerHTML = '<p style="color:#e0e0e0;font-weight:600;">Add Agent to Conversation</p><p style="color:#888;">Loading...</p>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
   try {
     var data = await rxjs.firstValueFrom(action$('list_repo_agents', {}));
-    var agents = data.agents || [];
-    var available = agents.filter(function(a) { return !a.in_conversation; });
-    var inConv = agents.filter(function(a) { return a.in_conversation; });
+    var definitions = data.agents || [];
+    var llmServices = data.llm_services || [];
+    var selectedDef = null;
     panel.innerHTML = '';
 
     var header = document.createElement('div');
@@ -1172,59 +1200,81 @@ async function showAddAgentToConvDialog() {
     header.appendChild(closeBtn);
     panel.appendChild(header);
 
-    if (available.length) {
-      var searchInput = document.createElement('input');
-      searchInput.placeholder = 'Search agents...';
-      searchInput.style.cssText = 'width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;font-size:12px;margin-bottom:8px;box-sizing:border-box;';
-      panel.appendChild(searchInput);
+    // Definition selector
+    var defLabel = document.createElement('label');
+    defLabel.style.cssText = 'color:#aaa;font-size:11px;';
+    defLabel.textContent = 'Definition (template)';
+    panel.appendChild(defLabel);
+    var defSelect = document.createElement('select');
+    defSelect.style.cssText = 'width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin:4px 0 12px;';
+    defSelect.innerHTML = '<option value="">-- Select a definition --</option>'
+      + definitions.map(function(d) {
+        return '<option value="' + escapeHtml(d.name) + '">' + escapeHtml(d.name)
+          + (d.description ? ' \u2014 ' + escapeHtml(d.description) : '') + '</option>';
+      }).join('');
+    panel.appendChild(defSelect);
 
-      var list = document.createElement('div');
-      list.id = 'agent-pick-list';
-      available.forEach(function(a) {
-        var lbl = document.createElement('label');
-        lbl.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 4px;cursor:pointer;border-radius:4px;';
-        var cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.value = a.name; cb.style.accentColor = '#6c5ce7';
-        var nameSpan = document.createElement('span');
-        nameSpan.style.cssText = 'color:#e0e0e0;font-size:12px;';
-        nameSpan.textContent = a.name;
-        lbl.appendChild(cb); lbl.appendChild(nameSpan);
-        if (a.description) {
-          var desc = document.createElement('span');
-          desc.style.cssText = 'color:#888;font-size:11px;';
-          desc.textContent = a.description;
-          lbl.appendChild(desc);
-        }
-        list.appendChild(lbl);
-      });
-      panel.appendChild(list);
+    // Form area (rendered when definition is selected)
+    var formArea = document.createElement('div');
+    formArea.id = '_addAgentForm';
+    panel.appendChild(formArea);
 
-      searchInput.addEventListener('input', function() {
-        var q = this.value.toLowerCase();
-        list.querySelectorAll('label').forEach(function(lbl) {
-          var n = lbl.querySelector('span') ? lbl.querySelector('span').textContent.toLowerCase() : '';
-          lbl.style.display = n.includes(q) ? '' : 'none';
+    function _guessLlm(name) {
+      for (var i = 0; i < llmServices.length; i++) {
+        if (llmServices[i].service_id === name + '_llm_service') return llmServices[i].service_id;
+        if (llmServices[i].service_id === name + '_llm') return llmServices[i].service_id;
+      }
+      return llmServices.length ? llmServices[0].service_id : '';
+    }
+
+    function _renderForm() {
+      formArea.innerHTML = '';
+      if (!selectedDef) return;
+      var def = definitions.find(function(d) { return d.name === selectedDef; });
+      if (!def) return;
+      var paramSchema = def.parameters || {};
+      var paramKeys = Object.keys(paramSchema);
+      var svcOpts = llmServices.map(function(s) {
+        var sel = s.service_id === _guessLlm(selectedDef) ? ' selected' : '';
+        return '<option value="' + escapeHtml(s.service_id) + '"' + sel + '>'
+          + escapeHtml(s.service_id) + '</option>';
+      }).join('');
+      var html = '<div style="padding:10px;border:1px solid #333;border-radius:4px;background:#0d1117;">';
+      // Instance name
+      html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Instance Name *</label>'
+        + '<input id="_addInstName" value="' + escapeHtml(selectedDef) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
+      // LLM Service
+      html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">LLM Service *</label>'
+        + '<select id="_addLlm" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
+        + svcOpts + '</select></div>';
+      // Params from schema
+      if (paramKeys.length) {
+        html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #333;">'
+          + '<div style="font-size:11px;color:#6c5ce7;margin-bottom:6px;font-weight:600;">Parameters</div>';
+        paramKeys.forEach(function(k) {
+          var spec = paramSchema[k] || {};
+          var defVal = k === 'name' ? selectedDef : (spec.default || '');
+          html += '<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">'
+            + escapeHtml(k + (spec.required ? ' *' : '')) + '</label>'
+            + '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(defVal)) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
         });
-      });
-    } else {
-      var empty = document.createElement('div');
-      empty.style.cssText = 'color:#666;font-size:12px;margin-bottom:8px;';
-      empty.textContent = 'All agents are already in this conversation.';
-      panel.appendChild(empty);
+        html += '</div>';
+      }
+      html += '</div>';
+      formArea.innerHTML = html;
     }
 
-    if (inConv.length) {
-      var already = document.createElement('div');
-      already.style.cssText = 'margin-top:8px;font-size:11px;color:#555;';
-      already.textContent = 'Already in conversation: ' + inConv.map(function(a) { return a.name; }).join(', ');
-      panel.appendChild(already);
-    }
+    defSelect.onchange = function() {
+      selectedDef = defSelect.value;
+      _renderForm();
+    };
 
+    // Create link + buttons
     var createLink = document.createElement('div');
     createLink.style.cssText = 'margin-top:12px;border-top:1px solid #333;padding-top:10px;font-size:11px;';
     var cl = document.createElement('span');
     cl.style.cssText = 'color:#6c5ce7;cursor:pointer;';
-    cl.textContent = '+ Create new agent in repository';
+    cl.textContent = '+ Create new definition in repository';
     cl.onclick = function() { overlay.remove(); showResourceCreator('agent'); };
     createLink.appendChild(cl);
     panel.appendChild(createLink);
@@ -1236,15 +1286,26 @@ async function showAddAgentToConvDialog() {
     cancelBtn.style.cssText = 'background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
     cancelBtn.onclick = function() { overlay.remove(); };
     var addBtn = document.createElement('button');
-    addBtn.textContent = 'Add Selected';
+    addBtn.textContent = 'Add Agent';
     addBtn.style.cssText = 'background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
     addBtn.onclick = async function() {
-      var checks = list ? list.querySelectorAll('input[type=checkbox]:checked') : [];
-      if (!checks.length) { alert('Select at least one agent.'); return; }
+      if (!selectedDef) { alert('Select a definition first.'); return; }
+      var instName = (document.getElementById('_addInstName') || {}).value || '';
+      var llm = (document.getElementById('_addLlm') || {}).value || '';
+      if (!instName.trim()) { alert('Instance name is required.'); return; }
+      if (!llm) { alert('LLM Service is required.'); return; }
+      var params = {};
+      formArea.querySelectorAll('[data-param]').forEach(function(inp) {
+        params[inp.dataset.param] = inp.value;
+      });
       overlay.remove();
-      for (var i = 0; i < checks.length; i++) {
-        await cmdResourceAction('add_agent_to_conv', {name: checks[i].value, conversation_id: conversationId});
-      }
+      await cmdResourceAction('add_agent_to_conv', {
+        instance_name: instName.trim(),
+        definition: selectedDef,
+        params: params,
+        llm_service: llm,
+        conversation_id: conversationId,
+      });
       loadResources();
     };
     btns.appendChild(cancelBtn); btns.appendChild(addBtn);

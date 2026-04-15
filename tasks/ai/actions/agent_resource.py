@@ -997,9 +997,19 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     })
         except Exception:
             pass
+        # Include definition's parameters schema
+        _cfg = cfgs[aname]
+        _def_params_schema = {}
+        _def_name = _cfg.get("definition", "")
+        if _def_name:
+            from core.resource_store import ResourceStore as _RS
+            _adef = _RS.instance().get_any("agent", _def_name, user_id)
+            if _adef and _adef.get("parameters"):
+                _def_params_schema = _adef["parameters"]
         flowfile.set_content(json.dumps({
             "name": aname,
-            "config": cfgs[aname],
+            "config": _cfg,
+            "parameters_schema": _def_params_schema,
             "available_services": services,
         }, ensure_ascii=False).encode())
         return [flowfile]
@@ -1101,45 +1111,29 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
     if action == "create_conversation":
         agents = body.get("agents", [])
-        agent_configs = body.get("agent_configs", {})
         if not agents or not isinstance(agents, list):
             flowfile.set_content(json.dumps({"error": "'agents' list is required"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Normalize agent entries: support both legacy ["name", ...] and
-        # new [{instance_name, definition, params, llm_service}, ...]
         from core.resource_store import ResourceStore
         uid = user_id
         rs = ResourceStore.instance()
         from core.conv_agent_config import add_agent_to_conv
         _agent_entries = []
         for item in agents:
-            if isinstance(item, str):
-                # Legacy format: string name, config from agent_configs dict
-                acfg = agent_configs.get(item, {})
-                _agent_entries.append({
-                    "instance_name": item,
-                    "definition": item,
-                    "params": {},
-                    "llm_service": acfg.get("llm_service", ""),
-                    "model": acfg.get("model", ""),
-                    "tools": acfg.get("tools"),
-                    "max_depth": int(acfg.get("max_depth", 1000)),
-                    "skills": acfg.get("skills"),
-                })
-            elif isinstance(item, dict):
-                # New format: full instance spec
-                iname = item.get("instance_name") or item.get("name", "")
-                _agent_entries.append({
-                    "instance_name": iname,
-                    "definition": item.get("definition", iname),
-                    "params": item.get("params") or {},
-                    "llm_service": item.get("llm_service", ""),
-                    "model": item.get("model", ""),
-                    "tools": item.get("tools"),
-                    "max_depth": int(item.get("max_depth", 1000)),
-                    "skills": item.get("skills"),
-                })
+            if not isinstance(item, dict):
+                continue
+            iname = item.get("instance_name") or item.get("name", "")
+            _agent_entries.append({
+                "instance_name": iname,
+                "definition": item.get("definition", iname),
+                "params": item.get("params") or {},
+                "llm_service": item.get("llm_service", ""),
+                "model": item.get("model", ""),
+                "tools": item.get("tools"),
+                "max_depth": int(item.get("max_depth", 1000)),
+                "skills": item.get("skills"),
+            })
         # Validate definitions exist in repo
         valid_entries = []
         for entry in _agent_entries:

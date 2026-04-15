@@ -42,13 +42,13 @@ _GATEWAY = "gateway.pixazo.ai"
 
 # Cloudflare in front of gateway.pixazo.ai blocks the Python default
 # `User-Agent: Python-urllib/3.x` with a 403 challenge page on the
-# polling URLs (/v2/requests/status/...). We send a real-browser UA on
-# every request so async ops don't die at the first poll.
-_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
-)
+# polling URLs (/v2/requests/status/...). The official Pixazo doc uses
+# curl on the same endpoint without issue:
+#     curl -H "Ocp-Apim-Subscription-Key: ..." \
+#          https://gateway.pixazo.ai/v2/requests/status/<id>
+# Sending the curl UA gets us the same allowance — Cloudflare's
+# bot-detection layer treats `curl/*` as developer traffic, not bot.
+_BROWSER_UA = "curl/8.4.0"
 
 
 def _catalog_path() -> str:

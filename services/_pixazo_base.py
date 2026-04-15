@@ -402,6 +402,65 @@ class _PixazoBaseService(BaseService):
         """Trim a polling URL to its tail for compact log lines."""
         return url.rsplit("/", 1)[-1][:32] if url else url
 
+    @staticmethod
+    def _reshape_body(body: Dict[str, Any], shape: str) -> Dict[str, Any]:
+        """Rewrite the body to match a provider's expected shape.
+
+        Supported shapes:
+
+        - ``flat`` (default): pass through unchanged. Suits Sora, Veo,
+          Runway, Kling, most image gens.
+        - ``content_array``: collapse `prompt` / `image_url` /
+          `video_url` / `audio_url` into an OpenAI-style multimodal
+          ``content`` array. Suits Seedance and any provider that
+          inherited the ByteDance multimodal request schema.
+        """
+        if shape == "flat" or not isinstance(body, dict):
+            return body
+        if shape == "content_array":
+            content = []
+            for k in ("prompt", "text", "negative_prompt"):
+                v = body.get(k)
+                if v:
+                    content.append({"type": "text", "text": str(v)})
+            for k in ("image_url", "image", "input_image_url"):
+                v = body.get(k)
+                if v:
+                    urls = v if isinstance(v, list) else [v]
+                    for u in urls:
+                        content.append({"type": "image_url",
+                                         "image_url": {"url": u}})
+            for k in ("video_url",):
+                v = body.get(k)
+                if v:
+                    urls = v if isinstance(v, list) else [v]
+                    for u in urls:
+                        content.append({"type": "video_url",
+                                         "video_url": {"url": u}})
+            for k in ("audio_url",):
+                v = body.get(k)
+                if v:
+                    urls = v if isinstance(v, list) else [v]
+                    for u in urls:
+                        content.append({"type": "audio_url",
+                                         "audio_url": {"url": u}})
+            if not content:
+                # Nothing to wrap — leave body alone, the provider will
+                # error clearly.
+                return body
+            # Drop the keys we just rewrote, keep all the model-specific
+            # extras (duration, ratio, resolution, generate_audio, …).
+            _consumed = {
+                "prompt", "text", "negative_prompt",
+                "image_url", "image", "input_image_url",
+                "video_url", "audio_url",
+            }
+            rest = {k: v for k, v in body.items() if k not in _consumed}
+            return {"content": content, **rest}
+        # Unknown shape — log and pass through.
+        logger.warning("[PIXAZO] unknown body_shape=%r — passing flat", shape)
+        return body
+
     def _try_get_via_relay(self, url: str,
                             headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
         """Route a GET through the first connected relay (Linux TCP
@@ -648,6 +707,10 @@ class _PixazoBaseService(BaseService):
         logger.info("[PIXAZO] %s/%s → %s",
                     model_id or self._model_id, op_name,
                     self._short_url(endpoint))
+        # Some providers don't take the canonical {prompt, image_url, ...}
+        # flat body. Per-op `body_shape` rewrites the body before POST
+        # without changing caller signatures.
+        body = self._reshape_body(body, op.get("body_shape", "flat"))
         # Stay call-compatible with patched _post(endpoint, body) in tests:
         # only pass multipart kwarg when actually needed.
         if multipart:

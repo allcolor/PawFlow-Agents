@@ -186,3 +186,83 @@ def test_output_path_falls_back_when_missing():
     data = {"videoUrl": "https://cdn/fallback.mp4"}
     assert _extract_media_url(
         data, output_path="output.video_url") == "https://cdn/fallback.mp4"
+
+
+# ── Body shape rewriting ───────────────────────────────────────────────
+
+
+def test_body_shape_flat_passthrough():
+    from services._pixazo_base import _PixazoBaseService
+    body = {"prompt": "x", "duration": 5}
+    assert _PixazoBaseService._reshape_body(body, "flat") == body
+
+
+def test_body_shape_content_array_collapses_prompt_and_image():
+    """Seedance / OpenAI-style multimodal request:
+    {prompt, image_url, duration} → {content: [text, image_url], duration}.
+    """
+    from services._pixazo_base import _PixazoBaseService
+    body = {
+        "prompt": "A cat on the beach",
+        "image_url": "https://src/c.png",
+        "duration": 5,
+        "ratio": "16:9",
+    }
+    out = _PixazoBaseService._reshape_body(body, "content_array")
+    assert out["duration"] == 5
+    assert out["ratio"] == "16:9"
+    assert "prompt" not in out and "image_url" not in out
+    types = [c["type"] for c in out["content"]]
+    assert "text" in types
+    assert "image_url" in types
+    text_item = next(c for c in out["content"] if c["type"] == "text")
+    assert text_item["text"] == "A cat on the beach"
+    img_item = next(c for c in out["content"] if c["type"] == "image_url")
+    assert img_item["image_url"]["url"] == "https://src/c.png"
+
+
+def test_body_shape_content_array_handles_video_and_audio_urls():
+    from services._pixazo_base import _PixazoBaseService
+    body = {
+        "prompt": "remix this",
+        "video_url": "https://v/a.mp4",
+        "audio_url": "https://a/b.mp3",
+    }
+    out = _PixazoBaseService._reshape_body(body, "content_array")
+    types = {c["type"] for c in out["content"]}
+    assert types == {"text", "video_url", "audio_url"}
+
+
+def test_body_shape_unknown_passes_through_with_warning(caplog):
+    from services._pixazo_base import _PixazoBaseService
+    body = {"prompt": "x"}
+    with caplog.at_level("WARNING"):
+        out = _PixazoBaseService._reshape_body(body, "doesnotexist")
+    assert out == body
+    assert any("unknown body_shape" in r.message for r in caplog.records)
+
+
+def test_seedance_uses_content_array_body_via_invoke(monkeypatch):
+    """End-to-end: seedance-2-0 has body_shape=content_array in the
+    catalog → _invoke wraps the prompt before POSTing."""
+    s = _video("seedance-2-0")
+    captured = {}
+
+    def _fake_post(ep, body):
+        captured["body"] = body
+        return {"request_id": "rid",
+                "polling_url": "https://gw/v2/requests/status/rid"}
+
+    s._post = _fake_post  # type: ignore[assignment]
+    s._get_url = lambda u: {  # type: ignore[assignment]
+        "status": "completed", "video_url": "https://cdn/v.mp4"}
+    s._download_media = lambda u, default_mime="": (b"MP4", "video/mp4")  # type: ignore[assignment]
+
+    out = s.generate(prompt="A cat on the beach", duration=5)
+    assert out["video_bytes"] == b"MP4"
+    # Body must be content-array shape, not flat
+    assert "content" in captured["body"]
+    assert "prompt" not in captured["body"]
+    text_item = next(c for c in captured["body"]["content"]
+                      if c["type"] == "text")
+    assert text_item["text"] == "A cat on the beach"

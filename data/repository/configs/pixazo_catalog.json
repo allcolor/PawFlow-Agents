@@ -559,6 +559,151 @@
           "input_field": "text"
         }
       }
+    },
+
+    "hunyuan3d-3-0": {
+      "label": "Hunyuan3D 3.0 (Tencent)",
+      "category": "3d",
+      "operations": {
+        "image_to_3d": {
+          "endpoint": "/hunyuan3d-3-0-api-294/v1/hunyuan3d-3-0-api-request",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "image_url"
+        }
+      }
+    },
+    "hyper3d-rodin": {
+      "label": "Hyper3D Rodin v1 (Hyper3D)",
+      "category": "3d",
+      "operations": {
+        "image_to_3d": {
+          "endpoint": "/hyper3d-rodin-259/v1/hyper3d-rodin-request",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "input_image_urls"
+        },
+        "text_to_3d": {
+          "endpoint": "/hyper3d-rodin-259/v1/hyper3d-rodin-request",
+          "convention": "polling_url",
+          "id_field": "request_id"
+        }
+      }
+    },
+    "trellis-3d": {
+      "label": "Trellis 2 (Microsoft)",
+      "category": "3d",
+      "operations": {
+        "image_to_3d": {
+          "endpoint": "/trellis-2-image-to-3d/v1/trellis-2-image-to-3d-request",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "image_url"
+        }
+      }
+    },
+    "tripo3d": {
+      "label": "Tripo3D v2.5 (Tripo)",
+      "category": "3d",
+      "operations": {
+        "image_to_3d": {
+          "endpoint": "/tripo3d-v2-5-413/v1/tripo3d-v2-5-request",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "image_url"
+        }
+      }
+    },
+
+    "seedvr-upscale-image": {
+      "label": "SeedVR Image Upscaler (ByteDance)",
+      "category": "upscale",
+      "operations": {
+        "upscale": {
+          "endpoint": "/seedvr-upscale/v1/upscale-image/generate",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "image_url"
+        }
+      }
+    },
+    "seedvr-upscale-video": {
+      "label": "SeedVR Video Upscaler (ByteDance)",
+      "category": "upscale",
+      "operations": {
+        "upscale": {
+          "endpoint": "/seedvr-upscale/v1/upscale-video/generate",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "video_url"
+        }
+      }
+    },
+    "crystal-upscaler": {
+      "label": "Crystal Upscaler",
+      "category": "upscale",
+      "operations": {
+        "upscale": {
+          "endpoint": "/upscaler/v1/crystal-upscaler/generate",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "image_url"
+        }
+      }
+    },
+    "bria-rmbg": {
+      "label": "Bria RMBG 2.0 (Background Remover)",
+      "category": "upscale",
+      "operations": {
+        "upscale": {
+          "endpoint": "/bria-rmbg-2-0-682/v1/bria-rmbg-2-0-request",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "input_field": "image_url"
+        }
+      }
+    },
+
+    "fashn-virtual-try-on": {
+      "label": "Fashn Virtual Try-On",
+      "category": "try_on",
+      "operations": {
+        "try_on": {
+          "endpoint": "/fashn-virtual-try-on/v1/fashn-virtual-try-on-request",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "person_field": "model_image",
+          "garment_field": "garment_image"
+        }
+      }
+    },
+    "idm-vton": {
+      "label": "IDM VTON (Virtual Try-On)",
+      "category": "try_on",
+      "operations": {
+        "try_on": {
+          "endpoint": "/idm-vton-api/v1/r-idm-vton",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "person_field": "human_image",
+          "garment_field": "garment_image"
+        }
+      }
+    },
+
+    "omnihuman": {
+      "label": "OmniHuman 1.5 (ByteDance Lipsync)",
+      "category": "lipsync",
+      "operations": {
+        "lipsync": {
+          "endpoint": "/bytedance-omnihuman-v1-5-290/v1/bytedance-omnihuman-v1-5-request",
+          "convention": "polling_url",
+          "id_field": "request_id",
+          "video_field": "video_url",
+          "image_field": "image_url",
+          "audio_field": "audio_url"
+        }
+      }
     }
   }
 }

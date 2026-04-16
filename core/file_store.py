@@ -129,6 +129,10 @@ class FileStore:
         """Retrieve a file by ID with access control.
 
         Returns (filename, bytes, content_type) or None if not found/denied.
+        Used by HTTP handlers where a None return is a legitimate "deny"
+        answer. For internal code paths that MUST succeed (forwarding
+        attachments to an LLM, rebuilding context, etc.), use `get_required`
+        which raises instead of silently returning None.
         """
         with self._store_lock:
             self._ensure_loaded()
@@ -153,6 +157,48 @@ class FileStore:
         except FileNotFoundError:
             self._delete_entry(file_id)
             return None
+
+    def get_required(self, file_id: str, user_id: str,
+                     conversation_id: str) -> Tuple[str, bytes, str]:
+        """Strict retrieval: user_id, conversation_id, file_id all required.
+
+        Raises ValueError if any identifier is missing or empty, and raises
+        FileNotFoundError if the file is absent, expired, or access is denied.
+        Use this everywhere internal code forwards a file to an LLM / writes
+        it into a tool result / rebuilds a context — the three identifiers
+        together locate a file uniquely (owner × conv × file) and a silent
+        miss is always a bug, never a legitimate state.
+        """
+        if not user_id:
+            raise ValueError("FileStore.get_required: user_id is required")
+        if not conversation_id:
+            raise ValueError("FileStore.get_required: conversation_id is required")
+        if not file_id:
+            raise ValueError("FileStore.get_required: file_id is required")
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._entries.get(file_id)
+        if entry is None:
+            raise FileNotFoundError(
+                f"FileStore: no entry for file_id={file_id}")
+        _entry_conv = entry.get("conversation_id", "")
+        if _entry_conv and _entry_conv != conversation_id:
+            raise FileNotFoundError(
+                f"FileStore: file_id={file_id} belongs to conv "
+                f"{_entry_conv}, not {conversation_id}")
+        if not self.check_access(file_id, user_id=user_id):
+            _owner = entry.get("user_id", "")
+            raise FileNotFoundError(
+                f"FileStore: access denied for file_id={file_id} "
+                f"(owner={_owner}, requester={user_id})")
+        try:
+            content = Path(entry["path"]).read_bytes()
+        except FileNotFoundError:
+            self._delete_entry(file_id)
+            raise FileNotFoundError(
+                f"FileStore: file_id={file_id} index entry present but "
+                f"bytes missing on disk")
+        return (entry["filename"], content, entry["content_type"])
 
     def check_access(self, file_id: str, user_id: str = "",
                      gateway_key: str = "") -> bool:

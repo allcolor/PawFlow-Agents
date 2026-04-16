@@ -244,7 +244,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     # ── Streaming ───────────────────────────────────────────────────
 
     @staticmethod
-    def _extract_images(messages) -> list:
+    def _extract_images(messages, user_id: str, conversation_id: str) -> list:
         """Extract images from the LAST user message only.
 
         Removes image blocks from ALL messages (so they don't bloat the text
@@ -252,7 +252,20 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         content blocks for the stream-json message (native vision).
 
         Older images are replaced with a placeholder text.
+
+        user_id and conversation_id are REQUIRED — image_ref blocks point
+        to private attachments stored under (owner × conv × file_id).
+        A missing identifier means the caller has a bug; raise loudly
+        instead of dropping the image and pretending nothing happened.
         """
+        if not user_id:
+            raise ValueError(
+                "_extract_images: user_id is required to resolve image_ref "
+                "attachments (owner-scoped access control)")
+        if not conversation_id:
+            raise ValueError(
+                "_extract_images: conversation_id is required to resolve "
+                "image_ref attachments (files belong to a conversation)")
         import base64 as _b64
         image_blocks = []
 
@@ -308,27 +321,31 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         continue
 
                 elif btype == "image_ref":
-                    # Image stored in FileStore — load for vision on last user message only
+                    # Image stored in FileStore — load for vision on last user message only.
+                    # Older image_ref blocks (from prior turns already seen by
+                    # the model via session resume) are intentionally dropped
+                    # to text to keep the prompt compact.
                     if _is_last_user:
-                        try:
-                            from core.file_store import FileStore
-                            import base64 as _b64
-                            entry = FileStore.instance().get(block["file_id"])
-                            if entry:
-                                _fname, _data, _ct = entry
-                                _data_b64 = _b64.b64encode(_data).decode("ascii")
-                                image_blocks.append({
-                                    "type": "image",
-                                    "source": {
-                                        "type": "base64",
-                                        "media_type": block.get("mime_type", _ct),
-                                        "data": _data_b64,
-                                    },
-                                })
-                                logger.info("Loaded image from FileStore for vision: %s (%d bytes)",
-                                            block["file_id"], len(_data))
-                        except Exception as e:
-                            logger.warning("Failed to load image from FileStore: %s", e)
+                        from core.file_store import FileStore
+                        import base64 as _b64
+                        _fid = block.get("file_id", "")
+                        if not _fid:
+                            raise ValueError(
+                                "image_ref block missing file_id — producer bug")
+                        _fname, _data, _ct = FileStore.instance().get_required(
+                            _fid, user_id=user_id,
+                            conversation_id=conversation_id)
+                        _data_b64 = _b64.b64encode(_data).decode("ascii")
+                        image_blocks.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": block.get("mime_type", _ct),
+                                "data": _data_b64,
+                            },
+                        })
+                        logger.info("Loaded image from FileStore for vision: %s (%d bytes)",
+                                    _fid, len(_data))
                     new_content.append({"type": "text", "text": f"[image: {block.get('filename', '?')}]"})
                     continue
 
@@ -459,12 +476,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         """
         from core.llm_client import LLMClientError, LLMResponse
 
-        # Extract images BEFORE serialization (they'll be sent as content blocks)
-        image_blocks = self._extract_images(messages)
-
         user_id = getattr(self, '_user_id', "")
         conv_id = getattr(self, '_conversation_id', "")
         agent_name = getattr(self, '_agent_name', "")
+
+        # Extract images BEFORE serialization (they'll be sent as content blocks).
+        # user_id + conv_id are REQUIRED — FileStore enforces owner×conv
+        # access control, and a missing identifier silently drops the
+        # user's image. _extract_images raises if either is empty.
+        image_blocks = self._extract_images(
+            messages, user_id=user_id, conversation_id=conv_id)
 
         # Always load session_id from the store for THIS conversation
         # (never from self — the client is shared across conversations)

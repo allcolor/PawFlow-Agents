@@ -196,24 +196,28 @@ class LLMOpenaiMixin:
         finally:
             conn.close()
 
-    @staticmethod
-    def _resolve_image_ref(block: dict) -> Optional[dict]:
-        """Resolve an image_ref block to an image_url block by loading from FileStore."""
-        try:
-            from core.file_store import FileStore
-            import base64 as _b64
-            entry = FileStore.instance().get(block["file_id"])
-            if entry:
-                _fname, _data, _ct = entry
-                _data_b64 = _b64.b64encode(_data).decode("ascii")
-                mime = block.get("mime_type", _ct) or "image/png"
-                return {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{_data_b64}"},
-                }
-        except Exception as e:
-            logger.warning("Failed to resolve image_ref: %s", e)
-        return None
+    def _resolve_image_ref(self, block: dict) -> dict:
+        """Resolve an image_ref block to an image_url block by loading from FileStore.
+
+        user_id + conversation_id are REQUIRED (pulled from self). A missing
+        identifier or an unreadable file raises — silently dropping an image
+        the user explicitly attached is never acceptable.
+        """
+        from core.file_store import FileStore
+        import base64 as _b64
+        _fid = block.get("file_id", "")
+        if not _fid:
+            raise ValueError("image_ref block missing file_id — producer bug")
+        _uid = getattr(self, '_user_id', '')
+        _cid = getattr(self, '_conversation_id', '')
+        _fname, _data, _ct = FileStore.instance().get_required(
+            _fid, user_id=_uid, conversation_id=_cid)
+        _data_b64 = _b64.b64encode(_data).decode("ascii")
+        mime = block.get("mime_type", _ct) or "image/png"
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{_data_b64}"},
+        }
 
     def _build_openai_messages(self, messages) -> List[Dict[str, Any]]:
         """Convert LLMMessage list to OpenAI API message format."""
@@ -253,9 +257,7 @@ class LLMOpenaiMixin:
                         if p.get("type") == "image_url":
                             img_parts.append(p)
                         elif p.get("type") == "image_ref":
-                            _r = self._resolve_image_ref(p)
-                            if _r:
-                                img_parts.append(_r)
+                            img_parts.append(self._resolve_image_ref(p))
                     if img_parts:
                         api_messages.append({
                             "role": "user",
@@ -291,11 +293,7 @@ class LLMOpenaiMixin:
                             "text": f"[Document: {part.get('filename', 'file')}]\n{part.get('text', '')}",
                         })
                     elif pt == "image_ref":
-                        _resolved = self._resolve_image_ref(part)
-                        if _resolved:
-                            parts.append(_resolved)
-                        else:
-                            parts.append({"type": "text", "text": f"[image: {part.get('filename', '?')}]"})
+                        parts.append(self._resolve_image_ref(part))
                     elif pt == "file_ref":
                         parts.append({"type": "text", "text": f"[file: {part.get('filename', '?')}]"})
                     else:

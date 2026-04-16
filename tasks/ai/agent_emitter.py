@@ -457,8 +457,19 @@ class StreamEmitter(AgentEmitter):
                 continue
             _role = _qmsg.get("role", "user")
             _content = _qmsg.get("content", "")
-            if not _content:
+            _atts = _qmsg.get("attachments") or []
+            if not _content and not _atts:
                 continue
+            # Queued attachments were captured at enqueue time but never
+            # transformed — the LLM needs them as multimodal content
+            # (image_ref / file_ref parts) to actually see images.
+            if _atts and _role == "user":
+                _content = self.agent._build_user_content(
+                    _content if isinstance(_content, str) else "",
+                    _atts,
+                    conversation_id=self.conversation_id,
+                    user_id=getattr(self, "_user_id", "") or "",
+                )
             _src = _qmsg.get("source") or {}
             _mid = _qmsg.get("msg_id", "")
             _ts = _qmsg.get("ts") or _qmsg.get("timestamp")

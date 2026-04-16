@@ -46,6 +46,8 @@ class RouteOnAttributeTask(BaseTask):
         _rid_r = flowfile.get_attribute("http.request.id") or ""
         if _rid_r:
             logger.info("[routeOnAttribute] enter req_id=%s", _rid_r[:8])
+        import time as _t_r
+        _t_r_start = _t_r.monotonic()
         matched_routes = []
 
         for route_name, condition in self.routes.items():
@@ -54,23 +56,36 @@ class RouteOnAttributeTask(BaseTask):
 
         if matched_routes:
             if self.routing_strategy == 'route_to_matched':
-                # Première route qui matche
                 flowfile.set_attribute('route', matched_routes[0])
                 flowfile.set_attribute('route.relationship', matched_routes[0])
+                if _rid_r:
+                    logger.info("[routeOnAttribute] exit  req_id=%s took=%.0fms route=%s",
+                                _rid_r[:8],
+                                (_t_r.monotonic() - _t_r_start) * 1000,
+                                matched_routes[0])
                 return [flowfile]
             elif self.routing_strategy == 'route_to_all':
-                # Cloner vers toutes les routes qui matchent
                 results = []
                 for route_name in matched_routes:
                     ff = flowfile.clone()
                     ff.set_attribute('route', route_name)
                     ff.set_attribute('route.relationship', route_name)
                     results.append(ff)
+                if _rid_r:
+                    logger.info("[routeOnAttribute] exit  req_id=%s took=%.0fms routes=%s",
+                                _rid_r[:8],
+                                (_t_r.monotonic() - _t_r_start) * 1000,
+                                ",".join(matched_routes))
                 return results
         else:
             default_rel = self.config.get('default_relationship', 'unmatched')
             flowfile.set_attribute('route', default_rel)
             flowfile.set_attribute('route.relationship', default_rel)
+            if _rid_r:
+                logger.info("[routeOnAttribute] exit  req_id=%s took=%.0fms route=%s (default)",
+                            _rid_r[:8],
+                            (_t_r.monotonic() - _t_r_start) * 1000,
+                            default_rel)
             return [flowfile]
 
         return [flowfile]

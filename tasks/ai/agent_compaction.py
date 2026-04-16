@@ -776,11 +776,31 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 f"Do NOT restart or re-propose completed work. "
                 f"Use read_history tool to access older messages if needed."
             )
-        compacted.append(LLMMessage(role="user", content=_body))
+        # Summary + ack are synthetic messages created at compact time,
+        # but they conceptually belong BEFORE the recent messages (they
+        # cover the history that's been rolled up). The store sorts by
+        # (ts, seq) on read, so force BOTH their ts AND their seq to be
+        # strictly below the first recent message — ts handles the usual
+        # case, seq guards against ts ties from float imprecision.
+        from core.llm_client import _next_msg_seq
+        if recent_messages:
+            _first_recent_ts = min(m.timestamp for m in recent_messages)
+            _first_recent_seq = min(m.seq for m in recent_messages)
+        else:
+            import time as _t_compact
+            _first_recent_ts = _t_compact.time()
+            _first_recent_seq = _next_msg_seq() + 2
+        compacted.append(LLMMessage(
+            role="user", content=_body,
+            timestamp=_first_recent_ts - 0.002,
+            seq=_first_recent_seq - 2,
+        ))
         compacted.append(LLMMessage(
             role="assistant",
             content="Understood. I have the summary and will continue from the recent messages.",
             source={"type": "context"},
+            timestamp=_first_recent_ts - 0.001,
+            seq=_first_recent_seq - 1,
         ))
         compacted.extend(recent_messages)
 
@@ -854,10 +874,26 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 compacted = []
                 if system_msg:
                     compacted.append(system_msg)
-                compacted.append(LLMMessage(role="user", content=(
-                    f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
-                    f"Use read_history tool to access older messages if needed.")))
-                compacted.append(LLMMessage(role="assistant", content="Understood.", source={"type": "context"}))
+                if recent_messages:
+                    _frt = min(m.timestamp for m in recent_messages)
+                    _frs = min(m.seq for m in recent_messages)
+                else:
+                    import time as _t_aggr
+                    _frt = _t_aggr.time()
+                    _frs = _next_msg_seq() + 2
+                compacted.append(LLMMessage(
+                    role="user",
+                    content=(f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
+                             f"Use read_history tool to access older messages if needed."),
+                    timestamp=_frt - 0.002,
+                    seq=_frs - 2,
+                ))
+                compacted.append(LLMMessage(
+                    role="assistant", content="Understood.",
+                    source={"type": "context"},
+                    timestamp=_frt - 0.001,
+                    seq=_frs - 1,
+                ))
                 compacted.extend(recent_messages)
                 self._truncate_tool_results(compacted)
                 new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,

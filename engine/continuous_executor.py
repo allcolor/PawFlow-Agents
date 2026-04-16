@@ -513,6 +513,15 @@ class ContinuousFlowExecutor:
         3. On success: enqueue results to output -> COMMIT
         4. On error after retries: route to failure or discard -> ROLLBACK
         """
+        if task_id == "agent_actions":
+            # One-shot log: confirms a worker actually picked up this task.
+            import time as _t_exec
+            _last = getattr(self, "_aa_exec_log_ts", 0.0)
+            if _t_exec.time() - _last > 1.0:
+                import threading as _th_exec
+                logger.info("[_execute_task] agent_actions on thread=%s",
+                            _th_exec.current_thread().name)
+                self._aa_exec_log_ts = _t_exec.time()
         try:
             task = self._tasks.get(task_id)
             if not task:

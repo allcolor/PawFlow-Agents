@@ -191,17 +191,6 @@ class ContinuousFlowExecutor:
             "relations": flow.relations,
         }
         self._connections.build_from_flow(flow_dict)
-        # Sanity-log the connections involving agent_actions so we can
-        # spot stale deployments that forgot to reload the new topology.
-        for task_id in ("agent_actions", "agent", "route_after_auth"):
-            if task_id in self._tasks:
-                _out = self._connections.get_outgoing(task_id)
-                _in = self._connections.get_incoming(task_id)
-                logger.info(
-                    "[executor] task=%s in=%s out=%s",
-                    task_id,
-                    [(c.source_id, c.relationship) for c in _in],
-                    [(c.target_id, c.relationship) for c in _out])
 
     def _resolve_service_configs(self, flow: Flow):
         """Resolve expressions in service configs (cascade-safe).
@@ -393,29 +382,10 @@ class ContinuousFlowExecutor:
                 with self._lock:
                     current = self._in_flight.get(task_id, 0)
                 if current >= max_inst:
-                    if task_id == "agent_actions":
-                        import time as _t_dbg
-                        _last = getattr(self, "_aa_sat_log_ts", 0.0)
-                        if _t_dbg.time() - _last > 2.0:
-                            logger.warning(
-                                "[scheduler] agent_actions SATURATED: "
-                                "in_flight=%d/%d", current, max_inst)
-                            self._aa_sat_log_ts = _t_dbg.time()
                     continue
 
                 # Check output backpressure — don't consume if downstream is full
                 if self._connections.any_backpressured(task_id):
-                    if task_id == "agent_actions":
-                        import time as _t_dbg
-                        _last = getattr(self, "_aa_bp_log_ts", 0.0)
-                        if _t_dbg.time() - _last > 2.0:
-                            outgoing_dbg = self._connections.get_outgoing(task_id)
-                            logger.warning(
-                                "[scheduler] agent_actions BACKPRESSURED: outputs=%s",
-                                [(c.target_id, c.queue_size(),
-                                  c.is_backpressured())
-                                 for c in outgoing_dbg])
-                            self._aa_bp_log_ts = _t_dbg.time()
                     continue
 
                 # Check if there's input available
@@ -442,10 +412,6 @@ class ContinuousFlowExecutor:
                         break
                     with self._lock:
                         self._in_flight[task_id] = self._in_flight.get(task_id, 0) + 1
-                        _new_count = self._in_flight[task_id]
-                    if task_id == "agent_actions":
-                        logger.info("[scheduler] agent_actions INC → %d (max=%d)",
-                                    _new_count, max_inst)
                     try:
                         self._pool.submit(self._execute_task, task_id)
                     except RuntimeError:
@@ -650,9 +616,6 @@ class ContinuousFlowExecutor:
         finally:
             with self._lock:
                 self._in_flight[task_id] = max(0, self._in_flight.get(task_id, 1) - 1)
-                _new_count = self._in_flight[task_id]
-            if task_id == "agent_actions":
-                logger.info("[scheduler] agent_actions DEC → %d", _new_count)
 
     def _commit(self, task_id: str, task_type: str,
                 source_conn: Optional[Connection], input_ff: Optional[FlowFile],
@@ -688,14 +651,6 @@ class ContinuousFlowExecutor:
                 if not matching:
                     # Fallback: send to all outgoing
                     matching = outgoing
-                    if task_id == "route_after_auth":
-                        logger.warning(
-                            "[executor] route_after_auth: no connection "
-                            "matches relationship=%r — falling back to ALL "
-                            "outgoing %s. Connections declared: %s",
-                            ff_rel,
-                            [c.target_id for c in outgoing],
-                            [(c.target_id, c.relationship) for c in outgoing])
 
                 # Fan-out: tag all copies with the same fragment.identifier
                 # so downstream mergeContent can correlate them

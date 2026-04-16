@@ -172,7 +172,7 @@
     },
     "agent_actions": {
       "type": "agentActions",
-      "max_instances": "${agent_max_instances}",
+      "max_instances": 1000,
       "parameters": {
         "conversation_store": true
       }

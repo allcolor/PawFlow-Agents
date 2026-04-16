@@ -393,10 +393,29 @@ class ContinuousFlowExecutor:
                 with self._lock:
                     current = self._in_flight.get(task_id, 0)
                 if current >= max_inst:
+                    if task_id == "agent_actions":
+                        import time as _t_dbg
+                        _last = getattr(self, "_aa_sat_log_ts", 0.0)
+                        if _t_dbg.time() - _last > 2.0:
+                            logger.warning(
+                                "[scheduler] agent_actions SATURATED: "
+                                "in_flight=%d/%d", current, max_inst)
+                            self._aa_sat_log_ts = _t_dbg.time()
                     continue
 
                 # Check output backpressure — don't consume if downstream is full
                 if self._connections.any_backpressured(task_id):
+                    if task_id == "agent_actions":
+                        import time as _t_dbg
+                        _last = getattr(self, "_aa_bp_log_ts", 0.0)
+                        if _t_dbg.time() - _last > 2.0:
+                            outgoing_dbg = self._connections.get_outgoing(task_id)
+                            logger.warning(
+                                "[scheduler] agent_actions BACKPRESSURED: outputs=%s",
+                                [(c.target_id, c.queue_size(),
+                                  c.is_backpressured())
+                                 for c in outgoing_dbg])
+                            self._aa_bp_log_ts = _t_dbg.time()
                     continue
 
                 # Check if there's input available

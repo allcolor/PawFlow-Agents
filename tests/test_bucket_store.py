@@ -18,8 +18,6 @@ from core.bucket_store import (
 
 
 def _fresh_store(tmp_path, agent="claude"):
-    # Drop the singleton cache so each test gets a clean instance
-    BucketStore._instances.clear()
     return BucketStore.get(tmp_path / "conv1", agent)
 
 
@@ -43,8 +41,7 @@ def test_add_bucket_persists_and_updates_meta(tmp_path):
     # Meta and bucket file both exist on disk
     assert (s._dir / "meta.json").exists()
     assert (s._dir / "B_00001.json").exists()
-    # Fresh instance (cache cleared) reads the same state
-    BucketStore._instances.clear()
+    # Fresh instance reads the same state from disk
     s2 = BucketStore.get(tmp_path / "conv1", "claude")
     assert s2.bucket_count == 1
     assert s2.last_seq == 500
@@ -140,15 +137,20 @@ def test_wipe_clears_everything(tmp_path):
     assert not (s._dir / "B_00001.json").exists()
 
 
-def test_singleton_per_conv_and_agent(tmp_path):
-    BucketStore._instances.clear()
+def test_disk_is_source_of_truth(tmp_path):
+    # Deleting meta.json on disk must immediately reflect in new
+    # BucketStore instances — no in-memory caching.
     a1 = BucketStore.get(tmp_path / "conv1", "claude")
+    a1.add_bucket(first_seq=1, last_seq=500, first_ts=1.0, last_ts=2.0,
+                   summary="x" * 100, model="m")
+    assert a1.last_seq == 500
+    # User wipes buckets on disk
+    import shutil
+    shutil.rmtree(a1._dir)
+    # Fresh instance reads from disk — sees empty
     a2 = BucketStore.get(tmp_path / "conv1", "claude")
-    b1 = BucketStore.get(tmp_path / "conv1", "qwen")
-    c1 = BucketStore.get(tmp_path / "conv2", "claude")
-    assert a1 is a2  # same (conv, agent) = same instance
-    assert a1 is not b1  # different agent
-    assert a1 is not c1  # different conv
+    assert a2.last_seq == 0
+    assert a2.bucket_count == 0
 
 
 def test_bucket_numbering_persists_across_rollup(tmp_path):

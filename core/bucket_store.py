@@ -24,7 +24,7 @@ import json
 import logging
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +53,6 @@ class BucketStore:
     the agent already, so lock contention is not a real concern.
     """
 
-    _instances: Dict[Tuple[str, str], "BucketStore"] = {}
-    _instances_lock = threading.Lock()
-
     def __init__(self, conv_dir: Path, agent_name: str):
         self._dir = conv_dir / "summaries" / (agent_name or "_shared")
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -65,14 +62,14 @@ class BucketStore:
 
     @classmethod
     def get(cls, conv_dir: Path, agent_name: str) -> "BucketStore":
-        """Singleton per (conv_dir, agent_name) to share the lock."""
-        key = (str(conv_dir), agent_name or "")
-        with cls._instances_lock:
-            inst = cls._instances.get(key)
-            if inst is None:
-                inst = cls(conv_dir, agent_name)
-                cls._instances[key] = inst
-            return inst
+        """Build a fresh instance that reads meta.json from disk.
+
+        No in-memory singleton: the previous cache kept stale state
+        when buckets were deleted on disk (e.g., user cleanup), causing
+        the next compact to think 1964 old messages were still covered.
+        Reading a tiny meta.json file per compact is negligible.
+        """
+        return cls(conv_dir, agent_name)
 
     # ── Meta I/O ────────────────────────────────────────────────────
 

@@ -101,7 +101,8 @@ class AgentSummarizeMixin:
                             user_id: str = "", agent_name: str = "",
                             llm_service: str = "",
                             conversation_id: str = "",
-                            compact_instructions: str = "") -> str:
+                            compact_instructions: str = "",
+                            final: bool = True) -> str:
         """Divide-and-conquer summarization for inputs that don't fit one pass.
 
         Splits `text` into chunks ≤ `chunk_char_limit` on natural newline
@@ -144,12 +145,15 @@ class AgentSummarizeMixin:
         for i, chunk in enumerate(chunks, 1):
             logger.info("[compact] chunk %d/%d: %d chars", i, n, len(chunk))
             _instr = (
-                f"This is chunk {i}/{n} of a larger conversation. Summarize "
-                f"only this chunk — preserve concrete facts, decisions, file "
-                f"paths. Output ≤ {per_chunk_target} tokens."
+                f"This is chunk {i}/{n} of a larger conversation. "
+                f"Output bullet notes only — facts, file paths, decisions, "
+                f"errors. No template, no headers."
             )
             if compact_instructions:
                 _instr = f"{compact_instructions}\n\n{_instr}"
+            # Per-chunk passes are intermediate: free-form notes, no
+            # 7-section template (would impose a ~4000-char floor and
+            # waste output tokens on small chunks).
             summary = self._call_summarize(
                 client, chunk,
                 target_tokens=per_chunk_target,
@@ -157,26 +161,28 @@ class AgentSummarizeMixin:
                 llm_service=llm_service,
                 conversation_id=conversation_id,
                 compact_instructions=_instr,
+                final=False,
             )
             chunk_summaries.append(
-                f"=== Chunk {i}/{n} summary ===\n{summary}")
+                f"=== Chunk {i}/{n} notes ===\n{summary}")
 
         joined = "\n\n".join(chunk_summaries)
         logger.info("[compact] chunked: joined summaries = %d chars, "
-                     "running final pass", len(joined))
-        # Final pass: summarize the summaries. If joined is somehow STILL
-        # over the chunk limit (chunks too verbose), this re-chunks too —
-        # depth grows logarithmically, no infinite recursion risk.
+                     "running %s pass",
+                     len(joined), "final" if final else "intermediate")
         _final_instr = (
-            "Below are summaries of consecutive chunks of one large "
-            "conversation. Produce one coherent overall summary that "
-            "follows the standard 7-section structure (USER_INTENT, "
-            "DECISIONS, FILES_MODIFIED, ERRORS, CURRENT_STATE, PENDING, "
-            "CONTEXT). Drop redundancy across chunks. Apply recency "
-            "weighting — emphasize the LATEST chunks."
+            "Below are bullet notes from consecutive chunks of one large "
+            "conversation. Build the overall summary from them. Drop "
+            "redundancy across chunks. Apply recency weighting — emphasize "
+            "the LATEST chunks."
         )
         if compact_instructions:
             _final_instr = f"{compact_instructions}\n\n{_final_instr}"
+        # Recursive call: same `final` semantic as the caller. If the
+        # joined chunk notes still exceed the chunk limit (rare, only
+        # when n was very large), this re-chunks one more level — same
+        # rule applies: intermediate stays free-form, final builds the
+        # 7-section structure.
         return self._call_summarize(
             client, joined,
             target_tokens=target_tokens,
@@ -184,6 +190,7 @@ class AgentSummarizeMixin:
             llm_service=llm_service,
             conversation_id=conversation_id,
             compact_instructions=_final_instr,
+            final=final,
         )
 
     def _call_summarize(self, client: LLMClient, text: str,
@@ -191,12 +198,19 @@ class AgentSummarizeMixin:
                         user_id: str = "", agent_name: str = "",
                         llm_service: str = "",
                         conversation_id: str = "",
-                        compact_instructions: str = "") -> str:
+                        compact_instructions: str = "",
+                        final: bool = True) -> str:
         """Summarize text via file-based tool loop (unified for all providers).
 
         1. Write text to FileStore
         2. For CC: use complete_stream (CC handles tool loop)
         3. For API: run mini tool loop with read + compact_result
+
+        `final=True`  → produce the structured 7-section summary that the
+                        agent will see (USER_INTENT/DECISIONS/…).
+        `final=False` → intermediate chunk pass: free-form, just preserve
+                        facts. Avoids the 7-section minimum bloat (~4000
+                        chars floor) when summarizing small chunks.
         """
         _svc_id = llm_service
         if not _svc_id:
@@ -231,6 +245,7 @@ class AgentSummarizeMixin:
                 llm_service=llm_service,
                 conversation_id=conversation_id,
                 compact_instructions=compact_instructions,
+                final=final,
             )
 
         from core.file_store import FileStore
@@ -254,8 +269,39 @@ class AgentSummarizeMixin:
             return
 
         _focus = f"\n- FOCUS: {compact_instructions}" if compact_instructions else ""
+        if final:
+            # Final pass: full structured summary the agent will read.
+            _format_rules = (
+                f"- Summary must be maximum {target_tokens} tokens.\n"
+                f"- Use this checklist — every section MUST be present:\n"
+                f"  1. USER_INTENT 2. DECISIONS 3. FILES_MODIFIED (with paths)\n"
+                f"  4. ERRORS 5. CURRENT_STATE 6. PENDING 7. CONTEXT\n"
+                f"- Skip raw tool output, JSON blobs, and technical plumbing.\n"
+                f"- RECENCY WEIGHTING: emphasize the LATEST work — what the user "
+                f"is currently focused on. Older threads (especially any content "
+                f"tagged as 'earlier planning work' or carried over from a prior "
+                f"compacted summary) should be compressed into at most one short "
+                f"bullet under CONTEXT — just enough that a reader knows it "
+                f"happened, without re-stating goals or decisions. If an older "
+                f"topic has clearly been completed or superseded, drop it. The "
+                f"summary's job is to set up the CURRENT state, not to preserve "
+                f"history indefinitely."
+            )
+        else:
+            # Intermediate chunk pass: free-form, no 7-section template.
+            # The 7-section structure has a ~4000-char floor that bloats
+            # per-chunk summaries 5× over their target. The final pass
+            # builds the structure from the chunk notes.
+            _format_rules = (
+                f"- Output AT MOST {target_tokens} tokens. Stay terse.\n"
+                f"- No headers, no template — free-form bullet notes.\n"
+                f"- Preserve concrete facts ONLY: file paths, decisions "
+                f"made, errors hit, commands run, file contents discussed. "
+                f"No fluff, no narration, no meta-commentary.\n"
+                f"- Skip raw tool output and JSON plumbing."
+            )
         prompt = (
-            f"You are a summarizer. Read the file and produce a structured summary.\n\n"
+            f"You are a summarizer. Read the file and produce a summary.\n\n"
             f"STEP 1: Read the file:\n"
             f"  read(path=\"{file_id}\", source=\"filestore\")\n"
             f"  The file may be large — paginate with offset/limit until you've read ALL of it.\n\n"
@@ -264,20 +310,7 @@ class AgentSummarizeMixin:
             f"RULES:\n"
             f"- You may ONLY use these 2 tools: read and compact_result.\n"
             f"- Do NOT respond with text. Your ONLY output is tool calls.\n"
-            f"- Summary must be maximum {target_tokens} tokens.\n"
-            f"- Use this checklist — every section MUST be present:\n"
-            f"  1. USER_INTENT 2. DECISIONS 3. FILES_MODIFIED (with paths)\n"
-            f"  4. ERRORS 5. CURRENT_STATE 6. PENDING 7. CONTEXT\n"
-            f"- Skip raw tool output, JSON blobs, and technical plumbing.\n"
-            f"- RECENCY WEIGHTING: emphasize the LATEST work — what the user "
-            f"is currently focused on. Older threads (especially any content "
-            f"tagged as 'earlier planning work' or carried over from a prior "
-            f"compacted summary) should be compressed into at most one short "
-            f"bullet under CONTEXT — just enough that a reader knows it "
-            f"happened, without re-stating goals or decisions. If an older "
-            f"topic has clearly been completed or superseded, drop it. The "
-            f"summary's job is to set up the CURRENT state, not to preserve "
-            f"history indefinitely."
+            f"{_format_rules}"
             f"{_focus}\n"
             f"\ncompact_key (use EXACTLY this): {compact_key}"
         )

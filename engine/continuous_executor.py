@@ -373,8 +373,22 @@ class ContinuousFlowExecutor:
                 if self._stop_event.is_set():
                     break
 
+                # Pulsed log: dump every check result for agent_actions
+                # so we can see which gate is blocking it.
+                _is_aa = (task_id == "agent_actions")
+                if _is_aa:
+                    import time as _t_aa
+                    _last = getattr(self, "_aa_dbg_ts", 0.0)
+                    _aa_dbg = (_t_aa.time() - _last) > 1.0
+                    if _aa_dbg:
+                        self._aa_dbg_ts = _t_aa.time()
+                else:
+                    _aa_dbg = False
+
                 # Skip non-runnable tasks
                 if not self._task_states.is_runnable(task_id):
+                    if _aa_dbg:
+                        logger.info("[sched-aa] SKIP not_runnable")
                     continue
 
                 # Skip if at max concurrent instances
@@ -382,15 +396,29 @@ class ContinuousFlowExecutor:
                 with self._lock:
                     current = self._in_flight.get(task_id, 0)
                 if current >= max_inst:
+                    if _aa_dbg:
+                        logger.info("[sched-aa] SKIP saturated %d/%d", current, max_inst)
                     continue
 
                 # Check output backpressure — don't consume if downstream is full
                 if self._connections.any_backpressured(task_id):
+                    if _aa_dbg:
+                        outgoing_dbg = self._connections.get_outgoing(task_id)
+                        logger.info(
+                            "[sched-aa] SKIP backpressured outputs=%s",
+                            [(c.target_id, c.queue_size(),
+                              c.is_backpressured())
+                             for c in outgoing_dbg])
                     continue
 
                 # Check if there's input available
                 incoming = self._connections.get_incoming(task_id)
                 has_input = any(not c.is_empty() for c in incoming)
+                if _aa_dbg:
+                    _sizes = [(c.source_id, c.queue_size()) for c in incoming]
+                    logger.info("[sched-aa] runnable max=%d in_flight=%d "
+                                "has_input=%s queues=%s",
+                                max_inst, current, has_input, _sizes)
 
                 # Root tasks (no incoming connections):
                 # - Self-triggering tasks (has_pending_input) get scheduled
@@ -669,6 +697,23 @@ class ContinuousFlowExecutor:
                         prio = target_task.prioritize(ff_to_send)
                         if prio != 0:
                             ff_to_send.set_attribute("priority", str(prio))
+                    # Diag: show what's being routed to agent_actions and whether enqueue succeeds
+                    _rid_commit = ff_to_send.get_attribute("http.request.id") or ""
+                    if out_conn.target_id == "agent_actions" and _rid_commit:
+                        _ok = out_conn.enqueue(ff_to_send)
+                        logger.info(
+                            "[_commit] route → agent_actions req_id=%s enqueue_ok=%s "
+                            "qsize=%d bp=%s",
+                            _rid_commit[:8], _ok, out_conn.queue_size(),
+                            out_conn.is_backpressured())
+                        if not _ok:
+                            logger.warning(f"Backpressure on {out_conn}: "
+                                f"FlowFile from '{task_id}' could not be enqueued")
+                            source_conn.enqueue(ff_to_send)
+                        else:
+                            if self._data_preview and self._data_preview.is_enabled(task_id, out_conn.target_id):
+                                self._data_preview.capture(task_id, out_conn.target_id, ff_to_send)
+                        continue
                     logger.debug(
                         "_commit: %s → %s [%d/%d], fragment.id=%s, %d bytes",
                         task_id, out_conn.target_id, i + 1, len(matching),

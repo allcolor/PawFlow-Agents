@@ -499,7 +499,37 @@ class AgentLoopTask(
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         _body_preview = flowfile.get_content()[:200].decode("utf-8", errors="replace")
-        logger.debug("[agent_loop] execute: %s", _body_preview)
+        _rid = flowfile.get_attribute("http.request.id") or ""
+        # Try to extract action name for log
+        _act_log = "?"
+        try:
+            if _body_preview.lstrip().startswith("{"):
+                import json as _j_log
+                _b = _j_log.loads(flowfile.get_content().decode("utf-8", errors="replace"))
+                _act_log = _b.get("action", "msg") if isinstance(_b, dict) else "?"
+        except Exception:
+            pass
+        import time as _t_al
+        _t_al_start = _t_al.monotonic()
+        logger.info("[agent_loop] enter req_id=%s action=%s",
+                    _rid[:8] if _rid else "?", _act_log)
+        try:
+            _result = self._execute_inner(flowfile)
+            _dur = (_t_al.monotonic() - _t_al_start) * 1000
+            logger.info("[agent_loop] exit  req_id=%s action=%s "
+                        "took=%.0fms result=%s",
+                        _rid[:8] if _rid else "?", _act_log, _dur,
+                        f"{len(_result)} ff" if _result else "None/empty")
+            return _result
+        except Exception as _e:
+            _dur = (_t_al.monotonic() - _t_al_start) * 1000
+            logger.error("[agent_loop] CRASH req_id=%s action=%s took=%.0fms: %s",
+                          _rid[:8] if _rid else "?", _act_log, _dur, _e,
+                          exc_info=True)
+            raise
+
+    def _execute_inner(self, flowfile: FlowFile) -> List[FlowFile]:
+        """Original execute body — wrapped by execute() with entry/exit logs."""
         # Reject unlinked Telegram users (require identity link for security)
         tg_user_id = flowfile.get_attribute("telegram.user_id") or ""
         if tg_user_id:

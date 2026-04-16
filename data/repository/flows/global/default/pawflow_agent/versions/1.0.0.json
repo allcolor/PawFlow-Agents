@@ -120,6 +120,7 @@
     },
     "validate_auth": {
       "type": "validateSessionAuth",
+      "max_instances": "${agent_max_instances}",
       "parameters": {
         "cookie_name": "pawflow_token",
         "login_redirect": "/auth/login",
@@ -188,6 +189,7 @@
     },
     "route_after_auth": {
       "type": "routeOnAttribute",
+      "max_instances": "${agent_max_instances}",
       "parameters": {
         "routes": {
           "chat": {
@@ -221,6 +223,7 @@
     },
     "format_response": {
       "type": "updateAttribute",
+      "max_instances": "${agent_max_instances}",
       "parameters": {
         "set": {
           "http.response.header.Content-Type": "application/json",
@@ -230,6 +233,7 @@
     },
     "send_response": {
       "type": "handleHTTPResponse",
+      "max_instances": "${agent_max_instances}",
       "parameters": {
         "service_id": "http_listener",
         "content_type": "application/json"

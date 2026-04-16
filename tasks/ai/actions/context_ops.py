@@ -187,22 +187,22 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
     """Handle context ops actions. Returns [flowfile] or None."""
 
     def _ctx_load(conv_id, agent_name=""):
-        """Load context for compaction/view.
+        """Load the context the agent actually sees right now.
 
-        Rule: compaction always starts from the shared timeline, never
-        from the per-agent context (which may already contain leftover
-        summaries from previous compactions — feeding that back into a
-        new summarization just layers stale topics on top of each
-        other).  For a specific agent, personalize the shared view so
-        the agent's own messages read as assistant and the others as
-        user (via load_shared_for_agent).
+        Same precedence as agent_loop.py at runtime: agent_context
+        first (compacted/diverged view), fallback to the personalized
+        transcript only if no per-agent context exists yet (fresh
+        conversation). This is the view the Context Editor must show.
+
+        Compaction doesn't use this function — it needs the full
+        transcript as source and calls load_transcript_for_agent
+        directly.
         """
         if agent_name and agent_name not in ("", "ALL"):
-            full = store.load_transcript_for_agent(conv_id, agent_name)
-            if full:
-                return full
-            # Fresh conversation: no transcript yet → fall back to agent ctx
-            return store.load_agent_context(conv_id, agent_name)
+            ctx = store.load_agent_context(conv_id, agent_name)
+            if ctx:
+                return ctx
+            return store.load_transcript_for_agent(conv_id, agent_name)
         return store.load_context(conv_id, user_id=user_id)
 
     def _ctx_save(conv_id, data, agent_name=""):
@@ -450,9 +450,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Load source data
-        context_data = _ctx_load(conv_id, _ctx_agent)
-        source_data = context_data if context_data is not None else store.load(conv_id, user_id=user_id)
+        # Compaction always starts from the full transcript (personalized
+        # for the agent). Feeding back an already-compacted agent_context
+        # would layer stale summaries on top of each other.
+        if _ctx_agent and _ctx_agent not in ("", "ALL"):
+            source_data = store.load_transcript_for_agent(conv_id, _ctx_agent)
+        else:
+            source_data = store.load_context(conv_id, user_id=user_id)
+        if source_data is None:
+            source_data = store.load(conv_id, user_id=user_id)
         # Filter out display-only sub-agent traces
         if source_data:
             source_data = [m for m in source_data if not (isinstance(m, dict) and m.get("display_only"))]

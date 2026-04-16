@@ -406,12 +406,13 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
     html += '<input id="_ncInstName" value="' + escapeHtml(_nextInstanceName(focusedDef)) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
     html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">LLM Service *</label>';
     html += '<select id="_ncLlmSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;">' + svcOpts + '</select></div>';
-    // Params
-    if (paramKeys.length) {
+    // Params — skip 'name' (always synced from instance_name)
+    var visibleParamKeys = paramKeys.filter(function(k) { return k !== 'name'; });
+    if (visibleParamKeys.length) {
       html += '<div style="margin-bottom:6px;"><div style="font-size:10px;color:#888;margin-bottom:4px;">Parameters</div>';
-      paramKeys.forEach(function(k) {
+      visibleParamKeys.forEach(function(k) {
         var spec = paramSchema[k] || {};
-        var defVal = k === 'name' ? _nextInstanceName(focusedDef) : (spec.default || '');
+        var defVal = spec.default || '';
         html += '<div style="margin-bottom:4px;"><label style="font-size:10px;color:#888;">' + escapeHtml(k + (spec.required ? ' *' : '')) + '</label>';
         html += '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(defVal)) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
       });
@@ -441,7 +442,7 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
       if (!iname) { alert('Instance name is required.'); return; }
       if (agentInstances[iname]) { alert('Instance "' + iname + '" already exists.'); return; }
       if (!llm) { alert('LLM Service is required.'); return; }
-      var params = {};
+      var params = { name: iname };
       panel.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
       });

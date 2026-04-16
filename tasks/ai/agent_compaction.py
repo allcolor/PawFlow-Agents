@@ -358,11 +358,31 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 "Return 0-5 items. If nothing is worth remembering, return [].\n\n"
                 f"SUMMARY:\n{summary[:4000]}"
             )
-            resp = client.complete(
-                messages=[LLMMessage(role="user", content=prompt)],
-                temperature=0.3,
-                max_tokens=1000,
+            # Isolate this LLM call from the user's conversation. Without
+            # this, CC's client.complete would resume the live conv session
+            # (conv_id is still set on the shared client instance) and the
+            # extract prompt + model's answer would leak into the user's
+            # chat as rogue turns. Same sentinel pattern as _summarize_via_cc.
+            _inner = getattr(client, "_client", client)
+            _saved = (
+                getattr(_inner, "_conversation_id", ""),
+                getattr(_inner, "_agent_name", ""),
+                getattr(_inner, "_user_id", ""),
+                getattr(_inner, "_event_cid", ""),
             )
+            _inner._conversation_id = "_memory_extract"
+            _inner._agent_name = "memory"
+            _inner._user_id = user_id
+            _inner._event_cid = ""
+            try:
+                resp = client.complete(
+                    messages=[LLMMessage(role="user", content=prompt)],
+                    temperature=0.3,
+                    max_tokens=1000,
+                )
+            finally:
+                (_inner._conversation_id, _inner._agent_name,
+                 _inner._user_id, _inner._event_cid) = _saved
             import re as _re_mem
             _match = _re_mem.search(r'\[.*\]', resp.content or "", _re_mem.DOTALL)
             if not _match:

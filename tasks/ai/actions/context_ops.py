@@ -625,8 +625,27 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 context_data = context_data[start:end]
                 has_more = start > 0
 
-        deserialized = self._deserialize_messages(context_data)
-        estimated = self._estimate_tokens(deserialized)
+        # CC session context is read from CC's own jsonl files — we don't
+        # own those entries, they don't have PawFlow's (ts, seq) invariant.
+        # Skip the strict deserialize and estimate tokens directly from
+        # content length. For every other source (shared, agent ctx, task
+        # sub-conv, transcript page) we go through _deserialize_messages
+        # which enforces the invariant.
+        if _ctx_agent.startswith("cc_session:"):
+            _total_chars = 0
+            for _m in context_data:
+                _c = _m.get("content", "")
+                if isinstance(_c, str):
+                    _total_chars += len(_c)
+                elif isinstance(_c, list):
+                    for _p in _c:
+                        _t = _p.get("text") if isinstance(_p, dict) else None
+                        if _t:
+                            _total_chars += len(_t)
+            estimated = _total_chars // 4  # rough
+        else:
+            deserialized = self._deserialize_messages(context_data)
+            estimated = self._estimate_tokens(deserialized)
         # Classify messages for display
         display_msgs = []
         for m in context_data:

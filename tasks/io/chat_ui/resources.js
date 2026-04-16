@@ -807,12 +807,13 @@ function _showAgentConvConfigDialog(agentName) {
       html += '<div style="margin-bottom:10px;padding:6px 8px;background:#0f0f23;border-radius:4px;font-size:11px;">'
         + '<span style="color:#888;">Definition:</span> <span style="color:#6c5ce7;">' + escapeHtml(cfg.definition) + '</span></div>';
     }
-    // Instance parameters
+    // Instance parameters — skip 'name' (synced from instance_name, immutable here)
     var paramKeys = Object.keys(paramsSchema);
-    if (paramKeys.length) {
+    var visibleParamKeys = paramKeys.filter(function(k) { return k !== 'name'; });
+    if (visibleParamKeys.length) {
       html += '<div style="margin-bottom:10px;padding:8px;border:1px solid #333;border-radius:4px;">'
         + '<div style="font-size:11px;color:#6c5ce7;margin-bottom:6px;font-weight:600;">Instance Parameters</div>';
-      paramKeys.forEach(function(k) {
+      visibleParamKeys.forEach(function(k) {
         var spec = paramsSchema[k] || {};
         var val = instParams[k] || spec.default || '';
         var label = k + (spec.required ? ' *' : '');
@@ -846,8 +847,8 @@ function _showAgentConvConfigDialog(agentName) {
       var tools = document.getElementById('acc-tools').value
         .split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
       var depth = parseInt(document.getElementById('acc-depth').value) || 1000;
-      // Collect params
-      var params = {};
+      // Collect params — name is always the instance name
+      var params = { name: agentName };
       panel.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
       });
@@ -1247,13 +1248,14 @@ async function showAddAgentToConvDialog() {
       html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">LLM Service *</label>'
         + '<select id="_addLlm" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
         + svcOpts + '</select></div>';
-      // Params from schema
-      if (paramKeys.length) {
+      // Params from schema — skip 'name' (always synced from instance_name)
+      var visibleParamKeys = paramKeys.filter(function(k) { return k !== 'name'; });
+      if (visibleParamKeys.length) {
         html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #333;">'
           + '<div style="font-size:11px;color:#6c5ce7;margin-bottom:6px;font-weight:600;">Parameters</div>';
-        paramKeys.forEach(function(k) {
+        visibleParamKeys.forEach(function(k) {
           var spec = paramSchema[k] || {};
-          var defVal = k === 'name' ? selectedDef : (spec.default || '');
+          var defVal = spec.default || '';
           html += '<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">'
             + escapeHtml(k + (spec.required ? ' *' : '')) + '</label>'
             + '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(defVal)) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
@@ -1294,7 +1296,7 @@ async function showAddAgentToConvDialog() {
       var llm = (document.getElementById('_addLlm') || {}).value || '';
       if (!instName.trim()) { alert('Instance name is required.'); return; }
       if (!llm) { alert('LLM Service is required.'); return; }
-      var params = {};
+      var params = { name: instName.trim() };
       formArea.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
       });

@@ -235,10 +235,13 @@ class AgentSummarizeMixin:
             target_tokens = 2000
 
         # Divide-and-conquer for inputs that don't fit one summarizer pass.
-        # Chunk size = 2/3 of the service's max_context_size, leaving 1/3
-        # for prompt scaffolding + tool loop + output. Tokens→chars uses
-        # an average of 3.5 chars/token (mixed text+code).
-        _CHUNK_CHAR_LIMIT = int(_svc_ctx_max * (2 / 3) * 3.5)
+        # Chunk size = 1/3 of the service's max_context_size. 2/3 was too
+        # aggressive: CC's internal paginated `read` loop + tool scaffolding
+        # + output pushed total tokens over the window, triggering CC's own
+        # compact which loses the summary state. 1/3 leaves plenty of
+        # headroom for the tool loop. Tokens→chars uses ~3.5 (mixed
+        # text+code).
+        _CHUNK_CHAR_LIMIT = int(_svc_ctx_max * (1 / 3) * 3.5)
         if len(text) > _CHUNK_CHAR_LIMIT:
             return self._summarize_chunked(
                 client, text,

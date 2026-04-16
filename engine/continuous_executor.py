@@ -442,6 +442,10 @@ class ContinuousFlowExecutor:
                         break
                     with self._lock:
                         self._in_flight[task_id] = self._in_flight.get(task_id, 0) + 1
+                        _new_count = self._in_flight[task_id]
+                    if task_id == "agent_actions":
+                        logger.info("[scheduler] agent_actions INC → %d (max=%d)",
+                                    _new_count, max_inst)
                     try:
                         self._pool.submit(self._execute_task, task_id)
                     except RuntimeError:
@@ -646,6 +650,9 @@ class ContinuousFlowExecutor:
         finally:
             with self._lock:
                 self._in_flight[task_id] = max(0, self._in_flight.get(task_id, 1) - 1)
+                _new_count = self._in_flight[task_id]
+            if task_id == "agent_actions":
+                logger.info("[scheduler] agent_actions DEC → %d", _new_count)
 
     def _commit(self, task_id: str, task_type: str,
                 source_conn: Optional[Connection], input_ff: Optional[FlowFile],

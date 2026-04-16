@@ -159,6 +159,9 @@ class HTTPReceiverTask(BaseTask):
         # Enqueue for pickup by execute()
         try:
             self._queue.put_nowait(ff)
+            logger.info("[httpReceiver] enqueued %s %s (req_id=%s, qsize=%d)",
+                        pending_req.method, pending_req.path,
+                        pending_req.request_id[:8], self._queue.qsize())
         except queue.Full:
             logger.warning("httpReceiver queue full, rejecting request")
             # Auto-respond 503
@@ -183,7 +186,10 @@ class HTTPReceiverTask(BaseTask):
             ff = self._queue.get_nowait()
             _route = ff.get_attribute("http.route") or "?"
             _method = ff.get_attribute("http.method") or "?"
-            logger.debug("[httpReceiver] %s %s", _method, _route)
+            _rid = ff.get_attribute("http.request.id") or "?"
+            logger.info("[httpReceiver] dequeued %s %s (req_id=%s, qsize=%d)",
+                        _method, _route, _rid[:8] if _rid else "?",
+                        self._queue.qsize())
             return [ff]
         except queue.Empty:
             return []

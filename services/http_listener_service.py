@@ -54,9 +54,14 @@ class PendingRequest:
     _event: threading.Event = field(default_factory=threading.Event)
     completed: bool = False
 
-    def wait(self, timeout: float = 30.0) -> bool:
-        """Block until response is ready or timeout."""
-        return self._event.wait(timeout=timeout)
+    def wait(self) -> None:
+        """Block until response is ready. NO TIMEOUT — project rule.
+
+        If the flow never responds, this blocks forever. That's a real
+        bug we want to surface (not mask with a 504), and the HTTP
+        worker thread is a daemon — Ctrl+C kills it cleanly.
+        """
+        self._event.wait()
 
     def complete(self, status: int, headers: Dict[str, str], body: bytes):
         """Set the response and unblock the waiting HTTP handler."""
@@ -295,7 +300,6 @@ class _RequestHandler(BaseHTTPRequestHandler):
 
         # Match route
         registry: RouteRegistry = self.server._route_registry
-        timeout: float = self.server._request_timeout
         result = registry.match(method, path)
 
         if result is None:
@@ -352,23 +356,11 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "Internal Server Error"}).encode())
             return
 
-        # Block until flow responds or timeout
-        if not req.wait(timeout=timeout):
-            self.server._pending_requests.pop(req.request_id, None)
-            _waited = _t_http.monotonic() - _t_dispatch
-            logger.warning(
-                "[http] 504 — %s %s timed out after %.1fs (request_id=%s, "
-                "body=%db) — flow chain stuck",
-                method, path, _waited, req.request_id[:8], len(body or b""))
-            self.send_response(504)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "error": "Gateway Timeout",
-                "message": f"Flow did not respond within {timeout}s",
-            }).encode())
-            return
-        # Log slow responses (anything above 5s) so we see where time goes
+        # Block until flow responds. NO TIMEOUT — project rule: only the
+        # LLM watchdog has a timeout, nowhere else. If a request stalls
+        # forever, that's a backend bug we want to surface (not paper over
+        # with a 504). The slow-response log below catches anything > 5s.
+        req.wait()
         _waited = _t_http.monotonic() - _t_dispatch
         if _waited > 5.0:
             logger.warning("[http] slow response — %s %s took %.1fs "

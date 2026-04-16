@@ -379,8 +379,9 @@ class AgentSummarizeMixin:
                         f"Read the file, summarize in {target_tokens} tokens, call compact_result."
                     )
                     set_compact_key(compact_key)
+                _stream_response = None
                 try:
-                    client.complete_stream(
+                    _stream_response = client.complete_stream(
                         messages=[LLMMessage(role="user", content=prompt)],
                         max_tokens=min(target_tokens * 3, 8000),
                     )
@@ -399,6 +400,17 @@ class AgentSummarizeMixin:
                         return summary
                 except TimeoutError:
                     logger.warning("[compact-cc] attempt %d: compact_result not called", attempt)
+
+                # Fallback: CC under context pressure sometimes emits the
+                # summary as plain text instead of calling compact_result.
+                # Salvage it rather than retrying from scratch (costly).
+                _text = getattr(_stream_response, "content", "") or ""
+                if _text.strip() and len(_text.strip()) > 50:
+                    logger.warning(
+                        "[compact-cc] attempt %d: CC returned text instead "
+                        "of compact_result tool call, using as summary "
+                        "(%d chars)", attempt, len(_text))
+                    return _text
 
             raise RuntimeError("Claude Code failed to call compact_result after retries")
         finally:

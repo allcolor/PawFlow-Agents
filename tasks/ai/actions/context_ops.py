@@ -519,43 +519,62 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        _rb_msgs = store.load(conv_id, user_id=user_id)
-        if _rb_msgs:
-            # Filter: no display_only, no tool_calls, no tool results
-            # (context = conversation messages only, not tool plumbing)
-            _rb_msgs = [m for m in _rb_msgs
-                        if isinstance(m, dict)
-                        and not m.get("display_only")
-                        and not m.get("tool_calls")
-                        and m.get("role") != "tool"]
-        if not _rb_msgs:
+
+        def _load_rebuild_source(target_agent):
+            """Load transcript personalized for the target agent.
+
+            For a specific agent, claude's assistant turns must be
+            demoted to user with "[Agent claude]:" prefix — otherwise
+            qwen would read claude's words as if they were its own.
+            For shared, use the raw transcript (agent-neutral).
+            """
+            if target_agent and target_agent not in ("", "shared", "ALL"):
+                raw = store.load_transcript_for_agent(conv_id, target_agent)
+            else:
+                raw = store.load(conv_id, user_id=user_id)
+            if not raw:
+                return []
+            return [m for m in raw
+                    if isinstance(m, dict)
+                    and not m.get("display_only")
+                    and not m.get("tool_calls")
+                    and m.get("role") != "tool"]
+
+        _rb_msgs = _load_rebuild_source(_rb_agent)
+        if not _rb_msgs and _rb_agent != "ALL":
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
 
         def _do_rebuild():
             # /rebuild = context = full conversation transcript. No compaction.
+            if _rb_agent == "ALL":
+                # Rebuild ALL agent contexts + shared, each with its own
+                # personalized view (claude's and qwen's contexts differ).
+                agent_map = store.list_agent_contexts(conv_id)
+                _total = 0
+                for name in agent_map:
+                    _msgs = _load_rebuild_source("" if name == "*" else name)
+                    if name == "*":
+                        store.save_context(conv_id, list(_msgs))
+                    else:
+                        store.save_agent_context(conv_id, name, list(_msgs))
+                    _total = max(_total, len(_msgs))
+                deserialized = self._deserialize_messages(_rb_msgs) if _rb_msgs else []
+                estimated = self._estimate_tokens(deserialized)
+                store.invalidate_claude_sessions(conv_id)
+                return {"before": _total, "after": _total,
+                        "tokens_after": estimated, "agent": "ALL"}
             deserialized = self._deserialize_messages(_rb_msgs)
             estimated = self._estimate_tokens(deserialized)
-            if _rb_agent == "ALL":
-                # Rebuild ALL agent contexts + shared
-                agent_map = store.list_agent_contexts(conv_id)
-                for name in agent_map:
-                    if name == "*":
-                        store.save_context(conv_id, list(_rb_msgs))
-                    else:
-                        store.save_agent_context(conv_id, name, list(_rb_msgs))
-            else:
-                _ctx_save(conv_id, _rb_msgs, _rb_agent)
-                # If agent context == shared context after rebuild, remove the
-                # agent context (it'll fall back to shared automatically)
-                if _rb_agent and _rb_agent != "shared":
-                    shared_ctx = store.load_context(conv_id)
-                    if shared_ctx is not None and shared_ctx == _rb_msgs:
-                        store.save_agent_context(conv_id, _rb_agent, shared_ctx)
-                        logger.info(f"[rebuild] Agent '{_rb_agent}' context == shared, merged back")
-            # Invalidate the rebuilt agent's CC session
+            _ctx_save(conv_id, _rb_msgs, _rb_agent)
+            # If agent context == shared context after rebuild, remove the
+            # agent context (it'll fall back to shared automatically)
             if _rb_agent and _rb_agent != "shared":
+                shared_ctx = store.load_context(conv_id)
+                if shared_ctx is not None and shared_ctx == _rb_msgs:
+                    store.save_agent_context(conv_id, _rb_agent, shared_ctx)
+                    logger.info(f"[rebuild] Agent '{_rb_agent}' context == shared, merged back")
                 store.set_extra(conv_id, f"claude_session:{_rb_agent}", "")
             else:
                 store.invalidate_claude_sessions(conv_id)

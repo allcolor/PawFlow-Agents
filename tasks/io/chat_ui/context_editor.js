@@ -48,25 +48,30 @@ function ctxRefresh() {
   });
 }
 
-async function ctxEditMessage(index) {
+async function ctxEditMessage(msgId) {
   const full = await ctxLoadFull();
   if (full.error) { addMsg('error', full.error); return; }
-  const msg = full.context[index];
-  if (!msg) return;
-  const row = document.getElementById('ctx-row-' + index);
+  const msg = (full.context || []).find(m => (m.msg_id || m.trace_id) === msgId);
+  if (!msg) { addMsg('error', 'Message not found — refresh the context'); return; }
+  // Scope the row lookup to the context overlay — the chat timeline
+  // also uses data-msgid on its message rows, and querySelector would
+  // otherwise pick the chat row and render the edit form there.
+  const overlay = document.getElementById('contextOverlay');
+  if (!overlay) return;
+  const row = overlay.querySelector('[data-msgid="' + msgId + '"]');
   if (!row) return;
   const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
   row.innerHTML = '<div style="padding:8px">'
     + '<div style="margin-bottom:6px"><label style="color:#808090;font-size:11px;margin-right:6px">' + t('contextRole') + ':</label>'
-    + '<select id="ctx-edit-role-' + index + '" style="background:#0d1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:2px 6px;font-size:12px">'
+    + '<select id="ctx-edit-role-' + msgId + '" style="background:#0d1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:2px 6px;font-size:12px">'
     + '<option value="system"' + (msg.role==='system'?' selected':'') + '>system</option>'
     + '<option value="user"' + (msg.role==='user'?' selected':'') + '>user</option>'
     + '<option value="assistant"' + (msg.role==='assistant'?' selected':'') + '>assistant</option>'
     + '<option value="tool"' + (msg.role==='tool'?' selected':'') + '>tool</option>'
     + '</select></div>'
-    + '<textarea id="ctx-edit-ta-' + index + '" style="width:100%;min-height:120px;background:#0d1117;color:#c0c0d0;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;resize:vertical">' + content.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>'
+    + '<textarea id="ctx-edit-ta-' + msgId + '" style="width:100%;min-height:120px;background:#0d1117;color:#c0c0d0;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;resize:vertical">' + content.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>'
     + '<div style="display:flex;gap:6px;margin-top:6px">'
-    + '<button onclick="ctxSaveEdit(' + index + ')" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px">' + t('contextSave') + '</button>'
+    + '<button onclick="ctxSaveEdit(\'' + msgId + '\')" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px">' + t('contextSave') + '</button>'
     + '<button onclick="ctxRefresh()" style="background:#333;color:#ccc;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px">' + t('contextCancel') + '</button>'
     + '</div></div>';
 }
@@ -103,18 +108,20 @@ function ctxLoadMore() {
     // Append older messages at the BOTTOM (list is newest-first, older = further down)
     // Server returns chronological (oldest first) — reverse for newest-first display
     const olderMsgs = data.context || [];
-    const baseIdx = _ctxTotalCount - _ctxCurrentOffset;
     const reversed = [...olderMsgs].reverse();
-    reversed.forEach((m, ri) => {
-      const origIdx = baseIdx + (olderMsgs.length - 1 - ri);
+    reversed.forEach((m) => {
+      const mid = m.msg_id || m.trace_id || '';
+      if (!mid) return;
       const color = roleColors[m.role] || '#808090';
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(' + origIdx + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
+      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
+      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
       const row = document.createElement('div');
+      row.dataset.msgid = mid;
       row.style.cssText = 'padding:6px 8px;border-bottom:1px solid #222;cursor:pointer';
-      row.innerHTML = '<div style="display:flex;align-items:center">' + badge + tcTag + '<span style="margin-left:auto">' + delBtn + '</span></div>'
+      row.innerHTML = '<div style="display:flex;align-items:center">' + badge + tcTag + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>';
       list.appendChild(row);
     });
@@ -136,26 +143,23 @@ function ctxClose() {
   if (_ctxDirty) { _ctxDirty = false; reloadConv(); }
 }
 
-async function ctxSaveEdit(index) {
-  const ta = document.getElementById('ctx-edit-ta-' + index);
-  const roleEl = document.getElementById('ctx-edit-role-' + index);
+async function ctxSaveEdit(msgId) {
+  const ta = document.getElementById('ctx-edit-ta-' + msgId);
+  const roleEl = document.getElementById('ctx-edit-role-' + msgId);
   if (!ta) return;
   _ctxMutate(
-    {action: 'edit_context', index, content: ta.value, role: roleEl ? roleEl.value : undefined},
+    {action: 'edit_context', msg_id: msgId, agent_name: _ctxAgentFilter,
+     content: ta.value, role: roleEl ? roleEl.value : undefined},
     (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
 }
 
-async function ctxDeleteMessage(index) {
+async function ctxDeleteMessage(msgId) {
   if (!confirm(t('contextDeleteConfirm'))) return;
   if (_ctxAgentFilter === 'transcript') {
-    const row = document.getElementById('ctx-row-' + index);
-    const mid = row && row.dataset.msgid;
-    if (mid) {
-      await _ctxMutate({action: 'delete_message', msg_id: mid});
-    }
+    await _ctxMutate({action: 'delete_message', msg_id: msgId});
   } else {
     await _ctxMutate(
-      {action: 'delete_context_message', index, agent_name: _ctxAgentFilter},
+      {action: 'delete_context_message', msg_id: msgId, agent_name: _ctxAgentFilter},
       (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
   }
 }
@@ -257,10 +261,14 @@ async function ctxDeleteContext() {
 
 const _ctxSelected = new Set();
 function ctxToggleSelect(row, event) {
-  const idx = row.dataset.ctxIdx;
-  if (!idx) return;
+  const mid = row.dataset.msgid;
+  if (!mid) return;
+  // Prevent the browser's native text selection that mousedown already
+  // started — the inline onclick handler fires too late for that, but
+  // clearing the live Selection here undoes the highlight.
+  try { window.getSelection().removeAllRanges(); } catch (e) {}
   if (event.shiftKey && _ctxSelected.size > 0) {
-    const rows = Array.from(document.querySelectorAll('[data-ctx-idx]'));
+    const rows = Array.from(document.querySelectorAll('[data-msgid]'));
     const lastSel = rows.find(r => r.classList.contains('ctx-selected'));
     const lastIdx = lastSel ? rows.indexOf(lastSel) : -1;
     const curIdx = rows.indexOf(row);
@@ -269,23 +277,23 @@ function ctxToggleSelect(row, event) {
       for (let i = from; i <= to; i++) {
         rows[i].classList.add('ctx-selected');
         rows[i].style.outline = '2px solid #6c5ce7';
-        _ctxSelected.add(rows[i].dataset.ctxIdx);
+        _ctxSelected.add(rows[i].dataset.msgid);
       }
     }
   } else if (event.ctrlKey) {
-    if (_ctxSelected.has(idx)) {
-      _ctxSelected.delete(idx);
+    if (_ctxSelected.has(mid)) {
+      _ctxSelected.delete(mid);
       row.classList.remove('ctx-selected');
       row.style.outline = '';
     } else {
-      _ctxSelected.add(idx);
+      _ctxSelected.add(mid);
       row.classList.add('ctx-selected');
       row.style.outline = '2px solid #6c5ce7';
     }
   } else {
     document.querySelectorAll('.ctx-selected').forEach(r => { r.classList.remove('ctx-selected'); r.style.outline = ''; });
     _ctxSelected.clear();
-    _ctxSelected.add(idx);
+    _ctxSelected.add(mid);
     row.classList.add('ctx-selected');
     row.style.outline = '2px solid #6c5ce7';
   }
@@ -295,21 +303,8 @@ function ctxToggleSelect(row, event) {
 }
 async function ctxDeleteSelected() {
   if (!_ctxSelected.size) return;
-  // Every row MUST have a msg_id (transcript and all contexts).
-  // No msg_id = bug at creation time — surface it loudly instead of
-  // falling back to index-based deletion (which is page-local and
-  // will silently corrupt the wrong rows).
-  const selectedRows = Array.from(document.querySelectorAll('.ctx-selected'));
-  const mids = selectedRows.map(r => r.dataset.msgid).filter(Boolean);
+  const mids = Array.from(_ctxSelected);
   _ctxSelected.clear();
-  if (mids.length !== selectedRows.length) {
-    const missing = selectedRows
-      .filter(r => !r.dataset.msgid)
-      .map(r => r.dataset.ctxIdx);
-    console.error('BUG: rows without msg_id —', missing);
-    addMsg('error', 'BUG: ' + missing.length + ' selected row(s) have no msg_id. Refusing to delete.');
-    return;
-  }
   await _ctxMutate({action: 'delete_message', msg_ids: mids});
 }
 
@@ -331,17 +326,17 @@ function showContextOverlay(data) {
   } else {
     // Reverse: newest first
     const reversed = [...data.context].reverse();
-    reversed.forEach((m, ri) => {
-      const i = data.context.length - 1 - ri;  // original index for edit/delete
+    reversed.forEach((m) => {
+      const mid = m.msg_id || m.trace_id || '';
+      if (!mid) return;  // cannot edit/delete a message without a stable id
       const color = roleColors[m.role] || '#808090';
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const src = m.source ? '<span style="color:#808090;font-size:10px;margin-left:4px">[' + (m.source.name||'') + ']</span>' : '';
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(' + i + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
-      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(' + i + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
-      const _mid = m.msg_id || '';
-      msgsHtml += '<div id="ctx-row-' + i + '" data-ctx-idx="' + i + '"' + (_mid ? ' data-msgid="' + _mid + '"' : '') + ' style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
+      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
+      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
+      msgsHtml += '<div data-msgid="' + mid + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
         + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>'
         + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto">' + content + '</div>'

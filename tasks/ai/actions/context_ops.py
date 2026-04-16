@@ -742,28 +742,31 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
     if action == "edit_context":
         conv_id = body.get("conversation_id", "")
         _ctx_agent = body.get("agent_name", "")
-        index = body.get("index")
+        msg_id = body.get("msg_id", "")
         new_content = body.get("content", "")
         new_role = body.get("role")
-        if not conv_id or index is None:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id or index"}).encode())
+        if not conv_id or not msg_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or msg_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         context_data = _ctx_load(conv_id, _ctx_agent)
-        _using_context = context_data is not None
         if context_data is None:
             context_data = store.load(conv_id, user_id=user_id) or []
-        if index < 0 or index >= len(context_data):
+        _idx = next(
+            (i for i, m in enumerate(context_data)
+             if m.get("msg_id") == msg_id or m.get("trace_id") == msg_id),
+            -1,
+        )
+        if _idx < 0:
             flowfile.set_content(json.dumps({
-                "error": f"Index {index} out of range (0-{len(context_data)-1}). "
-                         "The context may have changed â€” please refresh.",
+                "error": f"Message {msg_id} not found in context — please refresh.",
             }).encode())
-            flowfile.set_attribute("http.response.status", "400")
+            flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        context_data[index]["content"] = new_content
+        context_data[_idx]["content"] = new_content
         if new_role:
-            context_data[index]["role"] = new_role
-        _ctx_save(conv_id, context_data)
+            context_data[_idx]["role"] = new_role
+        _ctx_save(conv_id, context_data, _ctx_agent)
         deserialized = self._deserialize_messages(context_data)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
@@ -867,36 +870,25 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
     if action == "delete_context_message":
         conv_id = body.get("conversation_id", "")
         _ctx_agent = body.get("agent_name", "")
-        index = body.get("index")
-        if not conv_id or index is None:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id or index"}).encode())
+        msg_id = body.get("msg_id", "")
+        if not conv_id or not msg_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or msg_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         context_data = _ctx_load(conv_id, _ctx_agent)
         if context_data is None:
             context_data = store.load(conv_id, user_id=user_id) or []
-        if index < 0 or index >= len(context_data):
-            # Index from overlay may target messages if context was compacted;
-            # fall back to messages list
-            msgs = store.load(conv_id, user_id=user_id) or []
-            if 0 <= index < len(msgs):
-                msgs.pop(index)
-                store.save(conv_id, msgs, user_id=user_id)
-                deserialized = self._deserialize_messages(msgs)
-                estimated = self._estimate_tokens(deserialized)
-                flowfile.set_content(json.dumps({
-                    "ok": True,
-                    "message_count": len(msgs),
-                    "token_estimate": estimated,
-                }).encode())
-                return [flowfile]
+        _before = len(context_data)
+        context_data = [
+            m for m in context_data
+            if m.get("msg_id") != msg_id and m.get("trace_id") != msg_id
+        ]
+        if len(context_data) == _before:
             flowfile.set_content(json.dumps({
-                "error": f"Index {index} out of range (0-{len(context_data)-1}). "
-                         "The context may have changed â€” please refresh.",
+                "error": f"Message {msg_id} not found in context — please refresh.",
             }).encode())
-            flowfile.set_attribute("http.response.status", "400")
+            flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        context_data.pop(index)
         _ctx_save(conv_id, context_data, _ctx_agent)
         deserialized = self._deserialize_messages(context_data)
         estimated = self._estimate_tokens(deserialized)
@@ -935,7 +927,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _ctx_agent = body.get("agent_name", "")
         role = body.get("role", "user")
         content = body.get("content", "")
-        index = body.get("index")
+        before_msg_id = body.get("before_msg_id", "")
+        after_msg_id = body.get("after_msg_id", "")
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -943,9 +936,28 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         context_data = _ctx_load(conv_id, _ctx_agent)
         if context_data is None:
             context_data = store.load(conv_id, user_id=user_id) or []
-        msg = {"role": role, "content": content}
-        if index is not None:
-            context_data.insert(index, msg)
+        from core.llm_client import stamp_message
+        msg = stamp_message({"role": role, "content": content})
+        if before_msg_id:
+            _idx = next((i for i, m in enumerate(context_data)
+                          if m.get("msg_id") == before_msg_id), -1)
+            if _idx < 0:
+                flowfile.set_content(json.dumps({
+                    "error": f"before_msg_id {before_msg_id} not found — please refresh.",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            context_data.insert(_idx, msg)
+        elif after_msg_id:
+            _idx = next((i for i, m in enumerate(context_data)
+                          if m.get("msg_id") == after_msg_id), -1)
+            if _idx < 0:
+                flowfile.set_content(json.dumps({
+                    "error": f"after_msg_id {after_msg_id} not found — please refresh.",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            context_data.insert(_idx + 1, msg)
         else:
             context_data.append(msg)
         _ctx_save(conv_id, context_data, _ctx_agent)

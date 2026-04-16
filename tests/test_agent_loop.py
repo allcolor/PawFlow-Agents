@@ -1105,17 +1105,19 @@ class TestContextActionsAsync(unittest.TestCase):
         assert data["token_estimate"] >= 0
 
     def test_edit_context_async(self):
-        """edit_context modifies a message via async path."""
+        """edit_context modifies a message by msg_id via async path."""
         from core.conversation_store import ConversationStore
+        from core.llm_client import stamp_message
         store = ConversationStore.instance()
+        _user_msg = stamp_message({"role": "user", "content": "hello"})
         store.save("ctx_edit1", [
             {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hello"},
+            _user_msg,
         ], user_id="testuser")
         ack, data = self._exec_async(self._make_task(), {
             "action": "edit_context",
             "conversation_id": "ctx_edit1",
-            "index": 1,
+            "msg_id": _user_msg["msg_id"],
             "content": "modified hello",
         })
         assert ack["status"] == "accepted"
@@ -1123,7 +1125,8 @@ class TestContextActionsAsync(unittest.TestCase):
         assert data["ok"] is True
         ctx = store.load_context("ctx_edit1")
         assert ctx is not None
-        assert ctx[1]["content"] == "modified hello"
+        _edited = next(m for m in ctx if m.get("msg_id") == _user_msg["msg_id"])
+        assert _edited["content"] == "modified hello"
 
     def test_replace_context_async(self):
         """replace_context replaces the entire context via async path."""
@@ -1149,25 +1152,30 @@ class TestContextActionsAsync(unittest.TestCase):
             assert got["content"] == exp["content"]
 
     def test_delete_context_message_async(self):
-        """delete_context_message removes a message via async path."""
+        """delete_context_message removes a message by msg_id via async path."""
         from core.conversation_store import ConversationStore
+        from core.llm_client import stamp_message
         store = ConversationStore.instance()
+        _user_msg = stamp_message({"role": "user", "content": "hello"})
+        _asst_msg = stamp_message({"role": "assistant", "content": "world"})
         store.save("ctx_del1", [
             {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "world"},
+            _user_msg,
+            _asst_msg,
         ], user_id="testuser")
         ack, data = self._exec_async(self._make_task(), {
             "action": "delete_context_message",
             "conversation_id": "ctx_del1",
-            "index": 1,
+            "msg_id": _user_msg["msg_id"],
         })
         assert ack["status"] == "accepted"
         assert data is not None
         assert data["ok"] is True
         ctx = store.load_context("ctx_del1")
         assert len(ctx) == 2
-        assert ctx[1]["role"] == "assistant"
+        # Deleted msg is gone, the other user/asst remains
+        assert not any(m.get("msg_id") == _user_msg["msg_id"] for m in ctx)
+        assert any(m.get("msg_id") == _asst_msg["msg_id"] for m in ctx)
 
     def test_add_context_message_async(self):
         """add_context_message appends a message via async path."""

@@ -416,9 +416,19 @@ class ContinuousFlowExecutor:
                 has_input = any(not c.is_empty() for c in incoming)
                 if _aa_dbg:
                     _sizes = [(c.source_id, c.queue_size()) for c in incoming]
+                    with self._lock:
+                        _all_in_flight = dict(self._in_flight)
+                    # Pool state
+                    _pool_state = {}
+                    try:
+                        _pool_state["work_queue"] = self._pool._work_queue.qsize()
+                        _pool_state["threads"] = len(self._pool._threads)
+                    except Exception:
+                        pass
                     logger.info("[sched-aa] runnable max=%d in_flight=%d "
-                                "has_input=%s queues=%s",
-                                max_inst, current, has_input, _sizes)
+                                "has_input=%s queues=%s pool=%s all_inflight=%s",
+                                max_inst, current, has_input, _sizes,
+                                _pool_state, _all_in_flight)
 
                 # Root tasks (no incoming connections):
                 # - Self-triggering tasks (has_pending_input) get scheduled
@@ -440,6 +450,8 @@ class ContinuousFlowExecutor:
                         break
                     with self._lock:
                         self._in_flight[task_id] = self._in_flight.get(task_id, 0) + 1
+                    if task_id == "agent_actions" and _aa_dbg:
+                        logger.info("[sched-aa] SUBMIT")
                     try:
                         self._pool.submit(self._execute_task, task_id)
                     except RuntimeError:

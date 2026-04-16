@@ -65,6 +65,22 @@ class ValidateSessionAuthTask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        _rid_va = flowfile.get_attribute("http.request.id") or "?"
+        logger.info("[validate_auth] enter req_id=%s", _rid_va[:8])
+        import time as _t_va
+        _t_va_start = _t_va.monotonic()
+        try:
+            return self._execute_inner(flowfile)
+        finally:
+            _dur = (_t_va.monotonic() - _t_va_start) * 1000
+            if _dur > 50:
+                logger.warning("[validate_auth] SLOW req_id=%s took=%.0fms",
+                                _rid_va[:8], _dur)
+            else:
+                logger.info("[validate_auth] exit  req_id=%s took=%.0fms",
+                            _rid_va[:8], _dur)
+
+    def _execute_inner(self, flowfile: FlowFile) -> List[FlowFile]:
         cookie_name = self.config.get("cookie_name", "pawflow_token")
 
         # Bypass auth for /files/ with public or gateway_key access

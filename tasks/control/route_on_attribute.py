@@ -5,10 +5,13 @@ Tâche RouteOnAttribute - Router les FlowFiles selon la valeur d'un attribut.
 Inspiré du processor RouteOnAttribute de Apache NiFi.
 """
 
+import logging
 import re
 from typing import Dict, Any, List
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
+
+logger = logging.getLogger(__name__)
 
 
 class RouteOnAttributeTask(BaseTask):
@@ -40,6 +43,9 @@ class RouteOnAttributeTask(BaseTask):
         Le FlowFile reçoit un attribut 'route' indiquant la route choisie.
         L'executor pourra ensuite utiliser cet attribut pour le routage.
         """
+        _rid_r = flowfile.get_attribute("http.request.id") or ""
+        if _rid_r:
+            logger.info("[routeOnAttribute] enter req_id=%s", _rid_r[:8])
         matched_routes = []
 
         for route_name, condition in self.routes.items():

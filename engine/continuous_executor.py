@@ -382,10 +382,36 @@ class ContinuousFlowExecutor:
                 with self._lock:
                     current = self._in_flight.get(task_id, 0)
                 if current >= max_inst:
+                    if task_id == "agent":
+                        # Pulsed log: only when agent is starved + has input.
+                        incoming_dbg = self._connections.get_incoming(task_id)
+                        has_input_dbg = any(not c.is_empty() for c in incoming_dbg)
+                        if has_input_dbg:
+                            import time as _t_dbg
+                            _last = getattr(self, "_agent_starved_log_ts", 0.0)
+                            if _t_dbg.time() - _last > 2.0:
+                                logger.warning(
+                                    "[scheduler] agent SATURATED: in_flight=%d/%d, "
+                                    "input_queues=%s",
+                                    current, max_inst,
+                                    [(c.source_id, c.queue_size())
+                                     for c in incoming_dbg])
+                                self._agent_starved_log_ts = _t_dbg.time()
                     continue
 
                 # Check output backpressure — don't consume if downstream is full
                 if self._connections.any_backpressured(task_id):
+                    if task_id == "agent":
+                        import time as _t_dbg
+                        _last = getattr(self, "_agent_bp_log_ts", 0.0)
+                        if _t_dbg.time() - _last > 2.0:
+                            outgoing_dbg = self._connections.get_outgoing(task_id)
+                            logger.warning(
+                                "[scheduler] agent BACKPRESSURED: outputs=%s",
+                                [(c.target_id, c.queue_size(),
+                                  c.is_backpressured())
+                                 for c in outgoing_dbg])
+                            self._agent_bp_log_ts = _t_dbg.time()
                     continue
 
                 # Check if there's input available

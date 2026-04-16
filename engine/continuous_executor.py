@@ -191,6 +191,17 @@ class ContinuousFlowExecutor:
             "relations": flow.relations,
         }
         self._connections.build_from_flow(flow_dict)
+        # Sanity-log the connections involving agent_actions so we can
+        # spot stale deployments that forgot to reload the new topology.
+        for task_id in ("agent_actions", "agent", "route_after_auth"):
+            if task_id in self._tasks:
+                _out = self._connections.get_outgoing(task_id)
+                _in = self._connections.get_incoming(task_id)
+                logger.info(
+                    "[executor] task=%s in=%s out=%s",
+                    task_id,
+                    [(c.source_id, c.relationship) for c in _in],
+                    [(c.target_id, c.relationship) for c in _out])
 
     def _resolve_service_configs(self, flow: Flow):
         """Resolve expressions in service configs (cascade-safe).
@@ -651,6 +662,14 @@ class ContinuousFlowExecutor:
                 if not matching:
                     # Fallback: send to all outgoing
                     matching = outgoing
+                    if task_id == "route_after_auth":
+                        logger.warning(
+                            "[executor] route_after_auth: no connection "
+                            "matches relationship=%r — falling back to ALL "
+                            "outgoing %s. Connections declared: %s",
+                            ff_rel,
+                            [c.target_id for c in outgoing],
+                            [(c.target_id, c.relationship) for c in outgoing])
 
                 # Fan-out: tag all copies with the same fragment.identifier
                 # so downstream mergeContent can correlate them

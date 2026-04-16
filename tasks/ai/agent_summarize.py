@@ -95,6 +95,97 @@ class AgentSummarizeMixin:
             compact_instructions=compact_instructions,
         )
 
+    def _summarize_chunked(self, client: LLMClient, text: str,
+                            chunk_char_limit: int,
+                            target_tokens: int = 0,
+                            user_id: str = "", agent_name: str = "",
+                            llm_service: str = "",
+                            conversation_id: str = "",
+                            compact_instructions: str = "") -> str:
+        """Divide-and-conquer summarization for inputs that don't fit one pass.
+
+        Splits `text` into chunks ≤ `chunk_char_limit` on natural newline
+        boundaries, summarizes each via `_call_summarize` (recursive call,
+        each chunk fits so chunking branch never re-fires), then a final
+        pass summarizes the concatenated chunk-summaries.
+
+        Per-chunk target is sized so that the final pass input is itself
+        bounded (cap chunk summaries to keep the joined input small enough
+        for one CC session).
+        """
+        # Split on newlines, never mid-line. Greedy fill.
+        lines = text.split("\n")
+        chunks: List[str] = []
+        cur: List[str] = []
+        cur_len = 0
+        for line in lines:
+            ln_len = len(line) + 1  # +1 for the newline
+            if cur and cur_len + ln_len > chunk_char_limit:
+                chunks.append("\n".join(cur))
+                cur = [line]
+                cur_len = ln_len
+            else:
+                cur.append(line)
+                cur_len += ln_len
+        if cur:
+            chunks.append("\n".join(cur))
+
+        n = len(chunks)
+        # Per-chunk target so the joined output fits the final pass.
+        # final_input ≈ n * per_chunk_chars; we want it ≤ chunk_char_limit
+        # so the final pass does a single _call_summarize without re-chunking.
+        per_chunk_target = max(500, (chunk_char_limit // n) // 4)  # chars→tokens ~/4
+        logger.info(
+            "[compact] chunked: %d chars → %d chunks of ≤%d chars, "
+            "per-chunk target=%d tokens, final target=%d tokens",
+            len(text), n, chunk_char_limit, per_chunk_target, target_tokens)
+
+        chunk_summaries: List[str] = []
+        for i, chunk in enumerate(chunks, 1):
+            logger.info("[compact] chunk %d/%d: %d chars", i, n, len(chunk))
+            _instr = (
+                f"This is chunk {i}/{n} of a larger conversation. Summarize "
+                f"only this chunk — preserve concrete facts, decisions, file "
+                f"paths. Output ≤ {per_chunk_target} tokens."
+            )
+            if compact_instructions:
+                _instr = f"{compact_instructions}\n\n{_instr}"
+            summary = self._call_summarize(
+                client, chunk,
+                target_tokens=per_chunk_target,
+                user_id=user_id, agent_name=agent_name,
+                llm_service=llm_service,
+                conversation_id=conversation_id,
+                compact_instructions=_instr,
+            )
+            chunk_summaries.append(
+                f"=== Chunk {i}/{n} summary ===\n{summary}")
+
+        joined = "\n\n".join(chunk_summaries)
+        logger.info("[compact] chunked: joined summaries = %d chars, "
+                     "running final pass", len(joined))
+        # Final pass: summarize the summaries. If joined is somehow STILL
+        # over the chunk limit (chunks too verbose), this re-chunks too —
+        # depth grows logarithmically, no infinite recursion risk.
+        _final_instr = (
+            "Below are summaries of consecutive chunks of one large "
+            "conversation. Produce one coherent overall summary that "
+            "follows the standard 7-section structure (USER_INTENT, "
+            "DECISIONS, FILES_MODIFIED, ERRORS, CURRENT_STATE, PENDING, "
+            "CONTEXT). Drop redundancy across chunks. Apply recency "
+            "weighting — emphasize the LATEST chunks."
+        )
+        if compact_instructions:
+            _final_instr = f"{compact_instructions}\n\n{_final_instr}"
+        return self._call_summarize(
+            client, joined,
+            target_tokens=target_tokens,
+            user_id=user_id, agent_name=agent_name,
+            llm_service=llm_service,
+            conversation_id=conversation_id,
+            compact_instructions=_final_instr,
+        )
+
     def _call_summarize(self, client: LLMClient, text: str,
                         target_tokens: int = 0,
                         user_id: str = "", agent_name: str = "",
@@ -122,6 +213,26 @@ class AgentSummarizeMixin:
         if not target_tokens:
             target_tokens = 2000
 
+        # Divide-and-conquer for inputs that don't fit one summarizer pass.
+        # CC has a hard ~200K-token context. Reading a huge file via the
+        # paginated `read` tool accumulates all pages in CC's context,
+        # which saturates well before the summary is emitted. Cap each
+        # chunk at 50K chars (~12K tokens) so a single chunk + tool loop
+        # leaves CC plenty of headroom. Each chunk gets a per-chunk
+        # summary; we then summarize the concatenated summaries (final
+        # pass), naturally bounded because each summary ≤ target_tokens.
+        _CHUNK_CHAR_LIMIT = 50_000
+        if len(text) > _CHUNK_CHAR_LIMIT:
+            return self._summarize_chunked(
+                client, text,
+                chunk_char_limit=_CHUNK_CHAR_LIMIT,
+                target_tokens=target_tokens,
+                user_id=user_id, agent_name=agent_name,
+                llm_service=llm_service,
+                conversation_id=conversation_id,
+                compact_instructions=compact_instructions,
+            )
+
         from core.file_store import FileStore
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
 
@@ -135,14 +246,12 @@ class AgentSummarizeMixin:
         set_compact_key(compact_key)
 
         def _pub(detail):
-            if conversation_id:
-                try:
-                    from core.conversation_event_bus import ConversationEventBus
-                    ConversationEventBus.instance().publish_event(
-                        conversation_id, "compact_progress",
-                        {"stage": "summarizing", "detail": detail})
-                except Exception:
-                    pass
+            # No-op SSE: the UI only displays "Compacting..." which is
+            # already published by _run_bg_context_op (start/done). Per-
+            # chunk / per-attempt detail is server-log territory only —
+            # publishing it would flood SSE with N×retries events that
+            # the UI ignores anyway.
+            return
 
         _focus = f"\n- FOCUS: {compact_instructions}" if compact_instructions else ""
         prompt = (

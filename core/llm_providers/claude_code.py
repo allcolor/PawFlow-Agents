@@ -761,16 +761,48 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     logger.error("[claude-code] turn_callback error: %s", e,
                                  exc_info=True)
             elif text or tc:
-                # Internal sentinel sessions (e.g. "_compact" summarizer)
-                # run without a turn_callback by design — they return the
-                # aggregated result in content_parts. Downgrade the noise.
+                # Internal sentinel sessions (e.g. "_compact" summarizer,
+                # "_memory_extract") run without a turn_callback by design —
+                # they aggregate the result in content_parts. Log at INFO
+                # so that summarizer / memory-extract behavior is visible
+                # when these sessions misbehave (CC saturating, looping on
+                # phantom tool calls, etc.). Includes a tool-name digest
+                # so debugging doesn't require enabling DEBUG everywhere.
                 _is_sentinel = conv_id.startswith("_") if conv_id else False
+                # mcp__pawflow__use_tool is the meta-dispatch tool — the
+                # ACTUAL useful info is in its `tool_name` argument
+                # ("read", "compact_result", …). Without unwrapping it,
+                # every log line just says "use_tool" and you can't tell
+                # the summarizer apart from a phantom call.
+                def _tc_label(t):
+                    name = t.get("name", "?")
+                    args = t.get("arguments") or {}
+                    if name == "mcp__pawflow__use_tool" and isinstance(args, dict):
+                        inner = args.get("tool_name") or "?"
+                        inner_args = args.get("arguments") or {}
+                        # Add a single distinguishing arg per inner tool
+                        if inner == "read":
+                            _p = (inner_args.get("path") or "")[:24]
+                            _o = inner_args.get("offset")
+                            _l = inner_args.get("limit")
+                            return (f"use_tool/read({_p}"
+                                    + (f",off={_o}" if _o else "")
+                                    + (f",lim={_l}" if _l else "") + ")")
+                        if inner == "compact_result":
+                            _slen = len(str(inner_args.get("summary", "")))
+                            return f"use_tool/compact_result(summary={_slen}c)"
+                        return f"use_tool/{inner}"
+                    return name
+                _tc_names = ",".join(_tc_label(t) for t in tc)[:200]
                 if _is_sentinel:
-                    logger.debug("[claude-code] flush turn %d (sentinel '%s'): text=%d, tc=%d",
-                                 _turn_count, conv_id, len(text), len(tc))
+                    logger.info("[claude-code] flush turn %d (sentinel '%s'): "
+                                "text=%d, tc=%d [%s]",
+                                _turn_count, conv_id, len(text), len(tc),
+                                _tc_names)
                 else:
-                    logger.warning("[claude-code] flush turn %d but NO turn_callback: text=%d, tc=%d",
-                                   _turn_count, len(text), len(tc))
+                    logger.warning("[claude-code] flush turn %d but NO turn_callback: "
+                                   "text=%d, tc=%d [%s]",
+                                   _turn_count, len(text), len(tc), _tc_names)
                 # Tell webchat to finalize current streaming element
                 _pub("turn_complete", {
                     "agent_name": agent_name,
@@ -915,6 +947,20 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     subtype = event.get("subtype", "")
                     if subtype == "compact_boundary" or (
                             subtype == "status" and event.get("status") == "compacting"):
+                        # Sentinel sessions (_compact, _memory_extract, …)
+                        # are themselves PawFlow compactions. If CC saturates
+                        # mid-summarization, let it run its own internal
+                        # compact — interrupting would either loop forever
+                        # (compact-of-compact) or destroy the in-flight
+                        # summarization. Preempt-on-compact only applies
+                        # to normal user sessions where PawFlow's bucket
+                        # cache produces a better result than CC's auto.
+                        _is_sentinel = conv_id.startswith("_") if conv_id else False
+                        if _is_sentinel:
+                            logger.info("[claude-code] CC self-compacting in "
+                                         "sentinel '%s' — letting it continue",
+                                         conv_id)
+                            continue
                         logger.warning("[claude-code] CC compacting detected (subtype=%s) "
                                        "— killing CC, PawFlow will compact", subtype)
                         proc.kill()

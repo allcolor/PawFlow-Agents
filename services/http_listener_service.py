@@ -339,6 +339,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
         self.server._pending_requests[req.request_id] = req
 
         # Dispatch to flow (non-blocking — the callback enqueues a FlowFile)
+        import time as _t_http
+        _t_dispatch = _t_http.monotonic()
         try:
             entry.callback(req)
         except Exception as e:
@@ -353,6 +355,11 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # Block until flow responds or timeout
         if not req.wait(timeout=timeout):
             self.server._pending_requests.pop(req.request_id, None)
+            _waited = _t_http.monotonic() - _t_dispatch
+            logger.warning(
+                "[http] 504 — %s %s timed out after %.1fs (request_id=%s, "
+                "body=%db) — flow chain stuck",
+                method, path, _waited, req.request_id[:8], len(body or b""))
             self.send_response(504)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -361,6 +368,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 "message": f"Flow did not respond within {timeout}s",
             }).encode())
             return
+        # Log slow responses (anything above 5s) so we see where time goes
+        _waited = _t_http.monotonic() - _t_dispatch
+        if _waited > 5.0:
+            logger.warning("[http] slow response — %s %s took %.1fs "
+                            "(request_id=%s, status=%d)",
+                            method, path, _waited, req.request_id[:8],
+                            req.response_status)
 
         # Send the flow's response
         self.server._pending_requests.pop(req.request_id, None)

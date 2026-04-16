@@ -213,29 +213,32 @@ class AgentSummarizeMixin:
                         chars floor) when summarizing small chunks.
         """
         _svc_id = llm_service
-        if not _svc_id:
-            try:
-                _, _, _svc_id = self._get_summarizer_client(user_id)
-            except Exception:
-                _svc_id = ""
+        _svc_ctx_max = 0
+        try:
+            _, _svc_ctx_max, _resolved_svc = self._get_summarizer_client(user_id)
+            if not _svc_id:
+                _svc_id = _resolved_svc
+        except Exception:
+            pass
         if not _svc_id:
             raise RuntimeError(
                 "No summarizer_service configured. Set `summarizer_service` "
                 "in the flow/agent config — compaction has no default.")
+        if not _svc_ctx_max:
+            raise RuntimeError(
+                f"summarizer_service '{_svc_id}' has no max_context_size "
+                f"configured. Set it explicitly — chunk sizing has no default.")
         logger.info(f"[compact] summarize via summarizer_service='{_svc_id}', "
-                     f"target={target_tokens} tokens, input={len(text)} chars")
+                     f"target={target_tokens} tokens, input={len(text)} chars, "
+                     f"svc max_context={_svc_ctx_max} tokens")
         if not target_tokens:
             target_tokens = 2000
 
         # Divide-and-conquer for inputs that don't fit one summarizer pass.
-        # CC has a hard ~200K-token context. Reading a huge file via the
-        # paginated `read` tool accumulates all pages in CC's context,
-        # which saturates well before the summary is emitted. Cap each
-        # chunk at 50K chars (~12K tokens) so a single chunk + tool loop
-        # leaves CC plenty of headroom. Each chunk gets a per-chunk
-        # summary; we then summarize the concatenated summaries (final
-        # pass), naturally bounded because each summary ≤ target_tokens.
-        _CHUNK_CHAR_LIMIT = 50_000
+        # Chunk size = 2/3 of the service's max_context_size, leaving 1/3
+        # for prompt scaffolding + tool loop + output. Tokens→chars uses
+        # an average of 3.5 chars/token (mixed text+code).
+        _CHUNK_CHAR_LIMIT = int(_svc_ctx_max * (2 / 3) * 3.5)
         if len(text) > _CHUNK_CHAR_LIMIT:
             return self._summarize_chunked(
                 client, text,

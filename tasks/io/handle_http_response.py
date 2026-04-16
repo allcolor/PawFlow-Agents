@@ -106,7 +106,7 @@ class HandleHTTPResponseTask(BaseTask):
             success = svc.submit_stream_response(request_id, status, headers, sse_stream)
         else:
             success = svc.submit_response(request_id, status, headers, body)
-        logger.info("[handleHTTPResponse] %s status=%d (req_id=%s, body=%db, ok=%s)",
+        logger.debug("[handleHTTPResponse] %s status=%d (req_id=%s, body=%db, ok=%s)",
                     "stream" if is_stream else "submit",
                     status, request_id[:8] if request_id else "?",
                     len(body) if body else 0, success)

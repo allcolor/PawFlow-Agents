@@ -10,13 +10,10 @@ Subclasses AgentLoopTask to reuse the action handler dispatch
 """
 
 import json
-import logging
 from typing import List
 
 from core import FlowFile
 from tasks.ai.agent_loop import AgentLoopTask
-
-logger = logging.getLogger(__name__)
 
 
 class AgentActionsTask(AgentLoopTask):
@@ -32,34 +29,25 @@ class AgentActionsTask(AgentLoopTask):
     )
     ICON = "settings"
 
+    def select_processable(self, connections):
+        """UI actions bypass all gating: no LLM capacity check, no
+        context-op lock. A /desktop click must not wait for compact
+        to finish. Just return the first available FF.
+        """
+        for conn in connections:
+            for ff in conn.peek_all():
+                return ff, conn
+        return None
+
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        _rid = flowfile.get_attribute("http.request.id") or ""
-        _act_log = "?"
-        try:
-            raw = flowfile.get_content().decode("utf-8", errors="replace")
-            if raw.lstrip().startswith("{"):
-                _b = json.loads(raw)
-                if isinstance(_b, dict):
-                    _act_log = _b.get("action") or "?"
-        except Exception:
-            pass
-        logger.info("[agent_actions] enter req_id=%s action=%s",
-                    _rid[:8] if _rid else "?", _act_log)
-        import time as _t_aa
-        _t_aa_start = _t_aa.monotonic()
-        try:
-            result = self._handle_action(flowfile)
-            if result is None:
-                flowfile.set_content(json.dumps({
-                    "error": "Not an action — body must contain {\"action\": ...}",
-                }).encode())
-                flowfile.set_attribute("http.response.status", "400")
-                result = [flowfile]
-            return result
-        finally:
-            _dur = (_t_aa.monotonic() - _t_aa_start) * 1000
-            logger.info("[agent_actions] exit  req_id=%s action=%s took=%.0fms",
-                        _rid[:8] if _rid else "?", _act_log, _dur)
+        result = self._handle_action(flowfile)
+        if result is None:
+            flowfile.set_content(json.dumps({
+                "error": "Not an action — body must contain {\"action\": ...}",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            result = [flowfile]
+        return result
 
 
 from core import TaskFactory

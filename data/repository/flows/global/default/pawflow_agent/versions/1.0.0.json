@@ -62,6 +62,11 @@
             "relationship": "POST:/api/agent"
           },
           {
+            "method": "POST",
+            "pattern": "/api/ui",
+            "relationship": "POST:/api/ui"
+          },
+          {
             "method": "GET",
             "pattern": "/api/agent/events",
             "relationship": "GET:/api/agent/events"
@@ -165,6 +170,13 @@
         "image_service": "${image_service}"
       }
     },
+    "agent_actions": {
+      "type": "agentActions",
+      "max_instances": "${agent_max_instances}",
+      "parameters": {
+        "conversation_store": true
+      }
+    },
     "agent_events": {
       "type": "agentSSEStream",
       "parameters": {
@@ -201,6 +213,11 @@
             "attribute": "http.path",
             "operator": "equals",
             "value": "/api/agent/events"
+          },
+          "ui": {
+            "attribute": "http.path",
+            "operator": "equals",
+            "value": "/api/ui"
           },
           "files": {
             "attribute": "http.path",
@@ -256,6 +273,11 @@
     {
       "from": "http_in",
       "to": "validate_auth",
+      "type": "POST:/api/ui"
+    },
+    {
+      "from": "http_in",
+      "to": "validate_auth",
       "type": "GET:/chat"
     },
     {
@@ -287,6 +309,16 @@
       "from": "route_after_auth",
       "to": "agent",
       "type": "api"
+    },
+    {
+      "from": "route_after_auth",
+      "to": "agent_actions",
+      "type": "ui"
+    },
+    {
+      "from": "agent_actions",
+      "to": "send_response",
+      "type": "success"
     },
     {
       "from": "route_after_auth",

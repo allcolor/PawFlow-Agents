@@ -43,7 +43,11 @@ function action$(actionName, params = {}, opts = {}) {
   _pendingActions++;
   _updateLoadingState();
 
-  fetch(API, {
+  // UI commands go to /api/ui (dedicated task slot, isolated from
+  // agent execution). Derive from API (/api/agent) by swapping the
+  // last path segment so custom deployments keep working.
+  const _uiUrl = API.replace(/\/api\/agent$/, '/api/ui');
+  fetch(_uiUrl, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(body),

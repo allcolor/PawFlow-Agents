@@ -70,6 +70,15 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     try:
         client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        # Keepalive on browser side too, so a silently-dead tab (closed
+        # without sending a WS close frame) is detected quickly.
+        client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if hasattr(socket, "TCP_KEEPIDLE"):
+            client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
+        if hasattr(socket, "TCP_KEEPINTVL"):
+            client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 3)
+        if hasattr(socket, "TCP_KEEPCNT"):
+            client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
     except Exception:
         pass
 
@@ -167,11 +176,15 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
     t0.start()
     t1.start()
     t2.start()
-    t0.join()
-    stop.set()
+
+    # Wait until ANY thread signals stop (browser close, backend EOF,
+    # write failure). Joining t0 alone would keep the main thread
+    # blocked while pulseaudio keeps streaming — the reader only
+    # checks stop between packets, so in a busy stream it never sees
+    # the flag quickly. Closing both sockets after stop is what
+    # actually unblocks any recv() still in flight.
+    stop.wait()
     queue_event.set()
-    t1.join(timeout=2)
-    t2.join(timeout=2)
 
     try:
         backend_sock.close()
@@ -181,6 +194,11 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         _ws_close(client_sock, 1000, "")
     except Exception:
         pass
+
+    t0.join(timeout=2)
+    t1.join(timeout=2)
+    t2.join(timeout=2)
+    logger.info("Audio proxy: session %s disconnected", session_id)
 
 
 def _recv_exact(sock, n: int) -> Optional[bytes]:

@@ -494,6 +494,20 @@ function audioDisconnect() {
   _updateAudioUI(false);
 }
 
+function audioRestart() {
+  // Rebuild the full audio pipeline (WS, decoder, worklet, ring buffer)
+  // without touching the VNC view. Used when the stream stalls silently
+  // (backend TCP dead, decoder wedged, etc).
+  var sid = _audioSessionId;
+  if (!sid) {
+    console.warn('[audio] restart requested but no active session');
+    return;
+  }
+  console.log('[audio] restart requested for session', sid);
+  audioDisconnect();
+  audioConnect(sid);
+}
+
 function audioToggleMute() {
   _audioMuted = !_audioMuted;
   if (_audioGain) _audioGain.gain.value = _audioMuted ? 0 : _audioVolume;
@@ -509,8 +523,13 @@ function audioSetVolume(val) {
 
 function _updateAudioUI(connected) {
   var btn = document.getElementById('audioToggleBtn');
-  if (!btn) return;
-  btn.style.display = connected ? 'inline-block' : 'none';
-  btn.textContent = _audioMuted ? '\uD83D\uDD07' : '\uD83D\uDD0A';
-  btn.title = _audioMuted ? 'Unmute audio' : 'Mute audio';
+  if (btn) {
+    btn.style.display = connected ? 'inline-block' : 'none';
+    btn.textContent = _audioMuted ? '\uD83D\uDD07' : '\uD83D\uDD0A';
+    btn.title = _audioMuted ? 'Unmute audio' : 'Mute audio';
+  }
+  var rbtn = document.getElementById('audioRestartBtn');
+  if (rbtn) {
+    rbtn.style.display = connected ? 'inline-block' : 'none';
+  }
 }

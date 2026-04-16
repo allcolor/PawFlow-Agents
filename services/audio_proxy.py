@@ -52,6 +52,17 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         backend_sock = socket.create_connection((target_host, target_port), timeout=5)
         backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         backend_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
+        # Keepalive so a silently-dead backend (pulseaudio crash, network
+        # blip, container hiccup) surfaces in seconds, not minutes. The
+        # browser's audioRestart button is a fast manual fix; keepalive
+        # is the automatic path.
+        backend_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if hasattr(socket, "TCP_KEEPIDLE"):
+            backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
+        if hasattr(socket, "TCP_KEEPINTVL"):
+            backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 3)
+        if hasattr(socket, "TCP_KEEPCNT"):
+            backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
     except Exception as e:
         logger.warning("Audio proxy: connect failed %s:%d: %s", target_host, target_port, e)
         _ws_close(client_sock, 4002, "Audio source unavailable")

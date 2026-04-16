@@ -1065,16 +1065,32 @@ class ConversationStore:
                     # side-channels entirely (these aren't addressed to us).
                     if src.get("task_id") or src.get("btw"):
                         continue
-                    content = m.get("content", "")
                     # Tool-call-only turns have no text. Stripping the
                     # tool_calls leaves nothing useful — don't emit empty
-                    # "[Agent X]:" stubs into the view.
-                    if not (isinstance(content, str) and content.strip()):
+                    # "[Agent X]:" stubs into the view. Handle both string
+                    # and list (multimodal) content formats.
+                    content = m.get("content", "")
+                    if isinstance(content, str):
+                        if not content.strip():
+                            continue
+                        text = content
+                    elif isinstance(content, list):
+                        # Collect text from every text block; drop the rest
+                        # (tool_use blocks become meaningless once tool_calls
+                        # are stripped).
+                        _parts = [
+                            b.get("text", "") for b in content
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        ]
+                        text = "\n".join(p for p in _parts if p.strip())
+                        if not text.strip():
+                            continue
+                    else:
                         continue
                     mm = dict(m)
                     mm["role"] = "user"
                     prefix = f"[Agent {src_name}]: " if src_name else "[Agent]: "
-                    mm["content"] = prefix + content
+                    mm["content"] = prefix + text
                     mm.pop("tool_calls", None)
                     out.append(mm)
                 continue

@@ -63,6 +63,8 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
             backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 3)
         if hasattr(socket, "TCP_KEEPCNT"):
             backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        # Timeout so recv() unblocks periodically to check stop flag
+        backend_sock.settimeout(1.0)
     except Exception as e:
         logger.warning("Audio proxy: connect failed %s:%d: %s", target_host, target_port, e)
         _ws_close(client_sock, 4002, "Audio source unavailable")
@@ -186,6 +188,13 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
     stop.wait()
     queue_event.set()
 
+    # shutdown() forces any blocked recv() to fail immediately,
+    # even on Windows where close() alone may not unblock it
+    # when PulseAudio keeps streaming data.
+    try:
+        backend_sock.shutdown(socket.SHUT_RDWR)
+    except Exception:
+        pass
     try:
         backend_sock.close()
     except Exception:
@@ -198,6 +207,8 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
     t0.join(timeout=2)
     t1.join(timeout=2)
     t2.join(timeout=2)
+    if t0.is_alive():
+        logger.warning("Audio proxy: reader thread still alive for %s", session_id)
     logger.info("Audio proxy: session %s disconnected", session_id)
 
 

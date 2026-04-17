@@ -128,7 +128,7 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const error = (available - TARGET) / TARGET; // -1..+N
     const correction = error * 0.002; // very gentle proportional
     const raw = this.baseStep * (1 + correction);
-    const clamped = Math.max(this.baseStep * 0.995, Math.min(this.baseStep * 1.005, raw));
+    const clamped = Math.max(this.baseStep * 0.99, Math.min(this.baseStep * 1.01, raw));
     // EMA smoothing (alpha=0.001, tau ≈ 2.7s at 375 calls/s)
     if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
     this._smoothStep += 0.001 * (clamped - this._smoothStep);
@@ -175,7 +175,7 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const error = (available - TARGET) / TARGET;
     const correction = error * 0.002;
     const raw = this.baseStep * (1 + correction);
-    const clamped = Math.max(this.baseStep * 0.995, Math.min(this.baseStep * 1.005, raw));
+    const clamped = Math.max(this.baseStep * 0.99, Math.min(this.baseStep * 1.01, raw));
     if (this._pmSmoothStep === undefined) this._pmSmoothStep = this.baseStep;
     this._pmSmoothStep += 0.001 * (clamped - this._pmSmoothStep);
     const step = this._pmSmoothStep;

@@ -17,19 +17,48 @@ logger = logging.getLogger(__name__)
 
 _audio_sources: Dict[str, Tuple[str, int]] = {}
 _audio_lock = threading.Lock()
+# Active proxy sessions: session_id -> [(stop_event, backend_socket), ...]
+_active_proxies: Dict[str, list] = {}
 
 
 def register_audio_source(session_id: str, host: str, port: int):
     if not port:
         return
+    # Kill any stale proxies from a previous session with the same ID
     with _audio_lock:
+        old_proxies = _active_proxies.pop(session_id, [])
         _audio_sources[session_id] = (host, port)
+    _kill_proxies(old_proxies)
     logger.info("Audio proxy: registered %s -> %s:%d", session_id, host, port)
 
 
 def unregister_audio_source(session_id: str):
     with _audio_lock:
         _audio_sources.pop(session_id, None)
+        proxies = _active_proxies.pop(session_id, [])
+    _kill_proxies(proxies)
+
+
+def kill_audio_proxies(session_id: str):
+    """Kill all active audio proxy threads for a session."""
+    with _audio_lock:
+        proxies = _active_proxies.pop(session_id, [])
+    _kill_proxies(proxies)
+
+
+def _kill_proxies(proxies):
+    for stop_ev, backend_sock in proxies:
+        stop_ev.set()
+        try:
+            backend_sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            backend_sock.close()
+        except Exception:
+            pass
+    if proxies:
+        logger.info("Audio proxy: killed %d active proxy(ies)", len(proxies))
 
 
 def _get_audio_target(session_id: str) -> Tuple[str, int]:
@@ -86,6 +115,10 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         pass
 
     stop = threading.Event()
+
+    # Register this proxy so it can be killed when the audio source is unregistered
+    with _audio_lock:
+        _active_proxies.setdefault(session_id, []).append((stop, backend_sock))
 
     pkt_queue = collections.deque(maxlen=250)  # ~5s of 20ms packets
     queue_event = threading.Event()
@@ -211,6 +244,17 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
     t2.join(timeout=2)
     if t0.is_alive():
         logger.warning("Audio proxy: reader thread still alive for %s", session_id)
+
+    # Unregister this proxy from the active list
+    with _audio_lock:
+        entries = _active_proxies.get(session_id, [])
+        try:
+            entries.remove((stop, backend_sock))
+        except ValueError:
+            pass
+        if session_id in _active_proxies and not entries:
+            del _active_proxies[session_id]
+
     logger.info("Audio proxy: session %s disconnected", session_id)
 
 

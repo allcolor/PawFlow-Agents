@@ -123,15 +123,14 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const MAX_FILL = 36000; // 750ms — hard snap safety net
     const RESUME_MIN = 4800; // 100ms
 
-    // Clock drift recovery: ultra-gentle ±0.5% max, smoothed over ~3s
-    // Inaudible (a semitone is 6%, this is 8 cents)
+    // Clock drift recovery: ±3% max, EMA smoothed over ~1s
     const error = (available - TARGET) / TARGET; // -1..+N
-    const correction = error * 0.002; // very gentle proportional
+    const correction = error * 0.002; // gentle proportional
     const raw = this.baseStep * (1 + correction);
-    const clamped = Math.max(this.baseStep * 0.98, Math.min(this.baseStep * 1.02, raw));
-    // EMA smoothing (alpha=0.0013, tau ≈ 2s at 375 calls/s)
+    const clamped = Math.max(this.baseStep * 0.97, Math.min(this.baseStep * 1.03, raw));
+    // EMA smoothing (alpha=0.0027, tau ≈ 1s at 375 calls/s)
     if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
-    this._smoothStep += 0.0013 * (clamped - this._smoothStep);
+    this._smoothStep += 0.0027 * (clamped - this._smoothStep);
     const step = this._smoothStep;
 
     if (available > MAX_FILL) {
@@ -175,9 +174,9 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const error = (available - TARGET) / TARGET;
     const correction = error * 0.002;
     const raw = this.baseStep * (1 + correction);
-    const clamped = Math.max(this.baseStep * 0.98, Math.min(this.baseStep * 1.02, raw));
+    const clamped = Math.max(this.baseStep * 0.97, Math.min(this.baseStep * 1.03, raw));
     if (this._pmSmoothStep === undefined) this._pmSmoothStep = this.baseStep;
-    this._pmSmoothStep += 0.0013 * (clamped - this._pmSmoothStep);
+    this._pmSmoothStep += 0.0027 * (clamped - this._pmSmoothStep);
     const step = this._pmSmoothStep;
 
     if (available > MAX_FILL) {

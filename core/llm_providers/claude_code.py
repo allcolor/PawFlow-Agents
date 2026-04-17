@@ -1336,10 +1336,22 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # (process was killed after break on result event — that's expected)
         _got_result = bool(last_data.get("session_id") or last_data.get("result"))
         _was_compact_stall = (proc.returncode == -9 and _stall_start_time > 0 and not _got_assistant)
+        # Tool-result / no-assistant stalls are PawFlow-watchdog kills. CC
+        # produced work up to that point; the kill is our own recovery
+        # action, not a user-facing failure. Tag the exception so the
+        # retry loop in LLMClient.complete_stream treats it as retryable
+        # (same path as compact_stall) instead of surfacing an error to
+        # the user on the first attempt.
+        _was_tool_stall = bool(self._stall_killed) and not _was_compact_stall
         if proc.returncode and proc.returncode != 0 and not _got_result:
             if _stderr:
                 logger.error("Claude CLI stderr: %.500s", _stderr)
-            _reason = "compact_stall" if _was_compact_stall else ""
+            if _was_compact_stall:
+                _reason = "compact_stall"
+            elif _was_tool_stall:
+                _reason = "tool_stall"
+            else:
+                _reason = ""
             raise LLMClientError(
                 f"Claude CLI stream exited with code {proc.returncode}"
                 + (f" ({_reason})" if _reason else "")

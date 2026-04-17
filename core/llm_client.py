@@ -787,7 +787,11 @@ class LLMClient(
                 is_529 = "529" in err_str or "overloaded" in err_str.lower()
                 is_500 = "500" in err_str or "Internal server error" in err_str
                 is_compact_stall = "compact_stall" in err_str
-                retryable = is_429 or is_529 or is_500 or is_compact_stall or any(
+                # Tool-result stall: PawFlow's watchdog killed CC because
+                # it went idle mid-turn. Our own recovery action — transparent
+                # to the user, always retry.
+                is_tool_stall = "tool_stall" in err_str
+                retryable = is_429 or is_529 or is_500 or is_compact_stall or is_tool_stall or any(
                     code in err_str for code in ("503", "502", "reset", "timeout",
                                                   "api_error", "server_error")
                 )
@@ -807,11 +811,17 @@ class LLMClient(
                         raise LLMClientError(
                             f"Overloaded (529) after {overloaded_attempts} attempts: {last_error}")
 
-                if is_compact_stall:
-                    # Compact stall: CC was killed after being unresponsive
-                    # post-compaction. Retry immediately (no backoff needed,
-                    # the session is already compacted).
-                    logger.warning("[stream] Compact stall detected — retrying immediately")
+                if is_compact_stall or is_tool_stall:
+                    # Stall kill by our own watchdog — CC went idle mid-turn
+                    # (no assistant output after init, or no assistant after
+                    # its tool_results landed). Retry immediately (no backoff):
+                    # this is our own recovery action, not a transient upstream
+                    # failure. Still bounded by max_retries so we eventually
+                    # surface if CC is genuinely stuck.
+                    _kind = "Compact" if is_compact_stall else "Tool-result"
+                    logger.warning(
+                        "[stream] %s stall detected — retrying immediately "
+                        "(attempt %d/%d)", _kind, attempt, self.max_retries)
                     continue
 
                 if retryable and attempt < self.max_retries:

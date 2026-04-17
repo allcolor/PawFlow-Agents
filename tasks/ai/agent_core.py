@@ -1015,6 +1015,24 @@ class AgentCoreMixin:
                         # response_content stays "" — done event uses last turn text.
                         if _is_claude_code:
                             response_content = _resp_text
+                            # Patch last assistant message with token data
+                            # (turn_callback persisted it without tokens)
+                            _cc_last_mid = getattr(client, '_last_turn_msg_id', '')
+                            if _cc_last_mid and (response.tokens_in or response.tokens_out):
+                                _cc_src = _agent_source(response.tokens_in, response.tokens_out, response.model)
+                                # Update in-memory message
+                                for _m in reversed(messages):
+                                    if getattr(_m, 'msg_id', '') == _cc_last_mid:
+                                        _m.source = _cc_src
+                                        break
+                                # Persist patch to transcript
+                                if use_conv_store and conversation_id:
+                                    try:
+                                        from core.conversation_store import ConversationStore
+                                        ConversationStore.instance().patch_message(
+                                            conversation_id, _cc_last_mid, source=_cc_src)
+                                    except Exception:
+                                        pass
                             emitter.stop_heartbeat(_iter_hb)
                             _flush()
                             break

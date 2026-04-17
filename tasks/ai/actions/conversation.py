@@ -32,6 +32,9 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                     c["status"] = "active" if c["conversation_id"] in _active_cids else "idle"
         except Exception:
             pass
+        for c in convs:
+            branch = store.git_current_branch(c["conversation_id"])
+            c["branch"] = branch if branch and branch != "main" else ""
         result = json.dumps({"conversations": convs}, ensure_ascii=False)
         flowfile.set_content(result.encode("utf-8"))
         return [flowfile]
@@ -343,6 +346,176 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         from core.poll_scheduler import PollScheduler
         loops = PollScheduler.instance().list_loops(conv_id)
         flowfile.set_content(json.dumps({"loops": loops}).encode())
+        return [flowfile]
+
+    # ── Git versioning ─────────────────────────────────────────────
+
+    if action == "conv_git_log":
+        conv_id = body.get("conversation_id", "")
+        limit = int(body.get("limit", 30))
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        commits = store.git_log(conv_id, limit=limit)
+        tags = store.git_list_tags(conv_id)
+        tag_by_commit = {t["commit"]: t["name"] for t in tags}
+        for c in commits:
+            c["tag"] = tag_by_commit.get(c["hash"][:7], "")
+        flowfile.set_content(json.dumps({
+            "commits": commits,
+            "branch": store.git_current_branch(conv_id),
+        }).encode())
+        return [flowfile]
+
+    if action == "conv_fork":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            new_cid = store.fork(conv_id, user_id)
+            flowfile.set_content(json.dumps({
+                "ok": True, "conversation_id": new_cid, "source": conv_id,
+            }).encode())
+        except (RuntimeError, ValueError) as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "conv_branch":
+        conv_id = body.get("conversation_id", "")
+        branch_name = body.get("branch_name", "").strip()
+        if not conv_id or not branch_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or branch_name"}).encode())
+            return [flowfile]
+        try:
+            ok = store.git_branch(conv_id, branch_name)
+            flowfile.set_content(json.dumps({
+                "ok": ok, "branch": branch_name,
+            }).encode())
+        except RuntimeError as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "conv_switch_branch":
+        conv_id = body.get("conversation_id", "")
+        branch_name = body.get("branch_name", "").strip()
+        if not conv_id or not branch_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or branch_name"}).encode())
+            return [flowfile]
+        try:
+            ok = store.git_switch(conv_id, branch_name)
+            flowfile.set_content(json.dumps({"ok": ok, "branch": branch_name}).encode())
+        except RuntimeError as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "conv_list_branches":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        branches = store.git_list_branches(conv_id)
+        flowfile.set_content(json.dumps({
+            "branches": branches,
+            "current": store.git_current_branch(conv_id),
+        }).encode())
+        return [flowfile]
+
+    if action == "conv_delete_branch":
+        conv_id = body.get("conversation_id", "")
+        branch_name = body.get("branch_name", "").strip()
+        if not conv_id or not branch_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or branch_name"}).encode())
+            return [flowfile]
+        try:
+            ok = store.git_delete_branch(conv_id, branch_name)
+            flowfile.set_content(json.dumps({"ok": ok}).encode())
+        except ValueError as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "conv_rollback":
+        conv_id = body.get("conversation_id", "")
+        commit_hash = body.get("commit_hash", "").strip()
+        rewind_files = body.get("rewind_files", False)
+        if not conv_id or not commit_hash:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or commit_hash"}).encode())
+            return [flowfile]
+        try:
+            store._require_idle(conv_id)
+        except RuntimeError as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+        ok = store.git_rollback(conv_id, commit_hash)
+        result = {"ok": ok, "commit": commit_hash}
+        if rewind_files:
+            from core.checkpoint import CheckpointManager
+            checkpoints = CheckpointManager.list_checkpoints(conv_id)
+            # Find closest checkpoint by git commit timestamp
+            commit_log = store.git_log(conv_id, limit=100)
+            target_ts = 0
+            for c in commit_log:
+                if c["hash"].startswith(commit_hash):
+                    target_ts = c["timestamp"]
+                    break
+            target_cp = None
+            for cp in checkpoints:
+                if cp.get("timestamp", 0) <= target_ts:
+                    target_cp = cp
+            if target_cp:
+                def _svc_resolver(svc_id):
+                    try:
+                        from core.service_registry import ServiceRegistry
+                        return ServiceRegistry.get_instance().get_live_instance("global", "", svc_id)
+                    except Exception:
+                        return self._find_filesystem_service(user_id) if hasattr(self, '_find_filesystem_service') else None
+                file_result = CheckpointManager.rewind_files(
+                    conv_id, target_cp["id"], service_resolver=_svc_resolver)
+                result["files"] = file_result
+            else:
+                result["files"] = {"error": "No matching checkpoint found for file rewind"}
+        flowfile.set_content(json.dumps(result).encode())
+        return [flowfile]
+
+    if action == "conv_tag":
+        conv_id = body.get("conversation_id", "")
+        tag_name = body.get("tag_name", "").strip()
+        message = body.get("message", "")
+        if not conv_id or not tag_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or tag_name"}).encode())
+            return [flowfile]
+        ok = store.git_tag(conv_id, tag_name, message)
+        flowfile.set_content(json.dumps({"ok": ok, "tag": tag_name}).encode())
+        return [flowfile]
+
+    if action == "conv_list_tags":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        tags = store.git_list_tags(conv_id)
+        flowfile.set_content(json.dumps({"tags": tags}).encode())
+        return [flowfile]
+
+    if action == "conv_delete_tag":
+        conv_id = body.get("conversation_id", "")
+        tag_name = body.get("tag_name", "").strip()
+        if not conv_id or not tag_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or tag_name"}).encode())
+            return [flowfile]
+        ok = store.git_delete_tag(conv_id, tag_name)
+        flowfile.set_content(json.dumps({"ok": ok}).encode())
+        return [flowfile]
+
+    if action == "conv_compare_branches":
+        conv_id = body.get("conversation_id", "")
+        branch_a = body.get("branch_a", "").strip()
+        branch_b = body.get("branch_b", "").strip()
+        if not conv_id or not branch_a or not branch_b:
+            flowfile.set_content(json.dumps({"error": "Missing parameters"}).encode())
+            return [flowfile]
+        result = store.git_compare_branches(conv_id, branch_a, branch_b)
+        flowfile.set_content(json.dumps(result).encode())
         return [flowfile]
 
     return None

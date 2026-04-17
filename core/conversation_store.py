@@ -187,7 +187,10 @@ class ConversationStore:
                         ctx = entry / "context.jsonl"
                         if ctx.exists():
                             files.append(f"{entry.name}/context.jsonl")
-                self._git(cid, "add", "--", *files, check=False)
+                existing = [f for f in files if (conv_dir / f).exists()]
+                if not existing:
+                    return
+                self._git(cid, "add", "--", *existing, check=False)
                 # Commit only if something staged
                 diff = self._git(cid, "diff", "--cached", "--quiet", check=False)
                 if diff.returncode == 0:
@@ -251,6 +254,218 @@ class ConversationStore:
             return result.stdout
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return ""
+
+    def _require_idle(self, cid: str) -> None:
+        """Raise if conversation has active agents."""
+        c = self._load_cache(cid)
+        if c.get("status") not in ("idle", ""):
+            raise RuntimeError(
+                f"Conversation is {c.get('status')} — wait for agents to finish")
+
+    def git_current_branch(self, cid: str) -> str:
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return ""
+        try:
+            result = self._git(cid, "branch", "--show-current")
+            return result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired):
+            return "main"
+
+    def git_list_branches(self, cid: str) -> List[Dict]:
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return []
+        try:
+            result = self._git(cid, "branch", "--format=%(refname:short)\t%(objectname:short)\t%(committerdate:unix)")
+            current = self.git_current_branch(cid)
+            branches = []
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                parts = line.split("\t")
+                name = parts[0]
+                branches.append({
+                    "name": name,
+                    "commit": parts[1] if len(parts) > 1 else "",
+                    "timestamp": int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0,
+                    "current": name == current,
+                })
+            return branches
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired):
+            return []
+
+    def git_branch(self, cid: str, branch_name: str) -> bool:
+        """Create a new branch and switch to it."""
+        self._require_idle(cid)
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return False
+        try:
+            self.git_snapshot(cid, f"before branch {branch_name}")
+            self._git(cid, "checkout", "-b", branch_name)
+            logger.info("[convstore] branched %s → %s", cid[:8], branch_name)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired) as e:
+            logger.warning("[convstore] branch failed for %s: %s", cid[:8], e)
+            return False
+
+    def git_switch(self, cid: str, branch_name: str) -> bool:
+        """Switch to an existing branch. Reloads caches."""
+        self._require_idle(cid)
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return False
+        try:
+            self.git_snapshot(cid, f"before switch to {branch_name}")
+            self._git(cid, "checkout", branch_name)
+            with self._cache_lock:
+                self._cache.pop(cid, None)
+            self._invalidate_ctx_cache(cid)
+            self._reload_cache(cid)
+            self.invalidate_claude_sessions(cid)
+            logger.info("[convstore] switched %s → %s", cid[:8], branch_name)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired) as e:
+            logger.warning("[convstore] switch failed for %s: %s", cid[:8], e)
+            return False
+
+    def git_delete_branch(self, cid: str, branch_name: str) -> bool:
+        """Delete a branch (cannot delete current branch)."""
+        current = self.git_current_branch(cid)
+        if branch_name == current:
+            raise ValueError("Cannot delete the current branch")
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return False
+        try:
+            self._git(cid, "branch", "-D", branch_name)
+            logger.info("[convstore] deleted branch %s on %s", branch_name, cid[:8])
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired) as e:
+            logger.warning("[convstore] delete branch failed: %s", e)
+            return False
+
+    def git_tag(self, cid: str, tag_name: str, message: str = "") -> bool:
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return False
+        try:
+            self.git_snapshot(cid, f"tag {tag_name}")
+            if message:
+                self._git(cid, "tag", "-a", tag_name, "-m", message)
+            else:
+                self._git(cid, "tag", tag_name)
+            logger.info("[convstore] tagged %s: %s", cid[:8], tag_name)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired) as e:
+            logger.warning("[convstore] tag failed: %s", e)
+            return False
+
+    def git_list_tags(self, cid: str) -> List[Dict]:
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return []
+        try:
+            result = self._git(cid, "tag", "-l", "--format=%(refname:short)\t%(objectname:short)\t%(creatordate:unix)",
+                               check=False)
+            tags = []
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                parts = line.split("\t")
+                tags.append({
+                    "name": parts[0],
+                    "commit": parts[1] if len(parts) > 1 else "",
+                    "timestamp": int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0,
+                })
+            return tags
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return []
+
+    def git_delete_tag(self, cid: str, tag_name: str) -> bool:
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return False
+        try:
+            self._git(cid, "tag", "-d", tag_name)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired):
+            return False
+
+    def git_compare_branches(self, cid: str, branch_a: str, branch_b: str) -> Dict:
+        """Compare two branches: commit counts and message counts."""
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return {}
+        try:
+            # Commits ahead/behind
+            result = self._git(cid, "rev-list", "--left-right", "--count",
+                               f"{branch_a}...{branch_b}", check=False)
+            parts = result.stdout.strip().split("\t")
+            ahead = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
+            behind = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            # Message count per branch via git show
+            def _msg_count(branch: str) -> int:
+                r = self._git(cid, "show", f"{branch}:transcript.jsonl", check=False)
+                if r.returncode != 0:
+                    return 0
+                return sum(1 for l in r.stdout.strip().split("\n")
+                           if l.strip() and '"t":"msg"' in l)
+            return {
+                "branch_a": branch_a, "branch_b": branch_b,
+                "commits_ahead": ahead, "commits_behind": behind,
+                "messages_a": _msg_count(branch_a),
+                "messages_b": _msg_count(branch_b),
+            }
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired):
+            return {}
+
+    def fork(self, cid: str, user_id: str) -> str:
+        """Fork a conversation into a new independent copy (git clone)."""
+        self._require_idle(cid)
+        source_dir = self._conv_dir(cid)
+        if not source_dir.is_dir():
+            raise ValueError(f"Conversation {cid[:16]} not found")
+        self.git_snapshot(cid, "before fork")
+        new_cid = self.generate_id()
+        dest_dir = self._store_dir / self._safe_name(user_id) / self._safe_name(new_cid)
+        try:
+            subprocess.run(
+                ["git", "clone", str(source_dir), str(dest_dir)],
+                capture_output=True, text=True, check=True, timeout=30,
+            )
+            # Remove the remote origin (it points to the source conv)
+            subprocess.run(
+                ["git", "-C", str(dest_dir), "remote", "remove", "origin"],
+                capture_output=True, text=True, check=False, timeout=10,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired) as e:
+            logger.warning("[convstore] fork clone failed: %s", e)
+            raise RuntimeError(f"Fork failed: {e}")
+        # Store fork metadata
+        self._cid_user[new_cid] = user_id
+        extras = self._read_extras(new_cid)
+        extras["forked_from"] = cid
+        extras["_meta_user_id"] = user_id
+        extras["_meta_created_at"] = time.time()
+        self._write_extras(new_cid, extras)
+        # Set title
+        source_title = self.get_extra(cid, "title") or "Conversation"
+        self.set_extra(new_cid, "title", f"{source_title} (fork)")
+        self._reload_cache(new_cid)
+        self.git_snapshot(new_cid, "forked")
+        logger.info("[convstore] forked %s → %s", cid[:8], new_cid[:8])
+        return new_cid
 
     # ── Cross-file UUID invariant ────────────────────────────────────
     #

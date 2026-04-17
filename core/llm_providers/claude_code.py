@@ -1276,10 +1276,21 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                  + _usage.get("cache_read_input_tokens", 0)
                                  + _usage.get("cache_creation_input_tokens", 0))
                     _total_out = _usage.get("output_tokens", 0)
-                    logger.info("[claude-code] result event keys: %s, usage=%s, model=%s",
-                                list(event.keys()), _usage, event.get("model", "?"))
                     # model is in modelUsage keys, not at top level
                     _model_usage = event.get("modelUsage", {})
+                    # Fallback: if usage is empty, sum from modelUsage
+                    if not _total_in and not _total_out and _model_usage:
+                        for _mu in _model_usage.values():
+                            _total_in += (_mu.get("inputTokens", 0)
+                                          + _mu.get("input_tokens", 0)
+                                          + _mu.get("cacheReadInputTokens", 0)
+                                          + _mu.get("cache_read_input_tokens", 0)
+                                          + _mu.get("cacheCreationInputTokens", 0)
+                                          + _mu.get("cache_creation_input_tokens", 0))
+                            _total_out += (_mu.get("outputTokens", 0)
+                                           + _mu.get("output_tokens", 0))
+                    logger.info("[claude-code] result: usage=%s, modelUsage_keys=%s, tokens=%d/%d",
+                                _usage, list(_model_usage.keys()), _total_in, _total_out)
                     _result_model = (event.get("model")
                                      or (list(_model_usage.keys())[0] if _model_usage else "")
                                      or model)
@@ -1378,6 +1389,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                + usage.get("cache_read_input_tokens", 0)
                + usage.get("cache_creation_input_tokens", 0))
         _to = usage.get("output_tokens", 0)
+        if not _ti and not _to:
+            for _mu in last_data.get("modelUsage", {}).values():
+                _ti += (_mu.get("inputTokens", 0) + _mu.get("input_tokens", 0)
+                        + _mu.get("cacheReadInputTokens", 0) + _mu.get("cache_read_input_tokens", 0)
+                        + _mu.get("cacheCreationInputTokens", 0) + _mu.get("cache_creation_input_tokens", 0))
+                _to += _mu.get("outputTokens", 0) + _mu.get("output_tokens", 0)
         return LLMResponse(
             content=full_content,
             model=last_data.get("model", model),

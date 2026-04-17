@@ -143,6 +143,19 @@ function addMsg(role, text, extra) {
   el.addEventListener('click', function(e) {
     if (e.ctrlKey || e.shiftKey) { e.preventDefault(); toggleMsgSelect(this, e); }
   });
+  // Multi-part content (user messages with attachments after reload)
+  let _attachHtml = '';
+  if (Array.isArray(text)) {
+    const _textParts = [];
+    for (const _p of text) {
+      if (_p.type === 'text') _textParts.push(_p.text || '');
+      else if (_p.type === 'image_ref' && _p.file_id)
+        _attachHtml += '<img class="chat-image" src="/files/' + encodeURIComponent(_p.file_id) + '/' + encodeURIComponent(_p.filename || 'image') + '">';
+      else if (_p.type === 'file_ref' && _p.file_id)
+        _attachHtml += '<span class="doc-badge">\u{1F4CE} ' + escapeHtml(_p.filename || 'file') + '</span> ';
+    }
+    text = _textParts.join('\n');
+  }
   el.dataset.rawText = (text || '').substring(0, 500);
   if (extra && extra.raw_index !== undefined) el.dataset.rawIndex = extra.raw_index;
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';
@@ -313,7 +326,7 @@ function addMsg(role, text, extra) {
     const src = extra && extra.source ? extra.source : {type: 'agent', name: srcN};
     el.innerHTML = timeHtml + sourceBadge(src) + '<em>' + escapeHtml(text) + '</em>';
   } else if (role === 'user') {
-    el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text);
+    el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text) + _attachHtml;
   } else if (role === 'sub_agent_trace') {
     const dtcId = (extra && extra.source && extra.source.delegate_tc_id) || '';
     const taskId = (extra && extra.source && extra.source.task_id) || '';

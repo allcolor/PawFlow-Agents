@@ -53,31 +53,39 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         pattern = _re.compile(
             r'(?:fs://filestore|/files)/([a-f0-9]{12})'
             r'(?:/([^\s)\'"<]+))?')
-        seen = set()
+        seen_ids = set()
+        seen_names = set()
         files = []
+        def _add_file(fid, fname):
+            if fid in seen_ids:
+                return
+            seen_ids.add(fid)
+            available = fstore.exists(fid)
+            if available and not fname:
+                try:
+                    meta = fstore.get_metadata(fid) or {}
+                    fname = meta.get("filename", fid)
+                except Exception:
+                    fname = fid
+            if fname and fname in seen_names:
+                return
+            if fname:
+                seen_names.add(fname)
+            files.append({"file_id": fid, "filename": fname, "available": available})
+
         for msg in messages_data:
             content = msg.get("content", "")
+            # Multi-part content (user messages with attachments)
+            if isinstance(content, list):
+                for part in content:
+                    pt = part.get("type", "") if isinstance(part, dict) else ""
+                    if pt in ("image_ref", "file_ref") and part.get("file_id"):
+                        _add_file(part["file_id"], part.get("filename", ""))
+                continue
             if not isinstance(content, str):
                 continue
             for match in pattern.finditer(content):
-                fid = match.group(1)
-                fname = match.group(2) or ""
-                if fid in seen:
-                    continue
-                seen.add(fid)
-                available = fstore.exists(fid)
-                # Prefer the FileStore-recorded filename when the URL
-                # didn't carry one — keeps the panel labels meaningful.
-                if available and not fname:
-                    try:
-                        meta = fstore.get_metadata(fid) or {}
-                        fname = meta.get("filename", fid)
-                    except Exception:
-                        fname = fid
-                files.append({
-                    "file_id": fid, "filename": fname,
-                    "available": available,
-                })
+                _add_file(match.group(1), match.group(2) or "")
         flowfile.set_content(json.dumps({"files": files}, ensure_ascii=False).encode())
         return [flowfile]
 

@@ -146,18 +146,27 @@ class AgentSerializationMixin:
             raw_content = m.get("content", "")
             # Normalize content to string (may be a list for multipart messages)
             if isinstance(raw_content, list):
-                text_parts = []
-                for p in raw_content:
-                    if isinstance(p, dict):
-                        if p.get("type") == "text":
-                            text_parts.append(p.get("text", ""))
-                        elif p.get("type") == "image_url":
-                            text_parts.append("[Image]")
-                        elif p.get("type") == "document":
-                            text_parts.append(f"[Document: {p.get('filename', 'file')}]")
-                    elif isinstance(p, str):
-                        text_parts.append(p)
-                content = "\n".join(text_parts)
+                # Preserve image_ref/file_ref parts for user messages so
+                # the frontend can render attachment thumbnails on reload.
+                _has_refs = any(
+                    isinstance(p, dict) and p.get("type") in ("image_ref", "file_ref")
+                    for p in raw_content
+                )
+                if _has_refs and role == "user":
+                    content = raw_content  # pass through as-is
+                else:
+                    text_parts = []
+                    for p in raw_content:
+                        if isinstance(p, dict):
+                            if p.get("type") == "text":
+                                text_parts.append(p.get("text", ""))
+                            elif p.get("type") == "image_url":
+                                text_parts.append("[Image]")
+                            elif p.get("type") == "document":
+                                text_parts.append(f"[Document: {p.get('filename', 'file')}]")
+                        elif isinstance(p, str):
+                            text_parts.append(p)
+                    content = "\n".join(text_parts)
             elif isinstance(raw_content, str):
                 content = raw_content
             else:
@@ -311,7 +320,7 @@ class AgentSerializationMixin:
                 result.append(entry)
             elif role in ("user", "assistant"):
                 # Skip internal system instructions injected as user messages
-                if role == "user" and content.startswith("[System:"):
+                if role == "user" and isinstance(content, str) and content.startswith("[System:"):
                     continue
                 # Skip synthetic context messages (compaction acks, resume acks)
                 _src = m.get("source") or {}

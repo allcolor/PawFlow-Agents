@@ -444,10 +444,9 @@ class FileStore:
 
     # ── Cleanup ──────────────────────────────────────────────────
 
-    def cleanup_expired(self, max_age_hours: int = 24):
-        """Remove files past TTL or global max age."""
+    def cleanup_expired(self):
+        """Remove files past their explicit TTL. Files with ttl=0 are permanent."""
         now = time.time()
-        cutoff = now - (max_age_hours * 3600)
         to_delete = []
         with self._store_lock:
             for fid, entry in list(self._entries.items()):
@@ -456,8 +455,6 @@ class FileStore:
                     continue
                 ttl = entry.get("ttl", 0)
                 if ttl > 0 and (now - created) > ttl:
-                    to_delete.append(fid)
-                elif created < cutoff:
                     to_delete.append(fid)
         for fid in to_delete:
             self._delete_entry(fid)

@@ -177,16 +177,9 @@ class SeeHandler(BaseFsHandler):
 
         b64 = base64.b64encode(data).decode("ascii")
 
-        # Store in FileStore for URL access
-        from core.file_store import FileStore
-        fid = FileStore.instance().store(
-            fname, data, mime,
-            user_id=self._user_id,
-            conversation_id=getattr(self, '_conversation_id', '') or '')
-        url = f"fs://filestore/{fid}/{fname}"
-
         # Return marker — agent loop converts to multimodal content
-        return f"Image: {url} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
+        # see does NOT store in FileStore — it only passes data to LLM vision
+        return f"Image: {fname} ({len(data):,} bytes, {mime})\n__image_data__:{mime}:{b64}"
 
     def _see_video(self, fname: str, data: bytes, max_frames: int) -> str:
         """Extract key frames from video, return as image sequence."""

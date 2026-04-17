@@ -5,6 +5,7 @@ Browser protocol (WebSocket): binary frames containing raw Opus packets.
 """
 
 import logging
+import select
 import socket
 import struct
 import collections
@@ -95,19 +96,13 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         _interval_start = time.monotonic()
         try:
             while not stop.is_set():
-                try:
-                    hdr = _recv_exact(backend_sock, 2)
-                except socket.timeout:
-                    continue  # re-check stop flag
+                hdr = _recv_or_stop(backend_sock, 2, stop)
                 if not hdr:
                     break
                 pkt_len = struct.unpack("!H", hdr)[0]
                 if pkt_len == 0:
                     continue
-                try:
-                    pkt = _recv_exact(backend_sock, pkt_len)
-                except socket.timeout:
-                    continue
+                pkt = _recv_or_stop(backend_sock, pkt_len, stop)
                 if not pkt:
                     break
                 pkt_queue.append(pkt)  # deque maxlen auto-drops oldest
@@ -165,6 +160,12 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
     def _browser_to_backend():
         try:
             while not stop.is_set():
+                try:
+                    ready, _, _ = select.select([client_sock], [], [], 1.0)
+                except (ValueError, OSError):
+                    break
+                if not ready:
+                    continue  # timeout — re-check stop flag
                 opcode, data = _ws_recv(client_sock)
                 if opcode is None or opcode == 0x8:
                     break
@@ -217,6 +218,28 @@ def _recv_exact(sock, n: int) -> Optional[bytes]:
     buf = bytearray()
     while len(buf) < n:
         chunk = sock.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf.extend(chunk)
+    return bytes(buf)
+
+
+def _recv_or_stop(sock, n: int, stop_ev: threading.Event) -> Optional[bytes]:
+    """Receive exactly *n* bytes, aborting within 500ms if *stop_ev* is set."""
+    buf = bytearray()
+    while len(buf) < n:
+        if stop_ev.is_set():
+            return None
+        try:
+            ready, _, _ = select.select([sock], [], [], 0.5)
+        except (ValueError, OSError):
+            return None
+        if not ready:
+            continue
+        try:
+            chunk = sock.recv(n - len(buf))
+        except (socket.timeout, OSError):
+            return None
         if not chunk:
             return None
         buf.extend(chunk)

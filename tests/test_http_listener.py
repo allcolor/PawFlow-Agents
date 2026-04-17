@@ -114,25 +114,18 @@ class TestRouteRegistry:
 
 class TestPendingRequest:
 
-    def test_wait_timeout(self):
+    def test_wait_blocks_until_complete(self):
         req = PendingRequest(
             request_id="abc", method="GET", path="/",
             headers={}, body=b"",
         )
-        assert req.wait(timeout=0.1) is False
         assert req.completed is False
-
-    def test_complete_unblocks_wait(self):
-        req = PendingRequest(
-            request_id="abc", method="GET", path="/",
-            headers={}, body=b"",
-        )
         def respond():
             time.sleep(0.1)
             req.complete(200, {"Content-Type": "text/plain"}, b"OK")
         t = threading.Thread(target=respond)
         t.start()
-        assert req.wait(timeout=2.0) is True
+        req.wait()
         assert req.completed is True
         assert req.response_status == 200
         assert req.response_body == b"OK"
@@ -232,26 +225,19 @@ class TestHTTPListenerService:
         finally:
             svc.disconnect()
 
-    def test_504_on_timeout(self):
-        svc = HTTPListenerService({
-            "host": "127.0.0.1", "port": 19881,
-            "request_timeout": 0.5,
-        })
+    def test_no_timeout_blocks(self):
+        """PendingRequest.wait() blocks indefinitely (no 504). Verify basic dispatch works."""
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19881})
         svc.connect()
         try:
-            # Register route but never respond
-            svc.register_route("GET", "/slow", "test", lambda r: None)
-
-            try:
-                req = urllib.request.Request(
-                    "http://127.0.0.1:19881/slow",
-                    method="GET",
-                        headers={"Cookie": f"pawflow_token={_create_test_session()}"},
-                    )
-                urllib.request.urlopen(req, timeout=5)
-                assert False, "Should have raised"
-            except urllib.error.HTTPError as e:
-                assert e.code == 504
+            svc.register_route("GET", "/fast", "test", lambda r: r.complete(200, {}, b"ok"))
+            req = urllib.request.Request(
+                "http://127.0.0.1:19881/fast",
+                method="GET",
+                headers={"Cookie": f"pawflow_token={_create_test_session()}"},
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+            assert resp.status == 200
         finally:
             svc.disconnect()
 

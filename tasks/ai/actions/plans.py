@@ -45,21 +45,23 @@ def force_stop_agent(conv_id, agent_name):
 
 def _force_stop_agent(self, conv_id, agent_name=""):
     """Force stop an agent (legacy — uses self for CC subprocess kill)."""
+    from tasks.ai.agent_loop import AgentLoopTask
+    _exec = AgentLoopTask._live_instance or self
     try:
-        self.cancel_agent(conv_id, agent_name=agent_name, reason="plan_step_done")
+        _exec.cancel_agent(conv_id, agent_name=agent_name, reason="plan_step_done")
         from services.tool_relay_service import ToolRelayService
         ToolRelayService.cancel_agent(conv_id, agent_name)
     except Exception:
         pass
     # Kill Claude Code subprocess
     try:
-        with self._active_contexts_lock:
+        with _exec._active_contexts_lock:
             if agent_name:
                 _keys = [f"{conv_id}:{agent_name}"]
             else:
-                _keys = [k for k in self._active_claude_client
+                _keys = [k for k in _exec._active_claude_client
                          if k == conv_id or k.startswith(conv_id + ":")]
-            _clients = [(k, self._active_claude_client.get(k)) for k in _keys]
+            _clients = [(k, _exec._active_claude_client.get(k)) for k in _keys]
         for _k, client in _clients:
             if client and hasattr(client, 'cancel_claude_code'):
                 client.cancel_claude_code(force=True)

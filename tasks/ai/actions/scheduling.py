@@ -19,19 +19,21 @@ def _kill_running_task_agent(self, conv_id: str, task_id: str, agent_name: str, 
     force=True: kill Claude Code process immediately
     force=False: graceful interrupt, then force-kill after 10s
     """
+    from tasks.ai.agent_loop import AgentLoopTask
+    _exec = AgentLoopTask._live_instance or self
     sub_cid = f"{conv_id}::task::{task_id}"
     # 1. Bump generation so agent loop detects staleness
-    with self._conv_gen_lock:
-        for k in list(self._conv_generation):
+    with _exec._conv_gen_lock:
+        for k in list(_exec._conv_generation):
             if k.startswith(sub_cid):
-                self._conv_generation[k] += 1
+                _exec._conv_generation[k] += 1
     # 2. Set interrupt flag
-    with self._interrupt_lock:
-        self._conv_interrupt[sub_cid] = True
+    with _exec._interrupt_lock:
+        _exec._conv_interrupt[sub_cid] = True
     # 3. Kill Claude Code subprocess
     _cc_key = f"{sub_cid}:{agent_name}" if agent_name else sub_cid
-    with self._active_contexts_lock:
-        _cc = self._active_claude_client.get(_cc_key)
+    with _exec._active_contexts_lock:
+        _cc = _exec._active_claude_client.get(_cc_key)
     if _cc and hasattr(_cc, 'cancel_claude_code'):
         if force:
             _cc.cancel_claude_code(force=True)
@@ -42,8 +44,8 @@ def _kill_running_task_agent(self, conv_id: str, task_id: str, agent_name: str, 
             def _escalate():
                 import time as _t
                 _t.sleep(10)
-                with self._active_contexts_lock:
-                    _cc2 = self._active_claude_client.get(_cc_key)
+                with _exec._active_contexts_lock:
+                    _cc2 = _exec._active_claude_client.get(_cc_key)
                 if _cc2 and hasattr(_cc2, 'cancel_claude_code'):
                     logger.info("[task:%s] escalating to force-kill after 10s", task_id)
                     _cc2.cancel_claude_code(force=True)

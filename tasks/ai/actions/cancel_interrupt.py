@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
     """Handle cancel interrupt actions. Returns [flowfile] or None."""
+    # Resolve to the execution instance — self may be the actions-only
+    # dispatcher (AgentActionsTask) which has its own empty state dicts.
+    from tasks.ai.agent_loop import AgentLoopTask
+    _exec = AgentLoopTask._live_instance or self
 
 
     if action == "cancel":
@@ -45,10 +49,10 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             # 2. Bump generation — tells running thread to stop
             #    cancel_agent without agent_name bumps the gen_key = _task_cid
             #    which matches the poller's _thought_gen_key = entry_key
-            self.cancel_agent(_task_cid, agent_name="", silent=True)
+            _exec.cancel_agent(_task_cid, agent_name="", silent=True)
             if agent_name:
                 # Also bump the agent-specific key just in case
-                self.cancel_agent(_task_cid, agent_name=agent_name, silent=True)
+                _exec.cancel_agent(_task_cid, agent_name=agent_name, silent=True)
 
             try:
                 from services.tool_relay_service import ToolRelayService
@@ -57,10 +61,10 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 pass
 
             # 3. Kill task's Claude Code subprocess
-            with self._active_contexts_lock:
-                _cc_keys = [k for k in self._active_claude_client
+            with _exec._active_contexts_lock:
+                _cc_keys = [k for k in _exec._active_claude_client
                             if f"::task::{task_id}" in k]
-                _cc_clients = [(k, self._active_claude_client.get(k)) for k in _cc_keys]
+                _cc_clients = [(k, _exec._active_claude_client.get(k)) for k in _cc_keys]
             for _cc_key, client in _cc_clients:
                 if client and hasattr(client, 'cancel_claude_code'):
                     client.cancel_claude_code(force=True)
@@ -74,13 +78,13 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 pass
 
             # 4. Clear task's active context + active_thoughts
-            with self._active_contexts_lock:
-                for k in list(self._active_contexts):
+            with _exec._active_contexts_lock:
+                for k in list(_exec._active_contexts):
                     if f"::task::{task_id}" in k:
-                        del self._active_contexts[k]
-            with self._active_lock:
-                self._active_thoughts.discard(_task_cid)
-                self._active_thoughts.discard(f"{conv_id}::task_verify::{task_id}")
+                        del _exec._active_contexts[k]
+            with _exec._active_lock:
+                _exec._active_thoughts.discard(_task_cid)
+                _exec._active_thoughts.discard(f"{conv_id}::task_verify::{task_id}")
 
             # 5. Cancel the scheduled task in the poller
             try:
@@ -103,7 +107,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             }).encode())
             return [flowfile]
 
-        self.cancel_agent(conv_id, agent_name=agent_name)
+        _exec.cancel_agent(conv_id, agent_name=agent_name)
         # Cancel in-flight tool calls for this agent
         try:
             from services.tool_relay_service import ToolRelayService
@@ -111,10 +115,10 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
         except Exception:
             pass
         # Kill Claude Code subprocess (check keyed entries)
-        with self._active_contexts_lock:
+        with _exec._active_contexts_lock:
             _cc_keys = [f"{conv_id}:{agent_name}"] if agent_name else \
-                [k for k in self._active_claude_client if (k == conv_id or k.startswith(conv_id + ":")) and "::task::" not in k and "::task_verify::" not in k]
-            _cc_clients = [(k, self._active_claude_client.get(k)) for k in _cc_keys]
+                [k for k in _exec._active_claude_client if (k == conv_id or k.startswith(conv_id + ":")) and "::task::" not in k and "::task_verify::" not in k]
+            _cc_clients = [(k, _exec._active_claude_client.get(k)) for k in _cc_keys]
         for _cc_key, client in _cc_clients:
             if client and hasattr(client, 'cancel_claude_code'):
                 client.cancel_claude_code(force=True)
@@ -132,13 +136,13 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 "force_stopped": True,
             })
         # Clear active tracking
-        with self._active_lock:
-            self._active_conversations.pop(conv_id, None)
-            self._user_active_conversations.discard(conv_id)
-        with self._active_contexts_lock:
-            for k in list(self._active_contexts):
+        with _exec._active_lock:
+            _exec._active_conversations.pop(conv_id, None)
+            _exec._user_active_conversations.discard(conv_id)
+        with _exec._active_contexts_lock:
+            for k in list(_exec._active_contexts):
                 if (k == conv_id or k.startswith(conv_id + ":")) and "::task::" not in k and "::task_verify::" not in k:
-                    del self._active_contexts[k]
+                    del _exec._active_contexts[k]
         logger.info(f"[agent:{conv_id[:8]}] FORCE STOPPED ({_killed} thread(s))")
         flowfile.set_content(json.dumps({
             "cancelled": True, "conversation_id": conv_id,
@@ -172,7 +176,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             return [flowfile]
         # Task-targeted interrupt: use task's conversation ID
         _target_cid = f"{conv_id}::task::{task_id}" if task_id else conv_id
-        self.interrupt_agent(_target_cid, agent_name)
+        _exec.interrupt_agent(_target_cid, agent_name)
         flowfile.set_content(json.dumps({
             "interrupted": True, "conversation_id": conv_id,
             "agent_name": agent_name or "",

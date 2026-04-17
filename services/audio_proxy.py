@@ -91,22 +91,23 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     def _backend_reader():
         """Read TCP packets into queue without blocking on WS writes."""
-        _last_pkt = time.monotonic()
         _pkt_count = 0
         _interval_start = time.monotonic()
         try:
             while not stop.is_set():
-                _t0 = time.monotonic()
-                hdr = _recv_exact(backend_sock, 2)
-                _read_dt = time.monotonic() - _t0
+                try:
+                    hdr = _recv_exact(backend_sock, 2)
+                except socket.timeout:
+                    continue  # re-check stop flag
                 if not hdr:
                     break
-                if _read_dt > 0.1:
-                    logger.warning("Audio proxy reader: TCP recv stalled %.0fms", _read_dt * 1000)
                 pkt_len = struct.unpack("!H", hdr)[0]
                 if pkt_len == 0:
                     continue
-                pkt = _recv_exact(backend_sock, pkt_len)
+                try:
+                    pkt = _recv_exact(backend_sock, pkt_len)
+                except socket.timeout:
+                    continue
                 if not pkt:
                     break
                 pkt_queue.append(pkt)  # deque maxlen auto-drops oldest

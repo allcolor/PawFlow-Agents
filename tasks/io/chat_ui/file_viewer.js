@@ -118,8 +118,11 @@ function openFileViewer(filenameOrUrl) {
 
   // Determine if it's a URL or filename
   let url = filenameOrUrl;
-  if (!filenameOrUrl.startsWith('http')) {
-    // Search in conversation files
+  if (filenameOrUrl.startsWith('/files/')) {
+    // Already a /files/<id>/<name> path — make absolute
+    url = location.origin + filenameOrUrl;
+  } else if (!filenameOrUrl.startsWith('http')) {
+    // Bare filename — search in conversation files
     url = API.replace(/\/[^\/]*$/, '') + '/files/' + encodeURIComponent(filenameOrUrl);
   }
   const fname = filenameOrUrl.split('/').pop();

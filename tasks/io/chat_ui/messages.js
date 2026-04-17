@@ -551,7 +551,8 @@ function _attachToolResult(tcEl, resultText) {
   resultDiv.className = 'tc-result';
   const firstLine = resultText.split('\n')[0].substring(0, 120);
   const rendered = _renderToolOutput(resultText, toolHint, pathHint);
-  const inlineMedia = _extractInlineMedia(resultText);
+  // see sends the image to the LLM, not the user — don't render it twice
+  const inlineMedia = toolHint === 'see' ? '' : _extractInlineMedia(resultText);
   // Open while streaming, auto-collapse after 1.5s
   resultDiv.innerHTML = inlineMedia
     + '<details open><summary>\u23bf ' + escapeHtml(firstLine)

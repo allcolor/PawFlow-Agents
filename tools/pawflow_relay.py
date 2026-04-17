@@ -2427,8 +2427,13 @@ def _api_call(api_url, method, path, body=None, session_id=""):
 
 
 def _agent_api_call(login_url, session_id, action_body):
-    """Call the agent API (same port as chat UI) with an action."""
-    return _api_call(login_url, "POST", "/api/agent",
+    """Call the UI action endpoint with an action payload.
+
+    UI actions (service_install, service_uninstall, relay_list_available, …)
+    are dispatched via agentActions on /api/ui — not the agent pipeline at
+    /api/agent, which is reserved for real user↔agent messages.
+    """
+    return _api_call(login_url, "POST", "/api/ui",
                      body=action_body, session_id=session_id)
 
 

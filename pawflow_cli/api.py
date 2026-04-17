@@ -143,7 +143,7 @@ class AgentAPIClient:
         """
         body = {"action": action}
         body.update(kwargs)
-        resp = self._post("/api/agent", body)
+        resp = self._post("/api/ui", body)
 
         # If server returned data directly (no conversation_id = sync), use it
         if resp.get("status") != "accepted":
@@ -163,7 +163,7 @@ class AgentAPIClient:
         """Fire-and-forget action — don't wait for result."""
         body = {"action": action}
         body.update(kwargs)
-        return self._post("/api/agent", body)
+        return self._post("/api/ui", body)
 
     def send_message(self, message: str, conversation_id: str = None,
                      target_agent: str = "", attachments: list = None,

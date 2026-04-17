@@ -45,7 +45,7 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
         if gateway_cookie:
             _headers["Cookie"] = f"_pf_gw={gateway_cookie}"
         _body = json.dumps({"action": "ping"})
-        conn.request("POST", "/api/agent", body=_body, headers=_headers)
+        conn.request("POST", "/api/ui", body=_body, headers=_headers)
         resp = conn.getresponse()
         # Follow 301/302 (HTTP→HTTPS redirect)
         if resp.status == 301:
@@ -65,7 +65,7 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
                     conn = http.client.HTTPSConnection(_rh, _rpt, context=_ctx2, timeout=5)
                 else:
                     conn = http.client.HTTPConnection(_rh, _rpt, timeout=5)
-                conn.request("POST", _rp.path or "/api/agent", body=_body, headers=_headers)
+                conn.request("POST", _rp.path or "/api/ui", body=_body, headers=_headers)
                 resp = conn.getresponse()
         resp.read()
         # Server may send a refreshed token in header (silent OAuth refresh)

@@ -68,7 +68,7 @@ class RelayThread:
     def _check_relay_connected(self) -> bool:
         """Check if the relay is connected to the server."""
         try:
-            data = self._api("POST", "/api/agent",
+            data = self._api("POST", "/api/ui",
                              {"action": "relay_list_available"})
             for r in (data.get("relays") or []):
                 if r.get("relay_id") == self.relay_id and r.get("connected"):
@@ -80,7 +80,7 @@ class RelayThread:
     def _reregister_service(self):
         """Re-register the relay service on the server (keeps same port/token)."""
         try:
-            self._api("POST", "/api/agent",
+            self._api("POST", "/api/ui",
                       {"action": "service_uninstall", "service_id": self.relay_id})
         except Exception:
             pass
@@ -89,7 +89,7 @@ class RelayThread:
             config_str += f",docker_image={self.docker_image}"
         if self.allow_local:
             config_str += ",allow_local=true"
-        self._api("POST", "/api/agent", {
+        self._api("POST", "/api/ui", {
             "action": "service_install",
             "service_type": "relay",
             "service_name": self.relay_id,
@@ -104,7 +104,7 @@ class RelayThread:
 
         # Delete old service if exists
         try:
-            self._api("POST", "/api/agent",
+            self._api("POST", "/api/ui",
                       {"action": "service_uninstall", "service_id": self.relay_id})
         except Exception:
             pass
@@ -115,7 +115,7 @@ class RelayThread:
             config_str += f",docker_image={self.docker_image}"
         if self.allow_local:
             config_str += ",allow_local=true"
-        self._api("POST", "/api/agent", {
+        self._api("POST", "/api/ui", {
             "action": "service_install",
             "service_type": "relay",
             "service_name": self.relay_id,
@@ -136,7 +136,7 @@ class RelayThread:
         self._stop_event.set()
         if self._registered:
             try:
-                self._api("POST", "/api/agent",
+                self._api("POST", "/api/ui",
                           {"action": "service_uninstall", "service_id": self.relay_id})
             except Exception:
                 pass

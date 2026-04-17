@@ -138,7 +138,7 @@ if (LOGIN_URL) {
 function doLogout() {
   if (eventSource) { eventSource.close(); eventSource = null; }
   fetch(window.location.origin + '/auth/logout', { method: 'POST', credentials: 'same-origin' })
-    .finally(() => { window.location.href = LOGIN_URL || '/auth/login'; });
+    .finally(() => { window.location.href = '/'; });
 }
 
 function _syncToggleBtn() {

@@ -234,11 +234,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "Forbidden: external IP"}')
                 return
 
-        # Private gateway — skipped for public routes
-        if not _is_public:
-            from services.private_gateway import check_request as _gw_check
-            if _gw_check(self):
-                return
+        # Private gateway — checks ALL routes (own _EXEMPT_PATHS handles exclusions)
+        from services.private_gateway import check_request as _gw_check
+        if _gw_check(self):
+            return
 
         # Session auth — skipped for public routes
         if not _is_public:
@@ -261,10 +260,19 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 if not session and token:
                     session = True if sm.validate_api_key(token) else None
                 if not session:
-                    self.send_response(401)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(b'{"error": "Unauthorized"}')
+                    # Browser requests → redirect to login; API requests → 401 JSON
+                    _accept = self.headers.get("Accept", "")
+                    if "text/html" in _accept:
+                        self.send_response(302)
+                        self.send_header("Location", "/auth/login")
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                    else:
+                        self.send_response(401)
+                        self.send_header("Content-Type", "application/json")
+                        self.end_headers()
+                        self.wfile.write(b'{"error": "Unauthorized"}')
                     return
                 # Renew cookie to extend browser-side expiry (sliding window)
                 if token and cookie_header and session is not True:

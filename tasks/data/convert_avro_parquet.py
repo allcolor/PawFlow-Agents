@@ -1,35 +1,20 @@
 # Avro / Parquet Conversion Tasks
 
-"""Tâches ConvertAvro / ConvertParquet - conversion de formats colonnaires.
-
-Utilise fastavro (Avro) et pyarrow (Parquet) si disponibles.
-"""
+"""Tâches ConvertAvro / ConvertParquet - conversion de formats colonnaires."""
 
 import json
 import logging
+from io import BytesIO
 from typing import Dict, Any, List
+
+import fastavro
+import pyarrow
+import pyarrow.parquet
 
 from core import FlowFile, TaskFactory, TaskError
 from core.base_task import BaseTask
 
 logger = logging.getLogger(__name__)
-
-
-def _get_fastavro():
-    try:
-        import fastavro
-        return fastavro
-    except ImportError:
-        return None
-
-
-def _get_pyarrow():
-    try:
-        import pyarrow
-        import pyarrow.parquet
-        return pyarrow
-    except ImportError:
-        return None
 
 
 class ConvertAvroToJSONTask(BaseTask):
@@ -46,12 +31,6 @@ class ConvertAvroToJSONTask(BaseTask):
         self.pretty = self.config.get('pretty', True)
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        fastavro = _get_fastavro()
-        if fastavro is None:
-            raise TaskError("convertAvroToJSON: fastavro required. Install: pip install fastavro")
-
-        from io import BytesIO
-
         try:
             reader = fastavro.reader(BytesIO(flowfile.get_content()))
             records = list(reader)
@@ -85,12 +64,6 @@ class ConvertJSONToAvroTask(BaseTask):
         self.schema_text = self.config.get('avro_schema', '')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        fastavro = _get_fastavro()
-        if fastavro is None:
-            raise TaskError("convertJSONToAvro: fastavro required. Install: pip install fastavro")
-
-        from io import BytesIO
-
         try:
             records = json.loads(flowfile.get_content().decode('utf-8'))
         except json.JSONDecodeError as e:
@@ -121,7 +94,6 @@ class ConvertJSONToAvroTask(BaseTask):
 
     def _infer_schema(self, record: dict) -> dict:
         """Infer a simple Avro schema from a dict record."""
-        import fastavro
         type_map = {str: 'string', int: 'long', float: 'double', bool: 'boolean'}
         fields = []
         for k, v in record.items():
@@ -152,15 +124,9 @@ class ConvertParquetToJSONTask(BaseTask):
         self.columns = self.config.get('columns', '')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        pa = _get_pyarrow()
-        if pa is None:
-            raise TaskError("convertParquetToJSON: pyarrow required. Install: pip install pyarrow")
-
-        from io import BytesIO
-
         try:
             columns = [c.strip() for c in self.columns.split(',') if c.strip()] or None
-            table = pa.parquet.read_table(BytesIO(flowfile.get_content()), columns=columns)
+            table = pyarrow.parquet.read_table(BytesIO(flowfile.get_content()), columns=columns)
             records = table.to_pydict()
             # Convert column-oriented to row-oriented
             if records:
@@ -200,12 +166,6 @@ class ConvertJSONToParquetTask(BaseTask):
         self.compression = self.config.get('compression', 'snappy')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        pa = _get_pyarrow()
-        if pa is None:
-            raise TaskError("convertJSONToParquet: pyarrow required. Install: pip install pyarrow")
-
-        from io import BytesIO
-
         try:
             records = json.loads(flowfile.get_content().decode('utf-8'))
         except json.JSONDecodeError as e:
@@ -219,12 +179,12 @@ class ConvertJSONToParquetTask(BaseTask):
             if records:
                 keys = list(records[0].keys())
                 columns = {k: [r.get(k) for r in records] for k in keys}
-                table = pa.table(columns)
+                table = pyarrow.table(columns)
             else:
-                table = pa.table({})
+                table = pyarrow.table({})
 
             output = BytesIO()
-            pa.parquet.write_table(table, output, compression=self.compression)
+            pyarrow.parquet.write_table(table, output, compression=self.compression)
             flowfile.set_content(output.getvalue())
         except Exception as e:
             raise TaskError(f"convertJSONToParquet: {e}")

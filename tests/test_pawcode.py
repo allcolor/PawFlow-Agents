@@ -72,10 +72,6 @@ class TestRelayId:
 class TestTokenCounter:
     """Test precise token counting."""
 
-    @pytest.fixture(autouse=True)
-    def _require_tiktoken(self):
-        pytest.importorskip("tiktoken", reason="tiktoken not installed")
-
     def test_count_tokens(self):
         from core.token_counter import count_tokens
         result = count_tokens("Hello, world!")

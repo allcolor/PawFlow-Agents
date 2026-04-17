@@ -577,6 +577,140 @@ _SKIN_CAPTCHA = """<!DOCTYPE html>
 </body>
 </html>"""
 
+_SKIN_MATRIX = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Matrix</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+  canvas { position: fixed; top: 0; left: 0; z-index: 0; }
+  .overlay {
+    position: fixed; top: 0; left: 0; width: 100%%; height: 100%%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 1;
+  }
+  .wake { color: #00ff41; font-size: 24px; margin-bottom: 30px; min-height: 32px;
+          text-shadow: 0 0 10px rgba(0,255,65,0.5); }
+  .input-row {
+    display: flex; align-items: center;
+    background: rgba(0,0,0,0.85); border: 1px solid #00ff41;
+    border-radius: 4px; padding: 4px; margin-bottom: 20px;
+    box-shadow: 0 0 15px rgba(0,255,65,0.15);
+  }
+  input[type=password] {
+    background: transparent; border: none; outline: none;
+    color: #00ff41; font-family: 'Courier New', monospace;
+    font-size: 16px; padding: 12px 16px; width: 300px;
+    caret-color: #00ff41;
+  }
+  input::placeholder { color: #004d14; }
+  .pills { display: flex; gap: 24px; }
+  .pill {
+    padding: 14px 32px; font-size: 16px; font-weight: bold;
+    border: none; border-radius: 24px; cursor: pointer;
+    font-family: 'Courier New', monospace;
+    text-transform: uppercase; letter-spacing: 2px;
+    transition: all 0.3s;
+  }
+  .red-pill {
+    background: linear-gradient(135deg, #cc0000, #ff0000);
+    color: #fff; box-shadow: 0 0 20px rgba(255,0,0,0.4);
+  }
+  .red-pill:hover { box-shadow: 0 0 40px rgba(255,0,0,0.7); transform: scale(1.05); }
+  .red-pill:disabled { background: #333; box-shadow: none; cursor: not-allowed; transform: none; }
+  .blue-pill {
+    background: linear-gradient(135deg, #0044cc, #0066ff);
+    color: #fff; box-shadow: 0 0 20px rgba(0,100,255,0.4);
+  }
+  .blue-pill:hover { box-shadow: 0 0 40px rgba(0,100,255,0.7); transform: scale(1.05); }
+  .err { color: #ff0000; font-size: 14px; margin-bottom: 16px; min-height: 1.2em;
+         text-shadow: 0 0 10px rgba(255,0,0,0.5); }
+  .cd { color: #00ff41; font-size: 13px; margin-top: 16px;
+        text-shadow: 0 0 5px rgba(0,255,65,0.5); }
+  .sim-msg {
+    position: fixed; top: 0; left: 0; width: 100%%; height: 100%%;
+    background: #000; color: #0066ff; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-family: 'Courier New', monospace; font-size: 24px;
+    z-index: 999; text-shadow: 0 0 20px rgba(0,100,255,0.6);
+  }
+  .sim-msg .sub { font-size: 14px; color: #004499; margin-top: 16px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="overlay">
+  <div class="wake" id="w"></div>
+  <form method="POST" action="/_gateway" id="f">
+    <input type="hidden" name="next" value="%(next_url)s">
+    <div class="input-row">
+      <input type="password" name="secret" id="s" placeholder="Enter the access code..." autocomplete="off">
+    </div>
+    <div class="err" id="e">%(error)s</div>
+    <div class="pills">
+      <button type="submit" class="pill red-pill" id="b">Red Pill</button>
+      <button type="button" class="pill blue-pill" id="bp">Blue Pill</button>
+    </div>
+  </form>
+  <div class="cd" id="cd"></div>
+</div>
+<script>
+(function(){
+  var c=document.getElementById('c'),ctx=c.getContext('2d');
+  function resize(){c.width=window.innerWidth;c.height=window.innerHeight;}
+  resize();window.addEventListener('resize',resize);
+  var chars='\u30a2\u30a4\u30a6\u30a8\u30aa\u30ab\u30ad\u30af\u30b1\u30b3\u30b5\u30b7\u30b9\u30bb\u30bd\u30bf\u30c1\u30c4\u30c6\u30c8\u30ca\u30cb\u30cc\u30cd\u30ce\u30cf\u30d2\u30d5\u30d8\u30db\u30de\u30df\u30e0\u30e1\u30e2\u30e4\u30e6\u30e8\u30e9\u30ea\u30eb\u30ec\u30ed\u30ef\u30f2\u30f30123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  var fs=14,cols=Math.floor(c.width/fs);
+  var drops=[];for(var i=0;i<cols;i++)drops[i]=Math.random()*-100;
+  function draw(){
+    ctx.fillStyle='rgba(0,0,0,0.05)';ctx.fillRect(0,0,c.width,c.height);
+    ctx.font=fs+'px monospace';
+    cols=Math.floor(c.width/fs);
+    while(drops.length<cols)drops.push(Math.random()*-100);
+    for(var i=0;i<cols;i++){
+      var ch=chars[Math.floor(Math.random()*chars.length)];
+      var x=i*fs,y=drops[i]*fs;
+      ctx.fillStyle=Math.random()>0.975?'#fff':'#00ff41';
+      ctx.fillText(ch,x,y);
+      if(y>c.height&&Math.random()>0.975)drops[i]=0;
+      drops[i]++;
+    }
+  }
+  setInterval(draw,33);
+})();
+(function(){
+  var msgs=['Wake up, Neo...','The Matrix has you...','Follow the white rabbit.'];
+  var w=document.getElementById('w'),mi=0,ci=0;
+  if('%(error)s'){w.textContent='';document.getElementById('s').focus();return;}
+  function typeNext(){
+    if(mi>=msgs.length){w.textContent='';document.getElementById('s').focus();return;}
+    if(ci<=msgs[mi].length){w.textContent=msgs[mi].substring(0,ci)+'_';ci++;setTimeout(typeNext,70);}
+    else{setTimeout(function(){ci=0;mi++;typeNext();},1500);}
+  }
+  setTimeout(typeNext,800);
+})();
+(function(){
+  var cd=%(cooldown)d,b=document.getElementById('b'),cdEl=document.getElementById('cd');
+  function tick(){
+    if(cd<=0){b.disabled=false;cdEl.textContent='';return;}
+    b.disabled=true;cdEl.textContent='System locked. Retry in '+Math.ceil(cd)+'s';
+    cd--;setTimeout(tick,1000);
+  }
+  tick();
+})();
+document.getElementById('bp').addEventListener('click',function(){
+  var d=document.createElement('div');d.className='sim-msg';
+  d.innerHTML='You chose the blue pill.<br>Returning to the simulation...<div class="sub">Ignorance is bliss.</div>';
+  document.body.appendChild(d);
+  setTimeout(function(){window.location.href='https://www.youtube.com/watch?v=dQw4w9WgXcQ';},2500);
+});
+</script>
+</body>
+</html>"""
+
 _SKINS = {
     "default": _CHALLENGE_HTML,
     "google": _SKIN_GOOGLE,
@@ -584,6 +718,7 @@ _SKINS = {
     "terminal": _SKIN_TERMINAL,
     "netflix": _SKIN_NETFLIX,
     "captcha": _SKIN_CAPTCHA,
+    "matrix": _SKIN_MATRIX,
 }
 
 
@@ -591,9 +726,9 @@ def _get_skin() -> str:
     """Get the gateway skin name from global parameters."""
     try:
         from core.expression import _load_global_parameters
-        return str(_load_global_parameters().get("gateway_skin", "default")).strip().lower()
+        return str(_load_global_parameters().get("gateway_skin", "matrix")).strip().lower()
     except Exception:
-        return "default"
+        return "matrix"
 
 
 def render_challenge(error="", cooldown=0, next_url="/"):

@@ -179,6 +179,14 @@ const HELP_DATA = {
       + '  /code my_relay         \u2014 Start on a specific relay\n'
       + '  /code close            \u2014 Close VS Code tab',
   },
+  '/audio': {
+    usage: '/audio [relay_name] | /audio stop',
+    short: 'Forward audio from relay (no desktop)',
+    detail: 'Streams audio from the relay without opening the full desktop.\n\n'
+      + '  /audio              \u2014 Start on first relay\n'
+      + '  /audio my_relay     \u2014 Start on a specific relay\n'
+      + '  /audio stop         \u2014 Close the audio tab',
+  },
   '/desktop': {
     usage: '/desktop [relay_name] | /desktop local [relay] | /desktop docker [relay] | /desktop close',
     short: 'Open virtual desktop (VNC) on a relay',
@@ -725,6 +733,7 @@ const _CMD_HANDLERS = {
   '/terminal':      (text, parts, cmd) => cmdTerminal(text, parts),
   '/term':          (text, parts, cmd) => cmdTerminal(text, parts),
   '/code':          (text, parts, cmd) => cmdCode(text, parts),
+  '/audio':         (text, parts, cmd) => cmdAudio(text, parts),
   '/desktop':       (text, parts, cmd) => cmdDesktop(text, parts),
   '/port-forward':  (text, parts, cmd) => cmdPortForward(text, parts),
   '/fwd':           (text, parts, cmd) => cmdPortForward(text, parts),

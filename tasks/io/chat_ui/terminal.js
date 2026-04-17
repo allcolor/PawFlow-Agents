@@ -389,6 +389,12 @@ async function cmdDesktop(text, parts) {
         return;
       }
 
+      // Close audio-only tab if open (desktop includes audio)
+      const _audioTab = document.querySelector('[id^="tabContent_audio-"]');
+      if (_audioTab) {
+        const _atId = _audioTab.id.replace('tabContent_', '');
+        closeAudioTab(_atId);
+      }
       const _prefix = localScreen ? 'local_desktop' : 'desktop';
       const _desktopSid = _prefix + '_' + relayId;
       const _tabLabel = localScreen ? relayId + ' (local)' : relayId;
@@ -398,6 +404,58 @@ async function cmdDesktop(text, parts) {
         audioConnect(resp.audio_session);
       }
       addMsg('system', (localScreen ? 'Local screen' : 'Desktop') + ' ready.');
+    },
+    error: (e) => {
+      addMsg('system', 'Failed: ' + e.message);
+    },
+  });
+  return true;
+}
+
+/** /audio command — forward audio only (no VNC). Reuses open_desktop backend. */
+async function cmdAudio(text, parts) {
+  const sub = (parts[1] || '').toLowerCase();
+  if (sub === 'stop' || sub === 'close') {
+    const audioTab = document.querySelector('[id^="tabContent_audio-"]');
+    if (audioTab) {
+      const tId = audioTab.id.replace('tabContent_', '');
+      closeAudioTab(tId);
+      addMsg('system', 'Audio tab closed.');
+    } else {
+      addMsg('system', 'No audio tab open.');
+    }
+    return true;
+  }
+
+  let relayId = parts[1] || '';
+  if (!relayId) {
+    try {
+      const relays = await _getRelays();
+      relayId = await _pickRelay(relays);
+      if (!relayId) {
+        addMsg('system', 'No connected relay found.');
+        return true;
+      }
+    } catch (e) {
+      addMsg('system', 'Failed to list relays: ' + e.message);
+      return true;
+    }
+  }
+
+  addMsg('system', 'Starting audio on ' + relayId + '...');
+  action$('open_desktop', { relay_id: relayId }).subscribe({
+    next: (resp) => {
+      if (resp.error) {
+        addMsg('system', '\u26a0 ' + resp.error);
+        return;
+      }
+      if (resp.audio_session) {
+        addAudioTab(relayId, resp.audio_session);
+        audioConnect(resp.audio_session);
+        addMsg('system', 'Audio streaming from ' + relayId + '.');
+      } else {
+        addMsg('system', '\u26a0 No audio available on this relay.');
+      }
     },
     error: (e) => {
       addMsg('system', 'Failed: ' + e.message);

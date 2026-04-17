@@ -206,6 +206,61 @@ function closeDesktopTab(tabId) {
   if (_activeTab === tabId) switchTab('chat');
 }
 
+/** Add an Audio-only tab (minimal controls, no VNC). */
+function addAudioTab(relayId, audioSession) {
+  const tabId = 'audio-' + relayId;
+  if (document.getElementById('tabContent_' + tabId)) {
+    switchTab(tabId);
+    return tabId;
+  }
+
+  const btn = document.createElement('button');
+  btn.className = 'tab-btn';
+  btn.dataset.tab = tabId;
+  btn.title = 'Audio (' + relayId + ')';
+  btn.onclick = (e) => {
+    if (e.target.classList.contains('tab-close')) return;
+    switchTab(tabId);
+  };
+  btn.innerHTML = '<span style="font-size:14px">\uD83D\uDD0A</span>'
+    + '<span class="tab-close" onclick="closeAudioTab(\'' + tabId + '\')">&times;</span>';
+  const spacer = document.querySelector('.tab-spacer');
+  spacer.parentNode.insertBefore(btn, spacer);
+
+  const panel = document.createElement('div');
+  panel.className = 'tab-content';
+  panel.id = 'tabContent_' + tabId;
+  panel.dataset.tab = tabId;
+  panel.dataset.relayId = relayId;
+  panel.dataset.audioSession = audioSession;
+  panel.innerHTML = '<div class="audio-tab-panel">'
+    + '<div class="audio-tab-controls">'
+    + '<div class="audio-title">\uD83D\uDD0A Audio \u2014 ' + relayId + '</div>'
+    + '<div class="audio-btns">'
+    + '<button onclick="toggleAudioMute()" id="audioTabMuteBtn">Mute</button>'
+    + '<button onclick="audioRestart()">Restart</button>'
+    + '</div>'
+    + '<div class="audio-status">Streaming from relay</div>'
+    + '</div></div>';
+
+  document.querySelector('.main').appendChild(panel);
+  switchTab(tabId);
+  return tabId;
+}
+
+/** Close an Audio-only tab. */
+function closeAudioTab(tabId) {
+  const panel = document.getElementById('tabContent_' + tabId);
+  if (panel) panel.remove();
+  // Only disconnect audio if no desktop tab is using it
+  if (!document.querySelector('[id^="tabContent_desktop-"]')) {
+    if (typeof audioDisconnect === 'function') audioDisconnect();
+  }
+  const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"');
+  if (btn) btn.remove();
+  if (_activeTab === tabId) switchTab('chat');
+}
+
 /** Add a browser tab (iframe pointing to a URL). One per label. */
 function addBrowserTab(label, iframeSrc) {
   const tabId = 'browse-' + label.replace(/[^a-zA-Z0-9._-]/g, '_');

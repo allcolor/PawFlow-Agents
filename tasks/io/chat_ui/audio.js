@@ -31,7 +31,7 @@ var _pcmFlushTimer = null;
 var _preBuffer = [];
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 7200; // 150ms at 48kHz — jitter absorption buffer
+var _PRE_BUFFER_TARGET = 12000; // 250ms at 48kHz — jitter absorption buffer
 
 // Diagnostic stats
 var _audioStats = {
@@ -119,8 +119,9 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = ring.length;
     const wPos = Atomics.load(this.sabCtrl, 0);
     const available = wPos - Math.floor(this.sabRPos);
-    const TARGET = 7200; // 150ms at 48kHz — jitter absorption buffer
-    const MAX_FILL = 14400; // 300ms — drop threshold
+    const TARGET = 12000; // 250ms at 48kHz — jitter absorption buffer
+    const MAX_FILL = 24000; // 500ms — drop threshold
+    const RESUME_MIN = 4800; // 100ms — minimum buffer before resuming after underrun
 
     // Fixed step: CONSTANT playback rate, no adaptation
     const step = this.baseStep;
@@ -131,7 +132,17 @@ class AudioRingProcessor extends AudioWorkletProcessor {
       this.sabRPos = wPos - TARGET;
     }
 
-    if (available < out.length) this.underruns++;
+    // Underrun recovery: wait until RESUME_MIN before playing again
+    // Prevents cascade: underrun → play 1 sample → underrun → crackle
+    if (this._starving) {
+      if (available >= RESUME_MIN) {
+        this._starving = false;
+      } else {
+        for (let i = 0; i < out.length; i++) out[i] = 0;
+        this.underruns++;
+        return;
+      }
+    }
 
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.sabRPos);
@@ -142,8 +153,8 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         out[i] = s0 + frac * (s1 - s0);
         this.sabRPos += step;
       } else {
-        // Underrun: silence (no pitch change, just a micro-gap)
         out[i] = 0;
+        this._starving = true;
       }
     }
   }
@@ -152,8 +163,9 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = this.ring.length;
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
-    const TARGET = 7200; // 150ms
-    const MAX_FILL = 14400; // 300ms
+    const TARGET = 12000; // 250ms
+    const MAX_FILL = 24000; // 500ms
+    const RESUME_MIN = 4800; // 100ms
 
     const step = this.baseStep;
     this._pmSmoothStep = step;
@@ -162,7 +174,15 @@ class AudioRingProcessor extends AudioWorkletProcessor {
       this.rPos = this.wPos - TARGET;
     }
 
-    if (available < out.length) this.underruns++;
+    if (this._pmStarving) {
+      if (available >= RESUME_MIN) {
+        this._pmStarving = false;
+      } else {
+        for (let i = 0; i < out.length; i++) out[i] = 0;
+        this.underruns++;
+        return;
+      }
+    }
 
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.rPos);
@@ -174,6 +194,7 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         this.rPos += step;
       } else {
         out[i] = 0;
+        this._pmStarving = true;
       }
     }
   }

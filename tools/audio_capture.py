@@ -156,7 +156,8 @@ def _capture_loop(source: str):
             logger.info("Using PulseAudio monitor: %s", monitor)
 
             proc = subprocess.Popen(
-                ["parec", "--format=s16le", "--rate=48000", "--channels=1",
+                ["stdbuf", "-o0",
+                 "parec", "--format=s16le", "--rate=48000", "--channels=1",
                  "-d", monitor, "--latency-msec=20"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 bufsize=0)  # unbuffered — we manage our own buffer

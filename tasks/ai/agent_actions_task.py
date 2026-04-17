@@ -1,7 +1,7 @@
 """AgentActionsTask — pure action dispatcher.
 
 UI commands (open_desktop, list_resources, load_history, set_param,
-…) are not agent messages. They have their own endpoint (/api/ui),
+...) are not agent messages. They have their own endpoint (/api/ui),
 their own task slot, their own max_instances. They never traverse
 the agent execution pipeline.
 
@@ -23,11 +23,19 @@ class AgentActionsTask(AgentLoopTask):
     NAME = "Agent Actions"
     DESCRIPTION = (
         "Dispatch UI / command actions (list_resources, open_desktop, "
-        "load_history, …) without going through the agent execution "
+        "load_history, ...) without going through the agent execution "
         "pipeline. Use a dedicated endpoint and task slot so heavy "
         "agent work (compact, long messages) never blocks the UI."
     )
     ICON = "settings"
+
+    def __init__(self, config):
+        _saved = AgentLoopTask._live_instance
+        super().__init__(config)
+        # Restore: _live_instance must point to the execution task,
+        # not this actions-only dispatcher.
+        if _saved is not None:
+            AgentLoopTask._live_instance = _saved
 
     def select_processable(self, connections):
         """UI actions bypass all gating: no LLM capacity check, no

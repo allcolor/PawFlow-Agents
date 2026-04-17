@@ -87,52 +87,41 @@ class AgentLoopTask(
     ICON = "ai"
     _live_instance = None  # set by __init__ for wake_poller access
 
+    # ── Shared execution state (class-level) ──────────────────────
+    # Shared by ALL instances (AgentLoopTask + AgentActionsTask).
+    # Action handlers use self._active_contexts etc. and must see the
+    # same state regardless of which instance they run on.
+    _active_conversations: Dict[str, int] = {}          # conv_id -> refcount
+    _user_active_conversations: set = set()
+    _active_thoughts: set = set()
+    _active_lock = threading.Lock()
+    _conv_generation: Dict[str, int] = {}
+    _conv_gen_lock = threading.Lock()
+    _conv_interrupt: Dict[str, bool] = {}
+    _interrupt_lock = threading.Lock()
+    # Active agent contexts — push on enter, pop on exit (finally).
+    # Key: "conversation_id:agent_name", Value: ctx dict
+    # This is the SOLE source of truth for "which agents are active".
+    _active_contexts: Dict[str, dict] = {}
+    _active_contexts_lock = threading.Lock()
+    _active_claude_client: Dict[str, Any] = {}          # conv_id:agent -> CC client
+    _context_op_events: Dict[str, threading.Event] = {}
+    _context_op_lock = threading.Lock()
+    _calibrated_cpt: Dict[str, float] = {}               # service_id -> chars_per_token
+    _calibrated_cpt_lock = threading.Lock()
+    _interrupt_cooldowns: Dict[str, float] = {}
+
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        # Per-instance state (not shared with AgentActionsTask)
         self._tool_registry: Optional[ToolRegistry] = None
         self._poller_started = False
         self._poller_stop = threading.Event()
-        self._poller_wake = threading.Event()  # signal immediate poll
+        self._poller_wake = threading.Event()
         AgentLoopTask._live_instance = self
-        self._active_conversations: Dict[str, int] = {}  # conv_id -> refcount
-        # Set by ContinuousFlowExecutor before execute() — callable that
-        # dequeues and returns all pending FlowFiles from input queue
         self._drain_pending = None  # type: Optional[Callable[[], List[FlowFile]]]
         self._requeue_flowfiles = None  # type: Optional[Callable[[List[FlowFile]], None]]
-        self._user_active_conversations: set = set()  # convs with active USER interaction
-        self._active_thoughts: set = set()  # active thought keys (conv_id::thought::agent)
-        self._active_lock = threading.Lock()
-        # Generation counter per conversation — prevents stale threads from overwriting
-        # newer data.  Incremented on each user request; poller threads capture the
-        # generation at start and skip saves if it changed.
-        self._conv_generation: Dict[str, int] = {}
-        self._conv_gen_lock = threading.Lock()
-        # Interrupt signal — asks agent to conclude gracefully instead of cancelling
-        self._conv_interrupt: Dict[str, bool] = {}
-        self._interrupt_lock = threading.Lock()
-        # Running agents — state-based tracker (stack on loop entry, pop on exit)
-        # Active agent contexts — push on enter, pop on exit (finally).
-        # Key: "conversation_id:agent_name", Value: ctx dict
-        # This is the SOLE source of truth for "which agents are active".
-        self._active_contexts: Dict[str, dict] = {}
-        self._active_contexts_lock = threading.Lock()
-        # Claude Code client references — keyed by conv_id:agent_name
-        self._active_claude_client: Dict[str, Any] = {}
-        # Pending user messages queued while agent is busy — keyed by _queued_msgs:{agent_key}
-        # Pending user messages now live in core.pending_queue.PendingQueue
-        # (persistent, per-(conv, agent), disk-backed). No in-memory dict here.
-        # Context operation locks — prevents FlowFile processing during context mutations
-        # conv_id -> threading.Event (set = free, cleared = blocked)
-        self._context_op_events: Dict[str, threading.Event] = {}
-        self._context_op_lock = threading.Lock()
-        # Precompact snapshots — survives agent restart, used by /compact
-        # Key: "conv_id:agent_name", Value: {"messages": [...], "last_msg_id": str, "original_count": int}
-        # Calibrated chars-per-token ratio per LLM service (learned from actual usage)
-        self._calibrated_cpt: Dict[str, float] = {}  # service_id -> chars_per_token
-        self._calibrated_cpt_lock = threading.Lock()
-        # Interrupt cooldowns — keyed by synth_key → timestamp
-        self._interrupt_cooldowns: Dict[str, float] = {}
 
 
     def initialize(self):

@@ -95,11 +95,15 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
 
         # An agent is active IFF its context is in the active stack.
         # Push on enter, pop on exit (finally). No ghosts possible.
+        # Use the execution instance (not self — self may be the
+        # actions-only dispatcher which has its own empty dict).
+        from tasks.ai.agent_loop import AgentLoopTask
+        _exec = AgentLoopTask._live_instance or self
         active = []
-        with self._active_contexts_lock:
+        with _exec._active_contexts_lock:
             import time as _time
             import re as _re_active
-            for _k, ctx in self._active_contexts.items():
+            for _k, ctx in _exec._active_contexts.items():
                 if _k == conv_id or _k.startswith(conv_id + ":"):
                     _started = ctx.get("_started_at", 0)
                     # Extract task_id from key pattern conv::task::t_xxx:agent

@@ -104,7 +104,28 @@ class ScreenHandler(BaseFsHandler):
         #   local=true  → relay forwards to host helper (user's real desktop)
         #   local=false → relay's own Xvfb / Docker desktop container
         # The PawFlow server itself never runs a display — no local fallback.
+
+        # Auto-start desktop if not running (local=false only)
+        if not arguments.get("local", False):
+            self._ensure_desktop_started(svc)
+
         return self._exec_via_relay(svc, action, arguments)
+
+    def _ensure_desktop_started(self, svc):
+        """Auto-start the Docker virtual desktop if not already running."""
+        try:
+            status = svc._request("desktop_status", ".")
+            if isinstance(status, dict):
+                data = status.get("data", status)
+                if data.get("running"):
+                    return
+        except Exception:
+            pass
+        try:
+            logger.info("[screen] auto-starting Docker desktop")
+            svc._request("start_desktop", ".")
+        except Exception as e:
+            logger.warning("[screen] auto-start desktop failed: %s", e)
 
     def _exec_via_relay(self, svc, action: str, arguments: dict) -> str:
         """Execute screen action via relay. `local` flag is passed through."""

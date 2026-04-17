@@ -59,16 +59,15 @@ class OAuthLogoutTask(BaseTask):
             except Exception:
                 pass
 
-        # Clear cookie and redirect
-        clear_cookie = (
-            f"{cookie_name}=; Path=/; Max-Age=0; "
-            f"HttpOnly; SameSite=Lax"
-        )
+        # Clear session cookie + private gateway cookie
+        clear_session = f"{cookie_name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+        clear_gateway = "_pf_gw=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
 
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")
         flowfile.set_attribute("http.response.header.Location", redirect_to)
-        flowfile.set_attribute("http.response.header.Set-Cookie", clear_cookie)
+        flowfile.set_attribute("http.response.header.Set-Cookie",
+                               clear_session + "\n" + clear_gateway)
         flowfile.set_attribute("http.response.header.Cache-Control", "no-cache, no-store")
 
         return [flowfile]

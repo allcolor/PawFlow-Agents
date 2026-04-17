@@ -372,7 +372,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
         self.server._pending_requests.pop(req.request_id, None)
         self.send_response(req.response_status)
         for k, v in req.response_headers.items():
-            self.send_header(k, v)
+            # Set-Cookie requires separate headers per cookie (RFC 6265)
+            if k == "Set-Cookie" and "\n" in v:
+                for cv in v.split("\n"):
+                    if cv.strip():
+                        self.send_header(k, cv.strip())
+            else:
+                self.send_header(k, v)
         if "Content-Type" not in req.response_headers:
             self.send_header("Content-Type", "application/octet-stream")
         # Renew session cookie (sliding window)

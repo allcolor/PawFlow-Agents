@@ -119,21 +119,26 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = ring.length;
     const wPos = Atomics.load(this.sabCtrl, 0);
     const available = wPos - Math.floor(this.sabRPos);
-    const TARGET = 12000; // 250ms at 48kHz — jitter absorption buffer
-    const MAX_FILL = 24000; // 500ms — drop threshold
-    const RESUME_MIN = 4800; // 100ms — minimum buffer before resuming after underrun
+    const TARGET = 12000; // 250ms at 48kHz
+    const MAX_FILL = 36000; // 750ms — hard snap safety net
+    const RESUME_MIN = 4800; // 100ms
 
-    // Fixed step: CONSTANT playback rate, no adaptation
-    const step = this.baseStep;
-    this._smoothStep = step; // for stats reporting
+    // Clock drift recovery: ultra-gentle ±0.5% max, smoothed over ~3s
+    // Inaudible (a semitone is 6%, this is 8 cents)
+    const error = (available - TARGET) / TARGET; // -1..+N
+    const correction = error * 0.002; // very gentle proportional
+    const raw = this.baseStep * (1 + correction);
+    const clamped = Math.max(this.baseStep * 0.995, Math.min(this.baseStep * 1.005, raw));
+    // EMA smoothing (alpha=0.001, tau ≈ 2.7s at 375 calls/s)
+    if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
+    this._smoothStep += 0.001 * (clamped - this._smoothStep);
+    const step = this._smoothStep;
 
-    // Buffer overflow: snap forward to TARGET (prevents latency buildup)
     if (available > MAX_FILL) {
       this.sabRPos = wPos - TARGET;
     }
 
     // Underrun recovery: wait until RESUME_MIN before playing again
-    // Prevents cascade: underrun → play 1 sample → underrun → crackle
     if (this._starving) {
       if (available >= RESUME_MIN) {
         this._starving = false;
@@ -163,12 +168,17 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = this.ring.length;
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
-    const TARGET = 12000; // 250ms
-    const MAX_FILL = 24000; // 500ms
-    const RESUME_MIN = 4800; // 100ms
+    const TARGET = 12000;
+    const MAX_FILL = 36000;
+    const RESUME_MIN = 4800;
 
-    const step = this.baseStep;
-    this._pmSmoothStep = step;
+    const error = (available - TARGET) / TARGET;
+    const correction = error * 0.002;
+    const raw = this.baseStep * (1 + correction);
+    const clamped = Math.max(this.baseStep * 0.995, Math.min(this.baseStep * 1.005, raw));
+    if (this._pmSmoothStep === undefined) this._pmSmoothStep = this.baseStep;
+    this._pmSmoothStep += 0.001 * (clamped - this._pmSmoothStep);
+    const step = this._pmSmoothStep;
 
     if (available > MAX_FILL) {
       this.rPos = this.wPos - TARGET;

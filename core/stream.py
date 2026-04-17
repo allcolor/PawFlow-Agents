@@ -310,7 +310,8 @@ class ContentReference:
         if size_hint > SPILL_THRESHOLD:
             # Stream directly to disk
             spill_dir = _get_spill_dir()
-            temp_path = spill_dir / f"spill_stream_{id(stream)}"
+            import uuid as _uuid
+            temp_path = spill_dir / f"spill_stream_{_uuid.uuid4().hex[:12]}"
             total = 0
             with open(temp_path, 'wb') as f:
                 while True:

@@ -487,55 +487,167 @@ function importConversation() {
 
 function _showImportConvDialog(info, fmt) {
   // info: {temp_id, agents: [{name, definition},...], message_count, format}
-  // Fetch repo agents + LLM services for the mapping dialog
   action$('list_resources', {}).subscribe(resData => {
-    const repoAgents = (resData.agents || []).map(a => a.name);
-    const llmServices = resData.llm_services || [];
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-    const panel = document.createElement('div');
-    panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
-    let html = '<h3 style="margin:0 0 12px;color:#e0e0e0;font-size:14px;">Import Conversation</h3>';
-    html += '<div style="color:#888;font-size:11px;margin-bottom:12px;">' + info.message_count + ' messages, format: ' + fmt + '</div>';
-    html += '<div style="margin-bottom:10px;"><label style="color:#aaa;font-size:11px;">Title</label><input id="imp-title" value="Imported conversation" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
-    // Agent mapping
-    html += '<div style="margin-bottom:10px;"><label style="color:#aaa;font-size:11px;">Agent Mapping</label>';
-    for (const agent of info.agents) {
-      const defOptions = repoAgents.map(a => '<option value="' + a + '"' + (a === agent.definition ? ' selected' : '') + '>' + a + '</option>').join('');
-      const svcOptions = '<option value="">(auto)</option>' + llmServices.map(s => '<option value="' + s + '">' + s + '</option>').join('');
-      html += '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;padding:6px;background:#0a0a1a;border-radius:4px;border:1px solid #222;">';
-      html += '<span style="color:#e0e0e0;font-size:12px;min-width:80px;">' + agent.name + '</span>';
-      html += '<select class="imp-def" data-agent="' + agent.name + '" style="flex:1;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:3px;font-size:11px;">' + defOptions + '</select>';
-      html += '<select class="imp-svc" data-agent="' + agent.name + '" style="flex:1;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:3px;font-size:11px;">' + svcOptions + '</select>';
-      html += '</div>';
+    var repoAgents = resData.agents || [];
+    var llmServices = resData.llm_services || [];
+    var svcOpts = llmServices.map(s =>
+      '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + (s.description ? ' \u2014 ' + escapeHtml(s.description) : '') + '</option>'
+    ).join('');
+
+    function _guessLlm(name) {
+      for (var i = 0; i < llmServices.length; i++) {
+        if (llmServices[i].service_id === name + '_llm_service') return name + '_llm_service';
+      }
+      for (var i = 0; i < llmServices.length; i++) {
+        if (llmServices[i].service_id === name + '_llm') return name + '_llm';
+      }
+      return llmServices.length ? llmServices[0].service_id : '';
     }
-    html += '</div>';
-    html += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">';
-    html += '<button id="imp-cancel" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>';
-    html += '<button id="imp-go" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Import</button>';
-    html += '</div>';
-    panel.innerHTML = html;
-    overlay.appendChild(panel);
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+    var box = document.createElement('div');
+    box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:640px;max-width:780px;max-height:85vh;display:flex;flex-direction:column;gap:12px;overflow-y:auto;position:relative;';
+    box.onclick = e => e.stopPropagation();
+
+    var _listCss = 'width:100%;min-height:100px;max-height:240px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);';
+
+    box.innerHTML =
+      '<span id="_impCloseX" style="position:absolute;top:8px;right:12px;cursor:pointer;color:#888;font-size:18px;" title="Cancel">\u2715</span>'
+      + '<div style="font-weight:600;font-size:1.1em;">Import Conversation</div>'
+      + '<div style="color:#888;font-size:11px;">' + info.message_count + ' messages \u2014 format: ' + escapeHtml(fmt) + '</div>'
+      + '<div><label style="font-size:11px;color:#888;">Title</label>'
+      + '<input id="_impTitle" type="text" value="Imported conversation" style="width:100%;padding:6px 10px;border-radius:5px;border:1px solid var(--border,#444);background:var(--bg,#141420);color:inherit;font-size:0.95em;box-sizing:border-box;"></div>'
+      + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">Agent Mapping</div>'
+      + '<div style="display:flex;gap:12px;align-items:stretch;">'
+      +   '<div id="_impAgentTree" style="' + _listCss + 'flex:1;"></div>'
+      +   '<div id="_impAgentDetail" style="flex:1;border:1px solid var(--border,#444);border-radius:4px;padding:10px;background:var(--bg,#141420);min-height:100px;max-height:240px;overflow-y:auto;font-size:12px;color:#aaa;display:flex;align-items:center;justify-content:center;">Select an agent to configure</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">'
+      +   '<button id="_impCancelBtn" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer;">Cancel</button>'
+      +   '<button id="_impGoBtn" style="padding:6px 14px;border-radius:5px;border:none;background:var(--accent,#7c6af7);color:#fff;cursor:pointer;font-weight:600;">Import</button>'
+      + '</div>';
+
+    overlay.appendChild(box);
     document.body.appendChild(overlay);
-    panel.querySelector('#imp-cancel').onclick = () => overlay.remove();
-    panel.querySelector('#imp-go').onclick = () => {
-      const title = panel.querySelector('#imp-title').value.trim() || 'Imported';
-      const agent_mapping = {};
-      panel.querySelectorAll('.imp-def').forEach(sel => {
-        const name = sel.dataset.agent;
-        const svcSel = panel.querySelector('.imp-svc[data-agent="' + name + '"]');
-        agent_mapping[name] = {
-          definition: sel.value,
-          params: { name: name },
-          llm_service: svcSel ? svcSel.value : '',
-        };
+
+    function _cancelImport() {
+      overlay.remove();
+      action$('conv_import_cleanup', { temp_id: info.temp_id }).subscribe(() => {});
+    }
+
+    var agentInstances = {};
+    var focusedAgent = '';
+
+    info.agents.forEach(a => {
+      var bestDef = repoAgents.find(r => r.name === a.definition) ? a.definition
+                  : repoAgents.find(r => r.name === a.name) ? a.name
+                  : repoAgents.length ? repoAgents[0].name : '';
+      agentInstances[a.name] = {
+        definition: bestDef,
+        llm_service: _guessLlm(bestDef || a.name),
+        params: { name: a.name },
+      };
+    });
+
+    function _renderTree() {
+      var tree = document.getElementById('_impAgentTree');
+      tree.innerHTML = '';
+      var hdr = document.createElement('div');
+      hdr.style.cssText = 'font-size:10px;color:#666;padding:2px 4px;';
+      hdr.textContent = 'Imported agents (' + Object.keys(agentInstances).length + ')';
+      tree.appendChild(hdr);
+      Object.keys(agentInstances).forEach(iname => {
+        var inst = agentInstances[iname];
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12px;'
+          + (focusedAgent === iname ? 'background:rgba(124,106,247,0.15);' : '');
+        var label = document.createElement('span');
+        label.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        label.textContent = iname;
+        var badge = document.createElement('span');
+        badge.style.cssText = 'font-size:10px;color:#888;';
+        badge.textContent = inst.definition ? '\u2192 ' + inst.definition : '\u26A0 unmapped';
+        row.appendChild(label);
+        row.appendChild(badge);
+        row.onclick = () => { focusedAgent = iname; _renderTree(); _renderDetail(); };
+        tree.appendChild(row);
       });
+    }
+
+    function _renderDetail() {
+      var panel = document.getElementById('_impAgentDetail');
+      if (!focusedAgent || !agentInstances[focusedAgent]) {
+        panel.innerHTML = '<span style="color:#666;">Select an agent to configure</span>';
+        panel.style.display = 'flex'; panel.style.alignItems = 'center'; panel.style.justifyContent = 'center';
+        return;
+      }
+      panel.style.display = 'block'; panel.style.alignItems = ''; panel.style.justifyContent = '';
+      var inst = agentInstances[focusedAgent];
+      var defAgent = repoAgents.find(a => a.name === inst.definition);
+      var paramSchema = defAgent && defAgent.parameters ? defAgent.parameters : {};
+      var paramKeys = Object.keys(paramSchema).filter(k => k !== 'name');
+
+      var defOptions = repoAgents.map(a =>
+        '<option value="' + escapeHtml(a.name) + '"' + (a.name === inst.definition ? ' selected' : '') + '>'
+        + escapeHtml(a.name) + (a.description ? ' \u2014 ' + escapeHtml(a.description) : '') + '</option>'
+      ).join('');
+
+      var html = '<div style="font-weight:600;font-size:13px;color:#fff;margin-bottom:8px;">' + escapeHtml(focusedAgent) + '</div>';
+      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">Instance Name</label>';
+      html += '<input id="_impInstName" value="' + escapeHtml(focusedAgent) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
+      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">Definition *</label>';
+      html += '<select id="_impDefSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;">' + defOptions + '</select></div>';
+      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">LLM Service *</label>';
+      html += '<select id="_impLlmSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;">' + svcOpts + '</select></div>';
+      if (paramKeys.length) {
+        html += '<div style="margin-bottom:6px;"><div style="font-size:10px;color:#888;margin-bottom:4px;">Parameters</div>';
+        paramKeys.forEach(k => {
+          var spec = paramSchema[k] || {};
+          var val = inst.params[k] || spec.default || '';
+          html += '<div style="margin-bottom:4px;"><label style="font-size:10px;color:#888;">' + escapeHtml(k + (spec.required ? ' *' : '')) + '</label>';
+          html += '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(val)) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
+        });
+        html += '</div>';
+      }
+      html += '<button id="_impApplyBtn" style="width:100%;padding:5px;border-radius:4px;border:1px solid #6c5ce7;background:transparent;color:#6c5ce7;cursor:pointer;font-size:11px;font-weight:600;">Apply Changes</button>';
+
+      panel.innerHTML = html;
+      var llmSel = document.getElementById('_impLlmSelect');
+      if (llmSel) llmSel.value = inst.llm_service || _guessLlm(inst.definition);
+      var defSel = document.getElementById('_impDefSelect');
+      if (defSel) defSel.onchange = () => {
+        inst.definition = defSel.value;
+        inst.llm_service = _guessLlm(defSel.value);
+        _renderDetail();
+      };
+      document.getElementById('_impApplyBtn').onclick = () => {
+        var newName = (document.getElementById('_impInstName').value || '').trim();
+        if (!newName) { alert('Instance name is required.'); return; }
+        var newDef = defSel.value;
+        var newLlm = llmSel.value;
+        var params = { name: newName };
+        panel.querySelectorAll('[data-param]').forEach(inp => { params[inp.dataset.param] = inp.value; });
+        if (newName !== focusedAgent) delete agentInstances[focusedAgent];
+        agentInstances[newName] = { definition: newDef, llm_service: newLlm, params: params };
+        focusedAgent = newName;
+        _renderTree(); _renderDetail();
+      };
+    }
+
+    _renderTree();
+    if (info.agents.length) { focusedAgent = info.agents[0].name; _renderTree(); _renderDetail(); }
+
+    document.getElementById('_impCloseX').onclick = _cancelImport;
+    document.getElementById('_impCancelBtn').onclick = _cancelImport;
+    document.getElementById('_impGoBtn').onclick = () => {
+      if (!Object.keys(agentInstances).length) { alert('At least one agent is required.'); return; }
+      var title = (document.getElementById('_impTitle').value || '').trim() || 'Imported';
       overlay.remove();
       document.getElementById('status').textContent = 'Importing...';
       action$('conv_import_execute', {
         temp_id: info.temp_id, format: fmt,
-        agent_mapping, title,
+        agent_mapping: agentInstances, title,
       }).subscribe(result => {
         if (result.error) { addMsg('error', 'Import failed: ' + result.error); }
         else {

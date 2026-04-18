@@ -573,6 +573,15 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps(result).encode())
         return [flowfile]
 
+    if action == "conv_import_cleanup":
+        import tempfile, shutil
+        temp_id = body.get("temp_id", "")
+        if temp_id:
+            temp_dir = Path(tempfile.gettempdir()) / f"pf_import_{temp_id}"
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        flowfile.set_content(json.dumps({"ok": True}).encode())
+        return [flowfile]
+
     if action == "conv_import_analyze":
         import tempfile, uuid
         fmt = body.get("format", "")

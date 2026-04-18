@@ -384,7 +384,7 @@ function connectSSE(cid, onReady) {
   const _delegateGroups = {};
   const _delegateSubBlocks = {};
 
-  function _getOrCreateGroup(delegateTcId, srcAgent, total) {
+  function _getOrCreateGroup(delegateTcId, srcAgent, total, sourceTaskId) {
     if (!delegateTcId) return null;
     if (_delegateGroups[delegateTcId]) return _delegateGroups[delegateTcId];
     const details = document.createElement('details');
@@ -400,10 +400,23 @@ function connectSSE(cid, onReady) {
     const content = document.createElement('div');
     content.className = 'delegate-body';
     details.appendChild(content);
-    const container = document.getElementById('messages');
-    const typingEl = document.getElementById('typing');
-    if (typingEl) container.insertBefore(details, typingEl);
-    else container.appendChild(details);
+    // If spawned from a task, nest inside the task block
+    let parentFound = false;
+    if (sourceTaskId) {
+      for (const bk of Object.keys(_taskBlocks).reverse()) {
+        if (bk.startsWith(sourceTaskId + '::iter')) {
+          _taskBlocks[bk].content.appendChild(details);
+          parentFound = true;
+          break;
+        }
+      }
+    }
+    if (!parentFound) {
+      const container = document.getElementById('messages');
+      const typingEl = document.getElementById('typing');
+      if (typingEl) container.insertBefore(details, typingEl);
+      else container.appendChild(details);
+    }
     scrollBottom();
     _delegateGroups[delegateTcId] = { el: details, content, summary, total: total || 1, doneCount: 0, subBlocks: {} };
     return _delegateGroups[delegateTcId];
@@ -501,7 +514,7 @@ function connectSSE(cid, onReady) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     if (data.delegate_tc_id) {
-      const group = _getOrCreateGroup(data.delegate_tc_id, data.source_agent || '', data.total || 1);
+      const group = _getOrCreateGroup(data.delegate_tc_id, data.source_agent || '', data.total || 1, data.source_task_id || '');
       if (group) group.summary.dataset.src = data.source_agent || '';
     }
   });
@@ -513,7 +526,7 @@ function connectSSE(cid, onReady) {
     trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '');
     if (data.delegate_tc_id && data.task_id) {
       // Ensure group exists (handles case where delegate_group_start wasn't received)
-      const group = _getOrCreateGroup(data.delegate_tc_id, data.source_agent || '', 1);
+      const group = _getOrCreateGroup(data.delegate_tc_id, data.source_agent || '', 1, data.source_task_id || '');
       if (group) group.summary.dataset.src = data.source_agent || '';
       _getOrCreateSubBlock(data.delegate_tc_id, data.task_id, data.agent_name || '', data.llm_service || '', data.message || '');
     }

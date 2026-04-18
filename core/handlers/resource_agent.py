@@ -473,33 +473,23 @@ class SpawnAgentsHandler(ToolHandler):
                 "\"message\": \"<text>\", \"id\"?: \"<optional>\", "
                 "\"context\"?: \"shared\"|\"isolated\"|\"last:N\"}."
             )
-        # Validate input shape upfront: tasks must be a list of dicts with
-        # 'agent' and 'message' keys. Malformed calls (single string,
-        # nested dict, bare dict) would crash deeper with cryptic errors.
-        if not isinstance(tasks_spec, list):
-            return (
-                "Error: 'tasks' must be a list of objects, got "
-                f"{type(tasks_spec).__name__}. "
-                "Expected: tasks=[{\"agent\": \"<name>\", "
-                "\"message\": \"<text>\"}, ...]"
-            )
-        _bad = []
-        for _i, _t in enumerate(tasks_spec):
-            if not isinstance(_t, dict):
-                _bad.append(f"tasks[{_i}] is {type(_t).__name__}")
-            elif not _t.get("agent") or not _t.get("message"):
-                _bad.append(f"tasks[{_i}] missing 'agent' or 'message'")
-        if _bad:
-            return (
-                "Error: malformed 'tasks' — " + "; ".join(_bad) + ". "
-                "Expected each task: {\"agent\": \"<existing-agent-name>\", "
-                "\"message\": \"<text>\", \"id\"?: \"<optional>\", "
-                "\"context\"?: \"shared\"|\"isolated\"|\"last:N\"}."
-            )
         # Delegate is ALWAYS async (fire-and-forget). Results come back
         # via the preempt (caller running) / wake (caller idle) path.
         # No more 'wait' param — concurrency is the whole point.
         user_id = self._user_id
+
+        # Detect task sub-conv: when an agent running inside a task
+        # delegates, self._conversation_id is the sub-conv
+        # (parent::task::tid). Agent resolution, routing, and delivery
+        # must use the parent conv (where agents are registered).
+        # Result delivery back to the calling task agent uses the raw
+        # sub-conv ID so the preempt/wake targets the correct context.
+        _raw_conv_id = self._conversation_id
+        _parent_conv_id = _raw_conv_id
+        _source_task_id = ""
+        if "::task::" in _raw_conv_id:
+            _parent_conv_id = _raw_conv_id.split("::task::")[0]
+            _source_task_id = _raw_conv_id.split("::task::", 1)[1]
 
         # Thread-safe source agent (each agent loop runs in its own thread)
         _src_agent = getattr(self._local, 'source_agent', '') or ''
@@ -509,11 +499,11 @@ class SpawnAgentsHandler(ToolHandler):
         # Resolve self-name and nicknames to detect self-calls
         _self_names = {_src_agent.lower()} if _src_agent else set()
         _src_nickname = ""
-        if self._conversation_id and _src_agent:
+        if _parent_conv_id and _src_agent:
             try:
                 from core.conversation_store import ConversationStore
                 _nicks = ConversationStore.instance().get_extra(
-                    self._conversation_id, "agent_nicknames") or {}
+                    _parent_conv_id, "agent_nicknames") or {}
                 _src_nickname = _nicks.get(_src_agent, "")
                 if _src_nickname:
                     _self_names.add(_src_nickname.lower())
@@ -536,9 +526,9 @@ class SpawnAgentsHandler(ToolHandler):
             # Preempt path: a delegate for (_src_agent, agent_name) is
             # already running in this conversation — inject the message
             # into its loop instead of spawning a second one.
-            if (self._conversation_id and _src_agent and agent_name):
+            if (_parent_conv_id and _src_agent and agent_name):
                 _live = get_live_delegate(
-                    self._conversation_id, _src_agent, agent_name)
+                    _parent_conv_id, _src_agent, agent_name)
                 if _live:
                     _live_client = _live.get("client")
                     _live_tid = _live.get("task_id", "")
@@ -596,7 +586,8 @@ class SpawnAgentsHandler(ToolHandler):
                     )
                 _deliver_info = self._deliver_shared_delegate(
                     from_agent=_src_agent, to_agent=agent_name,
-                    message=message, user_id=user_id)
+                    message=message, user_id=user_id,
+                    conv_id=_parent_conv_id)
                 _injected_results.append({
                     "task_id": task_id,
                     "agent": agent_name,
@@ -617,7 +608,7 @@ class SpawnAgentsHandler(ToolHandler):
             try:
                 extra_skills = spec.get("skills") or []
                 task = resolve_agent_task(agent_name, message, user_id,
-                                         conversation_id=self._conversation_id,
+                                         conversation_id=_parent_conv_id,
                                          extra_skills=extra_skills)
                 task.id = task_id
                 task.source_agent = _src_agent
@@ -627,11 +618,12 @@ class SpawnAgentsHandler(ToolHandler):
                 task.persist = bool(spec.get("persist", False))
 
                 task.context_mode = context_mode
-                task.parent_conversation_id = self._conversation_id
+                task.parent_conversation_id = _parent_conv_id
+                task.source_task_id = _source_task_id
 
-                if context_mode != "isolated" and self._conversation_id:
+                if context_mode != "isolated" and _parent_conv_id:
                     task.context_messages = self._resolve_context(
-                        context_mode, self._conversation_id, user_id)
+                        context_mode, _parent_conv_id, user_id)
 
                 # Prevent agent from calling itself
                 if agent_name.lower() in _self_names:
@@ -660,6 +652,7 @@ class SpawnAgentsHandler(ToolHandler):
                     for t in agent_tasks
                 ],
                 "total": len(agent_tasks),
+                "source_task_id": _source_task_id,
             })
 
         # Create executor on-the-fly
@@ -672,11 +665,13 @@ class SpawnAgentsHandler(ToolHandler):
         # Always async. Background completion callback ships the
         # isolated/last:N sub-agent's result back to the caller via
         # preempt/wake.
-        _conv_id = self._conversation_id
+        # Result delivery uses _raw_conv_id so the preempt/wake
+        # targets the caller in the task sub-conv (not the parent).
+        _result_conv_id = _raw_conv_id
         _uid = user_id
         _src = _src_agent
         def _bg_callback(result, task):
-            self._inject_bg_result(result, task, _conv_id, _uid, _src)
+            self._inject_bg_result(result, task, _result_conv_id, _uid, _src)
 
         results = executor.spawn(agent_tasks, wait=False,
                                  on_bg_complete=_bg_callback)
@@ -799,7 +794,8 @@ class SpawnAgentsHandler(ToolHandler):
         return False
 
     def _deliver_shared_delegate(self, from_agent: str, to_agent: str,
-                                 message: str, user_id: str) -> Dict[str, str]:
+                                 message: str, user_id: str,
+                                 conv_id: str = "") -> Dict[str, str]:
         """Persist a private delegate message and trigger the target.
 
         Routing (via ConversationStore.agent_flush):
@@ -814,7 +810,7 @@ class SpawnAgentsHandler(ToolHandler):
           - idle    → wake by spawning a new agent loop
         """
         import uuid as _uuid
-        conv_id = self._conversation_id or ""
+        conv_id = conv_id or self._conversation_id or ""
         # Dedup: skip if the same (from, to, message) was just sent.
         if conv_id and self._is_duplicate_shared_delegate(
                 conv_id, from_agent, to_agent, message):
@@ -873,14 +869,30 @@ class SpawnAgentsHandler(ToolHandler):
             inst = AgentLoopTask._live_instance
             if inst:
                 key = f"{conv_id}:{to_agent}" if to_agent else conv_id
+                # _route_conv_id is the conv the target agent actually
+                # runs in — usually conv_id, but if the target is inside
+                # a task sub-conv (parent::task::tid:agent) we must use
+                # that sub-conv for preempt/wake routing.
+                _route_conv_id = conv_id
                 with inst._active_contexts_lock:
                     running = key in inst._active_contexts
+                    if not running and to_agent:
+                        # Scan for the agent in a task sub-conv
+                        _prefix = f"{conv_id}::task::"
+                        _suffix = f":{to_agent}"
+                        for k in inst._active_contexts:
+                            if k.startswith(_prefix) and k.endswith(_suffix):
+                                key = k
+                                # Extract sub-conv ID (everything before :agent)
+                                _route_conv_id = k[: -len(_suffix)]
+                                running = True
+                                break
                 if running:
                     logger.info(
-                        "[delegate-shared] target '%s' running — preempt",
-                        to_agent)
-                    self._preempt_caller(inst, conv_id, to_agent, message,
-                                         _msg_id, _src)
+                        "[delegate-shared] target '%s' running (key=%s) — preempt",
+                        to_agent, key)
+                    self._preempt_caller(inst, _route_conv_id, to_agent,
+                                         message, _msg_id, _src)
                     return {"state": "running (preempted)"}
                 else:
                     logger.info(
@@ -1020,8 +1032,11 @@ class SpawnAgentsHandler(ToolHandler):
         }
 
         # Publish a display_only event so the user sees it in the chat.
+        # When the caller is a task agent, conv_id is the sub-conv
+        # (parent::task::tid) but SSE must go to the parent conv.
+        _sse_cid = conv_id.split("::task::")[0] if "::task::" in conv_id else conv_id
         try:
-            ConversationEventBus.instance().publish_event(conv_id, "new_message", {
+            ConversationEventBus.instance().publish_event(_sse_cid, "new_message", {
                 "role": "user",
                 "content": text,
                 "msg_id": msg_id,

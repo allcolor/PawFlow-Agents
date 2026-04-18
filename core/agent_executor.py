@@ -107,6 +107,7 @@ class AgentTask:
     parent_conversation_id: str = ""  # for read_parent_context tool
     delegate_tc_id: str = ""  # tool_call ID of the delegate call in parent conversation
     persist: bool = False  # keep sub-conversation after completion (for multi-turn delegates)
+    source_task_id: str = ""  # task ID when delegate is spawned from within a task
 
 
 @dataclass
@@ -249,6 +250,7 @@ class SubAgentExecutor:
             "source_llm_service": task.source_llm_service,
             "llm_service": task.llm_service,
             "delegate_tc_id": task.delegate_tc_id,
+            "source_task_id": task.source_task_id,
         })
 
         # Create display-only trace message in parent conversation
@@ -265,6 +267,7 @@ class SubAgentExecutor:
                         "task_id": task.id,
                         "depth": _depth,
                         "delegate_tc_id": task.delegate_tc_id,
+                        "source_task_id": task.source_task_id,
                         "message": task.message,
                         "llm_service": task.llm_service,
                     },
@@ -455,6 +458,7 @@ class SubAgentExecutor:
                     "agent_name": task.agent_name,
                     "task_id": task.id,
                     "delegate_tc_id": task.delegate_tc_id,
+                    "source_task_id": task.source_task_id,
                 }
                 try:
                     if event_type == "tool_call":
@@ -577,6 +581,7 @@ class SubAgentExecutor:
                     "tokens_in": result.tokens_in,
                     "tokens_out": result.tokens_out,
                     "delegate_tc_id": task.delegate_tc_id,
+                    "source_task_id": task.source_task_id,
                 })
                 if _trace_created:
                     try:
@@ -601,6 +606,7 @@ class SubAgentExecutor:
                             "task_id": task.id,
                             "text": _chunk,
                             "delegate_tc_id": task.delegate_tc_id,
+                            "source_task_id": task.source_task_id,
                         })
                     except Exception:
                         pass
@@ -700,6 +706,7 @@ class SubAgentExecutor:
                         "task_id": task.id,
                         "thinking": response.thinking[:2000],
                         "delegate_tc_id": task.delegate_tc_id,
+                        "source_task_id": task.source_task_id,
                     })
 
                 # No tool calls → final response
@@ -715,6 +722,7 @@ class SubAgentExecutor:
                         "task_id": task.id,
                         "text": response.content[:1000],
                         "delegate_tc_id": task.delegate_tc_id,
+                        "source_task_id": task.source_task_id,
                     })
 
                 # Process tool calls
@@ -750,6 +758,7 @@ class SubAgentExecutor:
                         "tc_id": tc.id,
                         "iteration": result.iterations,
                         "delegate_tc_id": task.delegate_tc_id,
+                        "source_task_id": task.source_task_id,
                     })
                     if _trace_created:
                         try:
@@ -775,6 +784,7 @@ class SubAgentExecutor:
                         "tc_id": tc.id,
                         "result": _result_preview,
                         "delegate_tc_id": task.delegate_tc_id,
+                        "source_task_id": task.source_task_id,
                     })
                     messages.append(LLMMessage(
                         role="tool",
@@ -868,6 +878,7 @@ class SubAgentExecutor:
             "model": result.model,
             "provider": result.provider,
             "delegate_tc_id": task.delegate_tc_id,
+            "source_task_id": task.source_task_id,
         }
         if result.question:
             _done_data["question"] = result.question[:500]

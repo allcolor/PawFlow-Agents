@@ -1811,6 +1811,15 @@ class ConversationStore:
             FileStore.instance().delete_by(conversation_id=cid)
         except Exception:
             pass
+        # Drop edit-guard state for every agent in this conv — otherwise
+        # the read-hashes / failed-edit counters leak until size eviction.
+        try:
+            _owner = user_id or self._cid_user.get(cid, "")
+            if _owner:
+                from core.handlers._edit_guard import clear_conversation as _eg_clear
+                _eg_clear(_owner, cid)
+        except Exception:
+            pass
         self._invalidate_ctx_cache(cid)
         return True
 

@@ -301,6 +301,11 @@ class AgentToolConfigMixin:
                     h.set_user_id(user_id)
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
+                # Agent name scopes the Read-before-Edit guard — each agent
+                # has its own "has read" view, reads by other agents don't
+                # count.
+                if agent_name and hasattr(h, 'set_agent_name'):
+                    h.set_agent_name(agent_name)
                 # Try conversation-scoped relay bindings first (per-agent)
                 _agent_name = agent_name
                 _relay_svc = None

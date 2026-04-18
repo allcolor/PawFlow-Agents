@@ -1350,6 +1350,19 @@ class AgentCoreMixin:
                 self._cleanup_tool_result_files(
                     conversation_id=conversation_id,
                     agent_name=ctx.get("active_agent_name", ""))
+                # Drop Read-before-Edit guard state for this agent. The
+                # "has read" view lives ONE loop — between turns the file
+                # may have been edited, so a fresh read is required. Not
+                # clearing here would leak bounded-but-nontrivial state in
+                # long-running conversations.
+                try:
+                    from core.handlers._edit_guard import clear_agent
+                    _uid_done = ctx.get("user_id", "") or ""
+                    _agent_done = ctx.get("active_agent_name", "") or ""
+                    if _uid_done and _agent_done:
+                        clear_agent(_uid_done, conversation_id, _agent_done)
+                except Exception:
+                    pass
             except Exception as _post_err:
                 logger.error("[agent:%s] post-loop error: %s", conversation_id[:8],
                              _post_err, exc_info=True)

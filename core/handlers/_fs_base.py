@@ -110,6 +110,7 @@ class BaseFsHandler(ToolHandler):
         self._available_services = []
         self._user_id = ""
         self._conversation_id = ""
+        self._agent_name = ""
         self._checkpoint_id = ""
         self._tool_result_max_chars = 50000
         self._workdir = ""
@@ -123,6 +124,12 @@ class BaseFsHandler(ToolHandler):
 
     def set_conversation_id(self, conversation_id: str):
         self._conversation_id = conversation_id
+
+    def set_agent_name(self, agent_name: str):
+        # Scope for Read-before-Edit: each agent has its own view of what
+        # it has read. Another agent reading the same file in the same
+        # conv doesn't grant this agent permission to edit.
+        self._agent_name = agent_name or ""
 
     def set_checkpoint_id(self, checkpoint_id: str):
         self._checkpoint_id = checkpoint_id
@@ -356,6 +363,10 @@ class BaseFsHandler(ToolHandler):
         with open(full, "rb") as f:
             data = f.read()
         fname = os.path.basename(full)
+        # Track for Read-before-Edit enforcement.
+        from core.handlers._edit_guard import track_read
+        track_read(self._user_id, self._conversation_id,
+                   self._agent_name, path, data)
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:

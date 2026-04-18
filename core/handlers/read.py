@@ -119,6 +119,12 @@ class ReadHandler(BaseFsHandler):
         except Exception as e:
             return f"Error reading '{path}': {e}"
 
+        # Track for Read-before-Edit enforcement.
+        from core.handlers._edit_guard import track_read
+        track_read(self._user_id, self._conversation_id,
+                   self._agent_name, path,
+                   data if isinstance(data, (bytes, bytearray)) else b"")
+
         fname = path.rsplit("/", 1)[-1] if "/" in path else path
 
         # Images — return metadata + hint to use see() for visual inspection

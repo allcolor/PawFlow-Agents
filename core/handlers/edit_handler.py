@@ -75,11 +75,39 @@ class EditHandler(BaseFsHandler):
         start_line = int(arguments.get("start_line", 0) or 0)
         end_line = int(arguments.get("end_line", 0) or 0)
 
+        # Pre-flight guards (skip for line-based edits — they're
+        # addressed by line number, no old_string to dedup on).
+        from core.handlers._edit_guard import (
+            check_read_before_edit, check_duplicate_failure,
+            record_edit_failure, track_write,
+        )
+        _uid = self._user_id
+        _cid = self._conversation_id
+        _agent = self._agent_name
+        if not (start_line > 0 and end_line > 0):
+            _guard = check_read_before_edit(_uid, _cid, _agent, path)
+            if _guard:
+                return f"Error: {_guard}"
+            _dup = check_duplicate_failure(_uid, _cid, _agent, path, old_string)
+            if _dup:
+                return f"Error: {_dup}"
+
         # Workdir
         if workdir:
             if start_line > 0 and end_line > 0:
                 return self._workdir_line_edit(path, start_line, end_line, new_string)
-            return self._workdir_edit(path, old_string, new_string, replace_all)
+            _result = self._workdir_edit(path, old_string, new_string, replace_all)
+            if _result.startswith("Error:"):
+                record_edit_failure(_uid, _cid, _agent, path, old_string)
+            else:
+                # Successful edit — update tracking so next edit doesn't
+                # require a re-read of our own output.
+                try:
+                    with open(self._sandbox_path(path, self._workdir), "rb") as _f:
+                        track_write(_uid, _cid, _agent, path, _f.read())
+                except Exception:
+                    pass
+            return _result
 
         if svc is None or svc == "filestore":
             return self._no_target_error(fs) if svc is None else "Error: cannot edit FileStore files"
@@ -98,7 +126,13 @@ class EditHandler(BaseFsHandler):
                         f"({result.get('lines_removed', 0)} removed, "
                         f"{result.get('lines_inserted', 0)} inserted)")
             else:
-                result = svc.edit(path, old_string, new_string, replace_all)
+                try:
+                    result = svc.edit(path, old_string, new_string, replace_all)
+                except Exception as e:
+                    # Record failure so the next identical old_string attempt
+                    # gets refused by check_duplicate_failure.
+                    record_edit_failure(_uid, _cid, _agent, path, old_string)
+                    return f"Error editing '{path}': {e}"
                 diff = result.get("diff", [])
                 if diff:
                     diff_text = (f"Edited {result.get('path', path)} "

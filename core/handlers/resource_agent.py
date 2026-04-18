@@ -449,30 +449,17 @@ class SpawnAgentsHandler(ToolHandler):
         from core.agent_executor import resolve_agent_task, SubAgentExecutor
         import uuid
 
-        tasks_spec = arguments.get("tasks", [])
-        # Validate input shape upfront: tasks must be a list of dicts with
-        # 'agent' and 'message' keys. Malformed calls (single string,
-        # nested dict, bare dict) would crash deeper with cryptic errors.
-        if not isinstance(tasks_spec, list):
-            return (
-                "Error: 'tasks' must be a list of objects, got "
-                f"{type(tasks_spec).__name__}. "
-                "Expected: tasks=[{\"agent\": \"<name>\", "
-                "\"message\": \"<text>\"}, ...]"
-            )
-        _bad = []
-        for _i, _t in enumerate(tasks_spec):
-            if not isinstance(_t, dict):
-                _bad.append(f"tasks[{_i}] is {type(_t).__name__}")
-            elif not _t.get("agent") or not _t.get("message"):
-                _bad.append(f"tasks[{_i}] missing 'agent' or 'message'")
-        if _bad:
-            return (
-                "Error: malformed 'tasks' — " + "; ".join(_bad) + ". "
-                "Expected each task: {\"agent\": \"<existing-agent-name>\", "
-                "\"message\": \"<text>\", \"id\"?: \"<optional>\", "
-                "\"context\"?: \"shared\"|\"isolated\"|\"last:N\"}."
-            )
+        from core.handlers._arg_normalize import validate_object_list
+        tasks_spec, _err = validate_object_list(
+            arguments.get("tasks"),
+            param_name="tasks",
+            required_keys=["agent", "message"],
+            example=('tasks=[{"agent": "<existing-agent-name>", '
+                     '"message": "<text>", "id"?: "<optional>", '
+                     '"context"?: "shared"|"isolated"|"last:N"}, ...]'),
+        )
+        if _err:
+            return f"Error: {_err}"
         # Delegate is ALWAYS async (fire-and-forget). Results come back
         # via the preempt (caller running) / wake (caller idle) path.
         # No more 'wait' param — concurrency is the whole point.
@@ -606,7 +593,8 @@ class SpawnAgentsHandler(ToolHandler):
             # ISOLATED / last:N / summary:N / full path — spawn a real
             # sub-agent via SubAgentExecutor.
             try:
-                extra_skills = spec.get("skills") or []
+                from core.handlers._arg_normalize import normalize_string_list
+                extra_skills = normalize_string_list(spec.get("skills"))
                 task = resolve_agent_task(agent_name, message, user_id,
                                          conversation_id=_parent_conv_id,
                                          extra_skills=extra_skills)

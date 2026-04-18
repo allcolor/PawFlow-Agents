@@ -76,7 +76,8 @@ class RunTestsHandler(ToolHandler):
         self._user_id = user_id
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        test_files = arguments.get("test_files", [])
+        from core.handlers._arg_normalize import normalize_string_list
+        test_files = normalize_string_list(arguments.get("test_files"))
         test_pattern = arguments.get("test_pattern", "")
         timeout = arguments.get("timeout", 60)
         service_name = arguments.get("service", "")

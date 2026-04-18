@@ -57,7 +57,16 @@ class BatchEditHandler(BaseFsHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
         arguments = self._resolve_expressions(arguments)
-        edits = arguments.get("edits", [])
+        from core.handlers._arg_normalize import validate_object_list
+        edits, _err = validate_object_list(
+            arguments.get("edits"),
+            param_name="edits",
+            required_keys=["path", "old_string", "new_string"],
+            example=('edits=[{"path": "...", "old_string": "...", '
+                     '"new_string": "..."}, ...]'),
+        )
+        if _err:
+            return f"Error: {_err}"
         if not edits:
             return "Error: 'edits' array is required"
         fs = arguments.get("filesystem", "")

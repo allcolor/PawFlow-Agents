@@ -122,9 +122,8 @@ class RememberHandler(ToolHandler):
         if not text:
             return "Error: text is required"
         text = self._sanitize_memory(text)
-        tags = arguments.get("tags", [])
-        if not isinstance(tags, list):
-            tags = [str(tags)]
+        from core.handlers._arg_normalize import normalize_string_list
+        tags = normalize_string_list(arguments.get("tags"))
         scope = arguments.get("scope", "agent")
 
         user_id = self._user_id
@@ -372,9 +371,8 @@ class RecallHandler(ToolHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         query = arguments.get("query", "")
-        tags = arguments.get("tags")
-        if isinstance(tags, str):
-            tags = [tags]
+        from core.handlers._arg_normalize import normalize_string_list
+        tags = normalize_string_list(arguments.get("tags")) or None
 
         user_id = self._user_id
         try:

@@ -149,8 +149,9 @@ class AskUserHandler(ToolHandler):
         self._user_id = user_id
 
     def execute(self, arguments: Dict[str, Any]) -> str:
+        from core.handlers._arg_normalize import normalize_string_list
         question = arguments.get("question", "")
-        options = arguments.get("options", [])
+        options = normalize_string_list(arguments.get("options"))
         if not question:
             return "Error: missing 'question' parameter"
 

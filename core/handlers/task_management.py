@@ -483,7 +483,8 @@ class AssignTaskHandler(ToolHandler):
         all_tasks = store.get_extra(self._conversation_id, "agent_tasks") or {}
 
         # Dependency handling
-        depends_on = arguments.get("depends_on") or []
+        from core.handlers._arg_normalize import normalize_string_list
+        depends_on = normalize_string_list(arguments.get("depends_on"))
         if depends_on:
             # Validate: all deps must exist in the same conversation
             for dep_id in depends_on:

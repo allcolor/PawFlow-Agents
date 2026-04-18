@@ -80,10 +80,11 @@ class DiaryWriteHandler(ToolHandler):
             return "Error: user_id and agent_name required"
         try:
             from core.agent_diary import AgentDiary
+            from core.handlers._arg_normalize import normalize_string_list
             record = AgentDiary.instance().write(
                 self._user_id, self._agent_name, entry,
                 entry_type=arguments.get("type", "observation"),
-                tags=arguments.get("tags"),
+                tags=normalize_string_list(arguments.get("tags")),
             )
             return f"Diary entry saved ({record['id']}): [{record['type']}] {entry[:80]}"
         except Exception as e:

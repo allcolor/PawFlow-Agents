@@ -79,8 +79,13 @@ class CreatePlanHandler(_PlanHandlerBase):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time
+        from core.handlers._arg_normalize import normalize_single_field_object_list
         title = arguments.get("title", "")
-        steps = arguments.get("steps", [])
+        # Tolerate string / list-of-string in addition to list-of-object:
+        # LLMs sometimes collapse to a single string when the schema
+        # object has only one required field (description).
+        steps = normalize_single_field_object_list(
+            arguments.get("steps"), key="description")
         if not title or not steps:
             return "Error: title and steps are required"
 
@@ -180,8 +185,16 @@ class UpdatePlanHandler(_PlanHandlerBase):
         self._agent_name = name
 
     def execute(self, arguments: Dict[str, Any]) -> str:
+        from core.handlers._arg_normalize import validate_object_list
         plan_id = arguments.get("plan_id", "")
-        updates = arguments.get("updates", [])
+        updates, _err = validate_object_list(
+            arguments.get("updates"),
+            param_name="updates",
+            required_keys=["step", "status"],
+            example='updates=[{"step": 1, "status": "done", "note": "..."}, ...]',
+        )
+        if _err:
+            return f"Error: {_err}"
         if not plan_id or not updates:
             return "Error: plan_id and updates are required"
 

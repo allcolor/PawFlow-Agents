@@ -423,6 +423,99 @@ def action_find_replace(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     return {"replacements": count, "path": _rel(path, root_dir)}
 
 
+def _diagnose_edit_mismatch(old_string: str, text: str, filename: str) -> str:
+    """Build an actionable error message explaining WHY old_string doesn't match.
+
+    Emits several hints that cover the common causes agents hit repeatedly:
+    CRLF vs LF, trailing whitespace, tab/space indentation, and a best-effort
+    longest-prefix match pointing at the exact divergence position. The goal
+    is to replace 5 useless retries with a single corrective read.
+    """
+    hints = []
+
+    # CRLF vs LF mismatch
+    if '\r\n' in text and '\r\n' not in old_string:
+        if old_string.replace('\n', '\r\n') in text:
+            hints.append(
+                "File uses CRLF line endings; your old_string uses LF. "
+                "Re-send old_string with \\r\\n between lines.")
+    elif '\r\n' in old_string and '\r\n' not in text:
+        if old_string.replace('\r\n', '\n') in text:
+            hints.append(
+                "File uses LF line endings; your old_string has CRLF. "
+                "Strip the \\r from line endings in old_string.")
+
+    # Trailing whitespace mismatch (either direction) — only emit if no
+    # more specific hint already covers it. CRLF and tab/space mismatches
+    # also make rstripped content match, but their hints are more actionable.
+    _specific_hint = bool(hints)
+    old_rstripped = '\n'.join(l.rstrip() for l in old_string.split('\n'))
+    text_rstripped = '\n'.join(l.rstrip() for l in text.split('\n'))
+    if not _specific_hint and old_rstripped in text_rstripped:
+        hints.append(
+            "Content matches after rstripping each line — trailing whitespace "
+            "differs between your old_string and the file. Re-read the target "
+            "lines and copy them verbatim (cat -A or repr() to see exact bytes).")
+
+    # Tabs vs spaces
+    if '\t' in text and '\t' not in old_string:
+        # Guess the indent width that turns spaces into tabs
+        for _w in (4, 2, 8):
+            _swapped = old_string.replace(' ' * _w, '\t')
+            if _swapped in text:
+                hints.append(
+                    f"File uses tabs for indentation; your old_string uses "
+                    f"{_w}-space indent. Convert runs of {_w} spaces to tabs.")
+                break
+    elif '\t' in old_string and '\t' not in text:
+        for _w in (4, 2, 8):
+            _swapped = old_string.replace('\t', ' ' * _w)
+            if _swapped in text:
+                hints.append(
+                    f"File uses spaces for indentation ({_w}-wide); your "
+                    f"old_string has tabs. Replace each \\t with {_w} spaces.")
+                break
+
+    # Longest-prefix match — where does old_string start diverging?
+    _first_line = old_string.split('\n', 1)[0]
+    if len(_first_line) >= 8:
+        best_prefix = 0
+        best_pos = -1
+        _pos = 0
+        while True:
+            _pos = text.find(_first_line, _pos)
+            if _pos < 0:
+                break
+            _mlen = 0
+            _stop = min(len(old_string), len(text) - _pos)
+            while _mlen < _stop and text[_pos + _mlen] == old_string[_mlen]:
+                _mlen += 1
+            if _mlen > best_prefix:
+                best_prefix = _mlen
+                best_pos = _pos
+            _pos += 1
+        if best_pos >= 0 and best_prefix >= len(_first_line):
+            _line_num = text[:best_pos].count('\n') + 1
+            _diverge_line = old_string[:best_prefix].count('\n') + 1
+            _old_tail = old_string[best_prefix:best_prefix + 60].replace('\n', '\\n')
+            _file_tail = text[best_pos + best_prefix:best_pos + best_prefix + 60].replace('\n', '\\n')
+            hints.append(
+                f"Partial match starts at file line {_line_num}, "
+                f"diverges on line {_diverge_line} of old_string "
+                f"(after {best_prefix} chars). "
+                f"You sent: {_old_tail!r} | File has: {_file_tail!r}")
+
+    if not hints:
+        hints.append(
+            "No similar content found anywhere in the file. "
+            "Re-read the exact lines you want to edit before retrying.")
+
+    return (f"old_string not found in {filename}.\n  - "
+            + "\n  - ".join(hints)
+            + "\n\nDo NOT retry with the same old_string. "
+            "Read the file at the expected line range and copy the exact bytes.")
+
+
 def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     """Exact string replacement with diff context."""
     old_string = req.get("old_string", "")
@@ -434,27 +527,7 @@ def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     text = p.read_text(encoding="utf-8")
     count = text.count(old_string)
     if count == 0:
-        # Fuzzy fallback: try to find the closest match (whitespace-tolerant)
-        import difflib
-        old_lines = old_string.splitlines()
-        text_lines = text.splitlines()
-        # Try to find the best matching block
-        matcher = difflib.SequenceMatcher(None,
-            [l.strip() for l in old_lines],
-            [l.strip() for l in text_lines])
-        best = matcher.find_longest_match(0, len(old_lines), 0, len(text_lines))
-        if best.size >= max(1, len(old_lines) * 0.6):
-            # Found a fuzzy match — use the actual text from the file
-            matched_lines = text_lines[best.b:best.b + best.size]
-            actual_old = "\n".join(matched_lines)
-            if actual_old in text:
-                # Replace with the actual matched text
-                count = 1
-                old_string = actual_old
-            else:
-                raise ValueError(f"old_string not found in {p.name} (fuzzy match also failed)")
-        else:
-            raise ValueError(f"old_string not found in {p.name}")
+        raise ValueError(_diagnose_edit_mismatch(old_string, text, p.name))
     if count > 1 and not replace_all:
         raise ValueError(f"old_string found {count} times (use replace_all=true)")
 

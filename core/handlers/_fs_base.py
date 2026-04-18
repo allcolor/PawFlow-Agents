@@ -459,7 +459,11 @@ class BaseFsHandler(ToolHandler):
         with open(full, "r", encoding="utf-8") as f:
             content = f.read()
         if old_string not in content:
-            return f"Error: old_string not found in {path}"
+            # Rich diagnostic so the agent stops retrying the same wrong
+            # pattern and re-reads the file instead.
+            from tools.fs_actions import _diagnose_edit_mismatch
+            return "Error: " + _diagnose_edit_mismatch(
+                old_string, content, os.path.basename(path))
         if replace_all:
             new_content = content.replace(old_string, new_string)
             count = content.count(old_string)

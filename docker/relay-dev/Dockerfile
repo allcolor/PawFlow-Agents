@@ -7,9 +7,22 @@ ENV LC_ALL=C.UTF-8
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # ── System user (created early so Rust/Go install into /home/pawflow) ──
+# ubuntu:24.04 ships with a default user 'ubuntu' at UID 1000. We rename it to
+# 'pawflow' so our user owns UID 1000 — this matches the typical Linux/WSL
+# first-user uid, so bind-mounted host files aren't stuck as a different uid
+# and pawflow can read/write them. (claude-code's Dockerfile does the same
+# trick with node:22-slim's 'node' user.) If the base image ever drops the
+# ubuntu user, fall back to creating pawflow fresh at UID 1000.
 RUN apt-get update && apt-get install -y --no-install-recommends sudo \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -s /bin/bash -G sudo pawflow \
+    && if id -u ubuntu >/dev/null 2>&1; then \
+           usermod -l pawflow -d /home/pawflow -m ubuntu \
+        && groupmod -n pawflow ubuntu \
+        && usermod -aG sudo pawflow; \
+       else \
+           groupadd -g 1000 pawflow \
+        && useradd -u 1000 -g 1000 -m -s /bin/bash -G sudo pawflow; \
+       fi \
     && echo 'pawflow ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/pawflow \
     && chmod 440 /etc/sudoers.d/pawflow
 

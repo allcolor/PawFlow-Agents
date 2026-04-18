@@ -1111,7 +1111,7 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
         html += `<tr class="param-row" style="border-top:1px solid #222;">`;
         html += `<td style="padding:3px 4px;"><input class="pe-name" value="${pn}"${dis} style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
         html += `<td style="padding:3px 4px;"><select class="pe-type"${dis} style="background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}">`;
-        for (const t of ['string','number','boolean']) html += `<option value="${t}"${pt===t?' selected'}>${t}</option>`;
+        for (const t of ['string','number','boolean']) html += `<option value="${t}"${pt===t?' selected':''}>${t}</option>`;
         html += '</select></td>';
         html += `<td style="padding:3px 4px;"><input class="pe-default" value="${pd}"${dis} style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
         html += `<td style="padding:3px 4px;"><input class="pe-desc" value="${pdesc}"${dis} style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;

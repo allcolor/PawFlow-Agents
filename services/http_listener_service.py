@@ -442,6 +442,15 @@ class _RequestHandler(BaseHTTPRequestHandler):
         header = f"Content-Type: {ct}\r\n\r\n".encode()
         msg = BytesParser().parsebytes(header + body)
 
+        # Extract optional conversation_id from form fields
+        conv_id = ""
+        for part in msg.walk():
+            if part.get_content_disposition() == "form-data" and not part.get_filename():
+                name = part.get_param("name", header="content-disposition") or ""
+                if name == "conversation_id":
+                    conv_id = (part.get_payload(decode=True) or b"").decode().strip()
+                    break
+
         store = FileStore.instance()
         results = []
         for part in msg.walk():
@@ -457,7 +466,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
             mime = part.get_content_type() or "application/octet-stream"
             fid = store.store(
                 filename, raw, mime,
-                user_id=user_id,
+                user_id=user_id or "_anonymous",
+                conversation_id=conv_id or "_upload",
                 category="upload",
             )
             results.append({

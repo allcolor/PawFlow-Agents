@@ -127,6 +127,7 @@ function formatRelative(ms) {
 async function uploadFileToStore(file) {
   const fd = new FormData();
   fd.append('file', file);
+  if (typeof currentConvId !== 'undefined' && currentConvId) fd.append('conversation_id', currentConvId);
   const resp = await fetch('/api/upload', { method: 'POST', body: fd, headers: {'Authorization': getAuthHeaders()['Authorization'] || ''}, credentials: 'same-origin' });
   const data = await resp.json();
   if (!data.ok || !data.files || !data.files.length) throw new Error(data.error || 'Upload failed');

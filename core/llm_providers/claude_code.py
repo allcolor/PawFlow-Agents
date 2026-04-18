@@ -287,6 +287,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
                 _is_last_user = (idx == _last_user_idx)
 
+                # Placeholder policy: when we extract an image from the LAST
+                # user message into image_blocks, that image is sent to the
+                # model natively via vision — emitting a text placeholder on
+                # top of it is actively harmful: the agent reads
+                # "[image: foo.png]" and calls see() / read() on it, duplicating
+                # the image in its context (tokens ×2) for zero benefit.
+                # For OLDER user messages we keep a text placeholder so the
+                # model knows an image was there, but we DON'T re-send it via
+                # vision (would bloat context with every historical image).
+
                 if btype == "image_url":
                     url = (block.get("image_url") or {}).get("url", "")
                     if url.startswith("data:"):
@@ -306,8 +316,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                             mime, len(data_b64))
                             except Exception as e:
                                 logger.warning("Failed to extract image: %s", e)
-                        # Replace with placeholder (both old and current — current goes to image_blocks)
-                        new_content.append({"type": "text", "text": "[image]"})
+                            # Image is in vision — no text placeholder.
+                        else:
+                            new_content.append({"type": "text", "text": "[image]"})
                         continue
 
                 elif btype == "image":
@@ -317,7 +328,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             image_blocks.append(block)
                             logger.info("Extracted image for vision: %s",
                                         source.get("media_type", "?"))
-                        new_content.append({"type": "text", "text": "[image]"})
+                            # Image is in vision — no text placeholder.
+                        else:
+                            new_content.append({"type": "text", "text": "[image]"})
                         continue
 
                 elif btype == "image_ref":
@@ -346,7 +359,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         })
                         logger.info("Loaded image from FileStore for vision: %s (%d bytes)",
                                     _fid, len(_data))
-                    new_content.append({"type": "text", "text": f"[image: {block.get('filename', '?')}]"})
+                        # Image is in vision — no text placeholder that would
+                        # make the agent see()/read() it redundantly.
+                    else:
+                        new_content.append({"type": "text", "text": f"[image: {block.get('filename', '?')}]"})
                     continue
 
                 new_content.append(block)

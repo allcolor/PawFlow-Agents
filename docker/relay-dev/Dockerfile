@@ -250,7 +250,8 @@ RUN printf '#!/bin/bash\nsudo chronyd 2>/dev/null || true\nexec "$@"\n' > /usr/l
     && chmod +x /usr/local/bin/init.sh
 
 # ── Fix home ownership (usermod -m may keep old uid on preexisting files) ──
-RUN chown -R pawflow:pawflow /home/pawflow
+RUN chown pawflow:pawflow /home/pawflow \
+    && find /home/pawflow -maxdepth 1 ! -user pawflow -exec chown -R pawflow:pawflow {} +
 
 # ── Run as pawflow ──────────────────────────────────────────────────
 USER pawflow

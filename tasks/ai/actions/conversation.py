@@ -679,33 +679,115 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                     extras["selectedAgent"] = list(new_conv_agents.keys())[0]
             extras_path.write_text(json.dumps(extras, ensure_ascii=False, indent=2), encoding="utf-8")
         elif fmt == "claude_code":
-            # Convert CC JSONL to PawFlow transcript
+            # Convert CC JSONL to PawFlow transcript.
+            # Real Claude Code session files use type="user"/"assistant".
+            # PawFlow's own CC export uses type="human"/"tool_result".
+            # We handle both. Structured content blocks (text, tool_use,
+            # tool_result) are expanded into proper tool_call / tool
+            # messages so the UI renders them like native PawFlow traces
+            # instead of empty bubbles.
             text = raw.decode("utf-8", errors="replace")
             transcript_lines = []
-            msg_id_counter = 0
             import uuid as _u2
-            for line in text.splitlines():
+            def _emit(obj):
+                transcript_lines.append(json.dumps(obj, ensure_ascii=False))
+            def _stringify(c):
+                if isinstance(c, str):
+                    return c
+                if isinstance(c, list):
+                    parts = []
+                    for b in c:
+                        if not isinstance(b, dict):
+                            continue
+                        if b.get("type") == "text":
+                            parts.append(b.get("text", ""))
+                        elif b.get("type") == "tool_result":
+                            parts.append(_stringify(b.get("content", "")))
+                    return "\n".join(p for p in parts if p)
+                return json.dumps(c, ensure_ascii=False)
+            base_ts = time.time() - 1.0
+            for idx, line in enumerate(text.splitlines()):
                 line = line.strip()
-                if not line: continue
+                if not line:
+                    continue
                 try:
                     entry = json.loads(line)
                 except json.JSONDecodeError:
                     continue
                 msg_type = entry.get("type", "")
-                message = entry.get("message", {})
+                if msg_type == "summary":
+                    continue
+                message = entry.get("message", {}) or {}
                 content = message.get("content", "")
-                ts = time.time()
+                raw_ts = entry.get("timestamp") or message.get("timestamp") or ""
+                try:
+                    if isinstance(raw_ts, (int, float)):
+                        ts = float(raw_ts)
+                    elif isinstance(raw_ts, str) and raw_ts:
+                        ts = time.mktime(time.strptime(raw_ts[:19], "%Y-%m-%dT%H:%M:%S"))
+                    else:
+                        ts = base_ts + idx * 0.001
+                except Exception:
+                    ts = base_ts + idx * 0.001
                 mid = _u2.uuid4().hex[:12]
-                if msg_type == "human":
-                    transcript_lines.append(json.dumps({"t": "msg", "role": "user", "content": content, "msg_id": mid, "timestamp": ts}, ensure_ascii=False))
-                elif msg_type == "assistant":
-                    # CC content can be array of blocks
+                if msg_type in ("human", "user"):
+                    # User messages may carry tool_results (CC encodes
+                    # tool feedback as user role). Emit those as
+                    # role=tool so the UI shows them in-line.
                     if isinstance(content, list):
-                        text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-                        content = "\n".join(text_parts)
-                    transcript_lines.append(json.dumps({"t": "msg", "role": "assistant", "content": content, "msg_id": mid, "timestamp": ts}, ensure_ascii=False))
+                        tool_results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
+                        text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                        user_text = "\n".join(p for p in text_parts if p)
+                        if user_text:
+                            _emit({"t": "msg", "role": "user", "content": user_text, "msg_id": mid, "timestamp": ts})
+                        for tr in tool_results:
+                            _emit({
+                                "t": "msg", "role": "tool",
+                                "content": _stringify(tr.get("content", "")),
+                                "tool_call_id": tr.get("tool_use_id", ""),
+                                "msg_id": _u2.uuid4().hex[:12], "timestamp": ts,
+                            })
+                        if not user_text and not tool_results:
+                            continue
+                    else:
+                        if not (content or "").strip():
+                            continue
+                        _emit({"t": "msg", "role": "user", "content": content, "msg_id": mid, "timestamp": ts})
+                elif msg_type == "assistant":
+                    # Split text blocks and tool_use blocks. Preserve
+                    # tool calls so the chat UI renders them as proper
+                    # tool-call blocks instead of empty assistant bubbles.
+                    tool_calls = []
+                    assistant_text = ""
+                    if isinstance(content, list):
+                        text_parts = []
+                        for b in content:
+                            if not isinstance(b, dict):
+                                continue
+                            if b.get("type") == "text":
+                                text_parts.append(b.get("text", ""))
+                            elif b.get("type") == "tool_use":
+                                tool_calls.append({
+                                    "id": b.get("id", ""),
+                                    "name": b.get("name", ""),
+                                    "arguments": b.get("input", {}) or {},
+                                })
+                        assistant_text = "\n".join(p for p in text_parts if p)
+                    else:
+                        assistant_text = content or ""
+                    if not assistant_text and not tool_calls:
+                        continue
+                    obj = {"t": "msg", "role": "assistant", "content": assistant_text, "msg_id": mid, "timestamp": ts}
+                    if tool_calls:
+                        obj["tool_calls"] = tool_calls
+                    _emit(obj)
                 elif msg_type == "tool_result":
-                    transcript_lines.append(json.dumps({"t": "msg", "role": "tool", "content": str(content), "msg_id": mid, "timestamp": ts}, ensure_ascii=False))
+                    _emit({
+                        "t": "msg", "role": "tool",
+                        "content": _stringify(content),
+                        "tool_call_id": message.get("tool_use_id", "") or entry.get("tool_use_id", ""),
+                        "msg_id": mid, "timestamp": ts,
+                    })
             (conv_dir / "transcript.jsonl").write_text("\n".join(transcript_lines) + "\n", encoding="utf-8")
             # Create minimal extras
             agent_name = list(agent_mapping.keys())[0] if agent_mapping else "claude"
@@ -724,9 +806,11 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 },
             }
             (conv_dir / "extras.json").write_text(json.dumps(extras, ensure_ascii=False, indent=2), encoding="utf-8")
-        # Init git
+        # Init git and register in the cache so list_conversations
+        # picks up the new conversation immediately.
         store._cid_user[cid] = user_id
         store._git_init(cid)
+        store._reload_cache(cid)
         # Cleanup temp
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)

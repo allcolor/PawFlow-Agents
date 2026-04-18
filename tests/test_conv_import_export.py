@@ -280,6 +280,94 @@ def test_pawflow_import_roundtrip(store):
     assert extras["conv_agents"]["bot"]["definition"] == "my-bot"
 
 
+# ── CC import execute ─ real CC format (user/assistant + tool_use/tool_result) ──
+
+def _cc_execute(store, cc_text, agent_mapping=None):
+    """Directly invoke conv_import_execute for a CC JSONL payload."""
+    from tasks.ai.actions.conversation import _handle_conversation
+    from core import FlowFile
+    from core.file_store import FileStore
+
+    fs = FileStore.instance()
+    fid = fs.store("import.jsonl", cc_text.encode("utf-8"), "application/jsonl",
+                   user_id="testuser", conversation_id="_upload")
+
+    # Mock self object — _handle_conversation only uses `store` on self for
+    # this action path.
+    class _Self: pass
+    ff = FlowFile(content=b"")
+    # Analyze first to obtain a temp_id
+    body = {"file_id": fid, "format": "claude_code"}
+    out = _handle_conversation(_Self(), "conv_import_analyze", body, store, "testuser", ff)
+    info = json.loads(out[0].get_content().decode())
+    assert info.get("ok"), info
+    temp_id = info["temp_id"]
+
+    ff2 = FlowFile(content=b"")
+    body2 = {
+        "temp_id": temp_id, "format": "claude_code",
+        "title": "Imported CC",
+        "agent_mapping": agent_mapping or {"claude": {"definition": "claude", "params": {"name": "claude"}, "llm_service": ""}},
+    }
+    out2 = _handle_conversation(_Self(), "conv_import_execute", body2, store, "testuser", ff2)
+    res = json.loads(out2[0].get_content().decode())
+    assert res.get("ok"), res
+    return res["conversation_id"]
+
+
+def test_cc_import_real_format_user_assistant(store):
+    """Real CC session: type=user/assistant with structured content blocks."""
+    lines = [
+        json.dumps({"type": "user", "message": {"role": "user", "content": "Hello"}}),
+        json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Sure."},
+            {"type": "tool_use", "id": "tu_1", "name": "grep", "input": {"pattern": "foo"}},
+        ]}}),
+        json.dumps({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu_1", "content": "match"},
+        ]}}),
+        json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Done."},
+        ]}}),
+    ]
+    cid = _cc_execute(store, "\n".join(lines) + "\n")
+    conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
+    transcript = [json.loads(l) for l in (conv_dir / "transcript.jsonl").read_text().splitlines() if l.strip()]
+    roles = [m["role"] for m in transcript]
+    # user, assistant(with tool_calls), tool, assistant(text)
+    assert roles == ["user", "assistant", "tool", "assistant"]
+    assert transcript[0]["content"] == "Hello"
+    assert transcript[1]["content"] == "Sure."
+    assert transcript[1]["tool_calls"][0]["name"] == "grep"
+    assert transcript[1]["tool_calls"][0]["id"] == "tu_1"
+    assert transcript[2]["tool_call_id"] == "tu_1"
+    assert transcript[2]["content"] == "match"
+    assert transcript[3]["content"] == "Done."
+
+
+def test_cc_import_drops_empty_assistant_stub(store):
+    """Assistant entries with no text AND no tool_use produce zero messages."""
+    lines = [
+        json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}}),
+        json.dumps({"type": "assistant", "message": {"role": "assistant", "content": []}}),
+        json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "real"}}),
+    ]
+    cid = _cc_execute(store, "\n".join(lines) + "\n")
+    conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
+    transcript = [json.loads(l) for l in (conv_dir / "transcript.jsonl").read_text().splitlines() if l.strip()]
+    assert len(transcript) == 2
+    assert transcript[0]["content"] == "hi"
+    assert transcript[1]["content"] == "real"
+
+
+def test_cc_import_registers_in_list_conversations(store):
+    """After import, list_conversations must include the new conv."""
+    lines = [json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}})]
+    cid = _cc_execute(store, "\n".join(lines) + "\n")
+    convs = store.list_conversations(user_id="testuser")
+    assert any(c["conversation_id"] == cid for c in convs)
+
+
 def test_pawflow_import_remaps_agents(store):
     """Agent mapping updates extras.json with new definitions."""
     agents = {"old_agent": {"definition": "old-def", "params": {"name": "old_agent"}}}

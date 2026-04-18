@@ -96,7 +96,8 @@ function reloadConv() {
 function resumeConv(cid, force) {
   if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
-  // Prepare UI
+  // Prepare UI — full reset so the chat loads as if it were the first time.
+  // Anything that is conversation-scoped MUST be wiped here.
   if (eventSource) { eventSource.close(); eventSource = null; }
   conversationId = cid;
   _setInputEnabled(true);
@@ -106,9 +107,29 @@ function resumeConv(cid, force) {
   document.getElementById('messages').innerHTML = '';
   _expectingClear = false;
   _seenMsgIds.clear();
+  if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
   serverMsgCount = 0;
   _histTaskBlocks = {};
+  // Drop live SSE-side DOM references (task/delegate blocks from prev conv)
   if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
+  // Clear active-agents panel (stale poll from previous conv would leak)
+  if (typeof activeInteractions !== 'undefined') {
+    for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
+    if (typeof updateActivePanel === 'function') updateActivePanel();
+  }
+  if (typeof hideTyping === 'function') hideTyping();
+  // Flush any pending image-batch from the previous conv
+  if (typeof _pendingImages !== 'undefined') {
+    _pendingImages.length = 0;
+    if (typeof _imageFlushTimer !== 'undefined' && _imageFlushTimer) {
+      clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
+    }
+  }
+  // Reset selection so the new conv's active agent is picked up fresh
+  selectedAgent = '';
+  if (typeof nicknameMap !== 'undefined') nicknameMap = {};
+  // Auto-scroll defaults back to true for a fresh load
+  if (typeof _autoScroll !== 'undefined') _autoScroll = true;
   highlightConv(cid);
   // Reset SSE state so the new connection doesn't trigger false recovery
   sseEverConnected = false;
@@ -121,9 +142,14 @@ function resumeConv(cid, force) {
   _syncToggleBtn();
   // Load history AFTER SSE is connected (result comes via SSE command_result)
   function _loadWhenReady() {
+    // Bail out if the user has since switched to a different conv — we
+    // don't want an in-flight load_history for the previous cid to land
+    // inside the DOM of the now-active one.
+    if (cid !== conversationId) return;
     if (eventSource && eventSource.readyState === EventSource.OPEN) {
       action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
         .subscribe(data => {
+          if (cid !== conversationId) return;
           _renderHistory(data);
           startPollTimer();
         });

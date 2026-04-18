@@ -522,9 +522,11 @@ function _showImportConvDialog(info, fmt) {
   Promise.all([
     rxjs.firstValueFrom(action$('list_repo_agents', {})),
     rxjs.firstValueFrom(listServices$('llmConnection')),
+    rxjs.firstValueFrom(action$('relay_list_available', {})),
   ]).then(results => {
     var repoAgents = results[0].agents || [];
     var llmServices = (results[1].services || []).filter(s => s.enabled);
+    var availableRelays = (results[2].relays || []).filter(r => r.connected);
     var svcOpts = llmServices.map(s =>
       '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + (s.description ? ' \u2014 ' + escapeHtml(s.description) : '') + '</option>'
     ).join('');
@@ -546,6 +548,8 @@ function _showImportConvDialog(info, fmt) {
     box.onclick = e => e.stopPropagation();
 
     var _listCss = 'width:100%;min-height:100px;max-height:240px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);';
+    var _relCss = 'width:100%;min-height:60px;max-height:120px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);';
+    var _btnCss = 'padding:4px 10px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg2,#1e1e2e);color:inherit;cursor:pointer;font-size:16px;font-weight:600;';
 
     box.innerHTML =
       '<span id="_impCloseX" style="position:absolute;top:8px;right:12px;cursor:pointer;color:#888;font-size:18px;" title="Cancel">\u2715</span>'
@@ -557,6 +561,15 @@ function _showImportConvDialog(info, fmt) {
       + '<div style="display:flex;gap:12px;align-items:stretch;">'
       +   '<div id="_impAgentTree" style="' + _listCss + 'flex:1;"></div>'
       +   '<div id="_impAgentDetail" style="flex:1;border:1px solid var(--border,#444);border-radius:4px;padding:10px;background:var(--bg,#141420);min-height:100px;max-height:240px;overflow-y:auto;font-size:12px;color:#aaa;display:flex;align-items:center;justify-content:center;">Select an agent to configure</div>'
+      + '</div>'
+      + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">Relays</div>'
+      + '<div style="display:flex;gap:8px;align-items:stretch;">'
+      +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Available</div><div id="_impRelaysAvail" style="' + _relCss + '"></div></div>'
+      +   '<div style="display:flex;flex-direction:column;justify-content:center;gap:4px;">'
+      +     '<button id="_impRelayAdd" style="' + _btnCss + '" title="Link">\u25B6</button>'
+      +     '<button id="_impRelayRem" style="' + _btnCss + '" title="Unlink">\u25C0</button>'
+      +   '</div>'
+      +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Linked <span style="font-size:9px;color:#4ecdc4;">\u2605 = default</span></div><div id="_impRelaysSel" style="' + _relCss + '"></div></div>'
       + '</div>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">'
       +   '<button id="_impCancelBtn" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer;">Cancel</button>'
@@ -605,9 +618,32 @@ function _showImportConvDialog(info, fmt) {
         badge.textContent = inst.definition ? '\u2192 ' + inst.definition : '\u26A0 unmapped';
         row.appendChild(label);
         row.appendChild(badge);
-        row.onclick = () => { focusedAgent = iname; _renderTree(); _renderDetail(); };
+        row.onclick = () => { _commitCurrentDetail(); focusedAgent = iname; _renderTree(); _renderDetail(); };
         tree.appendChild(row);
       });
+    }
+
+    // Auto-commit the detail panel into agentInstances. Called on every
+    // input change, before switching focused agent, and on Import. This
+    // replaces the old explicit "Apply Changes" button — the state you see
+    // IS the state that gets imported.
+    function _commitCurrentDetail() {
+      if (!focusedAgent || !agentInstances[focusedAgent]) return;
+      var panel = document.getElementById('_impAgentDetail');
+      if (!panel) return;
+      var nameEl = document.getElementById('_impInstName');
+      var defEl  = document.getElementById('_impDefSelect');
+      var llmEl  = document.getElementById('_impLlmSelect');
+      if (!nameEl || !defEl || !llmEl) return;
+      var newName = (nameEl.value || '').trim() || focusedAgent;
+      var params = { name: newName };
+      panel.querySelectorAll('[data-param]').forEach(inp => { params[inp.dataset.param] = inp.value; });
+      var updated = { definition: defEl.value, llm_service: llmEl.value, params: params };
+      if (newName !== focusedAgent) {
+        delete agentInstances[focusedAgent];
+        focusedAgent = newName;
+      }
+      agentInstances[focusedAgent] = updated;
     }
 
     function _renderDetail() {
@@ -645,37 +681,87 @@ function _showImportConvDialog(info, fmt) {
         });
         html += '</div>';
       }
-      html += '<button id="_impApplyBtn" style="width:100%;padding:5px;border-radius:4px;border:1px solid #6c5ce7;background:transparent;color:#6c5ce7;cursor:pointer;font-size:11px;font-weight:600;">Apply Changes</button>';
 
       panel.innerHTML = html;
       var llmSel = document.getElementById('_impLlmSelect');
       if (llmSel) llmSel.value = inst.llm_service || _guessLlm(inst.definition);
+
+      // Auto-commit on any change — no Apply button. Def change resets
+      // the llm_service guess + re-renders so param schema updates.
+      var nameEl = document.getElementById('_impInstName');
       var defSel = document.getElementById('_impDefSelect');
+      if (nameEl) {
+        nameEl.oninput = () => _commitCurrentDetail();
+        nameEl.onblur = () => { _commitCurrentDetail(); _renderTree(); };
+      }
       if (defSel) defSel.onchange = () => {
-        inst.definition = defSel.value;
-        inst.llm_service = _guessLlm(defSel.value);
-        _renderDetail();
-      };
-      document.getElementById('_impApplyBtn').onclick = () => {
-        var newName = (document.getElementById('_impInstName').value || '').trim();
-        if (!newName) { alert('Instance name is required.'); return; }
-        var newDef = defSel.value;
-        var newLlm = llmSel.value;
-        var params = { name: newName };
-        panel.querySelectorAll('[data-param]').forEach(inp => { params[inp.dataset.param] = inp.value; });
-        if (newName !== focusedAgent) delete agentInstances[focusedAgent];
-        agentInstances[newName] = { definition: newDef, llm_service: newLlm, params: params };
-        focusedAgent = newName;
+        _commitCurrentDetail();
+        agentInstances[focusedAgent].llm_service = _guessLlm(defSel.value);
         _renderTree(); _renderDetail();
       };
+      if (llmSel) llmSel.onchange = () => _commitCurrentDetail();
+      panel.querySelectorAll('[data-param]').forEach(inp => { inp.oninput = () => _commitCurrentDetail(); });
+    }
+
+    // ── Relay selector (same UX as New Conv dialog) ──
+    var selRelays = [], defaultRelay = '';
+    function _makeRelayItem(text, id) {
+      var d = document.createElement('div');
+      d.textContent = text; d.dataset.id = id;
+      d.style.cssText = 'padding:3px 6px;cursor:pointer;border-radius:3px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      d.onmouseenter = function() { d.style.background = 'rgba(124,106,247,0.15)'; };
+      d.onmouseleave = function() { if (!d.classList.contains('_sel')) d.style.background = ''; };
+      d.onclick = function() {
+        d.parentNode.querySelectorAll('div').forEach(function(x) { x.classList.remove('_sel'); x.style.background = ''; });
+        d.classList.add('_sel'); d.style.background = 'rgba(124,106,247,0.3)';
+      };
+      return d;
+    }
+    function _renderRelays() {
+      var avail = document.getElementById('_impRelaysAvail');
+      var sel = document.getElementById('_impRelaysSel');
+      avail.innerHTML = ''; sel.innerHTML = '';
+      availableRelays.forEach(function(r) {
+        if (selRelays.indexOf(r.relay_id) >= 0) return;
+        var label = r.relay_id + (r.host_root ? ' (' + r.host_root + ')' : r.root ? ' (' + r.root + ')' : '');
+        avail.appendChild(_makeRelayItem(label, r.relay_id));
+      });
+      selRelays.forEach(function(rid) {
+        var d = _makeRelayItem(rid, rid);
+        var isDefault = rid === defaultRelay;
+        var radio = document.createElement('span');
+        radio.innerHTML = isDefault ? '\u2605' : '\u2606';
+        radio.style.cssText = 'cursor:pointer;color:' + (isDefault ? '#4ecdc4' : '#555') + ';margin-right:4px;font-size:14px;';
+        radio.title = 'Set as default';
+        radio.onclick = function(e) { e.stopPropagation(); defaultRelay = rid; _renderRelays(); };
+        d.insertBefore(radio, d.firstChild);
+        sel.appendChild(d);
+      });
     }
 
     _renderTree();
+    _renderRelays();
     if (info.agents.length) { focusedAgent = info.agents[0].name; _renderTree(); _renderDetail(); }
+
+    document.getElementById('_impRelayAdd').onclick = function() {
+      var s = document.querySelector('#_impRelaysAvail ._sel');
+      if (s) { selRelays.push(s.dataset.id); if (selRelays.length === 1) defaultRelay = s.dataset.id; _renderRelays(); }
+    };
+    document.getElementById('_impRelayRem').onclick = function() {
+      var s = document.querySelector('#_impRelaysSel ._sel');
+      if (s) { selRelays = selRelays.filter(function(x) { return x !== s.dataset.id; }); if (defaultRelay === s.dataset.id) defaultRelay = selRelays[0] || ''; _renderRelays(); }
+    };
+    document.getElementById('_impRelaysAvail').ondblclick = function(e) {
+      var t = e.target.closest('[data-id]'); if (t) { selRelays.push(t.dataset.id); if (selRelays.length === 1) defaultRelay = t.dataset.id; _renderRelays(); }
+    };
+    document.getElementById('_impRelaysSel').ondblclick = function(e) {
+      var t = e.target.closest('[data-id]'); if (t) { selRelays = selRelays.filter(function(x) { return x !== t.dataset.id; }); if (defaultRelay === t.dataset.id) defaultRelay = selRelays[0] || ''; _renderRelays(); }
+    };
 
     document.getElementById('_impCloseX').onclick = _cancelImport;
     document.getElementById('_impCancelBtn').onclick = _cancelImport;
     document.getElementById('_impGoBtn').onclick = () => {
+      _commitCurrentDetail();  // flush visible panel into agentInstances
       if (!Object.keys(agentInstances).length) { alert('At least one agent is required.'); return; }
       var title = (document.getElementById('_impTitle').value || '').trim() || 'Imported';
       overlay.remove();
@@ -683,13 +769,16 @@ function _showImportConvDialog(info, fmt) {
       action$('conv_import_execute', {
         temp_id: info.temp_id, format: fmt,
         agent_mapping: agentInstances, title,
+        relays: selRelays, default_relay: defaultRelay,
       }).subscribe(result => {
-        if (result.error) { addMsg('error', 'Import failed: ' + result.error); }
-        else {
-          addMsg('system', 'Conversation imported successfully');
-          loadConversations();
-          resumeConv(result.conversation_id);
-        }
+        if (result.error) { addMsg('error', 'Import failed: ' + result.error); document.getElementById('status').textContent = t('ready'); return; }
+        addMsg('system', 'Conversation imported successfully');
+        // Open the new conv FIRST (opens its SSE, sets conversationId),
+        // THEN refresh the sidebar. Reverse order races: the
+        // list_conversations reply gets scoped to the OLD conv and is
+        // dropped when resumeConv() closes that SSE.
+        resumeConv(result.conversation_id);
+        loadConversations();
         document.getElementById('status').textContent = t('ready');
       });
     };

@@ -640,6 +640,36 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         fmt = body.get("format", "")
         agent_mapping = body.get("agent_mapping", {})  # {import_name: {definition, params, llm_service}}
         title = body.get("title", "Imported conversation")
+        relay_ids = body.get("relays", []) or []
+        default_relay = body.get("default_relay", "") or ""
+        # Resolve llm_service -> {provider, model, base_url, containerized}
+        # once per agent mapping so imported assistant/tool messages carry
+        # the right `source` metadata (name, llm_service, provider, model).
+        # Without this the message meta bar is empty on imported convs.
+        _src_by_agent = {}
+        try:
+            from core.service_registry import ServiceRegistry
+            _reg = ServiceRegistry.get_instance()
+        except Exception:
+            _reg = None
+        for _ag_name, _ag_cfg in (agent_mapping or {}).items():
+            _svc_id = (_ag_cfg or {}).get("llm_service", "") or ""
+            _src = {"type": "agent", "name": _ag_name,
+                    "llm_service": _svc_id,
+                    "provider": "", "model": "", "base_url": "",
+                    "containerized": False}
+            if _reg and _svc_id:
+                try:
+                    _sdef = _reg.resolve_definition(_svc_id, user_id=user_id)
+                    if _sdef is not None:
+                        _cfg = _sdef.config or {}
+                        _src["provider"] = _cfg.get("provider", "") or ""
+                        _src["model"] = _cfg.get("model", "") or ""
+                        _src["base_url"] = _cfg.get("base_url", "") or _cfg.get("api_base", "") or ""
+                        _src["containerized"] = bool(_cfg.get("docker_image", ""))
+                except Exception:
+                    pass
+            _src_by_agent[_ag_name] = _src
         if not temp_id:
             flowfile.set_content(json.dumps({"error": "Missing temp_id"}).encode())
             return [flowfile]
@@ -714,6 +744,14 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             transcript_lines = []
             import uuid as _u2
             import re as _re
+            # CC transcripts have a single agent — pick the (only) entry from
+            # the agent mapping so source/name propagate from the dialog.
+            _cc_agent_name = next(iter(agent_mapping.keys()), "claude") if agent_mapping else "claude"
+            _cc_source = _src_by_agent.get(_cc_agent_name, {
+                "type": "agent", "name": _cc_agent_name,
+                "llm_service": "", "provider": "", "model": "",
+                "base_url": "", "containerized": False,
+            })
             # Monotonic seq assigned to every emitted non-system message.
             # _deserialize_messages in agent_serialization.py refuses
             # entries without seq + ts, so missing seq would make the
@@ -824,7 +862,9 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         assistant_text = content or ""
                     if not assistant_text and not tool_calls:
                         continue
-                    obj = {"t": "msg", "role": "assistant", "content": assistant_text, "msg_id": mid, "ts": ts}
+                    obj = {"t": "msg", "role": "assistant", "content": assistant_text,
+                           "source": dict(_cc_source),
+                           "msg_id": mid, "ts": ts}
                     if tool_calls:
                         obj["tool_calls"] = tool_calls
                     _emit(obj)
@@ -832,6 +872,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                     _emit({
                         "t": "msg", "role": "tool",
                         "content": _stringify(content),
+                        "source": dict(_cc_source),
                         "tool_call_id": message.get("tool_use_id", "") or entry.get("tool_use_id", ""),
                         "msg_id": mid, "ts": ts,
                     })
@@ -866,6 +907,13 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         store._cid_user[cid] = user_id
         store._git_init(cid)
         store._reload_cache(cid)
+        # Relay bindings (mirrors create_conversation in agent_resource.py).
+        if relay_ids:
+            from core.relay_bindings import link_relay, set_default_relay
+            for rid in relay_ids:
+                link_relay(cid, rid)
+            if default_relay and default_relay in relay_ids:
+                set_default_relay(cid, default_relay)
         # Cleanup temp
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)

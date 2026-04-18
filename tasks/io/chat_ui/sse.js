@@ -1013,6 +1013,14 @@ function connectSSE(cid, onReady) {
       if (msgRow) {
         msgRow.querySelectorAll('.tc-bg-btn, .tc-kl-btn').forEach(b => b.remove());
       }
+      // Safety net: if the tool_call element has a tc_id but no tc-result
+      // child, the tool_result SSE event never arrived (lost in transit or
+      // dropped by a filter). Attach a placeholder so the user sees the
+      // tool call is finalized instead of leaving it visually stuck.
+      const tcEl = bullet.closest('[data-tc-id]');
+      if (tcEl && !tcEl.querySelector('.tc-result')) {
+        try { _attachToolResult(tcEl, '[result not delivered]'); } catch (e) {}
+      }
     });
     trackAgentDone(doneAgent);
     console.log('[SSE done]', doneAgent, data.response ? data.response.substring(0, 100) : '(empty)');

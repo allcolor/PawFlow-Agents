@@ -1,6 +1,12 @@
 """Unit tests for pawflow_relay.utils path translation."""
 
+import sys
+from pathlib import Path
 from unittest.mock import patch
+
+# Ensure the project root is first in sys.path so that the pawflow_relay/
+# *package* is found before tools/pawflow_relay.py (standalone script).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pawflow_relay.utils import translate_path
 

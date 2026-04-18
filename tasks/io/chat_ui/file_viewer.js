@@ -16,7 +16,7 @@ function showParamMenu(e, key, scope, isSecret) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  item('\u{1F441} View', () => _showParamEditor(key, scope, isSecret, false, !_canEditScope(scope)));
+  item('\u{1F441} View', () => _showParamEditor(key, scope, isSecret, false, true));
   if (_canEditScope(scope)) {
     item('\u270F Edit...', () => _showParamEditor(key, scope, isSecret, false));
     item('\u{1F5D1} Delete', () => {

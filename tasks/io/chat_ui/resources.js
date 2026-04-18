@@ -677,7 +677,7 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
   };
 
   // View config — always available (read-only for non-admin on globals)
-  item('\u{1F441} View...', () => showResourceEditor(rtype, name, !_canEditScope(scope)));
+  item('\u{1F441} View...', () => showResourceEditor(rtype, name, true));
   // Edit — admin can edit globals, owners can edit their own
   if (_canEditScope(scope)) {
     item('\u270F Edit...', () => showResourceEditor(rtype, name));
@@ -762,7 +762,7 @@ function showAgentMenu(e, name, scope, autoconv) {
   };
   const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:#333;margin:4px 0;'; menu.appendChild(s); };
 
-  item('\u{1F441} View definition...', () => showResourceEditor('agent', name, !_canEditScope(scope)));
+  item('\u{1F441} View definition...', () => showResourceEditor('agent', name, true));
   if (_canEditScope(scope)) item('\u270F Edit definition...', () => showResourceEditor('agent', name));
   item('\u2699 Configure in conversation...', () => _showAgentConvConfigDialog(name));
   item('\u25B6 Select', () => cmdAgentSelect(name).then(loadResources));
@@ -1693,7 +1693,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  item('\u{1F441} View config...', () => showServiceEditForm(serviceId, scope, !_canEditScope(scope)));
+  item('\u{1F441} View config...', () => showServiceEditForm(serviceId, scope, true));
   if (_canEditScope(scope)) {
     item('\u270F Edit...', () => showServiceEditForm(serviceId, scope));
   }

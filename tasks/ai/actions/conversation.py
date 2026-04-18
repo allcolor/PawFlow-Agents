@@ -34,7 +34,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             pass
         for c in convs:
             branch = store.git_current_branch(c["conversation_id"])
-            c["branch"] = branch if branch and branch != "main" else ""
+            c["branch"] = branch or ""
         result = json.dumps({"conversations": convs}, ensure_ascii=False)
         flowfile.set_content(result.encode("utf-8"))
         return [flowfile]

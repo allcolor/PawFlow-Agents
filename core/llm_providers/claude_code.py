@@ -588,6 +588,20 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             _size = os.path.getsize(_expected_session_file) if _exists else 0
             logger.info("claude-code RESUME: session_id=%s file_exists=%s file_size=%d path=%s",
                          session_id, _exists, _size, _expected_session_file)
+            # Scrub legacy [image: image_<ts>_<n>.<ext>] placeholders from
+            # user text fields. These were written before the vision-
+            # placeholder fix and make the agent pattern-match "image
+            # attached → call see() with this filename" on every new
+            # user turn. The image bytes are still forwarded via the
+            # native vision channel, so stripping the text reference is
+            # purely cosmetic for the transcript AND prevents the bogus
+            # see() calls.
+            if _exists:
+                try:
+                    self._scrub_legacy_image_placeholders(_expected_session_file)
+                except Exception as _scrub_err:
+                    logger.warning("[claude-code] session scrub failed (%s): %s",
+                                   session_id[:8], _scrub_err)
 
         # Track pool container for cleanup
         self._pool_container_name = None

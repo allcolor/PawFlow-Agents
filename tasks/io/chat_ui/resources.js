@@ -1025,14 +1025,31 @@ function _usePrompt(name, hasParams) {
     }
     // Build parameter dialog
     const params = data.parameters;
-    let html = '<div style="margin-bottom:8px;color:#aaa;font-size:12px;">' + escapeHtml(data.title || name) + '</div>';
+    let ov = document.getElementById('promptParamOverlay');
+    if (ov) ov.remove();
+    ov = document.createElement('div');
+    ov.id = 'promptParamOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    const panel = document.createElement('div');
+    panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:420px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+    let formHtml = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${escapeHtml(data.title || name)}</h3>
+      <button onclick="document.getElementById('promptParamOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+    </div>`;
     for (const [key, schema] of Object.entries(params)) {
       const def = schema.default || '';
       const desc = schema.description || key;
-      html += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${escapeHtml(desc)}</label>`
-        + `<input id="prompt-param-${escapeHtml(key)}" value="${escapeHtml(String(def))}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
+      formHtml += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${escapeHtml(desc)}</label>`
+        + `<input id="prompt-param-${key}" value="${escapeHtml(String(def))}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
     }
-    showOverlay('Use Prompt', html, 'Paste', () => {
+    formHtml += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+      <button onclick="document.getElementById('promptParamOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+      <button id="promptParamPaste" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Paste</button>
+    </div>`;
+    panel.innerHTML = formHtml;
+    ov.appendChild(panel);
+    document.body.appendChild(ov);
+    document.getElementById('promptParamPaste').onclick = () => {
       const values = {};
       for (const key of Object.keys(params)) {
         values[key] = (document.getElementById('prompt-param-' + key) || {}).value || '';
@@ -1043,9 +1060,9 @@ function _usePrompt(name, hasParams) {
         input.value = res.resolved;
         input.focus();
         input.dispatchEvent(new Event('input'));
-        hideOverlay();
+        document.getElementById('promptParamOverlay').remove();
       });
-    });
+    };
   });
 }
 

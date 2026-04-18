@@ -1072,7 +1072,7 @@ const _RESOURCE_FIELDS = {
   skill:    [['prompt','textarea'],['description','text']],
   mcp:      [['url','text'],['auth','text'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['skills','skills_picker'],['description','text']],
-  prompt:   [['prompt','textarea'],['title','text'],['category','text'],['description','text']],
+  prompt:   [['prompt','textarea'],['parameters','textarea'],['title','text'],['category','text'],['description','text']],
   _tool:    [['tool_description','text'],['parameters','textarea'],['code','textarea']],
 };
 
@@ -1090,7 +1090,8 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
     }
   }
   for (const [key, type] of fields) {
-    const val = (data && data[key] != null) ? data[key] : '';
+    let val = (data && data[key] != null) ? data[key] : '';
+    if (typeof val === 'object') val = JSON.stringify(val, null, 2);
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
     html += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${key}</label>`;
     if (type === 'textarea') {
@@ -1186,6 +1187,9 @@ function _saveResourceEdit(rtype, name, scope) {
     const el = document.getElementById('res-' + key);
     if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
   }
+  if (rtype === 'prompt' && data.parameters) {
+    try { data.parameters = JSON.parse(data.parameters); } catch(e) { alert('Parameters must be valid JSON'); return; }
+  }
   action$('update_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else { addMsg('system', `${rtype} '${name}' updated.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
@@ -1229,6 +1233,10 @@ function _saveResourceCreate(rtype) {
     if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
     const el = document.getElementById('res-' + key);
     if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
+  }
+  // Parse parameters as JSON for prompt type
+  if (rtype === 'prompt' && data.parameters) {
+    try { data.parameters = JSON.parse(data.parameters); } catch(e) { alert('Parameters must be valid JSON'); return; }
   }
   // Dynamic tools use a dedicated action (CreateToolHandler pipeline)
   if (rtype === '_tool') {

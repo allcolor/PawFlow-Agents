@@ -70,81 +70,69 @@ function renameConvInline(e, cid) {
   input.onkeydown = (ev) => { if (ev.key === 'Enter') finish(); if (ev.key === 'Escape') loadConversations(); };
 }
 
-function reloadConv() {
-  if (!conversationId) return;
-  // Race-free reload: fetch first, then clear + repopulate atomically.
-  // The previous version cleared _seenMsgIds *before* the network round
-  // trip, so any SSE event arriving in that window registered its
-  // msg_id, and _renderHistory then deduped (skipped) those same
-  // messages from the history payload — the visible transcript was
-  // truncated to whatever happened to arrive between the two calls.
-  action$('load_history', { conversation_id: conversationId, limit: displayWindow, offset: 0 })
+// The ONE canonical "load this conv into the chat view" function.
+// Used by: clicking a conv in the sidebar, reloadConv (context editor
+// close, etc.), _switchAfterDelete, and the import flow.
+//
+// Uses the atomic "fetch first, THEN clear + open SSE + render" pattern.
+// Clearing state or opening the new SSE BEFORE the history payload is
+// in hand creates a race where SSE events arriving during the network
+// round trip land in _seenMsgIds and get deduped out of the history
+// render — the visible transcript ends up truncated. This pattern is
+// the one proven to work by context-editor-close; all reload paths
+// now go through it, no duplicated spaghetti.
+function resumeConv(cid, force) {
+  if (!cid) return;
+  if (cid === conversationId && !force) return;
+  document.getElementById('status').textContent = t('loading');
+  action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
     .subscribe(data => {
+      // Fetched — now swap everything atomically.
+      if (eventSource) { eventSource.close(); eventSource = null; }
       _expectingClear = true;
       document.getElementById('messages').innerHTML = '';
       _expectingClear = false;
       _seenMsgIds.clear();
+      if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
       serverMsgCount = 0;
-      // Drop stale SSE-side DOM references (task/delegate blocks).
-      if (typeof window._sseClearLiveBlocks === 'function') {
-        window._sseClearLiveBlocks();
+      _histTaskBlocks = {};
+      clearAllStreams();
+      sending = false;
+      if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
+      if (typeof activeInteractions !== 'undefined') {
+        for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
+        if (typeof updateActivePanel === 'function') updateActivePanel();
       }
-      _renderHistory(data);
-    });
-}
-
-function resumeConv(cid, force) {
-  if (cid === conversationId && !force) return;
-  document.getElementById('status').textContent = t('loading');
-  // Switch = exactly like a first-time load of the target conv:
-  //   1. stop the OLD conv's SSE so nothing from it can still hit us
-  //   2. wipe every conversation-scoped piece of state + the DOM
-  //   3. open the NEW SSE and fetch history
-  // No atomic re-clear inside the callback — if an SSE event from the
-  // new conv arrives between the clear and the history render, that's
-  // a normal live event for a conv opened mid-stream and it belongs
-  // in the transcript. The dedup in _renderHistory prevents doubles.
-  if (eventSource) { eventSource.close(); eventSource = null; }
-  _expectingClear = true;
-  document.getElementById('messages').innerHTML = '';
-  _expectingClear = false;
-  _seenMsgIds.clear();
-  if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
-  serverMsgCount = 0;
-  _histTaskBlocks = {};
-  clearAllStreams();
-  sending = false;
-  if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
-  if (typeof activeInteractions !== 'undefined') {
-    for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
-    if (typeof updateActivePanel === 'function') updateActivePanel();
-  }
-  if (typeof hideTyping === 'function') hideTyping();
-  if (typeof _pendingImages !== 'undefined') {
-    _pendingImages.length = 0;
-    if (typeof _imageFlushTimer !== 'undefined' && _imageFlushTimer) {
-      clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
-    }
-  }
-  selectedAgent = '';
-  if (typeof nicknameMap !== 'undefined') nicknameMap = {};
-  if (typeof _autoScroll !== 'undefined') _autoScroll = true;
-  conversationId = cid;
-  _setInputEnabled(true);
-  highlightConv(cid);
-  updateDeleteBtn();
-  document.getElementById('sidebar').classList.add('collapsed');
-  _syncToggleBtn();
-  sseEverConnected = false;
-  sseHadError = false;
-  stopPollTimer();
-  connectSSE(cid);
-  action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
-    .subscribe(data => {
-      if (cid !== conversationId) return;
+      if (typeof hideTyping === 'function') hideTyping();
+      if (typeof _pendingImages !== 'undefined') {
+        _pendingImages.length = 0;
+        if (typeof _imageFlushTimer !== 'undefined' && _imageFlushTimer) {
+          clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
+        }
+      }
+      selectedAgent = '';
+      if (typeof nicknameMap !== 'undefined') nicknameMap = {};
+      if (typeof _autoScroll !== 'undefined') _autoScroll = true;
+      conversationId = cid;
+      _setInputEnabled(true);
+      highlightConv(cid);
+      updateDeleteBtn();
+      document.getElementById('sidebar').classList.add('collapsed');
+      _syncToggleBtn();
+      sseEverConnected = false;
+      sseHadError = false;
+      stopPollTimer();
+      connectSSE(cid);
       _renderHistory(data);
       startPollTimer();
     });
+}
+
+// Thin alias for "reload the current conv" — same canonical path as
+// switch/delete/import. No duplicated logic.
+function reloadConv() {
+  if (!conversationId) return;
+  resumeConv(conversationId, true);
 }
 
 // Shared across render + loadMore so task blocks persist
@@ -389,28 +377,34 @@ function deleteCurrentConv() {
   });
 }
 
+// After deleting the current conv, fetch the fresh list from the server
+// and resume the next one (single source of truth — no stale DOM reads,
+// no duplicated switch logic). Falls back to the new-chat empty state
+// when no conv remains.
 function _switchAfterDelete(deletedCid) {
-  // Find the conversation list and pick the next one
-  var items = document.querySelectorAll('#convList .conv-item');
-  var nextCid = null;
-  var foundDeleted = false;
-  for (var i = 0; i < items.length; i++) {
-    if (items[i].dataset.cid === deletedCid) {
-      foundDeleted = true;
-      // Pick the previous conv, or the next one if this was the first
-      if (i > 0) nextCid = items[i - 1].dataset.cid;
-      else if (i + 1 < items.length) nextCid = items[i + 1].dataset.cid;
-      break;
+  action$('list_conversations', {}).subscribe(data => {
+    var convs = (data && data.conversations) || [];
+    renderConvList(convs);
+    // Pick neighbor of deleted in the sidebar order (already sorted
+    // updated_at DESC by the backend).
+    var idx = -1;
+    for (var i = 0; i < convs.length; i++) {
+      if (convs[i].conversation_id === deletedCid) { idx = i; break; }
     }
-  }
-  if (nextCid) {
-    resumeConv(nextCid);
-  } else {
-    // No other conv — clear chat and disable input
-    _doNewChat();
-    _setInputEnabled(false);
-  }
-  loadConversations();
+    // Deleted is already gone from the fresh list — pick the entry that
+    // occupied the slot (same index, or last if out of range).
+    var next = null;
+    if (convs.length) {
+      next = convs[idx >= 0 && idx < convs.length ? idx : convs.length - 1];
+      if (!next && convs.length) next = convs[0];
+    }
+    if (next) {
+      resumeConv(next.conversation_id, true);
+    } else {
+      _doNewChat();
+      _setInputEnabled(false);
+    }
+  });
 }
 
 function exportConversation() {

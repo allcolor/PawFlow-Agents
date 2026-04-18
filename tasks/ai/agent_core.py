@@ -740,6 +740,18 @@ class AgentCoreMixin:
                         _agent_name = ctx.get("active_agent_name", "")
                         logger.warning("[agent:%s] CCCompactDetected — compacting PawFlow context for %s",
                                        conversation_id[:8], _agent_name)
+                        # Rescue any preempt messages that were sent to CC's
+                        # stdin but not processed before compact_boundary.
+                        # Without this, a user message typed during compaction
+                        # is silently dropped (CC was killed before echoing it,
+                        # so it never landed in the transcript).
+                        _rescued_preempts = []
+                        try:
+                            _rescued_preempts = list(
+                                getattr(client, '_inflight_preempts', None) or [])
+                            client._inflight_preempts = []
+                        except Exception:
+                            pass
                         # Recover tokens BEFORE restarting — CC may have refreshed
                         # OAuth tokens during the session that was just killed
                         if hasattr(client, '_recover_tokens') and hasattr(client, '_get_session_workdir'):
@@ -811,6 +823,32 @@ class AgentCoreMixin:
                             _fatal_error = True
                             _fatal_error_msg = f"Compact failed: {compact_err}"
                             break
+                        # Requeue rescued preempts so the next turn's
+                        # drain_pending picks them up and persists them
+                        # to the transcript before the new CC session runs.
+                        if _rescued_preempts:
+                            try:
+                                from core.pending_queue import PendingQueue
+                                from core.llm_client import stamp_message
+                                _pq = PendingQueue.for_agent(
+                                    conversation_id, _agent_name or "")
+                                for _pp in _rescued_preempts:
+                                    _stamped = stamp_message({
+                                        "role": "user",
+                                        "content": _pp.get("text", ""),
+                                        "source": {"type": "user",
+                                                   "name": user_id or ""},
+                                    })
+                                    if _pp.get("attachments"):
+                                        _stamped["attachments"] = _pp["attachments"]
+                                    _pq.enqueue(_stamped, source="preempt-rescued")
+                                logger.warning(
+                                    "[agent:%s] Rescued %d inflight preempt(s) after compact — requeued",
+                                    conversation_id[:8], len(_rescued_preempts))
+                            except Exception as _re_err:
+                                logger.error(
+                                    "[agent:%s] Failed to requeue rescued preempts: %s",
+                                    conversation_id[:8], _re_err)
                         # Re-adopt current generation so the compacted loop
                         # is not killed by a stale generation check.
                         # (The CC kill + compact may have taken long enough

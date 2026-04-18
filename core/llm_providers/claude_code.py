@@ -116,6 +116,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             proc.stdin.write(msg + "\n")
             proc.stdin.flush()
             self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
+            # Track inflight preempt text so it can be rescued if CC is
+            # killed (compact/stall) before processing it.
+            if not hasattr(self, '_inflight_preempts'):
+                self._inflight_preempts = []
+            self._inflight_preempts.append(
+                {"text": text, "attachments": attachments})
             logger.info("Sent preempt message to Claude Code (pending=%d): %.100s",
                         self._preempt_pending, text)
             return True
@@ -800,6 +806,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         self._had_preempts_this_turn = False
         self._result_emitted = False  # set True when CC emits final result
         self._lost_preempt_messages = []  # preempts arriving after result
+        self._inflight_preempts = []  # preempts sent but not yet processed by CC
 
         def _inject_catchup():
             """Check for new messages from other agents and inject via stdin."""
@@ -1418,6 +1425,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # CC emitted its final result. Mark this so future
                     # preempts go to the requeue path instead of stdin.
                     self._result_emitted = True
+                    # Any preempts sent before this result have been
+                    # processed by CC — drop the inflight tracker so the
+                    # compact-rescue path doesn't re-enqueue them.
+                    self._inflight_preempts = []
                     break
 
         except _CC401Retry:

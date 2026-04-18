@@ -587,6 +587,8 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Upload not found or expired"}).encode())
             return [flowfile]
         _fname, raw, _ct = result
+        # Delete the uploaded file from FileStore — we copy raw to temp
+        fs.delete(file_id)
         temp_id = uuid.uuid4().hex[:16]
         temp_dir = Path(tempfile.gettempdir()) / f"pf_import_{temp_id}"
         temp_dir.mkdir(parents=True, exist_ok=True)

@@ -27,7 +27,7 @@ function renderConvList(convs) {
       : c.status === 'blocked' ? '<span class="conv-status blocked" title="Blocked"></span>' : '';
     const branchBadge = c.branch ? '<span class="conv-branch" title="Branch: ' + escapeHtml(c.branch) + '">\u{1F33F} ' + escapeHtml(c.branch) + '</span>' : '';
     el.innerHTML = '<div class="conv-preview" ondblclick="renameConvInline(event,\'' + c.conversation_id + '\')">' 
-      + statusDot + escapeHtml(title) + branchBadge + '</div>'
+      + statusDot + '<span class="conv-title">' + escapeHtml(title) + '</span>' + branchBadge + '</div>'
       + '<div class="conv-meta">' + c.message_count + ' messages \u00b7 ' + timeStr + '</div>'
       + '<button class="conv-delete" title="Delete" onclick="deleteConv(event,\'' + c.conversation_id + '\')">\u00d7</button>';
     el.onclick = () => resumeConv(c.conversation_id);

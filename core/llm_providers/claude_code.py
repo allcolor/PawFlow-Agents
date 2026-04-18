@@ -68,6 +68,22 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         Sets _preempt_pending so _stream_claude_code knows to NOT break
         at the next result event — it must wait for the preempt's result too.
         """
+        # During PawFlow's sentinel sessions (_compact, _memory_extract, ...)
+        # the SAME client instance is repurposed: _conversation_id is set to
+        # the sentinel name and _claude_proc points to a fresh subprocess
+        # spawned for that one-shot job. Writing a preempt to that stdin
+        # would land in the wrong stream (the compact subprocess would
+        # treat it as part of the summarization, then exit, eating the
+        # message). Refuse so the caller requeues into PendingQueue and
+        # the next live turn drains it.
+        _conv = getattr(self, '_conversation_id', '') or ''
+        if _conv.startswith('_'):
+            if not hasattr(self, '_lost_preempt_messages'):
+                self._lost_preempt_messages = []
+            self._lost_preempt_messages.append({"text": text, "attachments": attachments})
+            logger.info("Preempt arrived during sentinel '%s' — refusing send so caller requeues: %.100s",
+                        _conv, text)
+            return False
         proc = getattr(self, '_claude_proc', None)
         if not proc or proc.poll() is not None:
             logger.warning("No running Claude Code process to send message to")

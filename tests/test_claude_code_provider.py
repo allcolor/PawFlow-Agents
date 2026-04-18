@@ -259,6 +259,54 @@ class TestClaudeCodeEnv(unittest.TestCase):
         self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-test")
 
 
+class TestSendUserMessageSentinel(unittest.TestCase):
+    """Preempts arriving during a sentinel session (_compact, _memory_extract)
+    must be refused so the caller requeues into PendingQueue. Otherwise the
+    message lands in the wrong subprocess's stdin and is silently lost when
+    the one-shot helper exits.
+    """
+
+    def _make_client(self, conv_id):
+        client = LLMClient(provider="claude-code", config={"api_key": "sk-test"})
+        client._conversation_id = conv_id
+        client._agent_name = "compact" if conv_id.startswith("_") else "agent"
+        client._user_id = "alice"
+        # Pretend a live subprocess exists so the early proc-check doesn't
+        # short-circuit the test before reaching the sentinel guard.
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.stdin = MagicMock()
+        proc.stdin.closed = False
+        client._claude_proc = proc
+        return client, proc
+
+    def test_preempt_during_compact_sentinel_refused(self):
+        client, proc = self._make_client("_compact")
+        ok = client.send_user_message("hello during compact")
+        self.assertFalse(ok)
+        # Must NOT have written to the compact subprocess's stdin.
+        proc.stdin.write.assert_not_called()
+        # And must have stashed it for diagnostics.
+        self.assertEqual(len(client._lost_preempt_messages), 1)
+        self.assertEqual(client._lost_preempt_messages[0]["text"],
+                         "hello during compact")
+
+    def test_preempt_during_memory_extract_sentinel_refused(self):
+        client, proc = self._make_client("_memory_extract")
+        ok = client.send_user_message("hello during extract")
+        self.assertFalse(ok)
+        proc.stdin.write.assert_not_called()
+
+    def test_preempt_during_live_conversation_delivered(self):
+        client, proc = self._make_client("abc123")  # normal conv id
+        ok = client.send_user_message("hello live")
+        self.assertTrue(ok)
+        proc.stdin.write.assert_called_once()
+        # The payload sent to stdin contains our text.
+        sent = proc.stdin.write.call_args.args[0]
+        self.assertIn("hello live", sent)
+
+
 class TestProviderInProviders(unittest.TestCase):
     """Test that claude-code and gemini-cli are in PROVIDERS."""
 

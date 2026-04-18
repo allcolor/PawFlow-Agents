@@ -348,7 +348,7 @@ async function _renderResourcesData(data) {
       const _mcpArrow = _mcpCollapsed ? '\u25B6' : '\u25BC';
       html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
         <span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection('mcp')"><span id="res-arrow-mcp">${_mcpArrow}</span> MCP</span>
-      </div><div id="res-section-mcp" style="display:${_mcpCollapsed ? 'none' };max-height:260px;overflow-y:auto;">`;
+      </div><div id="res-section-mcp" style="display:${_mcpCollapsed ? 'none' : 'block'};max-height:260px;overflow-y:auto;">`;
     }
     { const linked = (data.mcp_servers || []).filter(m => m.linked);
       if (linked.length) {
@@ -374,7 +374,7 @@ async function _renderResourcesData(data) {
           <span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="loadResources()" title="Refresh from disk">\u21BB</span>
           <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="showResourceCreator('mcp')" title="Create new">+</span>
         </span>
-      </div><div id="res-section-_mcp_repo" style="display:${_mrCollapsed ? 'none' };">`;
+      </div><div id="res-section-_mcp_repo" style="display:${_mrCollapsed ? 'none' : 'block'};">`;
     }
     if (!_collapsedSections['_mcp_repo']) {
       const repoMcps = (data.mcp_servers || []).filter(m => !m.linked);

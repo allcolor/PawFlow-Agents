@@ -1072,7 +1072,7 @@ const _RESOURCE_FIELDS = {
   skill:    [['prompt','textarea'],['description','text']],
   mcp:      [['url','text'],['auth','text'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['skills','skills_picker'],['description','text']],
-  prompt:   [['prompt','textarea'],['parameters','textarea'],['title','text'],['category','text'],['description','text']],
+  prompt:   [['prompt','textarea'],['parameters','params_editor'],['title','text'],['category','text'],['description','text']],
   _tool:    [['tool_description','text'],['parameters','textarea'],['code','textarea']],
 };
 
@@ -1096,6 +1096,31 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
     html += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${key}</label>`;
     if (type === 'textarea') {
       html += `<textarea id="res-${key}"${dis} style="width:100%;min-height:120px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${escaped}</textarea>`;
+    } else if (type === 'params_editor') {
+      const params = (data && typeof data[key] === 'object' && data[key]) ? data[key] : {};
+      html += `<div id="res-${key}" data-type="params_editor" style="margin-top:2px;background:#0f0f23;border:1px solid #333;border-radius:4px;padding:6px;${roS}">`;
+      html += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+      html += '<tr style="color:#888;"><th style="text-align:left;padding:2px 4px;">Name</th><th style="text-align:left;padding:2px 4px;">Type</th><th style="text-align:left;padding:2px 4px;">Default</th><th style="text-align:left;padding:2px 4px;">Description</th>';
+      if (!ro) html += '<th style="width:24px;"></th>';
+      html += '</tr>';
+      for (const [pname, pdef] of Object.entries(params)) {
+        const pt = (pdef.type || 'string').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+        const pd = (pdef.default || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+        const pdesc = (pdef.description || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+        const pn = pname.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+        html += `<tr class="param-row" style="border-top:1px solid #222;">`;
+        html += `<td style="padding:3px 4px;"><input class="pe-name" value="${pn}"${dis} style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
+        html += `<td style="padding:3px 4px;"><select class="pe-type"${dis} style="background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}">`;
+        for (const t of ['string','number','boolean']) html += `<option value="${t}"${pt===t?' selected'}>${t}</option>`;
+        html += '</select></td>';
+        html += `<td style="padding:3px 4px;"><input class="pe-default" value="${pd}"${dis} style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
+        html += `<td style="padding:3px 4px;"><input class="pe-desc" value="${pdesc}"${dis} style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
+        if (!ro) html += `<td style="padding:3px 2px;"><button onclick="this.closest('tr').remove()" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:14px;">&times;</button></td>`;
+        html += '</tr>';
+      }
+      html += '</table>';
+      if (!ro) html += `<button onclick="_addParamRow(this.parentElement)" style="margin-top:4px;background:#333;color:#aaa;border:1px solid #444;padding:3px 10px;border-radius:3px;cursor:pointer;font-size:11px;">+ Add Parameter</button>`;
+      html += '</div>';
     } else if (type === 'skills_picker') {
       html += `<div id="res-${key}" data-type="skills_picker" style="margin-top:2px;background:#0f0f23;border:1px solid #333;border-radius:4px;padding:6px;max-height:120px;overflow-y:auto;${roS}">`;
       html += '<div style="color:#555;font-size:11px;">Loading skills...</div>';
@@ -1108,6 +1133,37 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
     html += '</div>';
   }
   return html;
+}
+
+function _addParamRow(container) {
+  const table = container.querySelector('table');
+  const tr = document.createElement('tr');
+  tr.className = 'param-row';
+  tr.style.borderTop = '1px solid #222';
+  tr.innerHTML = '<td style="padding:3px 4px;"><input class="pe-name" value="" style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;"/></td>'
+    + '<td style="padding:3px 4px;"><select class="pe-type" style="background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;"><option value="string">string</option><option value="number">number</option><option value="boolean">boolean</option></select></td>'
+    + '<td style="padding:3px 4px;"><input class="pe-default" value="" style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;"/></td>'
+    + '<td style="padding:3px 4px;"><input class="pe-desc" value="" style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;"/></td>'
+    + '<td style="padding:3px 2px;"><button onclick="this.closest(\'tr\').remove()" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:14px;">&times;</button></td>';
+  table.appendChild(tr);
+}
+
+function _collectParams(key) {
+  const container = document.getElementById('res-' + key);
+  if (!container || container.dataset.type !== 'params_editor') return undefined;
+  const rows = container.querySelectorAll('.param-row');
+  const params = {};
+  rows.forEach(row => {
+    const name = (row.querySelector('.pe-name')?.value || '').trim();
+    if (!name) return;
+    const entry = { type: row.querySelector('.pe-type')?.value || 'string' };
+    const def = (row.querySelector('.pe-default')?.value || '').trim();
+    if (def) entry.default = def;
+    const desc = (row.querySelector('.pe-desc')?.value || '').trim();
+    if (desc) entry.description = desc;
+    params[name] = entry;
+  });
+  return Object.keys(params).length ? params : undefined;
 }
 
 function _loadSkillsPicker(container, selected, readonly) {
@@ -1184,11 +1240,9 @@ function _saveResourceEdit(rtype, name, scope) {
   const data = {};
   for (const [key, type] of fields) {
     if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
+    if (type === 'params_editor') { const p = _collectParams(key); if (p) data[key] = p; continue; }
     const el = document.getElementById('res-' + key);
     if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
-  }
-  if (rtype === 'prompt' && data.parameters) {
-    try { data.parameters = JSON.parse(data.parameters); } catch(e) { alert('Parameters must be valid JSON'); return; }
   }
   action$('update_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
@@ -1231,12 +1285,9 @@ function _saveResourceCreate(rtype) {
   const data = {};
   for (const [key, type] of fields) {
     if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
+    if (type === 'params_editor') { const p = _collectParams(key); if (p) data[key] = p; continue; }
     const el = document.getElementById('res-' + key);
     if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
-  }
-  // Parse parameters as JSON for prompt type
-  if (rtype === 'prompt' && data.parameters) {
-    try { data.parameters = JSON.parse(data.parameters); } catch(e) { alert('Parameters must be valid JSON'); return; }
   }
   // Dynamic tools use a dedicated action (CreateToolHandler pipeline)
   if (rtype === '_tool') {

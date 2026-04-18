@@ -1,28 +1,18 @@
-"""Cost tracking per conversation/model."""
+"""Cost tracking per conversation/model.
+
+Pricing comes from the LLM service config (`cost_per_1m_input` /
+`cost_per_1m_output` on the llmConnection service). There is NO hardcoded
+price table — if a caller does not pass pricing, the turn is recorded at
+$0. This keeps the cost consistent with what the user configured on the
+service (e.g. `claude_code_llm_service` is priced at 0).
+"""
 
 import logging
 import threading
-from typing import Dict, Any
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Pricing per 1M tokens (USD)
-MODEL_COSTS = {
-    # Anthropic
-    "claude-opus-4-6": {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.5},
-    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_write": 3.75, "cache_read": 0.3},
-    "claude-haiku-4-5": {"input": 0.8, "output": 4.0, "cache_write": 1.0, "cache_read": 0.08},
-    # OpenAI
-    "gpt-4o": {"input": 2.5, "output": 10.0, "cache_read": 1.25},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.6, "cache_read": 0.075},
-    "gpt-4.1": {"input": 2.0, "output": 8.0, "cache_read": 0.5},
-    "gpt-4.1-mini": {"input": 0.4, "output": 1.6, "cache_read": 0.1},
-    "o3": {"input": 2.0, "output": 8.0},
-    "o3-mini": {"input": 1.1, "output": 4.4},
-    "o4-mini": {"input": 1.1, "output": 4.4},
-    # Default fallback
-    "_default": {"input": 5.0, "output": 15.0},
-}
 
 class CostTracker:
     """Track LLM costs per conversation."""
@@ -39,17 +29,38 @@ class CostTracker:
         return cls._instance
 
     def __init__(self):
-        self._costs = {}  # conv_id -> {"total": float, "by_model": {model: {"in": N, "out": N, "cost": float}}}
+        # conv_id -> {"total": float, "by_model": {model: {...}}}
+        self._costs = {}
 
     def track(self, conv_id, model, tokens_in=0, tokens_out=0,
-              cache_read=0, cache_write=0):
-        """Track token usage and calculate cost."""
-        costs = self._get_model_costs(model)
+              cache_read=0, cache_write=0,
+              cost_per_1m_input: Optional[float] = None,
+              cost_per_1m_output: Optional[float] = None,
+              cost_per_1m_cache_read: Optional[float] = None,
+              cost_per_1m_cache_write: Optional[float] = None):
+        """Track token usage and calculate cost for this turn.
+
+        Pricing MUST be supplied by the caller (from the LLM service
+        config). When omitted, cost is 0 — tokens are still tallied so
+        `by_model` stays useful for diagnostics.
+
+        Returns the delta cost recorded for this call (not the cumulative).
+        """
+        ci = float(cost_per_1m_input or 0.0)
+        co = float(cost_per_1m_output or 0.0)
+        # Sensible defaults when cache pricing isn't specified: read = 10%
+        # of input, write = 125% of input (matches Anthropic's published
+        # ratios). These kick in only when input pricing is configured.
+        ccr = (float(cost_per_1m_cache_read)
+               if cost_per_1m_cache_read is not None else ci * 0.1)
+        ccw = (float(cost_per_1m_cache_write)
+               if cost_per_1m_cache_write is not None else ci * 1.25)
+
         cost = (
-            tokens_in * costs["input"] / 1_000_000
-            + tokens_out * costs["output"] / 1_000_000
-            + cache_read * costs.get("cache_read", costs["input"] * 0.1) / 1_000_000
-            + cache_write * costs.get("cache_write", costs["input"] * 1.25) / 1_000_000
+            tokens_in * ci / 1_000_000
+            + tokens_out * co / 1_000_000
+            + cache_read * ccr / 1_000_000
+            + cache_write * ccw / 1_000_000
         )
 
         with self._lock:
@@ -58,7 +69,9 @@ class CostTracker:
             entry = self._costs[conv_id]
             entry["total"] += cost
             if model not in entry["by_model"]:
-                entry["by_model"][model] = {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0, "cost": 0.0}
+                entry["by_model"][model] = {
+                    "in": 0, "out": 0,
+                    "cache_read": 0, "cache_write": 0, "cost": 0.0}
             m = entry["by_model"][model]
             m["in"] += tokens_in
             m["out"] += tokens_out
@@ -75,12 +88,3 @@ class CostTracker:
     def get_total_cost(self):
         with self._lock:
             return sum(e["total"] for e in self._costs.values())
-
-    def _get_model_costs(self, model):
-        # Try exact match, then prefix match, then default
-        if model in MODEL_COSTS:
-            return MODEL_COSTS[model]
-        for key in MODEL_COSTS:
-            if key != "_default" and model.startswith(key):
-                return MODEL_COSTS[key]
-        return MODEL_COSTS["_default"]

@@ -52,14 +52,31 @@ def _apply_bg_results(messages, conversation_id):
                             m.tool_call_id)
 
 
+def _svc_rates(ctx):
+    """Extract per-1M token pricing from the resolved LLM service config.
+
+    Returns (cost_in, cost_out, cost_cache_read, cost_cache_write).
+    Cache rates default to Anthropic-standard ratios of cost_in when
+    not set (read = input * 0.1, write = input * 1.25). All rates are
+    $/1M tokens, parsed via safe_float to accept French decimals.
+    """
+    from core import safe_float
+    svc_cfg = getattr(ctx.get("resolved_svc"), 'config', {}) or {}
+    cost_in = safe_float(svc_cfg.get("cost_per_1m_input", 0), 0.0)
+    cost_out = safe_float(svc_cfg.get("cost_per_1m_output", 0), 0.0)
+    cr_cfg = svc_cfg.get("cost_per_1m_cache_read")
+    cw_cfg = svc_cfg.get("cost_per_1m_cache_write")
+    cost_cache_read = safe_float(cr_cfg, cost_in * 0.1) if cr_cfg not in (None, "") else cost_in * 0.1
+    cost_cache_write = safe_float(cw_cfg, cost_in * 1.25) if cw_cfg not in (None, "") else cost_in * 1.25
+    return cost_in, cost_out, cost_cache_read, cost_cache_write
+
+
 def _check_budget(ctx, total_in, total_out):
     """Raise RuntimeError if conversation cost exceeds max_budget_usd."""
     budget = ctx.get("max_budget_usd", 0)
     if not budget:
         return  # no cap
-    svc_cfg = getattr(ctx.get("resolved_svc"), 'config', {}) or {}
-    cost_in = float(svc_cfg.get("cost_per_1m_input", 3.0))
-    cost_out = float(svc_cfg.get("cost_per_1m_output", 15.0))
+    cost_in, cost_out, _, _ = _svc_rates(ctx)
     spent = (total_in / 1_000_000 * cost_in) + (total_out / 1_000_000 * cost_out)
     if spent >= budget:
         raise RuntimeError(f"Budget exceeded: ${spent:.4f} >= ${budget:.2f} limit")
@@ -966,9 +983,7 @@ class AgentCoreMixin:
                     # Budget warning at 80%
                     _bud = ctx.get("max_budget_usd", 0)
                     if _bud and not ctx.get("_budget_warning_sent"):
-                        _svc_c = getattr(ctx.get("resolved_svc"), 'config', {}) or {}
-                        _ci = float(_svc_c.get("cost_per_1m_input", 3.0))
-                        _co = float(_svc_c.get("cost_per_1m_output", 15.0))
+                        _ci, _co, _, _ = _svc_rates(ctx)
                         _spent = (total_tokens_in / 1_000_000 * _ci) + (total_tokens_out / 1_000_000 * _co)
                         if _spent >= _bud * 0.8:
                             ctx["_budget_warning_sent"] = True
@@ -1268,14 +1283,12 @@ class AgentCoreMixin:
                     final_model = fm
                 _flush()
 
+            # Mutable holder so the _make_result closure can observe the
+            # turn cost written after track() below, without redeclaring the
+            # closure after the call.
+            _turn_cost_ref = [0.0]
+
             def _make_result(reason=""):
-                # Compute turn cost
-                try:
-                    from core.cost_tracker import CostTracker
-                    _conv_cost = CostTracker.instance().get_conversation_cost(conversation_id)
-                    _turn_cost = _conv_cost.get("total", 0.0)
-                except Exception:
-                    _turn_cost = 0.0
                 return AgentResult(
                     response_content=response_content,
                     conversation_id=conversation_id,
@@ -1287,7 +1300,7 @@ class AgentCoreMixin:
                     finish_reason=reason or finish_reason, source=_agent_source(),
                     messages=messages, new_messages=new_messages,
                     all_msg_ids=all_assistant_msg_ids,
-                    cost_usd=_turn_cost)
+                    cost_usd=_turn_cost_ref[0])
 
             # Final drain: pick up any messages that arrived during the last turn
             _had_preempts = getattr(client, '_had_preempts_this_turn', False)
@@ -1339,10 +1352,15 @@ class AgentCoreMixin:
                 # Track cost per conversation/model
                 try:
                     from core.cost_tracker import CostTracker
-                    CostTracker.instance().track(
+                    _ci, _co, _ccr, _ccw = _svc_rates(ctx)
+                    _turn_cost_ref[0] = CostTracker.instance().track(
                         conversation_id, final_model or _client_model,
                         tokens_in=total_tokens_in, tokens_out=total_tokens_out,
-                        cache_read=total_cache_read, cache_write=total_cache_write)
+                        cache_read=total_cache_read, cache_write=total_cache_write,
+                        cost_per_1m_input=_ci, cost_per_1m_output=_co,
+                        cost_per_1m_cache_read=_ccr,
+                        cost_per_1m_cache_write=_ccw,
+                    )
                 except Exception as _cost_err:
                     logger.debug("[agent:%s] cost tracking error: %s",
                                  conversation_id[:8], _cost_err)

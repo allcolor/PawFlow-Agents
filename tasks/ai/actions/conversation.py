@@ -714,7 +714,15 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             transcript_lines = []
             import uuid as _u2
             import re as _re
+            # Monotonic seq assigned to every emitted non-system message.
+            # _deserialize_messages in agent_serialization.py refuses
+            # entries without seq + ts, so missing seq would make the
+            # imported conv unusable by any agent.
+            _seq_counter = [0]
             def _emit(obj):
+                if obj.get("role") != "system" and not obj.get("seq"):
+                    _seq_counter[0] += 1
+                    obj["seq"] = _seq_counter[0]
                 transcript_lines.append(json.dumps(obj, ensure_ascii=False))
             # Claude CLI stuffs meta blocks into the user transcript:
             #   <local-command-caveat>...</local-command-caveat>

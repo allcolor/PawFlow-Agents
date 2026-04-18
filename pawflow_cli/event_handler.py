@@ -287,7 +287,7 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
                         "list_repo_agents", "list_secrets", "list_variables",
                         "list_schedules", "list_memories", "list_prompts",
                         "task_status", "task_log", "stats", "insights",
-                        "check_files", "port_forward_list", "service_list"}
+                        "check_files", "port_forward_list", "list_services"}
             if _action in _silent:
                 pass  # silently consumed
             elif isinstance(_parsed, dict) and (_parsed.get("error") or _parsed.get("message")):

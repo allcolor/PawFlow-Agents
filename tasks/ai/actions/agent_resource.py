@@ -534,53 +534,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     running.append(entry)
             result["running_tasks"] = running
             result["all_tasks"] = all_task_instances
-        # Services (global + user)
-        try:
-            from core.service_registry import ServiceRegistry
-            svcs = []
-            greg = ServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all("global", "").items():
-                _enabled = getattr(sdef, "enabled", True)
-                try:
-                    _started = greg.is_connected("global", "", sid) if _enabled else False
-                except Exception:
-                    _started = False
-                svcs.append({
-                    "service_id": sid,
-                    "service_type": getattr(sdef, "service_type", ""),
-                    "enabled": _enabled,
-                    "started": _started,
-                    "description": getattr(sdef, "description", ""),
-                    "scope": "global",
-                })
-            if uid and uid != "anonymous":
-                ureg = ServiceRegistry.get_instance()
-                for sid, sdef in ureg.get_all("user", uid).items():
-                    _enabled = getattr(sdef, "enabled", True)
-                    try:
-                        _started = ureg.is_connected("user", uid, sid) if _enabled else False
-                    except Exception:
-                        _started = False
-                    _entry = {
-                        "service_id": sid,
-                        "service_type": getattr(sdef, "service_type", ""),
-                        "enabled": _enabled,
-                        "started": _started,
-                        "description": getattr(sdef, "description", ""),
-                        "scope": "user",
-                    }
-                    _svc = ureg.get_live_instance("user", uid, sid) if _enabled else None
-                    if _svc and hasattr(_svc, '_relay_info') and _svc._relay_info:
-                        _entry["relay_info"] = _svc._relay_info
-                    elif sdef.config and sdef.config.get("docker_image"):
-                        _entry["relay_info"] = {
-                            "containerized": True,
-                            "docker_image": sdef.config["docker_image"],
-                        }
-                    svcs.append(_entry)
-            result["services"] = svcs
-        except Exception:
-            result["services"] = []
+        # Services are NOT embedded here — UI calls `list_services` directly.
         # Relay bindings for this conversation (new per-agent format)
         if conv_id:
             try:
@@ -993,19 +947,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not in conversation"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        # Available LLM services for the dropdown
-        from core.service_registry import ServiceRegistry
-        services = []
-        try:
-            for sdef in ServiceRegistry.get_instance().resolve_by_type("llmConnection"):
-                if getattr(sdef, "enabled", True):
-                    services.append({
-                        "id": sdef.service_id,
-                        "provider": (sdef.config or {}).get("provider", ""),
-                    })
-        except Exception:
-            pass
-        # Include definition's parameters schema
+        # Include definition's parameters schema. For the LLM service dropdown,
+        # the UI calls `list_services` with service_type='llmConnection' directly.
         _cfg = cfgs[aname]
         _def_params_schema = {}
         _def_name = _cfg.get("definition", "")
@@ -1018,7 +961,6 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "name": aname,
             "config": _cfg,
             "parameters_schema": _def_params_schema,
-            "available_services": services,
         }, ensure_ascii=False).encode())
         return [flowfile]
 
@@ -1099,21 +1041,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             if a.get("parameters"):
                 entry["parameters"] = a["parameters"]
             out.append(entry)
-        # Also return available LLM services for the new conv dialog
-        llm_services = []
-        try:
-            from core.service_registry import ServiceRegistry
-            reg = ServiceRegistry.get_instance()
-            for sdef in reg.resolve_by_type("llmConnection", user_id=uid):
-                llm_services.append({
-                    "service_id": sdef.service_id,
-                    "description": sdef.description,
-                    "type": sdef.config.get("provider", ""),
-                })
-        except Exception:
-            pass
         flowfile.set_content(json.dumps({
-            "agents": out, "llm_services": llm_services,
+            "agents": out,
         }, ensure_ascii=False).encode())
         return [flowfile]
 

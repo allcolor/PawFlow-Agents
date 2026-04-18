@@ -144,11 +144,11 @@ def handle_resources_commands(app, cmd, arg, text):
         subcmd = parts[0].lower()
         try:
             if subcmd == "list":
-                data = app.api.send_action("service_list")
+                data = app.api.send_action("list_services")
                 services = data.get("services", [])
                 for s in services:
                     status = "+" if s.get("enabled") or s.get("connected") else "-"
-                    app.renderer.print(f"  [{status}] {s.get('id', '?')} ({s.get('type', '?')}): {s.get('description', '')[:50]}")
+                    app.renderer.print(f"  [{status}] {s.get('service_id', '?')} ({s.get('service_type', '?')}): {s.get('description', '')[:50]}")
                 if not services:
                     app.renderer.print_system("No services.")
             elif subcmd == "install":

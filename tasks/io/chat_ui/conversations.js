@@ -487,9 +487,12 @@ function importConversation() {
 
 function _showImportConvDialog(info, fmt) {
   // info: {temp_id, agents: [{name, definition},...], message_count, format}
-  action$('list_resources', {}).subscribe(resData => {
-    var repoAgents = resData.agents || [];
-    var llmServices = resData.llm_services || [];
+  Promise.all([
+    rxjs.firstValueFrom(action$('list_repo_agents', {})),
+    rxjs.firstValueFrom(listServices$('llmConnection')),
+  ]).then(results => {
+    var repoAgents = results[0].agents || [];
+    var llmServices = (results[1].services || []).filter(s => s.enabled);
     var svcOpts = llmServices.map(s =>
       '<option value="' + escapeHtml(s.service_id) + '">' + escapeHtml(s.service_id) + (s.description ? ' \u2014 ' + escapeHtml(s.description) : '') + '</option>'
     ).join('');

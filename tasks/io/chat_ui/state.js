@@ -223,13 +223,16 @@ async function _pickAgentsForNewConv() {
     var agents = [], llmServices = [], relays = [];
     var done = 0;
     function check() {
-      if (++done < 2) return;
+      if (++done < 3) return;
       if (agents.length === 0) { resolve(null); return; }
       _showNewConvDialog(agents, llmServices, relays, resolve);
     }
     action$('list_repo_agents', { conversation_id: '' }).subscribe(d => {
       agents = d.agents || [];
-      llmServices = d.llm_services || [];
+      check();
+    });
+    listServices$('llmConnection').subscribe(d => {
+      llmServices = (d.services || []).filter(s => s.enabled);
       check();
     });
     action$('relay_list_available').subscribe(d => {

@@ -43,45 +43,54 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     """Handle service flow actions. Returns [flowfile] or None."""
 
 
-    if action == "service_list":
+    if action == "list_services":
+        # Canonical service listing. Optional `service_type` filter returns
+        # only services of that type (e.g. 'llmConnection', 'tool_relay_service').
+        # Consumers needing a subset (LLM dropdowns, relay pickers, etc.) call
+        # this action with the appropriate filter — never embedded inside
+        # unrelated actions.
         try:
             from core.service_registry import ServiceRegistry
-            greg = ServiceRegistry.get_instance()
-            registry = ServiceRegistry.get_instance()
+            reg = ServiceRegistry.get_instance()
+            filter_type = body.get("service_type", "") or ""
             services = []
-            for sid, sdef in sorted(greg.get_all("global", "").items()):
+            for sid, sdef in sorted(reg.get_all("global", "").items()):
+                if filter_type and sdef.service_type != filter_type:
+                    continue
                 _enabled = getattr(sdef, "enabled", True)
                 try:
-                    _started = greg.is_connected("global", "", sid) if _enabled else False
+                    _started = reg.is_connected("global", "", sid) if _enabled else False
                 except Exception:
                     _started = False
                 services.append({
-                    "id": sid,
-                    "type": sdef.service_type,
+                    "service_id": sid,
+                    "service_type": sdef.service_type,
                     "enabled": _enabled,
                     "started": _started,
                     "description": sdef.description,
                     "scope": "global",
+                    "provider": (sdef.config or {}).get("provider", ""),
                 })
-            defs = registry.get_all("user", user_id)
-            for sid, sdef in sorted(defs.items()):
+            for sid, sdef in sorted(reg.get_all("user", user_id).items()):
+                if filter_type and sdef.service_type != filter_type:
+                    continue
                 try:
-                    _started = registry.is_connected("user", user_id, sid) if sdef.enabled else False
+                    _started = reg.is_connected("user", user_id, sid) if sdef.enabled else False
                 except Exception:
                     _started = False
                 entry = {
-                    "id": sid,
-                    "type": sdef.service_type,
+                    "service_id": sid,
+                    "service_type": sdef.service_type,
                     "enabled": sdef.enabled,
                     "started": _started,
                     "description": sdef.description,
                     "scope": "user",
+                    "provider": (sdef.config or {}).get("provider", ""),
                 }
-                svc = registry.get_live_instance("user", user_id, sid) if sdef.enabled else None
+                svc = reg.get_live_instance("user", user_id, sid) if sdef.enabled else None
                 if svc and hasattr(svc, '_relay_info') and svc._relay_info:
                     entry["relay_info"] = svc._relay_info
                 elif sdef.config and sdef.config.get("docker_image"):
-                    # Fallback: CLI passed docker_image in service config
                     entry["relay_info"] = {
                         "containerized": True,
                         "docker_image": sdef.config["docker_image"],

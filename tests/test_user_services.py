@@ -476,7 +476,7 @@ class TestAgentServiceActions:
     def test_service_list_empty(self):
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask({"conversation_store": True, "api_key": "test-key"})
-        ff = self._make_flowfile({"action": "service_list"})
+        ff = self._make_flowfile({"action": "list_services"})
         result = task._handle_action(ff)
         assert result is not None
         data = json.loads(result[0].get_content())
@@ -543,11 +543,11 @@ class TestAgentServiceActions:
 
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask({"conversation_store": True, "api_key": "test-key"})
-        ff = self._make_flowfile({"action": "service_list"})
+        ff = self._make_flowfile({"action": "list_services"})
         result = task._handle_action(ff)
         data = json.loads(result[0].get_content())
         svcs = data["services"]
-        by_id = {s["id"]: s for s in svcs}
+        by_id = {s["service_id"]: s for s in svcs}
         assert "db1" in by_id
         assert "db2" in by_id
         assert by_id["db1"]["enabled"] is True

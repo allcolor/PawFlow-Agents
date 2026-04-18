@@ -1,6 +1,13 @@
 // ── Resources (services, flows) ──────────────────────────────────
+// Canonical service lister. Pass a `serviceType` filter (e.g. 'llmConnection',
+// 'tool_relay_service') to get a subset. This is the ONLY way the UI should
+// fetch services — never through agent/resource actions.
+function listServices$(serviceType) {
+  return action$('list_services', serviceType ? { service_type: serviceType } : {});
+}
+
 function cmdServiceList() {
-  action$('service_list', {}).subscribe(data => {
+  listServices$().subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     const svcs = data.services || [];
     if (!svcs.length) { addMsg('system', 'No services installed. Use /service install <type> <name> [key=val,...] to add one.'); return; }
@@ -12,7 +19,7 @@ function cmdServiceList() {
         const img = s.relay_info.docker_image;
         tag = ' \u{1F433}' + (img ? ` [${img}]` : ' [container]');
       }
-      lines.push(`  ${icon} **${s.id}** (\`${s.type}\`)${tag} ${s.description || ''}`);
+      lines.push(`  ${icon} **${s.service_id}** (\`${s.service_type}\`)${tag} ${s.description || ''}`);
     });
     addMsg('system', lines.join('\n'));
   });
@@ -252,7 +259,15 @@ function _loadResourcesNow() {
   _loadResourcesTimer = null;
   if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
   document.getElementById('resourcesPanel').style.display = 'block';
-  action$('list_resources', {}).subscribe(data => _renderResourcesFromSSE(data));
+  // Fetch resources and services in parallel — merge then render.
+  var _resData = null, _svcData = null;
+  function _tryRender() {
+    if (_resData === null || _svcData === null) return;
+    var merged = Object.assign({}, _resData, { services: _svcData.services || [] });
+    _renderResourcesFromSSE(merged);
+  }
+  action$('list_resources', {}).subscribe(d => { _resData = d || {}; _tryRender(); });
+  listServices$().subscribe(d => { _svcData = d || { services: [] }; _tryRender(); });
   if (!window._cachedTools) {
     action$('get_tool_schemas', {}).subscribe(data => _renderResourcesFromSSE(data));
   }
@@ -785,16 +800,20 @@ function _showSkillAssignDialog(skillName) {
 
 function _showAgentConvConfigDialog(agentName) {
   if (!conversationId) { addMsg('error', 'No active conversation'); return; }
-  action$('get_agent_conv_config', { name: agentName, conversation_id: conversationId }).subscribe(function(data) {
+  Promise.all([
+    rxjs.firstValueFrom(action$('get_agent_conv_config', { name: agentName, conversation_id: conversationId })),
+    rxjs.firstValueFrom(listServices$('llmConnection')),
+  ]).then(function(results) {
+    var data = results[0], svcData = results[1];
     if (data.error) { addMsg('error', data.error); return; }
     var cfg = data.config || {};
     var paramsSchema = data.parameters_schema || {};
     var instParams = cfg.params || {};
-    var services = data.available_services || [];
+    var services = (svcData.services || []).filter(function(s) { return s.enabled; });
     var serviceOpts = services.map(function(s) {
-      var sel = s.id === cfg.llm_service ? ' selected' : '';
-      return '<option value="' + escapeHtml(s.id) + '"' + sel + '>'
-        + escapeHtml(s.id) + ' (' + escapeHtml(s.provider) + ')</option>';
+      var sel = s.service_id === cfg.llm_service ? ' selected' : '';
+      return '<option value="' + escapeHtml(s.service_id) + '"' + sel + '>'
+        + escapeHtml(s.service_id) + ' (' + escapeHtml(s.provider || '') + ')</option>';
     }).join('');
     var toolsStr = Array.isArray(cfg.tools) ? cfg.tools.join(', ') : (cfg.tools || '');
     var overlay = document.createElement('div');
@@ -1319,8 +1338,9 @@ async function showAddAgentToConvDialog() {
   overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
   try {
     var data = await rxjs.firstValueFrom(action$('list_repo_agents', {}));
+    var svcData = await rxjs.firstValueFrom(listServices$('llmConnection'));
     var definitions = data.agents || [];
-    var llmServices = data.llm_services || [];
+    var llmServices = (svcData.services || []).filter(function(s) { return s.enabled; });
     var selectedDef = null;
     panel.innerHTML = '';
 

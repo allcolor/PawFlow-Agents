@@ -106,6 +106,9 @@ function resumeConv(cid, force) {
   document.getElementById('messages').innerHTML = '';
   _expectingClear = false;
   _seenMsgIds.clear();
+  serverMsgCount = 0;
+  _histTaskBlocks = {};
+  if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
   highlightConv(cid);
   // Reset SSE state so the new connection doesn't trigger false recovery
   sseEverConnected = false;

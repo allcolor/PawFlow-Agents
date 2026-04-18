@@ -10,14 +10,15 @@ function renderAttachments() {
   pendingFiles.forEach((f, i) => {
     const el = document.createElement('div');
     el.className = 'att-item';
+    if (f.uploading) el.style.opacity = '0.5';
     const isImage = f.mime_type.startsWith('image/');
-    if (isImage) {
+    if (isImage && f.dataUrl) {
       el.innerHTML = '<img src="' + f.dataUrl + '" alt="' + escapeHtml(f.filename) + '">';
     } else {
       const icons = {'application/pdf': '\u{1F4C4}', 'text/plain': '\u{1F4DD}', 'text/html': '\u{1F310}', 'text/markdown': '\u{1F4DD}'};
       el.innerHTML = '<span class="att-icon">' + (icons[f.mime_type] || '\u{1F4CE}') + '</span>';
     }
-    el.innerHTML += '<span>' + escapeHtml(f.filename) + '</span>'
+    el.innerHTML += '<span>' + escapeHtml(f.filename) + (f.uploading ? ' ⏳' : '') + '</span>'
       + '<button class="att-remove" onclick="removeFile(' + i + ')">\u00d7</button>';
     preview.appendChild(el);
   });
@@ -28,7 +29,8 @@ function renderUserAttachments(attachments) {
   let html = '';
   for (const att of attachments) {
     if (att.mime_type && att.mime_type.startsWith('image/')) {
-      html += '<img class="chat-image" src="data:' + att.mime_type + ';base64,' + att.data + '">';
+      const imgSrc = att.url || att.dataUrl || (att.file_id ? '/files/' + encodeURIComponent(att.file_id) + '/' + encodeURIComponent(att.filename) : '');
+      html += '<img class="chat-image" src="' + imgSrc + '">';
     } else {
       html += '<span class="doc-badge">\u{1F4CE} ' + escapeHtml(att.filename) + '</span> ';
     }
@@ -198,8 +200,13 @@ async function send() {
 
 
   // Capture and clear attachments
+  // Wait for any uploads still in progress
+  if (pendingFiles.some(f => f.uploading)) {
+    addMsg('system', 'Files still uploading, please wait...');
+    return;
+  }
   const attachments = pendingFiles.map(f => ({
-    filename: f.filename, mime_type: f.mime_type, data: f.data,
+    filename: f.filename, mime_type: f.mime_type, file_id: f.file_id,
   }));
   const attachmentsForDisplay = [...pendingFiles];
   pendingFiles = [];

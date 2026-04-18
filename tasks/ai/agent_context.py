@@ -1399,33 +1399,45 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             mime = att.get("mime_type", "application/octet-stream")
             filename = att.get("filename", "file")
             data_b64 = att.get("data", "")
+            att_fid = att.get("file_id", "")
+
+            # Resolve raw bytes: either from pre-uploaded file_id or inline base64
+            from core.file_store import FileStore
+            _fs = FileStore.instance()
+            if att_fid:
+                _result = _fs.get(att_fid, user_id=user_id)
+                if _result:
+                    _, raw, _ = _result
+                else:
+                    parts.append({"type": "text", "text": f"[Attached file: {filename} — upload expired]"})
+                    continue
+            elif data_b64:
+                raw = base64.b64decode(data_b64)
+            else:
+                parts.append({"type": "text", "text": f"[Attached file: {filename} — no data]"})
+                continue
 
             if mime in _IMAGE_TYPES:
-                # Store image in FileStore — NEVER inline base64 in message content
-                from core.file_store import FileStore
                 import time as _time
-                _img_bytes = base64.b64decode(data_b64)
                 _img_fname = f"image_{int(_time.time())}_{len(parts)}.{filename.rsplit('.', 1)[-1] if '.' in filename else 'png'}"
-                _img_fid = FileStore.instance().store(
-                    _img_fname, _img_bytes, mime,
+                # Re-store under attachment category (or reuse existing fid)
+                _img_fid = att_fid or _fs.store(
+                    _img_fname, raw, mime,
                     user_id=user_id,
                     conversation_id=conversation_id or "",
                     category="attachment")
-                logger.info("Attachment image stored: %s (%d bytes) -> %s",
-                            filename, len(_img_bytes), _img_fid)
+                logger.info("Attachment image: %s (%d bytes) -> %s",
+                            filename, len(raw), _img_fid)
                 parts.append({
                     "type": "image_ref",
                     "file_id": _img_fid,
-                    "filename": _img_fname,
+                    "filename": _img_fname if not att_fid else filename,
                     "mime_type": mime,
-                    "size": len(_img_bytes),
+                    "size": len(raw),
                 })
             else:
-                # ALL non-image attachments: store in FileStore, reference in message
-                from core.file_store import FileStore
                 try:
-                    raw = base64.b64decode(data_b64)
-                    _fid = FileStore.instance().store(
+                    _fid = att_fid or _fs.store(
                         filename, raw, mime,
                         user_id=user_id,
                         conversation_id=conversation_id or "",

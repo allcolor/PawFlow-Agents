@@ -466,39 +466,23 @@ function importConversation() {
     const file = input.files[0];
     if (!file) return;
     const ext = file.name.split('.').pop().toLowerCase();
-    const reader = new FileReader();
-    reader.onload = () => {
-      const data = reader.result;  // ArrayBuffer
-      if (ext === 'zip') {
-        _importPawflowFile(file.name, data);
-      } else if (ext === 'jsonl') {
-        _importClaudeCodeFile(file.name, data);
-      } else {
-        addMsg('error', 'Unsupported format. Use .zip (PawFlow) or .jsonl (Claude Code)');
-      }
-    };
-    reader.readAsArrayBuffer(file);
+    const fmt = ext === 'zip' ? 'pawflow' : ext === 'jsonl' ? 'claude_code' : null;
+    if (!fmt) { addMsg('error', 'Unsupported format. Use .zip (PawFlow) or .jsonl (Claude Code)'); return; }
+    document.getElementById('status').textContent = 'Uploading...';
+    try {
+      const info = await uploadFileToStore(file);
+      document.getElementById('status').textContent = 'Analyzing...';
+      action$('conv_import_analyze', { file_id: info.file_id, format: fmt }).subscribe(result => {
+        document.getElementById('status').textContent = t('ready');
+        if (result.error) { addMsg('error', 'Import failed: ' + result.error); return; }
+        _showImportConvDialog(result, fmt);
+      });
+    } catch(e) {
+      document.getElementById('status').textContent = t('ready');
+      addMsg('error', 'Upload failed: ' + e.message);
+    }
   };
   input.click();
-}
-
-function _importPawflowFile(filename, arrayBuffer) {
-  // Upload zip to server, server extracts extras.json to find agents, returns agent list
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-  action$('conv_import_analyze', { filename, data_b64: b64, format: 'pawflow' }).subscribe(info => {
-    if (info.error) { addMsg('error', 'Import failed: ' + info.error); return; }
-    // info.agents = [{name, definition},...], info.temp_id = server-side temp storage key
-    _showImportConvDialog(info, 'pawflow');
-  });
-}
-
-function _importClaudeCodeFile(filename, arrayBuffer) {
-  const text = new TextDecoder().decode(arrayBuffer);
-  const b64 = btoa(unescape(encodeURIComponent(text)));
-  action$('conv_import_analyze', { filename, data_b64: b64, format: 'claude_code' }).subscribe(info => {
-    if (info.error) { addMsg('error', 'Import failed: ' + info.error); return; }
-    _showImportConvDialog(info, 'claude_code');
-  });
 }
 
 function _showImportConvDialog(info, fmt) {

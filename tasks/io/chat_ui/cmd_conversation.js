@@ -135,13 +135,9 @@ function cmdPaste() {
     for (const item of items) {
       if (item.types.includes('image/png')) {
         item.getType('image/png').then(blob => {
-          const reader = new FileReader();
-          reader.onload = function() {
-            const b64 = reader.result.split(',')[1];
-            pendingFiles.push({ filename: 'clipboard.png', mime_type: 'image/png', data: b64 });
-            addMsg('system', 'Image pasted from clipboard (' + pendingFiles.length + ' file(s) queued).');
-          };
-          reader.readAsDataURL(blob);
+          const file = new File([blob], 'clipboard.png', { type: 'image/png' });
+          handleFiles([file]);
+          addMsg('system', 'Image pasted from clipboard.');
         });
         return;
       }

@@ -240,6 +240,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             return
 
         # Session auth — skipped for public routes
+        session = None
         if not _is_public:
             try:
                 from core.security import SecurityManager
@@ -291,6 +292,11 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # Read body
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length) if content_length > 0 else b""
+
+        # ── Fast-path: /api/upload (multipart file upload → FileStore) ──
+        if method == "POST" and path == "/api/upload":
+            self._handle_upload(body, session)
+            return
 
         # Collect headers
         headers = {k: v for k, v in self.headers.items()}
@@ -410,6 +416,71 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 logger.error(f"Stream error for {req.request_id}: {e}")
         elif req.response_body:
             self.wfile.write(req.response_body)
+
+    def _handle_upload(self, body: bytes, session):
+        """Fast-path handler for POST /api/upload.
+
+        Parses multipart/form-data, stores each file in FileStore,
+        returns JSON with file IDs. No FlowFile pipeline needed.
+        """
+        import cgi
+        import io as _io
+        from core.file_store import FileStore
+
+        user_id = ""
+        if session and session is not True:
+            user_id = getattr(session, "username", "") or ""
+
+        ct = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ct:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error": "Expected multipart/form-data"}')
+            return
+
+        # Parse multipart using cgi.FieldStorage
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "CONTENT_TYPE": ct,
+            "CONTENT_LENGTH": str(len(body)),
+        }
+        fs = cgi.FieldStorage(
+            fp=_io.BytesIO(body),
+            environ=environ,
+            keep_blank_values=True,
+        )
+
+        store = FileStore.instance()
+        results = []
+        items = fs.list or []
+        for item in items:
+            if item.filename:
+                raw = item.file.read()
+                mime = item.type or "application/octet-stream"
+                fid = store.store(
+                    item.filename, raw, mime,
+                    user_id=user_id,
+                    category="upload",
+                )
+                results.append({
+                    "file_id": fid,
+                    "filename": item.filename,
+                    "mime_type": mime,
+                    "size": len(raw),
+                    "url": f"/files/{fid}/{item.filename}",
+                })
+                logger.info("Upload: %s (%s, %d bytes) -> %s",
+                            item.filename, mime, len(raw), fid)
+
+        resp = json.dumps({"ok": True, "files": results}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(resp)))
+        if hasattr(self, "_renew_cookie") and self._renew_cookie:
+            self.send_header("Set-Cookie", self._renew_cookie)
+        self.end_headers()
+        self.wfile.write(resp)
 
     # Handle all HTTP methods
     do_GET = _handle

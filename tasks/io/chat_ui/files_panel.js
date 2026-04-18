@@ -123,14 +123,19 @@ function formatRelative(ms) {
   return days + 'd ' + (hrs % 24) + 'h';
 }
 
+// Upload a file via multipart to /api/upload, returns {file_id, filename, mime_type, size, url}
+async function uploadFileToStore(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const resp = await fetch('/api/upload', { method: 'POST', body: fd, headers: {'Authorization': getAuthHeaders()['Authorization'] || ''}, credentials: 'same-origin' });
+  const data = await resp.json();
+  if (!data.ok || !data.files || !data.files.length) throw new Error(data.error || 'Upload failed');
+  return data.files[0];
+}
+
 // File upload handling
 function handleFiles(fileList) {
-  const MAX_SIZE = 10 * 1024 * 1024; // 10MB per file
   for (const file of fileList) {
-    if (file.size > MAX_SIZE) {
-      addMsg('error', t('fileTooLarge', {name: file.name, size: (file.size / 1024 / 1024).toFixed(1)}));
-      continue;
-    }
     // .py files → offer to install as dynamic tool
     if (file.name.endsWith('.py')) {
       const textReader = new FileReader();
@@ -145,21 +150,31 @@ function handleFiles(fileList) {
       textReader.readAsText(file);
       continue;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target.result;
-      const base64 = dataUrl.split(',')[1];
-      const entry = {
-        file: file,
-        filename: file.name,
-        mime_type: file.type || 'application/octet-stream',
-        data: base64,
-        dataUrl: dataUrl,
-      };
-      pendingFiles.push(entry);
-      renderAttachments();
-    };
-    reader.readAsDataURL(file);
+    // Upload via multipart (no size limit, no base64 OOM)
+    const mime = file.type || 'application/octet-stream';
+    const isImage = mime.startsWith('image/');
+    // Show placeholder immediately
+    const idx = pendingFiles.length;
+    const placeholder = { filename: file.name, mime_type: mime, uploading: true };
+    if (isImage) placeholder.dataUrl = URL.createObjectURL(file);
+    pendingFiles.push(placeholder);
+    renderAttachments();
+    uploadFileToStore(file).then(info => {
+      // Replace placeholder with uploaded info
+      const entry = pendingFiles.find(f => f === placeholder);
+      if (entry) {
+        entry.file_id = info.file_id;
+        entry.url = info.url;
+        entry.size = info.size;
+        entry.uploading = false;
+        if (isImage && !entry.dataUrl) entry.dataUrl = info.url;
+        renderAttachments();
+      }
+    }).catch(err => {
+      addMsg('error', `Upload failed for ${file.name}: ${err.message}`);
+      const i = pendingFiles.indexOf(placeholder);
+      if (i >= 0) { pendingFiles.splice(i, 1); renderAttachments(); }
+    });
   }
   // Reset file input so same file can be re-selected
   document.getElementById('fileInput').value = '';

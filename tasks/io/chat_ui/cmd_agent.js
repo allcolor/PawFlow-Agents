@@ -251,8 +251,11 @@ function cmdAgentSetname(realName, nickname) {
 }
 
 function cmdAgentMsg(agentName, text) {
+  if (pendingFiles.some(f => f.uploading)) {
+    addMsg('system', 'Files still uploading, please wait...'); return;
+  }
   const attachments = pendingFiles.map(f => ({
-    filename: f.filename, mime_type: f.mime_type, data: f.data,
+    filename: f.filename, mime_type: f.mime_type, file_id: f.file_id,
   }));
   const attachmentsForDisplay = [...pendingFiles];
   pendingFiles = [];

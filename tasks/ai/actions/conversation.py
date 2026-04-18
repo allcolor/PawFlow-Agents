@@ -574,13 +574,19 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "conv_import_analyze":
-        import base64, tempfile, uuid
+        import tempfile, uuid
         fmt = body.get("format", "")
-        data_b64 = body.get("data_b64", "")
-        if not data_b64 or fmt not in ("pawflow", "claude_code"):
-            flowfile.set_content(json.dumps({"error": "Missing data or invalid format"}).encode())
+        file_id = body.get("file_id", "")
+        if not file_id or fmt not in ("pawflow", "claude_code"):
+            flowfile.set_content(json.dumps({"error": "Missing file_id or invalid format"}).encode())
             return [flowfile]
-        raw = base64.b64decode(data_b64)
+        from core.file_store import FileStore
+        fs = FileStore.instance()
+        result = fs.get(file_id, user_id=user_id)
+        if result is None:
+            flowfile.set_content(json.dumps({"error": "Upload not found or expired"}).encode())
+            return [flowfile]
+        _fname, raw, _ct = result
         temp_id = uuid.uuid4().hex[:16]
         temp_dir = Path(tempfile.gettempdir()) / f"pf_import_{temp_id}"
         temp_dir.mkdir(parents=True, exist_ok=True)

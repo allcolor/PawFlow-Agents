@@ -365,10 +365,10 @@ async function _renderResourcesData(data) {
       const repoMcps = (data.mcp_servers || []).filter(m => !m.linked);
       if (repoMcps.length) {
         repoMcps.forEach(m => {
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp','${escapeHtml(m.name)}','${m.scope||''}');return false;">
             ${_scopeBadge(m.scope)}<span style="color:#888;font-size:12px;flex:1;">${escapeHtml(m.name)}</span>
             <span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Link to conversation"
-              onclick="fireAction('link_mcp',{name:'${escapeHtml(m.name)}'});setTimeout(loadResources,400)">+</span>
+              onclick="event.stopPropagation();fireAction('link_mcp',{name:'${escapeHtml(m.name)}'});setTimeout(loadResources,400)">+</span>
           </div>`;
         });
       } else {
@@ -435,10 +435,10 @@ async function _renderResourcesData(data) {
       const repoTasks = (data.task_defs || []).filter(t => !t.linked);
       if (repoTasks.length) {
         repoTasks.forEach(t => {
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'task_def','${escapeHtml(t.name)}','${t.scope||''}');return false;">
             ${_scopeBadge(t.scope)}<span style="color:#888;font-size:12px;flex:1;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
             <span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Link to conversation"
-              onclick="fireAction('link_task',{name:'${escapeHtml(t.name)}'});setTimeout(loadResources,400)">+</span>
+              onclick="event.stopPropagation();fireAction('link_task',{name:'${escapeHtml(t.name)}'});setTimeout(loadResources,400)">+</span>
           </div>`;
         });
       } else {

@@ -471,6 +471,21 @@ function exportConversation() {
     });
 }
 
+function _showImportProgress(label) {
+  var overlay = document.createElement('div');
+  overlay.id = 'importProgressOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#1a1a2e;border:1px solid #6c5ce7;border-radius:10px;padding:24px 32px;display:flex;align-items:center;gap:14px;color:#e0e0e0;font-size:14px;min-width:260px;box-shadow:0 10px 40px rgba(0,0,0,0.5);';
+  box.innerHTML = '<span class="spinner" style="color:#6c5ce7;font-size:22px;animation:spin 1.2s linear infinite;display:inline-block;">\u273B</span><span id="importProgressLabel">' + label + '</span>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  return {
+    setLabel: function(s) { var el = document.getElementById('importProgressLabel'); if (el) el.textContent = s; },
+    close: function() { var el = document.getElementById('importProgressOverlay'); if (el) el.remove(); },
+  };
+}
+
 function importConversation() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -481,16 +496,20 @@ function importConversation() {
     const ext = file.name.split('.').pop().toLowerCase();
     const fmt = ext === 'zip' ? 'pawflow' : ext === 'jsonl' ? 'claude_code' : null;
     if (!fmt) { addMsg('error', 'Unsupported format. Use .zip (PawFlow) or .jsonl (Claude Code)'); return; }
+    var progress = _showImportProgress('Uploading ' + file.name + '\u2026');
     document.getElementById('status').textContent = 'Uploading...';
     try {
       const info = await uploadFileToStore(file);
+      progress.setLabel('Analyzing conversation\u2026');
       document.getElementById('status').textContent = 'Analyzing...';
       action$('conv_import_analyze', { file_id: info.file_id, format: fmt }).subscribe(result => {
+        progress.close();
         document.getElementById('status').textContent = t('ready');
         if (result.error) { addMsg('error', 'Import failed: ' + result.error); return; }
         _showImportConvDialog(result, fmt);
       });
     } catch(e) {
+      progress.close();
       document.getElementById('status').textContent = t('ready');
       addMsg('error', 'Upload failed: ' + e.message);
     }

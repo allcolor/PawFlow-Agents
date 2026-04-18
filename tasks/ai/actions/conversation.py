@@ -713,8 +713,21 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             text = raw.decode("utf-8", errors="replace")
             transcript_lines = []
             import uuid as _u2
+            import re as _re
             def _emit(obj):
                 transcript_lines.append(json.dumps(obj, ensure_ascii=False))
+            # Claude CLI stuffs meta blocks into the user transcript:
+            #   <local-command-caveat>...</local-command-caveat>
+            #   <command-name>...</command-name><command-message>...</command-message><command-args>...</command-args>
+            #   <local-command-stdout>...</local-command-stdout>
+            # These are model-facing scaffolding, not user speech. Skip them.
+            _CC_META_RE = _re.compile(
+                r"^\s*(?:<local-command-(?:caveat|stdout|stderr)>.*?</local-command-(?:caveat|stdout|stderr)>"
+                r"|(?:<command-(?:name|message|args)>.*?</command-(?:name|message|args)>\s*)+)\s*$",
+                _re.DOTALL,
+            )
+            def _is_cc_meta(s):
+                return isinstance(s, str) and bool(_CC_META_RE.match(s))
             def _stringify(c):
                 if isinstance(c, str):
                     return c
@@ -762,7 +775,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         tool_results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
                         text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
                         user_text = "\n".join(p for p in text_parts if p)
-                        if user_text:
+                        if user_text and not _is_cc_meta(user_text):
                             _emit({"t": "msg", "role": "user", "content": user_text, "msg_id": mid, "ts": ts})
                         for tr in tool_results:
                             _emit({
@@ -775,6 +788,8 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                             continue
                     else:
                         if not (content or "").strip():
+                            continue
+                        if _is_cc_meta(content):
                             continue
                         _emit({"t": "msg", "role": "user", "content": content, "msg_id": mid, "ts": ts})
                 elif msg_type == "assistant":

@@ -150,6 +150,32 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "403")
         return [flowfile]
 
+    if action == "create_dynamic_tool":
+        tool_name = body.get("tool_name", "").strip()
+        tool_description = body.get("tool_description", "")
+        parameters = body.get("parameters", {})
+        code = body.get("code", "")
+        if not tool_name or not code:
+            flowfile.set_content(json.dumps({"error": "tool_name and code are required"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.handlers.dynamic_tool import CreateToolHandler
+            handler = CreateToolHandler()
+            handler.set_user_id(user_id)
+            conv_id = body.get("conversation_id", "") or flowfile.get_attribute("conversation_id") or ""
+            handler.set_conversation_id(conv_id)
+            result = handler.execute({
+                "tool_name": tool_name,
+                "tool_description": tool_description,
+                "parameters": parameters,
+                "code": code,
+            })
+            flowfile.set_content(json.dumps({"ok": True, "result": result}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "list_tools":
         try:
             from core.dynamic_tool_store import DynamicToolStore

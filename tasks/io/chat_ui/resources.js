@@ -107,7 +107,7 @@ function _sectionHeader(title, rtype) {
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
     <span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
     <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${onclick}" title="Create new">+</span>
-  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
+  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};max-height:260px;overflow-y:auto;">`;
 }
 function _repoSectionHeader(title, rtype) {
   if (!(rtype in _collapsedSections)) _collapsedSections[rtype] = true;
@@ -998,6 +998,7 @@ const _RESOURCE_FIELDS = {
   mcp:      [['url','text'],['auth','text'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['skills','skills_picker'],['description','text']],
   prompt:   [['content','textarea'],['title','text'],['category','text'],['description','text']],
+  _tool:    [['tool_description','text'],['parameters','textarea'],['code','textarea']],
 };
 
 function _buildResourceForm(rtype, data, isNew, readonly) {
@@ -1007,9 +1008,11 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
   let html = '';
   if (isNew) {
     html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Name</label><input id="res-name" value="" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
-    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="res-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
-      + (_isAdmin() ? '<option value="global">Global</option>' : '')
-      + '<option value="user">User</option><option value="conversation">Conversation</option></select></div>';
+    if (rtype !== '_tool') {
+      html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="res-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
+        + (_isAdmin() ? '<option value="global">Global</option>' : '')
+        + '<option value="user">User</option><option value="conversation">Conversation</option></select></div>';
+    }
   }
   for (const [key, type] of fields) {
     const val = (data && data[key] != null) ? data[key] : '';
@@ -1125,7 +1128,7 @@ function showResourceCreator(rtype) {
   const panel = document.createElement('div');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">New ${rtype}</h3>
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">New ${rtype === '_tool' ? 'Tool' : rtype}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
   </div>` + _buildResourceForm(rtype, {}, true)
     + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
@@ -1151,6 +1154,19 @@ function _saveResourceCreate(rtype) {
     if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
     const el = document.getElementById('res-' + key);
     if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
+  }
+  // Dynamic tools use a dedicated action (CreateToolHandler pipeline)
+  if (rtype === '_tool') {
+    let params = {};
+    try { params = data.parameters ? JSON.parse(data.parameters) : {}; } catch(e) { alert('Parameters must be valid JSON'); return; }
+    action$('create_dynamic_tool', {
+      tool_name: name, tool_description: data.tool_description || '',
+      parameters: params, code: data.code || ''
+    }).subscribe(d => {
+      if (d.error) addMsg('error', d.error);
+      else { addMsg('system', `Tool '${name}' created.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+    });
+    return;
   }
   action$('create_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
     if (d.error) addMsg('error', d.error);

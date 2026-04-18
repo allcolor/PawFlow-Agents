@@ -96,10 +96,14 @@ function reloadConv() {
 function resumeConv(cid, force) {
   if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
-  // STEP 1 — instantaneous visible clear. User-facing rule: on switch,
-  // the chat must look empty immediately while the new history loads.
-  // Any live SSE events from the OLD conv are stopped by closing its
-  // EventSource. The NEW SSE hasn't fired yet, so nothing can race here.
+  // Switch = exactly like a first-time load of the target conv:
+  //   1. stop the OLD conv's SSE so nothing from it can still hit us
+  //   2. wipe every conversation-scoped piece of state + the DOM
+  //   3. open the NEW SSE and fetch history
+  // No atomic re-clear inside the callback — if an SSE event from the
+  // new conv arrives between the clear and the history render, that's
+  // a normal live event for a conv opened mid-stream and it belongs
+  // in the transcript. The dedup in _renderHistory prevents doubles.
   if (eventSource) { eventSource.close(); eventSource = null; }
   _expectingClear = true;
   document.getElementById('messages').innerHTML = '';
@@ -131,57 +135,16 @@ function resumeConv(cid, force) {
   updateDeleteBtn();
   document.getElementById('sidebar').classList.add('collapsed');
   _syncToggleBtn();
-  // Reset SSE state so the new connection doesn't trigger false recovery
   sseEverConnected = false;
   sseHadError = false;
   stopPollTimer();
   connectSSE(cid);
-  // Load history AFTER SSE is connected (result comes via SSE command_result)
-  function _loadWhenReady() {
-    // Bail out if the user has since switched to a different conv — we
-    // don't want an in-flight load_history for the previous cid to land
-    // inside the DOM of the now-active one.
-    if (cid !== conversationId) return;
-    if (eventSource && eventSource.readyState === EventSource.OPEN) {
-      action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
-        .subscribe(data => {
-          if (cid !== conversationId) return;
-          // Atomic clear + reset + render — all conversation-scoped
-          // state is wiped here, then the fresh history is drawn. No
-          // SSE event can land between clear and render because this
-          // is a single synchronous block.
-          _expectingClear = true;
-          document.getElementById('messages').innerHTML = '';
-          _expectingClear = false;
-          _seenMsgIds.clear();
-          if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
-          serverMsgCount = 0;
-          _histTaskBlocks = {};
-          clearAllStreams();
-          sending = false;
-          if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
-          if (typeof activeInteractions !== 'undefined') {
-            for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
-            if (typeof updateActivePanel === 'function') updateActivePanel();
-          }
-          if (typeof hideTyping === 'function') hideTyping();
-          if (typeof _pendingImages !== 'undefined') {
-            _pendingImages.length = 0;
-            if (typeof _imageFlushTimer !== 'undefined' && _imageFlushTimer) {
-              clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
-            }
-          }
-          selectedAgent = '';
-          if (typeof nicknameMap !== 'undefined') nicknameMap = {};
-          if (typeof _autoScroll !== 'undefined') _autoScroll = true;
-          _renderHistory(data);
-          startPollTimer();
-        });
-    } else {
-      setTimeout(_loadWhenReady, 100);
-    }
-  }
-  _loadWhenReady();
+  action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
+    .subscribe(data => {
+      if (cid !== conversationId) return;
+      _renderHistory(data);
+      startPollTimer();
+    });
 }
 
 // Shared across render + loadMore so task blocks persist

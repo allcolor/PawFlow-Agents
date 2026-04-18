@@ -651,19 +651,27 @@ class AgentCoreMixin:
                             # Extract thinking from first tool_call (claude-code bundles it there)
                             _thinking_text = tool_calls[0].get("thinking", "") if tool_calls else ""
 
-                            tc_objects = [
-                                LLMToolCall(
+                            # Unwrap MCP wrapper BEFORE building LLMToolCall so
+                            # the persisted transcript carries the inner tool name
+                            # (Read/Grep/...) instead of raw mcp__pawflow__use_tool.
+                            # _classify_messages_for_display reads these entries
+                            # directly -- without unwrap here, reloads and post-turn
+                            # renders show use_tool(tool_name=..., arguments=[object Object])
+                            # even though live SSE (claude_code.py:1220) was clean.
+                            from core.llm_client import unwrap_mcp_tool
+                            tc_objects = []
+                            for tc in tool_calls:
+                                _raw_name = tc.get("name", "")
+                                _raw_args = tc.get("arguments", {})
+                                _inner_name, _inner_args = unwrap_mcp_tool(_raw_name, _raw_args)
+                                tc_objects.append(LLMToolCall(
                                     id=tc.get("id", ""),
-                                    name=tc.get("name", ""),
-                                    arguments=tc.get("arguments", {}),
-                                ) for tc in tool_calls
-                            ]
+                                    name=_inner_name,
+                                    arguments=_inner_args,
+                                ))
                             for tc_obj in tc_objects:
-                                from core.llm_client import unwrap_mcp_tool
-                                _display_name, _ = unwrap_mcp_tool(
-                                    tc_obj.name, tc_obj.arguments)
-                                tools_called.append(_display_name)
-                                ctx["_last_tool"] = _display_name
+                                tools_called.append(tc_obj.name)
+                                ctx["_last_tool"] = tc_obj.name
 
                             # Tool call message (in LLM context, includes thinking)
                             tc_msg = LLMMessage(

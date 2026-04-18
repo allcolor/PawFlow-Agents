@@ -937,43 +937,6 @@ function crc32(data) {
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
-function refreshCurrentConv() {
-  if (!conversationId) return;
-  document.getElementById('status').textContent = t('loading');
-  action$('load_history', { conversation_id: conversationId, limit: displayWindow, offset: 0 })
-    .subscribe(data => {
-      if (data.error) { document.getElementById('status').textContent = t('error'); return; }
-      _expectingClear = true;
-      document.getElementById('messages').innerHTML = '';
-      _expectingClear = false;
-      _seenMsgIds.clear();
-      clearAllStreams();
-      for (const m of (data.messages || [])) {
-        let content = m.content || '';
-        if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
-          content = content.replace(/^\[[^\]]+\]:\s*/, '');
-        }
-        addMsg(m.type || m.role, content, m);
-      }
-      serverMsgCount = data.message_count || 0;
-      hasMoreMessages = data.has_more || false;
-      currentOffset = data.raw_count || (data.messages || []).length;
-      _updateLoadMoreBanner();
-      scrollBottom();
-      const msgs = data.messages || [];
-      const lastRole = msgs.length > 0 ? (msgs[msgs.length - 1].type || msgs[msgs.length - 1].role) : '';
-      if (lastRole !== 'assistant' && lastRole !== 'user') {
-        sending = true;
-        document.getElementById('status').textContent = t('thinking');
-      } else {
-        sending = false;
-        document.getElementById('sendBtn').disabled = false;
-        document.getElementById('status').textContent = t('ready');
-      }
-      loadConversations();
-    });
-}
-
 // ── Git versioning context menu ──────────────────────────────────
 
 function showConvMenu(e, cid, status) {

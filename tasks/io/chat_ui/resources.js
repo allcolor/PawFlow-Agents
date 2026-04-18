@@ -1017,7 +1017,7 @@ function _usePrompt(name, hasParams) {
   action$('get_prompt', { name }).subscribe(data => {
     if (data.error) { addMsg('system', data.error); return; }
     if (!hasParams || !data.parameters || !Object.keys(data.parameters).length) {
-      const input = document.getElementById('userInput');
+      const input = document.getElementById('input');
       input.value = data.prompt;
       input.focus();
       input.dispatchEvent(new Event('input'));
@@ -1056,7 +1056,7 @@ function _usePrompt(name, hasParams) {
       }
       action$('use_prompt', { name, params: values }).subscribe(res => {
         if (res.error) { addMsg('system', res.error); return; }
-        const input = document.getElementById('userInput');
+        const input = document.getElementById('input');
         input.value = res.resolved;
         input.focus();
         input.dispatchEvent(new Event('input'));

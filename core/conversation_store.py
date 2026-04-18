@@ -1815,6 +1815,9 @@ class ConversationStore:
             func(path)
 
         lock = self._get_conv_lock(cid)
+        # Resolve owner BEFORE popping _cid_user so edit-guard and session
+        # workdir cleanup can find it.
+        _owner = user_id or self._cid_user.get(cid, "")
         with lock:
             shutil.rmtree(conv_dir, onerror=_force_remove)
         with self._cache_lock:
@@ -1830,12 +1833,26 @@ class ConversationStore:
         # Drop edit-guard state for every agent in this conv — otherwise
         # the read-hashes / failed-edit counters leak until size eviction.
         try:
-            _owner = user_id or self._cid_user.get(cid, "")
             if _owner:
                 from core.handlers._edit_guard import clear_conversation as _eg_clear
                 _eg_clear(_owner, cid)
         except Exception:
             pass
+        # Clean up Claude Code session workdir (sessions/claude/<user>/<cid>/).
+        # Without this, per-task session dirs accumulate forever since
+        # task sub-convs are deleted on completion but their CC session
+        # state (credentials, project jsonl, mcp_bridge logs) is never
+        # reclaimed.
+        if _owner:
+            try:
+                from core import paths as _paths
+                _sanitized_cid = cid.replace(":", "_")
+                _sess_dir = _paths.CLAUDE_SESSIONS_DIR / _owner / _sanitized_cid
+                if _sess_dir.is_dir():
+                    shutil.rmtree(_sess_dir, onerror=_force_remove)
+            except Exception as _se:
+                logger.debug("Failed to remove CC session workdir for %s: %s",
+                             cid, _se)
         self._invalidate_ctx_cache(cid)
         return True
 
@@ -2039,6 +2056,56 @@ class ConversationStore:
         for cid in expired:
             self.delete(cid)
             removed += 1
+        removed += self.cleanup_orphan_claude_sessions()
+        return removed
+
+    def cleanup_orphan_claude_sessions(self) -> int:
+        """Remove Claude Code session workdirs whose conversation no
+        longer exists.
+
+        Task sub-convs used to leak their session dirs when the sub-conv
+        was deleted but the corresponding sessions/claude/<user>/<cid>/
+        tree was left behind (credentials, project jsonl, mcp_bridge
+        log). We now clean up on delete(), but existing installs may
+        still have piles of orphans — this method reclaims them.
+
+        Returns the number of orphan session dirs removed.
+        """
+        import shutil
+        try:
+            from core import paths as _paths
+        except Exception:
+            return 0
+        base = _paths.CLAUDE_SESSIONS_DIR
+        if not base.is_dir():
+            return 0
+        self._ensure_loaded()
+        # Build set of live (sanitized) cids.
+        with self._cache_lock:
+            live_sanitized = {cid.replace(":", "_") for cid in self._cache.keys()}
+        removed = 0
+        for user_dir in base.iterdir():
+            if not user_dir.is_dir():
+                continue
+            # Skip reserved dirs (e.g. _compact, _memory_extract) used
+            # by CC helper flows, not tied to a specific conv.
+            if user_dir.name.startswith("_"):
+                continue
+            for sess_dir in user_dir.iterdir():
+                if not sess_dir.is_dir():
+                    continue
+                if sess_dir.name.startswith("_"):
+                    continue
+                if sess_dir.name in live_sanitized:
+                    continue
+                try:
+                    shutil.rmtree(sess_dir, ignore_errors=True)
+                    removed += 1
+                    logger.info("Removed orphan CC session dir: %s/%s",
+                                user_dir.name, sess_dir.name)
+                except Exception as _e:
+                    logger.debug("Failed to remove orphan session %s: %s",
+                                 sess_dir, _e)
         return removed
 
     def count(self) -> int:

@@ -908,7 +908,8 @@ class SubAgentExecutor:
         if sub_conv_id and not task.persist and result.status in ("completed", "error", "timeout", "cancelled"):
             try:
                 from core.conversation_store import ConversationStore
-                ConversationStore.instance().delete(sub_conv_id)
+                ConversationStore.instance().delete(
+                    sub_conv_id, user_id=task.user_id or "")
             except Exception:
                 pass
         elif sub_conv_id and task.persist:

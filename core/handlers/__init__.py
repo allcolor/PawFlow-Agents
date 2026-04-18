@@ -61,6 +61,8 @@ from core.handlers.capabilities import (  # noqa: F401
     LipsyncHandler,
     TrainImageModelHandler,
     SpeechToVideoHandler,
+    CloneVoiceHandler,
+    SpeakHandler,
 )
 from core.handlers.memory import (  # noqa: F401
     RememberHandler,

@@ -317,7 +317,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 86  # + upscale_video, remove_background, describe_image, remix_image, speech_to_video
+        assert len(defs) == 88  # + upscale_video, remove_background, describe_image, remix_image, speech_to_video, clone_voice, speak
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
     def test_execute_unknown_tool(self):
@@ -394,7 +394,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 86  # + upscale_video, remove_background, describe_image, remix_image, speech_to_video
+        assert len(registry.list_tools()) == 88  # + upscale_video, remove_background, describe_image, remix_image, speech_to_video, clone_voice, speak
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})

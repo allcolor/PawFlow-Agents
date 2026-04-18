@@ -86,6 +86,8 @@ from core.handlers import (  # noqa: F401
     LipsyncHandler,
     TrainImageModelHandler,
     SpeechToVideoHandler,
+    CloneVoiceHandler,
+    SpeakHandler,
     WebSearchHandler,
 )
 
@@ -269,6 +271,8 @@ def create_default_registry() -> ToolRegistry:
     registry.register(LipsyncHandler())
     registry.register(TrainImageModelHandler())
     registry.register(SpeechToVideoHandler())
+    registry.register(CloneVoiceHandler())
+    registry.register(SpeakHandler())
     registry.register(RememberHandler())
     registry.register(RecallHandler())
     registry.register(SemanticRecallHandler())

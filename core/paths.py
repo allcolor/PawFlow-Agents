@@ -24,6 +24,7 @@ SYSTEM_DIR = DATA_DIR / "system"
 REPO_TYPES = frozenset({
     "agents", "skills", "tasks", "flows",
     "mcps", "services", "tools", "prompts",
+    "voice_clones",
 })
 
 

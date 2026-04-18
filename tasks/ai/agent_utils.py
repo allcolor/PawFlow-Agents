@@ -391,6 +391,14 @@ class AgentUtilsMixin:
             "image-model training", "/trainerservice",
         )
 
+    def _make_voice_clone_resolver(self, user_id, conversation_id, agent_name):
+        from services.base_voice_clone import BaseVoiceCloneService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseVoiceCloneService, "voice_clone_services",
+            "voice cloning", "/voicecloneservice",
+        )
+
 
     def _decrement_active(self, conversation_id: str, ctx: dict = None):
         """Decrement the active-conversation refcount and clean up tracking.

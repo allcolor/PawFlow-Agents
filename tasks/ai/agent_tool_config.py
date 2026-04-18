@@ -125,7 +125,8 @@ class AgentToolConfigMixin:
                 ))
             elif h.name in ("generate_3d", "upscale_image", "upscale_video",
                              "remove_background", "try_on",
-                             "lipsync", "train_image_model"):
+                             "lipsync", "train_image_model",
+                             "clone_voice", "speak"):
                 if file_base_url and hasattr(h, 'set_base_url'):
                     h.set_base_url(file_base_url)
                 if user_id and hasattr(h, 'set_user_id'):
@@ -140,6 +141,8 @@ class AgentToolConfigMixin:
                     "try_on": self._make_tryon_resolver,
                     "lipsync": self._make_lipsync_resolver,
                     "train_image_model": self._make_trainer_resolver,
+                    "clone_voice": self._make_voice_clone_resolver,
+                    "speak": self._make_voice_clone_resolver,
                 }[h.name]
                 h.set_service_resolver(_maker(
                     user_id, conversation_id, agent_name))

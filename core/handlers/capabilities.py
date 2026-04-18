@@ -619,3 +619,298 @@ class SpeechToVideoHandler(_CapabilityHandlerBase):
             return self._persist(destination, filename, r, "Speech-to-video generated")
         except Exception as e:
             return f"Error generating speech-to-video: {e}"
+
+
+# ── Voice Clone ─────────────────────────────────────────────────────
+
+
+class CloneVoiceHandler(_CapabilityHandlerBase):
+    """Create (or reuse) a voice clone resource from a reference audio sample.
+
+    The resulting voice is stored as a `voice_clones` resource in the user
+    repository. Subsequent calls with the same reference audio return the
+    cached entry without re-contacting the provider.
+
+    Zero-shot providers (Fish Audio) just keep a pointer to the reference
+    audio; persistent-voice_id providers (ElevenLabs, PlayHT) would POST
+    the sample once and cache the returned voice_id here.
+    """
+
+    @property
+    def name(self) -> str:
+        return "clone_voice"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Register a voice clone from a reference audio sample. Returns "
+            "a `name` the agent can pass to `speak` to synthesize text in "
+            "that voice. The same reference audio is detected automatically "
+            "(hash-based) and the existing clone is reused — no duplicate "
+            "creation, no extra cost. 10-30 s of clean speech is the "
+            "recommended sample length. The optional `reference_text` "
+            "(transcription of the sample) improves synthesis quality on "
+            "zero-shot providers. The user must have the right to clone "
+            "the voice in the sample."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "User-friendly name for this voice clone (unique per user). Letters, digits, '-' and '_' are kept; other characters become '_'."},
+                "reference_audio_url": {"type": "string", "description": "Reference voice sample (HTTP URL or fs://filestore/<id>/<name>). 10-30 s of clean speech recommended."},
+                "reference_text": {"type": "string", "description": "Transcription of the reference audio. Optional; improves quality on zero-shot providers (Fish Audio)."},
+                "language": {"type": "string", "description": "BCP-47 language tag of the sample (e.g. 'fr', 'en')."},
+            },
+            "required": ["name", "reference_audio_url"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        svc, err = self._get_service()
+        if not svc:
+            return f"Error: {err or 'no voice-clone service available'}"
+
+        name = (arguments.get("name") or "").strip()
+        ref_url_raw = arguments.get("reference_audio_url") or ""
+        ref_url = self._rewrite(ref_url_raw)
+        if not name or not ref_url:
+            return ("Error: `name` and `reference_audio_url` are required")
+
+        reference_text = arguments.get("reference_text") or ""
+        language = arguments.get("language") or ""
+
+        from core import voice_clone_cache as _cache
+
+        provider = getattr(svc, "TYPE", svc.__class__.__name__)
+        provider_version = getattr(svc, "VERSION", "0")
+
+        # Download reference audio so we can hash it.
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                ref_url, headers={"User-Agent": "PawFlow-Agent/1.0"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                ref_bytes = resp.read()
+                ref_ct = resp.headers.get("Content-Type",
+                                           "application/octet-stream")
+        except Exception as e:
+            return f"Error downloading reference_audio_url: {e}"
+
+        if not ref_bytes:
+            return "Error: reference_audio_url returned empty content"
+
+        ref_hash = _cache.hash_audio(ref_bytes)
+
+        # Already cloned with this exact audio on this provider?
+        existing = _cache.find_by_hash(self._user_id, provider, ref_hash)
+        if existing:
+            _cache.touch(self._user_id, existing.get("name", name))
+            return (f"Voice clone already exists: name={existing['name']} "
+                    f"provider={provider} (cached, no cost). Use with "
+                    f"`speak(voice='{existing['name']}', text=...)`.")
+
+        # Store ref audio in FileStore for future synth calls.
+        try:
+            from core.file_store import FileStore
+            store = FileStore.instance()
+            filename = ref_url_raw.rstrip("/").split("/")[-1] or "reference.mp3"
+            ref_fid = store.store(
+                filename=filename,
+                content=ref_bytes,
+                content_type=ref_ct,
+                conversation_id=self._conversation_id or "_voice_cache",
+                user_id=self._user_id,
+                ttl=0,
+                category="voice_clone_ref",
+            )
+        except Exception as e:
+            return f"Error storing reference audio in FileStore: {e}"
+
+        # Paradigm B providers (ElevenLabs, ...) create a voice_id up-front.
+        voice_id = ""
+        if hasattr(svc, "ensure_voice_id"):
+            try:
+                voice_id = svc.ensure_voice_id(
+                    reference_audio_url=ref_url,
+                    reference_text=reference_text,
+                    name=name,
+                    reference_audio_bytes=ref_bytes,
+                ) or ""
+            except Exception as e:
+                logger.warning(
+                    "ensure_voice_id failed on %s: %s — falling back to "
+                    "stateless mode", provider, e)
+                voice_id = ""
+
+        entry = {
+            "name": name,
+            "provider": provider,
+            "provider_version": provider_version,
+            "voice_id": voice_id,
+            "ref_audio_hash": ref_hash,
+            "ref_audio_fid": ref_fid,
+            "ref_audio_filename": filename,
+            "ref_audio_content_type": ref_ct,
+            "ref_audio_size": len(ref_bytes),
+            "reference_text": reference_text,
+            "language": language,
+        }
+        try:
+            saved = _cache.save(self._user_id, entry)
+        except Exception as e:
+            return f"Error persisting voice clone: {e}"
+
+        _msg = (f"Voice clone registered: name={saved['name']} "
+                f"provider={provider} paradigm="
+                f"{'voice_id' if voice_id else 'zero-shot'}. "
+                f"Use `speak(voice='{saved['name']}', text=...)` to "
+                f"synthesize speech in this voice.")
+        return _msg
+
+
+class SpeakHandler(_CapabilityHandlerBase):
+    """Synthesize text with a registered voice clone, returning an audio URL.
+
+    The agent addresses a voice clone by its user-friendly `voice` name
+    (registered earlier via `clone_voice`). The result URL can be passed
+    directly to `lipsync` or `speech_to_video`.
+
+    A content-addressed FileStore cache is consulted first:
+    (ref_audio_hash, text, language, provider) → cached mp3 avoids
+    re-calling the provider for identical re-renders.
+    """
+
+    @property
+    def name(self) -> str:
+        return "speak"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Synthesize text using a previously registered voice clone. "
+            "Pass `voice` (the name returned by `clone_voice`) and `text`. "
+            "Returns a downloadable audio URL suitable for `lipsync` / "
+            "`speech_to_video`. Identical (voice, text, language) inputs "
+            "hit a cache and skip the provider call entirely."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "voice": {"type": "string", "description": "Name of a voice clone registered via `clone_voice` (owned by the current user)."},
+                "text": {"type": "string", "description": "Text to synthesize."},
+                "language": {"type": "string", "description": "BCP-47 language tag. Provider may ignore if irrelevant."},
+                "destination": {"type": "string"},
+                "path": {"type": "string"},
+            },
+            "required": ["voice", "text"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        svc, err = self._get_service()
+        if not svc:
+            return f"Error: {err or 'no voice-clone service available'}"
+
+        voice = (arguments.get("voice") or "").strip()
+        text = arguments.get("text") or ""
+        language = arguments.get("language") or ""
+        if not voice or not text:
+            return "Error: `voice` and `text` are required"
+
+        from core import voice_clone_cache as _cache
+
+        entry = _cache.get_by_name(self._user_id, voice)
+        if not entry:
+            return (f"Error: unknown voice clone {voice!r}. Register one "
+                    f"first with `clone_voice`.")
+
+        provider = getattr(svc, "TYPE", svc.__class__.__name__)
+        if entry.get("provider") and entry["provider"] != provider:
+            return (f"Error: voice clone {voice!r} was created with provider "
+                    f"{entry['provider']}, but the active voice-clone service "
+                    f"is {provider}. Switch services to re-use this voice.")
+
+        ref_hash = entry.get("ref_audio_hash") or ""
+        cache_key = _cache.tts_cache_key(
+            ref_hash, text, language=language, provider=provider)
+
+        # Cache hit — return existing FileStore entry.
+        cached_fid = _cache.tts_find(
+            self._user_id, self._conversation_id, cache_key)
+        if cached_fid:
+            from core.file_store import FileStore
+            meta = FileStore.instance().get_metadata(cached_fid) or {}
+            filename = meta.get("filename", f"{voice}.mp3")
+            url = f"fs://filestore/{cached_fid}/{filename}"
+            _cache.touch(self._user_id, voice)
+            return (f"Speech synthesized (cached): {url}\n"
+                    f"file_id: {cached_fid}")
+
+        # Cache miss — fetch reference bytes and call the provider.
+        ref_fid = entry.get("ref_audio_fid") or ""
+        ref_bytes = b""
+        if ref_fid:
+            try:
+                from core.file_store import FileStore
+                triple = FileStore.instance().get_required(
+                    ref_fid, self._user_id,
+                    self._conversation_id or "_voice_cache")
+                _, ref_bytes, _ = triple
+            except Exception as e:
+                logger.warning(
+                    "speak: cannot read ref audio %s (%s) — falling back "
+                    "to URL fetch", ref_fid, e)
+                ref_bytes = b""
+
+        try:
+            kwargs = {}
+            if entry.get("voice_id"):
+                kwargs["voice_id"] = entry["voice_id"]
+            # Rebuild a usable URL only if the service needs one.
+            ref_url = ""
+            if not ref_bytes and ref_fid:
+                ref_url = f"{self._base_url.rstrip('/')}/files/{ref_fid}"
+            r = svc.clone_speak(
+                text=text,
+                reference_audio_url=ref_url,
+                reference_text=entry.get("reference_text") or "",
+                language=language,
+                reference_audio_bytes=ref_bytes or None,
+                **kwargs,
+            )
+        except Exception as e:
+            return f"Error synthesizing speech: {e}"
+
+        audio_bytes = r.get("audio_bytes") or r.get("bytes") or b""
+        if not audio_bytes:
+            return "Error: provider returned no audio"
+        content_type = r.get("content_type", "audio/mpeg")
+        ext = {
+            "audio/mpeg": "mp3", "audio/mp3": "mp3",
+            "audio/wav": "wav", "audio/x-wav": "wav",
+            "audio/ogg": "ogg", "audio/L16": "pcm",
+        }.get(content_type.split(";")[0].strip(), "mp3")
+        filename = arguments.get("path") or (
+            f"{voice}_{int(time.time())}.{ext}")
+
+        # Store the rendered audio in FileStore + index it in the TTS cache.
+        conv = self._conversation_id or "_voice_cache"
+        try:
+            fid = _cache.tts_store(
+                user_id=self._user_id,
+                conversation_id=conv,
+                cache_key=cache_key,
+                filename=filename,
+                audio_bytes=audio_bytes,
+                content_type=content_type,
+            )
+        except Exception as e:
+            return f"Error storing synthesized audio: {e}"
+
+        _cache.touch(self._user_id, voice)
+        url = f"fs://filestore/{fid}/{filename}"
+        return f"Speech synthesized: {url}\nfile_id: {fid}"

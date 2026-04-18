@@ -58,7 +58,7 @@ def test_git_init_creates_repo(conv):
 def test_git_current_branch_default(conv):
     store, cid = conv
     branch = store.git_current_branch(cid)
-    assert branch in ("main", "master")
+    assert branch == "live"
 
 
 def test_git_log_has_init_commit(conv):

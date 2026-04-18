@@ -161,7 +161,7 @@ class ConversationStore:
         if git_dir.exists():
             return
         try:
-            self._git(cid, "init", "-q")
+            self._git(cid, "init", "-q", "-b", "live")
             # Configure for this repo only (no user-level config needed)
             self._git(cid, "config", "user.email", "pawflow@local")
             self._git(cid, "config", "user.name", "PawFlow")

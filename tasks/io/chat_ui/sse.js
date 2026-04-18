@@ -98,10 +98,6 @@ function connectSSE(cid, onReady) {
     // New turn starting — clear cancel suppression so tool events show again
     if (agentName) _cancelledAgents.delete(agentName.toLowerCase());
     trackAgentStart(agentName);
-    const wait = data.waiting_seconds || 0;
-    const verb = randomVerb();
-    let status = wait > 5 ? verb + '... (' + wait + 's)' : (data.round > 1 ? verb + '... (round ' + data.round + ')' : verb + '...');
-    document.getElementById('status').textContent = status;
   });
 
   // ── Extended thinking (Anthropic) ──

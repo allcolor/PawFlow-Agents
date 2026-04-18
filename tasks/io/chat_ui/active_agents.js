@@ -124,6 +124,7 @@ function syncActiveFromServer() {
       if (!document.getElementById('typing')) showTyping();
     } else {
       hideTyping();
+      if (!sending) document.getElementById('status').textContent = t('ready');
     }
   });
 }

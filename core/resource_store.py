@@ -25,6 +25,7 @@ _TYPE_MAP = {
     "skill": "skills",
     "mcp": "mcps",
     "task_def": "tasks",
+    "prompt": "prompts",
 }
 
 
@@ -36,6 +37,7 @@ _REQUIRED_FIELDS = {
     "skill": ("prompt",),
     "mcp": (),  # url or command required (validated in create)
     "task_def": ("prompt",),
+    "prompt": ("prompt",),
 }
 
 # Default values per type
@@ -65,6 +67,12 @@ _DEFAULTS = {
         "description": "",
         "created_by": "",
         "skills": [],
+    },
+    "prompt": {
+        "title": "",
+        "category": "",
+        "description": "",
+        "parameters": {},
     },
 }
 

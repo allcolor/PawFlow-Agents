@@ -396,6 +396,27 @@ async function _renderResourcesData(data) {
     }
     html += _sectionFooter();
 
+    // ── Prompts (click to paste into chat input) ──
+    html += _sectionHeader('Prompts', 'prompt');
+    if (!_collapsedSections['prompt']) {
+      const prompts = data.prompts || [];
+      if (prompts.length) {
+        prompts.forEach(p => {
+          const title = p.title || p.name;
+          const icon = p.has_parameters ? '\u{1F4DD}' : '\u{1F4CB}';
+          const desc = p.description ? ' title="' + escapeHtml(p.description) + '"' : '';
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
+            onclick="_usePrompt('${escapeHtml(p.name)}',${p.has_parameters})" oncontextmenu="showResourceMenu(event,'prompt','${p.name}','${p.scope||''}');return false;">
+            ${_scopeBadge(p.scope)}<span style="font-size:11px">${icon}</span>
+            <span style="font-size:12px;color:#c0c0d0">${escapeHtml(title)}</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No prompts</div>';
+      }
+    }
+    html += _sectionFooter();
+
     // ── Tools (always available, no linking) ──
     html += _sectionHeader('Tools', '_tool');
     if (!_collapsedSections['_tool']) {
@@ -991,13 +1012,50 @@ function _onDeployTemplateChange() {
 // Trigger on initial load
 setTimeout(function() { if (document.getElementById('deploy-template')) _onDeployTemplateChange(); }, 100);
 
+// ── Prompt use (click to paste) ─────────────────────────────────
+function _usePrompt(name, hasParams) {
+  action$('get_prompt', { name }).subscribe(data => {
+    if (data.error) { addMsg('system', data.error); return; }
+    if (!hasParams || !data.parameters || !Object.keys(data.parameters).length) {
+      const input = document.getElementById('userInput');
+      input.value = data.prompt;
+      input.focus();
+      input.dispatchEvent(new Event('input'));
+      return;
+    }
+    // Build parameter dialog
+    const params = data.parameters;
+    let html = '<div style="margin-bottom:8px;color:#aaa;font-size:12px;">' + escapeHtml(data.title || name) + '</div>';
+    for (const [key, schema] of Object.entries(params)) {
+      const def = schema.default || '';
+      const desc = schema.description || key;
+      html += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${escapeHtml(desc)}</label>`
+        + `<input id="prompt-param-${escapeHtml(key)}" value="${escapeHtml(String(def))}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
+    }
+    showOverlay('Use Prompt', html, 'Paste', () => {
+      const values = {};
+      for (const key of Object.keys(params)) {
+        values[key] = (document.getElementById('prompt-param-' + key) || {}).value || '';
+      }
+      action$('use_prompt', { name, params: values }).subscribe(res => {
+        if (res.error) { addMsg('system', res.error); return; }
+        const input = document.getElementById('userInput');
+        input.value = res.resolved;
+        input.focus();
+        input.dispatchEvent(new Event('input'));
+        hideOverlay();
+      });
+    });
+  });
+}
+
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {
   agent:    [['prompt','textarea'],['description','text']],
   skill:    [['prompt','textarea'],['description','text']],
   mcp:      [['url','text'],['auth','text'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['skills','skills_picker'],['description','text']],
-  prompt:   [['content','textarea'],['title','text'],['category','text'],['description','text']],
+  prompt:   [['prompt','textarea'],['title','text'],['category','text'],['description','text']],
   _tool:    [['tool_description','text'],['parameters','textarea'],['code','textarea']],
 };
 

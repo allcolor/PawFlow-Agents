@@ -23,7 +23,7 @@ SYSTEM_DIR = DATA_DIR / "system"
 # ── Repository resource types ────────────────────────────────────
 REPO_TYPES = frozenset({
     "agents", "skills", "tasks", "flows",
-    "mcps", "services", "tools",
+    "mcps", "services", "tools", "prompts",
 })
 
 
@@ -48,7 +48,7 @@ def repo_dir(rtype: str, scope: str = "global",
 
 
 # Resource types stored as markdown (frontmatter + body)
-_MARKDOWN_TYPES = frozenset({"agents", "skills"})
+_MARKDOWN_TYPES = frozenset({"agents", "skills", "prompts"})
 
 
 def repo_file(rtype: str, name: str, scope: str = "global",

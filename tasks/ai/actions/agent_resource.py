@@ -493,6 +493,17 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "linked": t["name"] in _linked_tasks,
         } for t in all_task_defs]
 
+        # Prompts: all from repo (no link/unlink — click to use)
+        all_prompts = rs.list_all("prompt", uid, conversation_id=conv_id)
+        prompts_out = [{
+            "name": p["name"],
+            "title": p.get("title", ""),
+            "category": p.get("category", ""),
+            "description": p.get("description", ""),
+            "scope": p.get("_scope", ""),
+            "has_parameters": bool(p.get("parameters")),
+        } for p in all_prompts]
+
         result = {
             "agents": agents_out,
             "repo_agent_count": repo_agent_count,
@@ -500,6 +511,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "skills": skills_out,
             "mcp_servers": mcps_out,
             "task_defs": tasks_out,
+            "prompts": prompts_out,
         }
         # Task instances for this conversation
         if conv_id:

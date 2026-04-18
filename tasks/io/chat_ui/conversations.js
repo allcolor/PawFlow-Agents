@@ -96,13 +96,35 @@ function reloadConv() {
 function resumeConv(cid, force) {
   if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
-  // Switch SSE to the new conversation. DO NOT clear the DOM yet — we
-  // keep the previous transcript visible until the new history arrives,
-  // then clear + render atomically in the load_history callback. This
-  // mirrors reloadConv() and avoids the race where SSE events landing
-  // between innerHTML='' and _renderHistory pollute _seenMsgIds and
-  // cause the history to be deduped out.
+  // STEP 1 — instantaneous visible clear. User-facing rule: on switch,
+  // the chat must look empty immediately while the new history loads.
+  // Any live SSE events from the OLD conv are stopped by closing its
+  // EventSource. The NEW SSE hasn't fired yet, so nothing can race here.
   if (eventSource) { eventSource.close(); eventSource = null; }
+  _expectingClear = true;
+  document.getElementById('messages').innerHTML = '';
+  _expectingClear = false;
+  _seenMsgIds.clear();
+  if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
+  serverMsgCount = 0;
+  _histTaskBlocks = {};
+  clearAllStreams();
+  sending = false;
+  if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
+  if (typeof activeInteractions !== 'undefined') {
+    for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
+    if (typeof updateActivePanel === 'function') updateActivePanel();
+  }
+  if (typeof hideTyping === 'function') hideTyping();
+  if (typeof _pendingImages !== 'undefined') {
+    _pendingImages.length = 0;
+    if (typeof _imageFlushTimer !== 'undefined' && _imageFlushTimer) {
+      clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
+    }
+  }
+  selectedAgent = '';
+  if (typeof nicknameMap !== 'undefined') nicknameMap = {};
+  if (typeof _autoScroll !== 'undefined') _autoScroll = true;
   conversationId = cid;
   _setInputEnabled(true);
   highlightConv(cid);

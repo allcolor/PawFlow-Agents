@@ -656,6 +656,30 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             import zipfile, io
             with zipfile.ZipFile(io.BytesIO(raw)) as zf:
                 zf.extractall(conv_dir)
+            # Bump the transcript's meta line ts to now so the conv
+            # appears at the top of the sidebar with the import date
+            # (and not the original export date).
+            tr_path = conv_dir / "transcript.jsonl"
+            if tr_path.exists():
+                try:
+                    tr_lines = tr_path.read_text(encoding="utf-8").splitlines()
+                    now_ts = time.time()
+                    if tr_lines:
+                        try:
+                            first = json.loads(tr_lines[0])
+                        except Exception:
+                            first = None
+                        if isinstance(first, dict) and first.get("t") == "meta":
+                            first["created_at"] = now_ts
+                            first["ts"] = now_ts
+                            tr_lines[0] = json.dumps(first, ensure_ascii=False)
+                        else:
+                            meta = {"t": "meta", "user_id": user_id, "status": "idle",
+                                    "created_at": now_ts, "expires_at": 0, "ts": now_ts}
+                            tr_lines.insert(0, json.dumps(meta, ensure_ascii=False))
+                        tr_path.write_text("\n".join(tr_lines) + "\n", encoding="utf-8")
+                except Exception:
+                    pass
             # Update extras with new cid, user, and agent mapping
             extras_path = conv_dir / "extras.json"
             if extras_path.exists():
@@ -788,21 +812,13 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         "tool_call_id": message.get("tool_use_id", "") or entry.get("tool_use_id", ""),
                         "msg_id": mid, "ts": ts,
                     })
-            # Prepend a meta line so ConversationStore picks up
-            # created_at from the earliest imported message (otherwise
-            # conv appears with epoch date 01/01/1970 in the list).
-            msg_tss = []
-            for _l in transcript_lines:
-                try:
-                    _obj = json.loads(_l)
-                    if _obj.get("t") == "msg" and _obj.get("ts"):
-                        msg_tss.append(float(_obj["ts"]))
-                except Exception:
-                    pass
-            first_ts = min(msg_tss) if msg_tss else time.time()
+            # Meta line: use import time (now) as created_at/ts so the
+            # conversation appears at the top of the sidebar with the
+            # correct date. An import is semantically a new conversation.
+            now_ts = time.time()
             meta_line = json.dumps({
                 "t": "meta", "user_id": user_id, "status": "idle",
-                "created_at": first_ts, "expires_at": 0, "ts": first_ts,
+                "created_at": now_ts, "expires_at": 0, "ts": now_ts,
             }, ensure_ascii=False)
             (conv_dir / "transcript.jsonl").write_text(meta_line + "\n" + "\n".join(transcript_lines) + "\n", encoding="utf-8")
             # Create minimal extras

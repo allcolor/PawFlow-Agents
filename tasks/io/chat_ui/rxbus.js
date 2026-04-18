@@ -40,6 +40,14 @@ function action$(actionName, params = {}, opts = {}) {
   if (!body.conversation_id && typeof conversationId !== 'undefined' && conversationId) {
     body.conversation_id = conversationId;
   }
+  // Capture the conversation_id this call is scoped to. The filter
+  // below rejects results from a DIFFERENT conv that happen to share
+  // the same action name, so a subscription left over from a previous
+  // conv can't swallow the current conv's result.
+  const _callConvId = body.conversation_id || '';
+  // Unique call id so multiple concurrent calls to the same action
+  // on the same conv don't route their sync results to each other.
+  const _callId = Math.random().toString(36).slice(2) + Date.now().toString(36);
   _pendingActions++;
   _updateLoadingState();
 
@@ -62,19 +70,35 @@ function action$(actionName, params = {}, opts = {}) {
     // Read response body — if it's NOT {"status":"accepted"}, it's a sync result
     return resp.json().then(data => {
       if (data && data.status !== 'accepted') {
-        // Sync response (no conversation_id = server ran it inline)
-        _commandResult$.next({ action: actionName, result: JSON.stringify(data) });
+        // Sync response — tag with call's conv + id so the filter
+        // below routes it to the right subscriber.
+        _commandResult$.next({
+          action: actionName, result: JSON.stringify(data),
+          conversation_id: _callConvId, _callId,
+        });
       }
       // else: accepted → result will arrive via SSE command_result
     });
   }).catch(err => {
     console.warn('[action$] fetch failed for', actionName, err);
-    _commandResult$.next({ action: actionName, error: err.message || 'Network error' });
+    _commandResult$.next({
+      action: actionName, error: err.message || 'Network error',
+      conversation_id: _callConvId, _callId,
+    });
   });
 
-  // Return filtered observable: wait for the matching command_result
+  // Return filtered observable: wait for the matching command_result.
+  // When the server tags the result with a conversation_id, only
+  // accept matches for the conv this call was issued from. Untagged
+  // results (older code paths without conv scoping) are accepted
+  // unconditionally so nothing regresses.
   return _commandResult$.pipe(
-    filter(r => r.action === actionName),
+    filter(r => {
+      if (r.action !== actionName) return false;
+      if (r._callId && r._callId !== _callId) return false;
+      if (_callConvId && r.conversation_id && r.conversation_id !== _callConvId) return false;
+      return true;
+    }),
     first(),
     map(r => {
       if (r.error) throw new Error(r.error);

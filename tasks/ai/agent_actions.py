@@ -129,6 +129,7 @@ class AgentActionsMixin:
                         ConversationEventBus.instance().publish_event(
                             conversation_id, "command_result", {
                                 "action": action, "result": _content,
+                                "conversation_id": conversation_id,
                             })
                         return
             except Exception as e:
@@ -138,6 +139,7 @@ class AgentActionsMixin:
                     ConversationEventBus.instance().publish_event(
                         conversation_id, "command_result", {
                             "action": action, "error": str(e),
+                            "conversation_id": conversation_id,
                         })
                 except Exception:
                     pass

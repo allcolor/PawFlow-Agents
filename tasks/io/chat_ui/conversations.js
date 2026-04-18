@@ -96,50 +96,24 @@ function reloadConv() {
 function resumeConv(cid, force) {
   if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
-  // Prepare UI — full reset so the chat loads as if it were the first time.
-  // Anything that is conversation-scoped MUST be wiped here.
+  // Switch SSE to the new conversation. DO NOT clear the DOM yet — we
+  // keep the previous transcript visible until the new history arrives,
+  // then clear + render atomically in the load_history callback. This
+  // mirrors reloadConv() and avoids the race where SSE events landing
+  // between innerHTML='' and _renderHistory pollute _seenMsgIds and
+  // cause the history to be deduped out.
   if (eventSource) { eventSource.close(); eventSource = null; }
   conversationId = cid;
   _setInputEnabled(true);
-  clearAllStreams();
-  sending = false;
-  _expectingClear = true;
-  document.getElementById('messages').innerHTML = '';
-  _expectingClear = false;
-  _seenMsgIds.clear();
-  if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
-  serverMsgCount = 0;
-  _histTaskBlocks = {};
-  // Drop live SSE-side DOM references (task/delegate blocks from prev conv)
-  if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
-  // Clear active-agents panel (stale poll from previous conv would leak)
-  if (typeof activeInteractions !== 'undefined') {
-    for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
-    if (typeof updateActivePanel === 'function') updateActivePanel();
-  }
-  if (typeof hideTyping === 'function') hideTyping();
-  // Flush any pending image-batch from the previous conv
-  if (typeof _pendingImages !== 'undefined') {
-    _pendingImages.length = 0;
-    if (typeof _imageFlushTimer !== 'undefined' && _imageFlushTimer) {
-      clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
-    }
-  }
-  // Reset selection so the new conv's active agent is picked up fresh
-  selectedAgent = '';
-  if (typeof nicknameMap !== 'undefined') nicknameMap = {};
-  // Auto-scroll defaults back to true for a fresh load
-  if (typeof _autoScroll !== 'undefined') _autoScroll = true;
   highlightConv(cid);
+  updateDeleteBtn();
+  document.getElementById('sidebar').classList.add('collapsed');
+  _syncToggleBtn();
   // Reset SSE state so the new connection doesn't trigger false recovery
   sseEverConnected = false;
   sseHadError = false;
   stopPollTimer();
-  // Connect SSE
   connectSSE(cid);
-  updateDeleteBtn();
-  document.getElementById('sidebar').classList.add('collapsed');
-  _syncToggleBtn();
   // Load history AFTER SSE is connected (result comes via SSE command_result)
   function _loadWhenReady() {
     // Bail out if the user has since switched to a different conv — we
@@ -150,6 +124,34 @@ function resumeConv(cid, force) {
       action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
         .subscribe(data => {
           if (cid !== conversationId) return;
+          // Atomic clear + reset + render — all conversation-scoped
+          // state is wiped here, then the fresh history is drawn. No
+          // SSE event can land between clear and render because this
+          // is a single synchronous block.
+          _expectingClear = true;
+          document.getElementById('messages').innerHTML = '';
+          _expectingClear = false;
+          _seenMsgIds.clear();
+          if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
+          serverMsgCount = 0;
+          _histTaskBlocks = {};
+          clearAllStreams();
+          sending = false;
+          if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
+          if (typeof activeInteractions !== 'undefined') {
+            for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
+            if (typeof updateActivePanel === 'function') updateActivePanel();
+          }
+          if (typeof hideTyping === 'function') hideTyping();
+          if (typeof _pendingImages !== 'undefined') {
+            _pendingImages.length = 0;
+            if (typeof _imageFlushTimer !== 'undefined' && _imageFlushTimer) {
+              clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
+            }
+          }
+          selectedAgent = '';
+          if (typeof nicknameMap !== 'undefined') nicknameMap = {};
+          if (typeof _autoScroll !== 'undefined') _autoScroll = true;
           _renderHistory(data);
           startPollTimer();
         });

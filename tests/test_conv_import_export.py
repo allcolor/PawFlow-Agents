@@ -333,16 +333,17 @@ def test_cc_import_real_format_user_assistant(store):
     cid = _cc_execute(store, "\n".join(lines) + "\n")
     conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
     transcript = [json.loads(l) for l in (conv_dir / "transcript.jsonl").read_text().splitlines() if l.strip()]
-    roles = [m["role"] for m in transcript]
+    msgs = [m for m in transcript if m.get("t") == "msg"]
+    roles = [m["role"] for m in msgs]
     # user, assistant(with tool_calls), tool, assistant(text)
     assert roles == ["user", "assistant", "tool", "assistant"]
-    assert transcript[0]["content"] == "Hello"
-    assert transcript[1]["content"] == "Sure."
-    assert transcript[1]["tool_calls"][0]["name"] == "grep"
-    assert transcript[1]["tool_calls"][0]["id"] == "tu_1"
-    assert transcript[2]["tool_call_id"] == "tu_1"
-    assert transcript[2]["content"] == "match"
-    assert transcript[3]["content"] == "Done."
+    assert msgs[0]["content"] == "Hello"
+    assert msgs[1]["content"] == "Sure."
+    assert msgs[1]["tool_calls"][0]["name"] == "grep"
+    assert msgs[1]["tool_calls"][0]["id"] == "tu_1"
+    assert msgs[2]["tool_call_id"] == "tu_1"
+    assert msgs[2]["content"] == "match"
+    assert msgs[3]["content"] == "Done."
 
 
 def test_cc_import_drops_empty_assistant_stub(store):
@@ -355,9 +356,10 @@ def test_cc_import_drops_empty_assistant_stub(store):
     cid = _cc_execute(store, "\n".join(lines) + "\n")
     conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
     transcript = [json.loads(l) for l in (conv_dir / "transcript.jsonl").read_text().splitlines() if l.strip()]
-    assert len(transcript) == 2
-    assert transcript[0]["content"] == "hi"
-    assert transcript[1]["content"] == "real"
+    msgs = [m for m in transcript if m.get("t") == "msg"]
+    assert len(msgs) == 2
+    assert msgs[0]["content"] == "hi"
+    assert msgs[1]["content"] == "real"
 
 
 def test_cc_import_registers_in_list_conversations(store):
@@ -366,6 +368,25 @@ def test_cc_import_registers_in_list_conversations(store):
     cid = _cc_execute(store, "\n".join(lines) + "\n")
     convs = store.list_conversations(user_id="testuser")
     assert any(c["conversation_id"] == cid for c in convs)
+
+
+def test_cc_import_preserves_timestamp_in_list(store):
+    """Imported conv must have a non-zero updated_at (no 01/01/1970).
+
+    Regression: import used to emit 'timestamp' but _scan_cache reads 'ts',
+    so updated_at stayed at 0 and the sidebar date was the epoch.
+    """
+    ts = 1_700_000_000  # 2023-11-14
+    lines = [
+        json.dumps({"type": "user", "timestamp": ts,
+                    "message": {"role": "user", "content": "hi"}}),
+        json.dumps({"type": "assistant", "timestamp": ts + 10,
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}),
+    ]
+    cid = _cc_execute(store, "\n".join(lines) + "\n")
+    convs = store.list_conversations(user_id="testuser")
+    me = next(c for c in convs if c["conversation_id"] == cid)
+    assert me["updated_at"] >= ts, f"updated_at={me['updated_at']} (01/01/1970 bug)"
 
 
 def test_pawflow_import_remaps_agents(store):

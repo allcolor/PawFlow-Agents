@@ -739,20 +739,20 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
                         user_text = "\n".join(p for p in text_parts if p)
                         if user_text:
-                            _emit({"t": "msg", "role": "user", "content": user_text, "msg_id": mid, "timestamp": ts})
+                            _emit({"t": "msg", "role": "user", "content": user_text, "msg_id": mid, "ts": ts})
                         for tr in tool_results:
                             _emit({
                                 "t": "msg", "role": "tool",
                                 "content": _stringify(tr.get("content", "")),
                                 "tool_call_id": tr.get("tool_use_id", ""),
-                                "msg_id": _u2.uuid4().hex[:12], "timestamp": ts,
+                                "msg_id": _u2.uuid4().hex[:12], "ts": ts,
                             })
                         if not user_text and not tool_results:
                             continue
                     else:
                         if not (content or "").strip():
                             continue
-                        _emit({"t": "msg", "role": "user", "content": content, "msg_id": mid, "timestamp": ts})
+                        _emit({"t": "msg", "role": "user", "content": content, "msg_id": mid, "ts": ts})
                 elif msg_type == "assistant":
                     # Split text blocks and tool_use blocks. Preserve
                     # tool calls so the chat UI renders them as proper
@@ -777,7 +777,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         assistant_text = content or ""
                     if not assistant_text and not tool_calls:
                         continue
-                    obj = {"t": "msg", "role": "assistant", "content": assistant_text, "msg_id": mid, "timestamp": ts}
+                    obj = {"t": "msg", "role": "assistant", "content": assistant_text, "msg_id": mid, "ts": ts}
                     if tool_calls:
                         obj["tool_calls"] = tool_calls
                     _emit(obj)
@@ -786,9 +786,25 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                         "t": "msg", "role": "tool",
                         "content": _stringify(content),
                         "tool_call_id": message.get("tool_use_id", "") or entry.get("tool_use_id", ""),
-                        "msg_id": mid, "timestamp": ts,
+                        "msg_id": mid, "ts": ts,
                     })
-            (conv_dir / "transcript.jsonl").write_text("\n".join(transcript_lines) + "\n", encoding="utf-8")
+            # Prepend a meta line so ConversationStore picks up
+            # created_at from the earliest imported message (otherwise
+            # conv appears with epoch date 01/01/1970 in the list).
+            msg_tss = []
+            for _l in transcript_lines:
+                try:
+                    _obj = json.loads(_l)
+                    if _obj.get("t") == "msg" and _obj.get("ts"):
+                        msg_tss.append(float(_obj["ts"]))
+                except Exception:
+                    pass
+            first_ts = min(msg_tss) if msg_tss else time.time()
+            meta_line = json.dumps({
+                "t": "meta", "user_id": user_id, "status": "idle",
+                "created_at": first_ts, "expires_at": 0, "ts": first_ts,
+            }, ensure_ascii=False)
+            (conv_dir / "transcript.jsonl").write_text(meta_line + "\n" + "\n".join(transcript_lines) + "\n", encoding="utf-8")
             # Create minimal extras
             agent_name = list(agent_mapping.keys())[0] if agent_mapping else "claude"
             agent_cfg = agent_mapping.get(agent_name, {"definition": "claude", "params": {"name": agent_name}, "llm_service": ""})

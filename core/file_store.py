@@ -182,6 +182,23 @@ class FileStore:
             raise FileNotFoundError(
                 f"FileStore: no entry for file_id={file_id}")
         _entry_conv = entry.get("conversation_id", "")
+        # "_upload" is the sentinel the HTTP upload handler uses when the
+        # client posts /api/upload before a conversation exists (drag-and-drop
+        # in the chat UI before sending the first message). The file gets
+        # adopted by the first conversation that actually references it —
+        # as long as the requester is the original uploader (or the entry is
+        # anonymous). Without this, a stale _upload entry from a previous
+        # failed flow crashes the whole LLM call.
+        if _entry_conv == "_upload":
+            _entry_user = entry.get("user_id", "")
+            if _entry_user and _entry_user not in ("_anonymous", user_id):
+                raise FileNotFoundError(
+                    f"FileStore: file_id={file_id} is pending upload owned "
+                    f"by {_entry_user}, cannot be adopted by {user_id}")
+            with self._store_lock:
+                entry["conversation_id"] = conversation_id
+            self._save_index()
+            _entry_conv = conversation_id
         if _entry_conv and _entry_conv != conversation_id:
             raise FileNotFoundError(
                 f"FileStore: file_id={file_id} belongs to conv "

@@ -74,14 +74,18 @@ def _kill_running_task_agent(self, conv_id: str, task_id: str, agent_name: str, 
 def _handle_scheduling(self, action, body, store, user_id, flowfile):
     """Handle scheduling actions. Returns [flowfile] or None."""
 
+    # Most actions below need conv_id; hoisting it here avoids UnboundLocalError
+    # when a branch checks `conv_id` without having assigned it locally
+    # (previous regression: `link_task` / `unlink_task` / `promote_task_def`
+    # etc. referenced conv_id before it was set).
+    conv_id = body.get("conversation_id", "")
 
     if action == "random_thought":
-        return self._handle_random_thought(body, body.get("conversation_id", ""), user_id, flowfile)
+        return self._handle_random_thought(body, conv_id, user_id, flowfile)
 
     # â”€â”€ Task management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     if action == "list_schedules":
-        conv_id = body.get("conversation_id", "")
         from core.poll_scheduler import PollScheduler
         all_scheds = PollScheduler.instance().list_all()
         # Filter to current conversation
@@ -90,7 +94,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "add_schedule":
-        conv_id = body.get("conversation_id", "")
         at_str = body.get("at", "")
         reason = body.get("reason", "manual schedule")
         agent = body.get("agent", "")
@@ -131,7 +134,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "delete_schedule":
-        conv_id = body.get("conversation_id", "")
         key = body.get("key", "").strip()
         from core.poll_scheduler import PollScheduler
         scheduler = PollScheduler.instance()
@@ -308,7 +310,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "assign_task":
-        conv_id = body.get("conversation_id", "")
         agent = body.get("agent_name", "")
         task_def_name = body.get("task_def_name", "")
         if not conv_id or not agent or not task_def_name:
@@ -348,7 +349,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "task_status":
-        conv_id = body.get("conversation_id", "")
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
@@ -400,7 +400,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
 
     if action == "task_log":
         task_name = body.get("name", body.get("task_id", ""))
-        conv_id = body.get("conversation_id", "")
         if not task_name:
             # Return all task logs
             extras = store.get_extras(conv_id) or {}
@@ -430,7 +429,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "task_history":
-        conv_id = body.get("conversation_id", "")
         task_id = body.get("task_id", "")
         if not conv_id or not task_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or task_id"}).encode())
@@ -457,7 +455,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action in ("pause_task", "resume_task", "cancel_task", "delete_task"):
-        conv_id = body.get("conversation_id", "")
         target = body.get("task_id", "") or body.get("agent_name", "")
         if not conv_id or not target:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or task_id/agent_name"}).encode())
@@ -533,7 +530,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
 
     # â”€â”€ Image service management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if action == "edit_task":
-        conv_id = body.get("conversation_id", "")
         task_id = body.get("task_id", "")
         if not conv_id or not task_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or task_id"}).encode())
@@ -567,7 +563,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "msg_task":
-        conv_id = body.get("conversation_id", "")
         task_id = body.get("task_id", "")
         message = body.get("message", "")
         if not conv_id or not task_id or not message:

@@ -158,8 +158,12 @@ class ConversationStore:
         """Initialize a git repo in the conversation directory (idempotent)."""
         conv_dir = self._conv_dir(cid)
         git_dir = conv_dir / ".git"
-        if git_dir.exists():
+        if git_dir.exists() and (git_dir / "HEAD").exists():
             return
+        # Remove incomplete .git dir if present
+        if git_dir.exists():
+            import shutil
+            shutil.rmtree(git_dir, ignore_errors=True)
         try:
             self._git(cid, "init", "-q", "-b", "live")
             # Configure for this repo only (no user-level config needed)
@@ -275,7 +279,8 @@ class ConversationStore:
 
     def git_current_branch(self, cid: str) -> str:
         conv_dir = self._conv_dir(cid)
-        if not (conv_dir / ".git").exists():
+        git_dir = conv_dir / ".git"
+        if not git_dir.exists() or not (git_dir / "HEAD").exists():
             return ""
         try:
             result = self._git(cid, "branch", "--show-current")

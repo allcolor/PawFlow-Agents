@@ -468,7 +468,13 @@ if (typeof hljs !== 'undefined') {
 <div class="sidebar collapsed" id="sidebar">
   <div class="sidebar-header">
     <h2>Conversations</h2>
-    <button class="btn-new" onclick="newChat()">+ New</button>
+    <div style="position:relative;display:inline-block;">
+      <button class="btn-new" style="border-radius:6px 0 0 6px" onclick="newChat()">+ New</button><button class="btn-new" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'" style="border-left:1px solid rgba(255,255,255,0.3);border-radius:0 6px 6px 0;padding:4px 6px;">▼</button>
+      <div style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#1a1a2e;border:1px solid #333;border-radius:6px;min-width:200px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.5);">
+        <div onclick="this.parentElement.style.display='none';newChat()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''">New conversation</div>
+        <div onclick="this.parentElement.style.display='none';importConversation()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''">Import conversation</div>
+      </div>
+    </div>
   </div>
   <div class="conv-list" id="convList"></div>
   <div class="sidebar-settings">
@@ -557,7 +563,7 @@ if (typeof hljs !== 'undefined') {
           <div><div class="ami-label">Memories</div><div class="ami-desc">View agent memories</div></div>
         </div>
         <div class="action-menu-sep"></div>
-        <div class="action-menu-item" onclick="closeActionMenu();exportConversation()">
+        <div class="action-menu-item" onclick="closeActionMenu();showExportDialog()">
           <span class="ami-icon">&#x1F4E5;</span>
           <div><div class="ami-label">Export</div><div class="ami-desc">Export conversation</div></div>
         </div>

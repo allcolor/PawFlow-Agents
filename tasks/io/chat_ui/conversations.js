@@ -458,6 +458,151 @@ function exportConversation() {
     });
 }
 
+function importConversation() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.zip,.jsonl';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    const ext = file.name.split('.').pop().toLowerCase();
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = reader.result;  // ArrayBuffer
+      if (ext === 'zip') {
+        _importPawflowFile(file.name, data);
+      } else if (ext === 'jsonl') {
+        _importClaudeCodeFile(file.name, data);
+      } else {
+        addMsg('error', 'Unsupported format. Use .zip (PawFlow) or .jsonl (Claude Code)');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+  input.click();
+}
+
+function _importPawflowFile(filename, arrayBuffer) {
+  // Upload zip to server, server extracts extras.json to find agents, returns agent list
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+  action$('conv_import_analyze', { filename, data_b64: b64, format: 'pawflow' }).subscribe(info => {
+    if (info.error) { addMsg('error', 'Import failed: ' + info.error); return; }
+    // info.agents = [{name, definition},...], info.temp_id = server-side temp storage key
+    _showImportConvDialog(info, 'pawflow');
+  });
+}
+
+function _importClaudeCodeFile(filename, arrayBuffer) {
+  const text = new TextDecoder().decode(arrayBuffer);
+  const b64 = btoa(unescape(encodeURIComponent(text)));
+  action$('conv_import_analyze', { filename, data_b64: b64, format: 'claude_code' }).subscribe(info => {
+    if (info.error) { addMsg('error', 'Import failed: ' + info.error); return; }
+    _showImportConvDialog(info, 'claude_code');
+  });
+}
+
+function _showImportConvDialog(info, fmt) {
+  // info: {temp_id, agents: [{name, definition},...], message_count, format}
+  // Fetch repo agents + LLM services for the mapping dialog
+  action$('list_resources', {}).subscribe(resData => {
+    const repoAgents = (resData.agents || []).map(a => a.name);
+    const llmServices = resData.llm_services || [];
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    const panel = document.createElement('div');
+    panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+    let html = '<h3 style="margin:0 0 12px;color:#e0e0e0;font-size:14px;">Import Conversation</h3>';
+    html += '<div style="color:#888;font-size:11px;margin-bottom:12px;">' + info.message_count + ' messages, format: ' + fmt + '</div>';
+    html += '<div style="margin-bottom:10px;"><label style="color:#aaa;font-size:11px;">Title</label><input id="imp-title" value="Imported conversation" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
+    // Agent mapping
+    html += '<div style="margin-bottom:10px;"><label style="color:#aaa;font-size:11px;">Agent Mapping</label>';
+    for (const agent of info.agents) {
+      const defOptions = repoAgents.map(a => '<option value="' + a + '"' + (a === agent.definition ? ' selected' : '') + '>' + a + '</option>').join('');
+      const svcOptions = '<option value="">(auto)</option>' + llmServices.map(s => '<option value="' + s + '">' + s + '</option>').join('');
+      html += '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;padding:6px;background:#0a0a1a;border-radius:4px;border:1px solid #222;">';
+      html += '<span style="color:#e0e0e0;font-size:12px;min-width:80px;">' + agent.name + '</span>';
+      html += '<select class="imp-def" data-agent="' + agent.name + '" style="flex:1;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:3px;font-size:11px;">' + defOptions + '</select>';
+      html += '<select class="imp-svc" data-agent="' + agent.name + '" style="flex:1;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:3px;font-size:11px;">' + svcOptions + '</select>';
+      html += '</div>';
+    }
+    html += '</div>';
+    html += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">';
+    html += '<button id="imp-cancel" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>';
+    html += '<button id="imp-go" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Import</button>';
+    html += '</div>';
+    panel.innerHTML = html;
+    overlay.appendChild(panel);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+    panel.querySelector('#imp-cancel').onclick = () => overlay.remove();
+    panel.querySelector('#imp-go').onclick = () => {
+      const title = panel.querySelector('#imp-title').value.trim() || 'Imported';
+      const agent_mapping = {};
+      panel.querySelectorAll('.imp-def').forEach(sel => {
+        const name = sel.dataset.agent;
+        const svcSel = panel.querySelector('.imp-svc[data-agent="' + name + '"]');
+        agent_mapping[name] = {
+          definition: sel.value,
+          params: { name: name },
+          llm_service: svcSel ? svcSel.value : '',
+        };
+      });
+      overlay.remove();
+      document.getElementById('status').textContent = 'Importing...';
+      action$('conv_import_execute', {
+        temp_id: info.temp_id, format: fmt,
+        agent_mapping, title,
+      }).subscribe(result => {
+        if (result.error) { addMsg('error', 'Import failed: ' + result.error); }
+        else {
+          addMsg('system', 'Conversation imported successfully');
+          loadConversations();
+          resumeConv(result.conversation_id);
+        }
+        document.getElementById('status').textContent = t('ready');
+      });
+    };
+  });
+}
+
+function showExportDialog() {
+  if (!conversationId) return;
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:340px;border:1px solid #333;';
+  panel.innerHTML = '<h3 style="margin:0 0 16px;color:#e0e0e0;font-size:14px;">Export Conversation</h3>'
+    + '<div style="display:flex;flex-direction:column;gap:8px;">'
+    + '<button onclick="this.closest(\'div[style*=fixed]\').remove();exportConversation()" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>HTML</b><br><span style=font-size:11px;color:#888>Standalone HTML file for viewing/sharing</span></button>'
+    + '<button onclick="this.closest(\'div[style*=fixed]\').remove();exportPawflow()" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>PawFlow (.pfconv.zip)</b><br><span style=font-size:11px;color:#888>Full conversation archive, re-importable</span></button>'
+    + '<button onclick="this.closest(\'div[style*=fixed]\').remove();exportClaudeCode()" style="background:#0f3460;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;cursor:pointer;text-align:left;"><b>Claude Code (.jsonl)</b><br><span style=font-size:11px;color:#888>Claude Code compatible format</span></button>'
+    + '</div>'
+    + '<div style="margin-top:12px;text-align:right;"><button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button></div>';
+  overlay.appendChild(panel);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+function exportPawflow() {
+  if (!conversationId) return;
+  document.getElementById('status').textContent = 'Exporting...';
+  action$('conv_export_pawflow', { conversation_id: conversationId }).subscribe(data => {
+    if (data.error) { addMsg('error', 'Export failed: ' + data.error); }
+    else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', 'Exported: ' + data.filename); }
+    document.getElementById('status').textContent = t('ready');
+  });
+}
+
+function exportClaudeCode() {
+  if (!conversationId) return;
+  document.getElementById('status').textContent = 'Exporting...';
+  action$('conv_export_claude_code', { conversation_id: conversationId }).subscribe(data => {
+    if (data.error) { addMsg('error', 'Export failed: ' + data.error); }
+    else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', 'Exported: ' + data.filename); }
+    document.getElementById('status').textContent = t('ready');
+  });
+}
+
 function buildExportHtml(messages, nicknames, fileUrls) {
   const nicks = nicknames || {};
   function nickLookup(name) {
@@ -471,6 +616,8 @@ function buildExportHtml(messages, nicknames, fileUrls) {
     if (type === 'system') continue;
     let cssClass = type;
     let content = m.content || '';
+    if (Array.isArray(content)) content = content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+    if (typeof content !== 'string') content = JSON.stringify(content);
     let badge = '';
     if (type === 'assistant' || type === 'user') {
       const src = m.source || {};

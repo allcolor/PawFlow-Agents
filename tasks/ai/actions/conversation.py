@@ -4,6 +4,7 @@ import json
 import logging
 import time
 import threading
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from core import FlowFile
@@ -507,6 +508,60 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": ok}).encode())
         return [flowfile]
 
+    if action == "conv_export_pawflow":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        import io, zipfile
+        from core.file_store import FileStore
+        conv_dir = store._conv_dir(conv_id)
+        if not conv_dir.is_dir():
+            flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+            return [flowfile]
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for f in sorted(conv_dir.rglob('*')):
+                if f.is_file() and '.git' not in f.parts:
+                    arcname = str(f.relative_to(conv_dir))
+                    zf.write(f, arcname)
+        filename = f"conversation_{conv_id[:8]}.pfconv.zip"
+        fid = FileStore.instance().store(filename, buf.getvalue(),
+            "application/zip", user_id=user_id, conversation_id=conv_id)
+        flowfile.set_content(json.dumps({
+            "ok": True, "url": f"/files/{fid}/{filename}", "filename": filename,
+        }).encode())
+        return [flowfile]
+
+    if action == "conv_export_claude_code":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        from core.file_store import FileStore
+        msgs = store.load(conversation_id=conv_id, user_id=user_id)
+        if not msgs:
+            flowfile.set_content(json.dumps({"error": "Conversation empty"}).encode())
+            return [flowfile]
+        lines = []
+        for m in msgs:
+            role = m.get("role", "") if isinstance(m, dict) else getattr(m, "role", "")
+            content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
+            if role == "user":
+                lines.append(json.dumps({"type": "human", "message": {"role": "user", "content": content}}, ensure_ascii=False))
+            elif role == "assistant":
+                lines.append(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": content}}, ensure_ascii=False))
+            elif role == "tool":
+                lines.append(json.dumps({"type": "tool_result", "message": {"role": "user", "content": content}}, ensure_ascii=False))
+        export = "\n".join(lines) + "\n"
+        filename = f"conversation_{conv_id[:8]}.cc.jsonl"
+        fid = FileStore.instance().store(filename, export.encode("utf-8"),
+            "application/jsonl", user_id=user_id, conversation_id=conv_id)
+        flowfile.set_content(json.dumps({
+            "ok": True, "url": f"/files/{fid}/{filename}", "filename": filename,
+        }).encode())
+        return [flowfile]
+
     if action == "conv_compare_branches":
         conv_id = body.get("conversation_id", "")
         branch_a = body.get("branch_a", "").strip()
@@ -516,6 +571,151 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             return [flowfile]
         result = store.git_compare_branches(conv_id, branch_a, branch_b)
         flowfile.set_content(json.dumps(result).encode())
+        return [flowfile]
+
+    if action == "conv_import_analyze":
+        import base64, tempfile, uuid
+        fmt = body.get("format", "")
+        data_b64 = body.get("data_b64", "")
+        if not data_b64 or fmt not in ("pawflow", "claude_code"):
+            flowfile.set_content(json.dumps({"error": "Missing data or invalid format"}).encode())
+            return [flowfile]
+        raw = base64.b64decode(data_b64)
+        temp_id = uuid.uuid4().hex[:16]
+        temp_dir = Path(tempfile.gettempdir()) / f"pf_import_{temp_id}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        (temp_dir / "raw").write_bytes(raw)
+        agents_found = []
+        message_count = 0
+        if fmt == "pawflow":
+            import zipfile, io
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    if "transcript.jsonl" not in zf.namelist():
+                        flowfile.set_content(json.dumps({"error": "Not a valid PawFlow archive (missing transcript.jsonl)"}).encode())
+                        return [flowfile]
+                    # Count messages
+                    for line in zf.read("transcript.jsonl").decode("utf-8", errors="replace").splitlines():
+                        if line.strip(): message_count += 1
+                    # Extract agents from extras.json
+                    if "extras.json" in zf.namelist():
+                        extras = json.loads(zf.read("extras.json"))
+                        conv_agents = extras.get("conv_agents", {})
+                        for name, cfg in conv_agents.items():
+                            agents_found.append({"name": name, "definition": cfg.get("definition", name)})
+            except zipfile.BadZipFile:
+                flowfile.set_content(json.dumps({"error": "Invalid zip file"}).encode())
+                return [flowfile]
+        elif fmt == "claude_code":
+            text = raw.decode("utf-8", errors="replace")
+            for line in text.splitlines():
+                if line.strip(): message_count += 1
+            agents_found = [{"name": "claude", "definition": "claude"}]
+        flowfile.set_content(json.dumps({
+            "ok": True, "temp_id": temp_id, "format": fmt,
+            "agents": agents_found, "message_count": message_count,
+        }).encode())
+        return [flowfile]
+
+    if action == "conv_import_execute":
+        import base64, tempfile, uuid as _uuid
+        temp_id = body.get("temp_id", "")
+        fmt = body.get("format", "")
+        agent_mapping = body.get("agent_mapping", {})  # {import_name: {definition, params, llm_service}}
+        title = body.get("title", "Imported conversation")
+        if not temp_id:
+            flowfile.set_content(json.dumps({"error": "Missing temp_id"}).encode())
+            return [flowfile]
+        temp_dir = Path(tempfile.gettempdir()) / f"pf_import_{temp_id}"
+        raw_file = temp_dir / "raw"
+        if not raw_file.exists():
+            flowfile.set_content(json.dumps({"error": "Import data expired"}).encode())
+            return [flowfile]
+        raw = raw_file.read_bytes()
+        cid = _uuid.uuid4().hex[:16] + _uuid.uuid4().hex[:16]
+        conv_dir = store._store_dir / store._safe_name(user_id) / store._safe_name(cid)
+        conv_dir.mkdir(parents=True, exist_ok=True)
+        if fmt == "pawflow":
+            import zipfile, io
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                zf.extractall(conv_dir)
+            # Update extras with new cid, user, and agent mapping
+            extras_path = conv_dir / "extras.json"
+            if extras_path.exists():
+                extras = json.loads(extras_path.read_text(encoding="utf-8"))
+            else:
+                extras = {}
+            extras["conversation_id"] = cid
+            extras["user_id"] = user_id
+            extras["title"] = title or extras.get("title", "Imported")
+            # Remap agents
+            if agent_mapping:
+                new_conv_agents = {}
+                for imp_name, mapping in agent_mapping.items():
+                    new_conv_agents[imp_name] = {
+                        "definition": mapping.get("definition", imp_name),
+                        "params": mapping.get("params", {"name": imp_name}),
+                        "llm_service": mapping.get("llm_service", ""),
+                    }
+                extras["conv_agents"] = new_conv_agents
+                if new_conv_agents:
+                    extras["selectedAgent"] = list(new_conv_agents.keys())[0]
+            extras_path.write_text(json.dumps(extras, ensure_ascii=False, indent=2), encoding="utf-8")
+        elif fmt == "claude_code":
+            # Convert CC JSONL to PawFlow transcript
+            text = raw.decode("utf-8", errors="replace")
+            transcript_lines = []
+            msg_id_counter = 0
+            import uuid as _u2
+            for line in text.splitlines():
+                line = line.strip()
+                if not line: continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg_type = entry.get("type", "")
+                message = entry.get("message", {})
+                content = message.get("content", "")
+                ts = time.time()
+                mid = _u2.uuid4().hex[:12]
+                if msg_type == "human":
+                    transcript_lines.append(json.dumps({"t": "msg", "role": "user", "content": content, "msg_id": mid, "timestamp": ts}, ensure_ascii=False))
+                elif msg_type == "assistant":
+                    # CC content can be array of blocks
+                    if isinstance(content, list):
+                        text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
+                        content = "\n".join(text_parts)
+                    transcript_lines.append(json.dumps({"t": "msg", "role": "assistant", "content": content, "msg_id": mid, "timestamp": ts}, ensure_ascii=False))
+                elif msg_type == "tool_result":
+                    transcript_lines.append(json.dumps({"t": "msg", "role": "tool", "content": str(content), "msg_id": mid, "timestamp": ts}, ensure_ascii=False))
+            (conv_dir / "transcript.jsonl").write_text("\n".join(transcript_lines) + "\n", encoding="utf-8")
+            # Create minimal extras
+            agent_name = list(agent_mapping.keys())[0] if agent_mapping else "claude"
+            agent_cfg = agent_mapping.get(agent_name, {"definition": "claude", "params": {"name": agent_name}, "llm_service": ""})
+            extras = {
+                "conversation_id": cid,
+                "user_id": user_id,
+                "title": title,
+                "selectedAgent": agent_name,
+                "conv_agents": {
+                    agent_name: {
+                        "definition": agent_cfg.get("definition", "claude"),
+                        "params": agent_cfg.get("params", {"name": agent_name}),
+                        "llm_service": agent_cfg.get("llm_service", ""),
+                    }
+                },
+            }
+            (conv_dir / "extras.json").write_text(json.dumps(extras, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Init git
+        store._cid_user[cid] = user_id
+        store._git_init(cid)
+        # Cleanup temp
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        flowfile.set_content(json.dumps({
+            "ok": True, "conversation_id": cid,
+        }).encode())
         return [flowfile]
 
     return None

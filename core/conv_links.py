@@ -5,13 +5,11 @@ This module manages linked_* lists in ConversationStore extras.
 
 Linkable types:
   - agents   → conv_agents config (handled by conv_agent_config.py)
-  - skills   → linked_skills (list of names)
-  - tasks    → linked_tasks (list of names)
   - mcps     → linked_mcps (list of names)
   - relays   → relay_bindings (delegates to relay_bindings.py)
 
 NOT linkable (global/always available):
-  - services, tools, flows
+  - services, tools, flows, skills, tasks
 """
 
 import logging
@@ -21,8 +19,6 @@ logger = logging.getLogger(__name__)
 
 # Extras keys for simple linkable types
 _LINK_KEYS = {
-    "skills": "linked_skills",
-    "tasks": "linked_tasks",
     "mcps": "linked_mcps",
 }
 

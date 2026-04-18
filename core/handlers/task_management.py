@@ -126,9 +126,7 @@ class LinkResourceHandler(ToolHandler):
         return (
             "Link or unlink a repository resource to this conversation.\n"
             "Resources must be linked before they can be used:\n"
-            "- tasks: link before assigning to an agent\n"
-            "- skills: link before assigning to an agent\n"
-            "- mcps: link before use\n"
+            "- mcps: link before use (tools become available to agents)\n"
             "- relays: link before use (relay-specific: set_default, per-agent binding via /relay)\n\n"
             "Actions: link, unlink, list"
         )
@@ -144,7 +142,7 @@ class LinkResourceHandler(ToolHandler):
                 },
                 "resource_type": {
                     "type": "string",
-                    "enum": ["tasks", "skills", "mcps", "relays"],
+                    "enum": ["mcps", "relays"],
                 },
                 "name": {
                     "type": "string",
@@ -433,11 +431,6 @@ class AssignTaskHandler(ToolHandler):
                                  conversation_id=self._conversation_id)
         if not definition:
             return f"Error: task definition '{task_def_name}' not found"
-        # Task must be linked to this conversation before assignment
-        from core.conv_links import is_linked
-        if not is_linked(self._conversation_id, "tasks", task_def_name):
-            return (f"Error: task '{task_def_name}' is not linked to this conversation. "
-                    f"Use link_task first.")
         task_desc = definition.get("prompt", "")
         if not task_desc:
             return f"Error: task definition '{task_def_name}' has no prompt"

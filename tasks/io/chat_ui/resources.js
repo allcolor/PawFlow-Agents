@@ -412,37 +412,18 @@ async function _renderResourcesData(data) {
     }
     html += _sectionFooter();
 
-    // ── Tasks (linked to conv) ──
+    // ── Task Definitions ──
     html += _sectionHeader('Tasks', 'task_def');
-    { const linked = (data.task_defs || []).filter(t => t.linked);
-      if (linked.length) {
-        linked.forEach(t => {
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'task_def','${t.name}','${t.scope||''}');return false;">
-            ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
-            <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
-            <span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"
-              onclick="fireAction('unlink_task',{name:'${escapeHtml(t.name)}'});setTimeout(loadResources,400)">&times;</span>
-          </div>`;
-        });
-      } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No tasks linked</div>';
-      }
-    }
-    html += _sectionFooter();
-    // Task Repository (collapsed)
-    html += _repoSectionHeader('Task Repository', '_task_repo');
-    if (!_collapsedSections['_task_repo']) {
-      const repoTasks = (data.task_defs || []).filter(t => !t.linked);
-      if (repoTasks.length) {
-        repoTasks.forEach(t => {
+    { const allTasks = data.task_defs || [];
+      if (allTasks.length) {
+        allTasks.forEach(t => {
           html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'task_def','${escapeHtml(t.name)}','${t.scope||''}');return false;">
-            ${_scopeBadge(t.scope)}<span style="color:#888;font-size:12px;flex:1;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
-            <span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Link to conversation"
-              onclick="event.stopPropagation();fireAction('link_task',{name:'${escapeHtml(t.name)}'});setTimeout(loadResources,400)">+</span>
+            ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
+            <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
           </div>`;
         });
       } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">All tasks are linked</div>';
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No task definitions</div>';
       }
     }
     html += _sectionFooter();

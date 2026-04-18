@@ -76,8 +76,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
 
     # Most actions below need conv_id; hoisting it here avoids UnboundLocalError
     # when a branch checks `conv_id` without having assigned it locally
-    # (previous regression: `link_task` / `unlink_task` / `promote_task_def`
-    # etc. referenced conv_id before it was set).
+    # (previous regression: actions referenced conv_id before it was set).
     conv_id = body.get("conversation_id", "")
 
     if action == "random_thought":
@@ -255,8 +254,8 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 {"error": str(e)}).encode())
         return [flowfile]
 
-    if action in ("link_task", "link_skill", "link_mcp"):
-        rtype = {"link_task": "tasks", "link_skill": "skills", "link_mcp": "mcps"}[action]
+    if action == "link_mcp":
+        rtype = "mcps"
         name = body.get("name", "").strip()
         if not name or not conv_id:
             flowfile.set_content(json.dumps(
@@ -264,10 +263,9 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             return [flowfile]
         # Verify resource exists
         from core.resource_store import ResourceStore
-        _singular = {"tasks": "task_def", "skills": "skill", "mcps": "mcp"}
-        if not ResourceStore.instance().get_any(_singular[rtype], name, user_id):
+        if not ResourceStore.instance().get_any("mcp", name, user_id):
             flowfile.set_content(json.dumps(
-                {"error": f"{rtype[:-1]} '{name}' not found"}).encode())
+                {"error": f"MCP server '{name}' not found"}).encode())
             return [flowfile]
         from core.conv_links import link as _link
         linked = _link(conv_id, rtype, name)
@@ -275,8 +273,8 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             {"ok": True, "name": name, f"linked_{rtype}": linked}).encode())
         return [flowfile]
 
-    if action in ("unlink_task", "unlink_skill", "unlink_mcp"):
-        rtype = {"unlink_task": "tasks", "unlink_skill": "skills", "unlink_mcp": "mcps"}[action]
+    if action == "unlink_mcp":
+        rtype = "mcps"
         name = body.get("name", "").strip()
         if not name or not conv_id:
             flowfile.set_content(json.dumps(
@@ -288,8 +286,8 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             {"ok": True, "name": name, f"linked_{rtype}": linked}).encode())
         return [flowfile]
 
-    if action in ("list_linked_tasks", "list_linked_skills", "list_linked_mcps"):
-        rtype = action.replace("list_linked_", "")
+    if action == "list_linked_mcps":
+        rtype = "mcps"
         if not conv_id:
             flowfile.set_content(json.dumps({f"linked_{rtype}": []}).encode())
             return [flowfile]
@@ -297,10 +295,9 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         linked = get_linked(conv_id, rtype)
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        _singular = {"tasks": "task_def", "skills": "skill", "mcps": "mcp"}
         items = []
         for name in linked:
-            rd = rs.get_any(_singular[rtype], name, user_id)
+            rd = rs.get_any("mcp", name, user_id)
             items.append({
                 "name": name,
                 "description": (rd or {}).get("description", ""),

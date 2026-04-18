@@ -455,11 +455,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
         # Linked resources
         from core.conv_links import get_linked
-        _linked_skills = set(get_linked(conv_id, "skills")) if conv_id else set()
-        _linked_tasks = set(get_linked(conv_id, "tasks")) if conv_id else set()
         _linked_mcps = set(get_linked(conv_id, "mcps")) if conv_id else set()
 
-        # Skills: show all from repo, mark linked and assigned_to
+        # Skills: show all from repo, mark assigned_to
         all_skills = rs.list_all("skill", uid, conversation_id=conv_id)
         skills_out = []
         for s in all_skills:
@@ -470,7 +468,6 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "name": sname,
                 "description": s.get("description", ""),
                 "scope": s.get("_scope", ""),
-                "linked": sname in _linked_skills,
                 "assigned_to": assigned_to,
             })
 
@@ -483,14 +480,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "linked": m["name"] in _linked_mcps,
         } for m in all_mcps]
 
-        # Tasks: show all from repo, mark linked
+        # Tasks: show all from repo
         all_task_defs = rs.list_all("task_def", uid, conversation_id=conv_id)
         tasks_out = [{
             "name": t["name"],
             "description": t.get("description", "") or t.get("prompt", "")[:60],
             "scope": t.get("_scope", ""),
             "default_interval": t.get("default_interval", "6/1m"),
-            "linked": t["name"] in _linked_tasks,
         } for t in all_task_defs]
 
         # Prompts: all from repo (no link/unlink — click to use)

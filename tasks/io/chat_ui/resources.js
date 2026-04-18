@@ -754,7 +754,13 @@ function showAgentMenu(e, name, scope, autoconv) {
     item('\u{1F504} Autoconv on...', () => { const freq = prompt('Frequency (e.g. 6/1m, 2-3/h, 1/2h):', '6/1m'); if (!freq) return; action$('random_thought', { sub: 'on', agent: name, frequency: freq }).subscribe(d => { addMsg('system', d.error || 'Autoconv enabled for ' + name + ' (' + freq + ')'); loadResources(); }); });
   }
   sep();
+  if (_isAdmin()) item('\u2191 Copy to Global', () => _copyResource('agent', name, 'global'));
+  if (scope !== 'user') item('\u2191 Copy to User', () => _copyResource('agent', name, 'user'));
+  sep();
   item('\u2716 Remove from conversation', () => _removeAgentFromConv(name), true);
+  if (_canEditScope(scope)) {
+    item('\u{1F5D1} Delete definition', () => _deleteResource('agent', name, scope), true);
+  }
   setTimeout(() => document.addEventListener('click', function _close() { menu.remove(); document.removeEventListener('click', _close); }), 0);
 }
 

@@ -369,7 +369,14 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     recursive = req.get("recursive", True)
     if not regex:
         raise ValueError("Missing 'regex' parameter")
-    compiled = re.compile(regex, re.IGNORECASE)
+    # Suppress Python 3.12+ FutureWarning for user-supplied regex quirks
+    # (e.g. `[[..]]` patterns flagged as possible nested sets). The regex
+    # still compiles correctly — we just don't want the warning to pollute
+    # the relay log on every grep call.
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("ignore", FutureWarning)
+        compiled = re.compile(regex, re.IGNORECASE)
     p = Path(path)
     results = []
 

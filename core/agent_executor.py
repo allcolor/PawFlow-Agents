@@ -743,17 +743,22 @@ class SubAgentExecutor:
                         result.status = "cancelled"
                         break
 
-                    result.tools_called.append(tc.name)
+                    # Unwrap MCP wrapper so UI displays the inner tool
+                    # (Read/Grep/...) instead of `use_tool`. Same as CC provider
+                    # (claude_code.py:1170) and agent_core.py:320.
+                    from core.llm_client import unwrap_mcp_tool
+                    _disp_name, _disp_args = unwrap_mcp_tool(tc.name, tc.arguments or {})
+                    result.tools_called.append(_disp_name)
                     # Truncate args for SSE (avoid huge payloads)
                     _tc_args_preview = {}
-                    if tc.arguments:
-                        for k, v in tc.arguments.items():
+                    if _disp_args and isinstance(_disp_args, dict):
+                        for k, v in _disp_args.items():
                             vs = str(v)
                             _tc_args_preview[k] = vs[:200] if len(vs) > 200 else vs
                     self._emit("sub_agent_tool", {
                         "agent_name": task.agent_name,
                         "task_id": task.id,
-                        "tool": tc.name,
+                        "tool": _disp_name,
                         "arguments": _tc_args_preview,
                         "tc_id": tc.id,
                         "iteration": result.iterations,
@@ -765,7 +770,7 @@ class SubAgentExecutor:
                             from core.conversation_store import ConversationStore
                             ConversationStore.instance().append_display_trace(
                                 task.parent_conversation_id, task.id,
-                                {"type": "tool_call", "tool": tc.name,
+                                {"type": "tool_call", "tool": _disp_name,
                                  "arguments": _tc_args_preview},
                             )
                         except Exception:
@@ -780,7 +785,7 @@ class SubAgentExecutor:
                     self._emit("sub_agent_tool_result", {
                         "agent_name": task.agent_name,
                         "task_id": task.id,
-                        "tool": tc.name,
+                        "tool": _disp_name,
                         "tc_id": tc.id,
                         "result": _result_preview,
                         "delegate_tc_id": task.delegate_tc_id,

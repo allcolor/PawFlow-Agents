@@ -326,38 +326,19 @@ async function _renderResourcesData(data) {
       }
     }
     html += _sectionFooter();
-    // ── Skills (linked to conv) ──
+    // ── Skills ──
     html += _sectionHeader('Skills', 'skill');
-    { const linked = (data.skills || []).filter(s => s.linked);
-      if (linked.length) {
-        linked.forEach(s => {
+    { const allSkills = data.skills || [];
+      if (allSkills.length) {
+        allSkills.forEach(s => {
           const assignedTo = s.assigned_to || [];
           const assignedTag = assignedTo.length ? ' <span style="color:#555;font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'skill','${s.name}','${s.scope||''}');return false;">
-            ${_scopeBadge(s.scope)}<span style="color:#e0e0e0;font-size:12px;">${escapeHtml(s.name)}${assignedTag}</span>
-            <span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"
-              onclick="fireAction('unlink_skill',{name:'${escapeHtml(s.name)}'});setTimeout(loadResources,400)">&times;</span>
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'skill','${escapeHtml(s.name)}','${s.scope||''}');return false;">
+            ${_scopeBadge(s.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(s.name)}${assignedTag}</span>
           </div>`;
         });
       } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No skills linked</div>';
-      }
-    }
-    html += _sectionFooter();
-    // Skill Repository (collapsed)
-    html += _repoSectionHeader('Skill Repository', '_skill_repo');
-    if (!_collapsedSections['_skill_repo']) {
-      const repoSkills = (data.skills || []).filter(s => !s.linked);
-      if (repoSkills.length) {
-        repoSkills.forEach(s => {
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
-            ${_scopeBadge(s.scope)}<span style="color:#888;font-size:12px;flex:1;">${escapeHtml(s.name)}</span>
-            <span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Link to conversation"
-              onclick="fireAction('link_skill',{name:'${escapeHtml(s.name)}'});setTimeout(loadResources,400)">+</span>
-          </div>`;
-        });
-      } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">All skills are linked</div>';
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No skills defined</div>';
       }
     }
     html += _sectionFooter();

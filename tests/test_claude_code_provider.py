@@ -286,10 +286,6 @@ class TestSendUserMessageSentinel(unittest.TestCase):
         self.assertFalse(ok)
         # Must NOT have written to the compact subprocess's stdin.
         proc.stdin.write.assert_not_called()
-        # And must have stashed it for diagnostics.
-        self.assertEqual(len(client._lost_preempt_messages), 1)
-        self.assertEqual(client._lost_preempt_messages[0]["text"],
-                         "hello during compact")
 
     def test_preempt_during_memory_extract_sentinel_refused(self):
         client, proc = self._make_client("_memory_extract")

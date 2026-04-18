@@ -294,6 +294,37 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _incoming_mode.get("source_agent") or "-",
                     _running_mode.get("type"),
                     _running_mode.get("source_agent") or "-")
+            # Source of truth: persist the user message to the transcript
+            # IMMEDIATELY, before any routing (preempt stdin or PendingQueue).
+            # Without this, a preempt that succeeds via stdin but is then
+            # killed by CC auto-compact leaves the user message ONLY in CC's
+            # in-memory session — it's lost from PawFlow's on-disk state,
+            # so the post-compact summarizer never sees it.
+            # Dedup via msg_id at agent_flush time prevents duplicates.
+            from core.conversation_writer import ConversationWriter
+            from core.llm_client import stamp_message
+            _uid = flowfile.get_attribute("http.auth.principal") or ""
+            _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
+            _stamped_user = None
+            if _user_text.strip() or _attachments_body:
+                _stamped_user = stamp_message({
+                    "role": "user",
+                    "content": _user_text,
+                    "source": {"type": "user", "name": _uid,
+                               "target_agent": _target or None},
+                    "msg_id": _user_msg_id or None,
+                    "channel": "web",
+                })
+                if _attachments_body:
+                    _stamped_user["attachments"] = _attachments_body
+                try:
+                    ConversationWriter.for_conversation(conversation_id).enqueue(
+                        [dict(_stamped_user)], user_id=_uid)
+                except Exception as _pe:
+                    logger.warning(
+                        "[agent:%s] pre-persist user message failed: %s",
+                        conversation_id[:8], _pe)
+
             if (_active_client and hasattr(_active_client, 'send_user_message')
                     and _user_text and _modes_match):
                 _attachments = _body.get("attachments", [])
@@ -305,11 +336,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     flowfile.set_attribute("agent.conversation_id", conversation_id)
                     return [flowfile]
                 else:
-                    # send_user_message returned False — either the proc is
-                    # dead OR CC has already emitted its final result and
-                    # the message was queued in _lost_preempt_messages.
-                    # Fall through to the regular queue path which schedules
-                    # a re-trigger via PollScheduler in the finally block.
+                    # send_user_message returned False — proc dead, compacting,
+                    # or CC already emitted its final result. Fall through to
+                    # the PendingQueue path to trigger a new turn. The user
+                    # message is already on disk (pre-persisted above).
                     _already_active = False
                     with self._active_contexts_lock:
                         self._active_claude_client.pop(_agent_key, None)
@@ -318,21 +348,19 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             # the active turn will drain at its end, or a wake will
             # fire if the turn somehow ended before we got here.
             from core.pending_queue import PendingQueue
-            from core.llm_client import stamp_message
-            _uid = flowfile.get_attribute("http.auth.principal") or ""
-            _queued_msg = stamp_message({
-                "role": "user",
-                "content": _user_text,
-                "source": {"type": "user", "name": _uid,
-                           "target_agent": _target or None},
-                "msg_id": _user_msg_id or None,
-                "channel": "web",
-            })
-            _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
-            if _attachments_body:
-                _queued_msg["attachments"] = _attachments_body
+            if _stamped_user is None:
+                _stamped_user = stamp_message({
+                    "role": "user",
+                    "content": _user_text,
+                    "source": {"type": "user", "name": _uid,
+                               "target_agent": _target or None},
+                    "msg_id": _user_msg_id or None,
+                    "channel": "web",
+                })
+                if _attachments_body:
+                    _stamped_user["attachments"] = _attachments_body
             PendingQueue.for_agent(conversation_id, _target or "").enqueue(
-                _queued_msg, source="http")
+                dict(_stamped_user), source="http")
             bus.publish_event(conversation_id, "message_queued", {"conversation_id": conversation_id})
             ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
                               "message_count": ConversationStore.instance().message_count(conversation_id)})

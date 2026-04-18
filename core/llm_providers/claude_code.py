@@ -72,30 +72,30 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # the SAME client instance is repurposed: _conversation_id is set to
         # the sentinel name and _claude_proc points to a fresh subprocess
         # spawned for that one-shot job. Writing a preempt to that stdin
-        # would land in the wrong stream (the compact subprocess would
-        # treat it as part of the summarization, then exit, eating the
-        # message). Refuse so the caller requeues into PendingQueue and
-        # the next live turn drains it.
+        # would land in the wrong stream. Refuse so the caller routes via
+        # the PendingQueue path.
         _conv = getattr(self, '_conversation_id', '') or ''
         if _conv.startswith('_'):
-            if not hasattr(self, '_lost_preempt_messages'):
-                self._lost_preempt_messages = []
-            self._lost_preempt_messages.append({"text": text, "attachments": attachments})
-            logger.info("Preempt arrived during sentinel '%s' — refusing send so caller requeues: %.100s",
+            logger.info("Preempt arrived during sentinel '%s' — refusing send: %.100s",
                         _conv, text)
+            return False
+        # Compact-in-progress: the reader thread has already (or is about to)
+        # kill the CC subprocess. Refuse immediately so the caller routes via
+        # the PendingQueue path — writing to a dying stdin would land the
+        # message in _inflight_preempts with a narrow race where the rescue
+        # handler may have already cleared the list.
+        if getattr(self, '_compacting', False):
+            logger.info("Preempt arrived during CC compact — refusing send: %.100s", text)
             return False
         proc = getattr(self, '_claude_proc', None)
         if not proc or proc.poll() is not None:
             logger.warning("No running Claude Code process to send message to")
             return False
         # If CC has already emitted its final result, sending via stdin is
-        # racy — CC may be tearing down. Push to lost-preempt queue so the
-        # caller can requeue, and tell the caller "not delivered".
+        # racy — CC may be tearing down. Refuse so the caller routes via
+        # PendingQueue.
         if getattr(self, '_result_emitted', False):
-            if not hasattr(self, '_lost_preempt_messages'):
-                self._lost_preempt_messages = []
-            self._lost_preempt_messages.append({"text": text, "attachments": attachments})
-            logger.info("Preempt arrived after CC result — queuing for requeue: %.100s", text)
+            logger.info("Preempt arrived after CC result — refusing send: %.100s", text)
             return False
         try:
             # Multi-agent catch-up: inject messages from other agents before user msg
@@ -132,12 +132,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             proc.stdin.write(msg + "\n")
             proc.stdin.flush()
             self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
-            # Track inflight preempt text so it can be rescued if CC is
-            # killed (compact/stall) before processing it.
-            if not hasattr(self, '_inflight_preempts'):
-                self._inflight_preempts = []
-            self._inflight_preempts.append(
-                {"text": text, "attachments": attachments})
             logger.info("Sent preempt message to Claude Code (pending=%d): %.100s",
                         self._preempt_pending, text)
             return True
@@ -821,8 +815,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         self._preempt_pending = 0  # reset at start of each stream
         self._had_preempts_this_turn = False
         self._result_emitted = False  # set True when CC emits final result
-        self._lost_preempt_messages = []  # preempts arriving after result
-        self._inflight_preempts = []  # preempts sent but not yet processed by CC
+        self._compacting = False  # set True when CC compact_boundary fires
 
         def _inject_catchup():
             """Check for new messages from other agents and inject via stdin."""
@@ -1103,6 +1096,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             continue
                         logger.warning("[claude-code] CC compacting detected (subtype=%s) "
                                        "— killing CC, PawFlow will compact", subtype)
+                        # Set BEFORE kill so a racing send_user_message from
+                        # another thread sees the flag and refuses, routing
+                        # the user message via PendingQueue instead of writing
+                        # to a stdin that's about to close.
+                        self._compacting = True
                         proc.kill()
                         from core.llm_client import CCCompactDetected
                         raise CCCompactDetected("CC auto-compact detected")
@@ -1439,12 +1437,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             "duration_ms": event.get("duration_ms", 0),
                         })
                     # CC emitted its final result. Mark this so future
-                    # preempts go to the requeue path instead of stdin.
+                    # preempts are refused (caller routes via PendingQueue).
                     self._result_emitted = True
-                    # Any preempts sent before this result have been
-                    # processed by CC — drop the inflight tracker so the
-                    # compact-rescue path doesn't re-enqueue them.
-                    self._inflight_preempts = []
                     break
 
         except _CC401Retry:

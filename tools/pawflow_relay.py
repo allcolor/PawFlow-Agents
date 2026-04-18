@@ -2130,9 +2130,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     opcode, payload = _ws_frame_recv(sock)
                     _last_activity[0] = time.time()
                 except socket.timeout:
-                    # Send app-level ping to keep connection alive
+                    # Send app-level ping to keep connection alive.
+                    # MUST hold _send_lock — worker threads from _pool also send
+                    # on this socket with the lock; concurrent writes on an SSL
+                    # socket interleave bytes mid-record and the server sees
+                    # WRONG_VERSION_NUMBER (ssl is not thread-safe for writes).
                     try:
-                        _ws_frame_send(sock, json.dumps({"type": "ping"}).encode("utf-8"))
+                        with _send_lock:
+                            _ws_frame_send(sock, json.dumps({"type": "ping"}).encode("utf-8"))
                         _last_activity[0] = time.time()  # successful send = connection alive
                     except Exception:
                         break  # send failed → connection dead
@@ -2141,7 +2146,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 if opcode == 0x08:
                     break
                 elif opcode == 0x09:
-                    _ws_frame_send(sock, payload, opcode=0x0A)
+                    # Same reasoning as the ping above: SSL writes must be
+                    # serialized with worker-thread sends.
+                    with _send_lock:
+                        _ws_frame_send(sock, payload, opcode=0x0A)
                     continue
                 elif opcode != 0x01:
                     continue

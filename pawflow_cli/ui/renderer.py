@@ -133,8 +133,20 @@ class TerminalRenderer:
     def __init__(self):
         # Force UTF-8 on Windows
         if sys.platform == "win32":
-            import os
-            os.system("")  # Enable VT100 escape sequences
+            # Enable VT100 escape sequences on the console handle.
+            # Previously we called os.system("") for this, but os.system
+            # spawns cmd.exe; when the cwd is a UNC path (e.g. \\wsl$\...)
+            # cmd.exe dumps a noisy warning ("CMD.EXE started with UNC path
+            # ... not supported") before returning. ctypes avoids the spawn.
+            import ctypes
+            try:
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+                mode = ctypes.c_ulong()
+                if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+                    kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+            except Exception:
+                pass
             if hasattr(sys.stdout, "reconfigure"):
                 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         if HAS_RICH:

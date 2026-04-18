@@ -131,6 +131,24 @@ After fixing, `curStep` in the browser console audio stats will converge to `1.0
 
 > Native Linux hosts and macOS (Docker Desktop) are not affected — their clocks are hardware-synced.
 
+## WSL2: Launching PawCode with a WSL-Resident Project
+
+When PawCode runs on Windows (`python -m pawflow_cli ...`) but the project lives inside a WSL distro, you may pass the path in any of these forms:
+
+- `\\wsl$\<distro>\home\<user>\<project>` (Explorer/UNC)
+- `\\wsl.localhost\<distro>\home\<user>\<project>` (newer Windows builds)
+- `C:\...` (Windows drive)
+
+`pawflow_relay.utils.translate_path` normalises all of them before passing the bind-mount to `wsl docker`:
+
+| Input                                   | Bind-mount target       |
+|-----------------------------------------|-------------------------|
+| `C:\foo\bar`                            | `/mnt/c/foo/bar`        |
+| `\\wsl$\Ubuntu-24.04\home\qan\PawFlow`  | `/home/qan/PawFlow`     |
+| `\\wsl.localhost\Ubuntu\home\qan`       | `/home/qan`             |
+
+> The `\\wsl$\...` form is a Windows-side network path; it is **not** visible from inside the WSL Docker daemon. Without stripping the `\\wsl$\<distro>\` prefix, Docker silently creates an empty directory for the bind-mount and `/workspace` appears blank to the relay.
+
 ## 3. Exec Shell Selection
 
 The `exec` action supports a `shell` parameter:

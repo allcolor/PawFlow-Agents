@@ -139,10 +139,17 @@ class ConversationStore:
     # ── Git per conversation ──────────────────────────────────────────
 
     def _git(self, cid: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-        """Run a git command in the conversation directory."""
+        """Run a git command in the conversation directory.
+
+        Passes `-c safe.directory=*` so git doesn't reject repos that live on
+        a filesystem owned by a different uid (happens when the server runs on
+        Windows against a \\\\wsl$\\... path, or inside Docker against a host
+        bind-mount). This is internal infrastructure, not a shared repo — the
+        ownership check adds no value here and only breaks snapshots.
+        """
         conv_dir = self._conv_dir(cid)
         return subprocess.run(
-            ["git"] + list(args),
+            ["git", "-c", "safe.directory=*"] + list(args),
             cwd=str(conv_dir), capture_output=True, text=True,
             check=check, timeout=10,
         )
@@ -163,7 +170,9 @@ class ConversationStore:
             self._git(cid, "commit", "-m", "init", "--allow-empty", "-q")
             logger.debug("[convstore] git init for %s", cid[:8])
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-            logger.warning("[convstore] git init failed for %s: %s", cid[:8], e)
+            detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
+            logger.warning("[convstore] git init failed for %s: %s | git stderr: %s",
+                           cid[:8], e, (detail.strip() if isinstance(detail, str) else detail))
 
     def git_snapshot(self, cid: str, message: str = ""):
         """Commit current state as a snapshot (called after agent turn end).
@@ -199,7 +208,9 @@ class ConversationStore:
                 self._git(cid, "commit", "-m", msg, "-q")
                 logger.debug("[convstore] git snapshot for %s: %s", cid[:8], msg)
             except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-                logger.warning("[convstore] git snapshot failed for %s: %s", cid[:8], e)
+                detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
+                logger.warning("[convstore] git snapshot failed for %s: %s | git stderr: %s",
+                               cid[:8], e, (detail.strip() if isinstance(detail, str) else detail))
 
     def git_log(self, cid: str, limit: int = 20) -> List[Dict]:
         """List recent git commits for a conversation."""

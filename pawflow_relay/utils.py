@@ -15,10 +15,26 @@ def docker_cmd():
 
 
 def translate_path(p):
-    """Translate a Windows path to WSL/Docker mount path."""
+    """Translate a Windows path to WSL/Docker mount path.
+
+    Handles:
+      - Drive letters:   C:\\foo\\bar           -> /mnt/c/foo/bar
+      - WSL UNC paths:   \\\\wsl$\\<distro>\\x  -> /x
+                         \\\\wsl.localhost\\<distro>\\x -> /x
+        (the relay runs `wsl docker`, so the daemon already lives inside the
+        distro and only sees Linux-native paths. Without this, Docker
+        silently bind-mounts an empty directory because //wsl$/... is a
+        Windows-side network path, not a valid Linux path.)
+    """
     if os.name != "nt":
         return p
     p = p.replace("\\", "/")
+    lower = p.lower()
+    for prefix in ("//wsl$/", "//wsl.localhost/"):
+        if lower.startswith(prefix):
+            rest = p[len(prefix):]
+            _, _, path = rest.partition("/")
+            return "/" + path
     if len(p) >= 2 and p[1] == ":":
         return f"/mnt/{p[0].lower()}{p[2:]}"
     return p

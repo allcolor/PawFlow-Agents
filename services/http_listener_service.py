@@ -423,8 +423,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         Parses multipart/form-data, stores each file in FileStore,
         returns JSON with file IDs. No FlowFile pipeline needed.
         """
-        import cgi
-        import io as _io
+        from email.parser import BytesParser
         from core.file_store import FileStore
 
         user_id = ""
@@ -439,39 +438,37 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b'{"error": "Expected multipart/form-data"}')
             return
 
-        # Parse multipart using cgi.FieldStorage
-        environ = {
-            "REQUEST_METHOD": "POST",
-            "CONTENT_TYPE": ct,
-            "CONTENT_LENGTH": str(len(body)),
-        }
-        fs = cgi.FieldStorage(
-            fp=_io.BytesIO(body),
-            environ=environ,
-            keep_blank_values=True,
-        )
+        # Parse multipart without the removed cgi module
+        header = f"Content-Type: {ct}\r\n\r\n".encode()
+        msg = BytesParser().parsebytes(header + body)
 
         store = FileStore.instance()
         results = []
-        items = fs.list or []
-        for item in items:
-            if item.filename:
-                raw = item.file.read()
-                mime = item.type or "application/octet-stream"
-                fid = store.store(
-                    item.filename, raw, mime,
-                    user_id=user_id,
-                    category="upload",
-                )
-                results.append({
-                    "file_id": fid,
-                    "filename": item.filename,
-                    "mime_type": mime,
-                    "size": len(raw),
-                    "url": f"/files/{fid}/{item.filename}",
-                })
-                logger.info("Upload: %s (%s, %d bytes) -> %s",
-                            item.filename, mime, len(raw), fid)
+        for part in msg.walk():
+            disp = part.get_content_disposition()
+            if disp != "form-data":
+                continue
+            filename = part.get_filename()
+            if not filename:
+                continue
+            raw = part.get_payload(decode=True)
+            if raw is None:
+                continue
+            mime = part.get_content_type() or "application/octet-stream"
+            fid = store.store(
+                filename, raw, mime,
+                user_id=user_id,
+                category="upload",
+            )
+            results.append({
+                "file_id": fid,
+                "filename": filename,
+                "mime_type": mime,
+                "size": len(raw),
+                "url": f"/files/{fid}/{filename}",
+            })
+            logger.info("Upload: %s (%s, %d bytes) -> %s",
+                        filename, mime, len(raw), fid)
 
         resp = json.dumps({"ok": True, "files": results}).encode()
         self.send_response(200)

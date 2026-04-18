@@ -85,47 +85,64 @@ function resumeConv(cid, force) {
   if (!cid) return;
   if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
-  action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
-    .subscribe(data => {
-      // Fetched — now swap everything atomically.
-      if (eventSource) { eventSource.close(); eventSource = null; }
-      _expectingClear = true;
-      document.getElementById('messages').innerHTML = '';
-      _expectingClear = false;
-      _seenMsgIds.clear();
-      if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
-      serverMsgCount = 0;
-      _histTaskBlocks = {};
-      clearAllStreams();
-      sending = false;
-      if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
-      if (typeof activeInteractions !== 'undefined') {
-        for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
-        if (typeof updateActivePanel === 'function') updateActivePanel();
-      }
-      if (typeof hideTyping === 'function') hideTyping();
-      if (typeof _pendingImages !== 'undefined') {
-        _pendingImages.length = 0;
-        if (typeof _imageFlushTimer !== 'undefined' && _imageFlushTimer) {
-          clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
-        }
-      }
-      selectedAgent = '';
-      if (typeof nicknameMap !== 'undefined') nicknameMap = {};
-      if (typeof _autoScroll !== 'undefined') _autoScroll = true;
-      conversationId = cid;
-      _setInputEnabled(true);
-      highlightConv(cid);
-      updateDeleteBtn();
-      document.getElementById('sidebar').classList.add('collapsed');
-      _syncToggleBtn();
-      sseEverConnected = false;
-      sseHadError = false;
-      stopPollTimer();
-      connectSSE(cid);
-      _renderHistory(data);
-      startPollTimer();
-    });
+
+  // Phase 1 — clear + swap SSE to the new conv FIRST. All server actions
+  // are async: /api/ui returns {status:"accepted"} and the real result
+  // arrives as a `command_result` SSE event on the target conv channel.
+  // If we fire load_history before the SSE is subscribed to `cid`, the
+  // result is published with nobody listening and the subscribe below
+  // waits forever — "Chargement..." freezes and clicking any conv does
+  // nothing (observed regression after the refreshCurrentConv refactor).
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  _expectingClear = true;
+  document.getElementById('messages').innerHTML = '';
+  _expectingClear = false;
+  _seenMsgIds.clear();
+  if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
+  serverMsgCount = 0;
+  _histTaskBlocks = {};
+  clearAllStreams();
+  sending = false;
+  if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
+  if (typeof activeInteractions !== 'undefined') {
+    for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
+    if (typeof updateActivePanel === 'function') updateActivePanel();
+  }
+  if (typeof hideTyping === 'function') hideTyping();
+  if (typeof _pendingImages !== 'undefined') {
+    _pendingImages.length = 0;
+    if (typeof _imageFlushTimer !== 'undefined' && _imageFlushTimer) {
+      clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
+    }
+  }
+  selectedAgent = '';
+  if (typeof nicknameMap !== 'undefined') nicknameMap = {};
+  if (typeof _autoScroll !== 'undefined') _autoScroll = true;
+  conversationId = cid;
+  _setInputEnabled(true);
+  highlightConv(cid);
+  updateDeleteBtn();
+  document.getElementById('sidebar').classList.add('collapsed');
+  _syncToggleBtn();
+  sseEverConnected = false;
+  sseHadError = false;
+  stopPollTimer();
+
+  // Phase 2 — connectSSE triggers onReady once EventSource is OPEN on
+  // `cid`, which is when it's safe to fire load_history. Before OPEN,
+  // the server's `command_result` publish on this conv channel buffers
+  // into the EventBus replay buffer (up to 60 s TTL) — once we're
+  // subscribed the replay delivers the missing event. But without this
+  // wait we used to fire load_history while still subscribed to the
+  // OLD conv's SSE, so the NEW conv's command_result never reached
+  // _commandResult$ and the whole UI hung on "Chargement...".
+  connectSSE(cid, () => {
+    action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
+      .subscribe(data => {
+        _renderHistory(data);
+        startPollTimer();
+      });
+  });
 }
 
 // Thin alias for "reload the current conv" — same canonical path as

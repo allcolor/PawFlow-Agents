@@ -344,7 +344,12 @@ async function _renderResourcesData(data) {
     html += _sectionFooter();
 
     // ── MCP Servers (linked to conv) ──
-    html += _sectionHeader('MCP', 'mcp');
+    { const _mcpCollapsed = _collapsedSections['mcp'] || false;
+      const _mcpArrow = _mcpCollapsed ? '\u25B6' : '\u25BC';
+      html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection('mcp')"><span id="res-arrow-mcp">${_mcpArrow}</span> MCP</span>
+      </div><div id="res-section-mcp" style="display:${_mcpCollapsed ? 'none' };max-height:260px;overflow-y:auto;">`;
+    }
     { const linked = (data.mcp_servers || []).filter(m => m.linked);
       if (linked.length) {
         linked.forEach(m => {
@@ -359,8 +364,18 @@ async function _renderResourcesData(data) {
       }
     }
     html += _sectionFooter();
-    // MCP Repository (collapsed)
-    html += _repoSectionHeader('MCP Repository', '_mcp_repo');
+    // MCP Repository (collapsed, with create button)
+    { if (!('_mcp_repo' in _collapsedSections)) _collapsedSections['_mcp_repo'] = true;
+      const _mrCollapsed = _collapsedSections['_mcp_repo'] || false;
+      const _mrArrow = _mrCollapsed ? '\u25B6' : '\u25BC';
+      html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="cursor:pointer;color:#888;font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('_mcp_repo')"><span id="res-arrow-_mcp_repo">${_mrArrow}</span> MCP Repository</span>
+        <span style="display:flex;gap:4px;">
+          <span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="loadResources()" title="Refresh from disk">\u21BB</span>
+          <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="showResourceCreator('mcp')" title="Create new">+</span>
+        </span>
+      </div><div id="res-section-_mcp_repo" style="display:${_mrCollapsed ? 'none' };">`;
+    }
     if (!_collapsedSections['_mcp_repo']) {
       const repoMcps = (data.mcp_servers || []).filter(m => !m.linked);
       if (repoMcps.length) {
@@ -372,7 +387,7 @@ async function _renderResourcesData(data) {
           </div>`;
         });
       } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">All MCP servers are linked</div>';
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No MCP servers defined</div>';
       }
     }
     html += _sectionFooter();

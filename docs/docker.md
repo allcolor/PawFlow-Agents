@@ -149,6 +149,23 @@ When PawCode runs on Windows (`python -m pawflow_cli ...`) but the project lives
 
 > The `\\wsl$\...` form is a Windows-side network path; it is **not** visible from inside the WSL Docker daemon. Without stripping the `\\wsl$\<distro>\` prefix, Docker silently creates an empty directory for the bind-mount and `/workspace` appears blank to the relay.
 
+### Git: trust the WSL-owned repo once
+
+Since git 2.35.2 (CVE-2022-24765), git on Windows refuses to operate on a repo whose files are owned by a different uid — which is exactly what happens when you run the PawFlow server from `\\wsl$\<distro>\...`. You'll see:
+
+```
+fatal: detected dubious ownership in repository at '//wsl$/<distro>/<path>'
+```
+
+PawFlow's conversation-snapshot git (`core.conversation_store`) already passes `-c safe.directory=*` so internal snapshots work out of the box. For manual `git` calls and for the project repo itself, add the path to your global safe-directory list **once**:
+
+```powershell
+# PowerShell — single-quoted so %(prefix) is passed literally to git
+git config --global --add safe.directory '%(prefix)///wsl$/Ubuntu-24.04/home/<user>/<project>'
+```
+
+`%(prefix)//` is git's own syntax for UNC paths; don't expand it.
+
 ## 3. Exec Shell Selection
 
 The `exec` action supports a `shell` parameter:

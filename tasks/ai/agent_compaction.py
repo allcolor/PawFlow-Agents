@@ -383,6 +383,17 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             finally:
                 (_inner._conversation_id, _inner._agent_name,
                  _inner._user_id, _inner._event_cid) = _saved
+                # One-shot helper: wipe the _memory_extract workdir for this
+                # user. Nothing here needs to persist between extractions.
+                try:
+                    import os as _os, shutil as _shutil
+                    from core.llm_providers.claude_code import _get_sessions_base
+                    _uid = (user_id or "default").replace(":", "_").replace("/", "_").replace("\\", "_")
+                    _mem_workdir = _os.path.join(_get_sessions_base(), _uid, "_memory_extract")
+                    if _os.path.isdir(_mem_workdir):
+                        _shutil.rmtree(_mem_workdir, ignore_errors=True)
+                except Exception:
+                    pass
             import re as _re_mem
             _match = _re_mem.search(r'\[.*\]', resp.content or "", _re_mem.DOTALL)
             if not _match:

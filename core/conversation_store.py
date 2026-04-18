@@ -2087,21 +2087,20 @@ class ConversationStore:
         for user_dir in base.iterdir():
             if not user_dir.is_dir():
                 continue
-            # Skip reserved dirs (e.g. _compact, _memory_extract) used
-            # by CC helper flows, not tied to a specific conv.
-            if user_dir.name.startswith("_"):
-                continue
             for sess_dir in user_dir.iterdir():
                 if not sess_dir.is_dir():
                     continue
-                if sess_dir.name.startswith("_"):
-                    continue
-                if sess_dir.name in live_sanitized:
+                # _compact / _memory_extract are one-shot helpers — never
+                # tied to a live conv, always safe to wipe as a safety net
+                # in case the immediate post-use cleanup was skipped.
+                _is_one_shot = sess_dir.name.startswith("_")
+                if not _is_one_shot and sess_dir.name in live_sanitized:
                     continue
                 try:
                     shutil.rmtree(sess_dir, ignore_errors=True)
                     removed += 1
-                    logger.info("Removed orphan CC session dir: %s/%s",
+                    logger.info("Removed %s CC session dir: %s/%s",
+                                "one-shot" if _is_one_shot else "orphan",
                                 user_dir.name, sess_dir.name)
                 except Exception as _e:
                     logger.debug("Failed to remove orphan session %s: %s",

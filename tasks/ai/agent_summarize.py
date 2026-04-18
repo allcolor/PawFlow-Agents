@@ -418,15 +418,15 @@ class AgentSummarizeMixin:
             _inner._agent_name = _saved_agent
             _inner._user_id = _saved_user
             _inner._event_cid = _saved_event_cid
-            # Clean compact workdir
+            # One-shot helper: wipe the entire _compact workdir for this
+            # user. Nothing here needs to persist between compactions.
             try:
                 import shutil
                 from core.llm_providers.claude_code import _get_sessions_base
-                _compact_workdir = os.path.join(_get_sessions_base(), "default", "compact")
-                for _subdir in ("projects", "sessions", ".cache"):
-                    _p = os.path.join(_compact_workdir, _subdir)
-                    if os.path.isdir(_p):
-                        shutil.rmtree(_p, ignore_errors=True)
+                _uid = (user_id or "default").replace(":", "_").replace("/", "_").replace("\\", "_")
+                _compact_workdir = os.path.join(_get_sessions_base(), _uid, "_compact")
+                if os.path.isdir(_compact_workdir):
+                    shutil.rmtree(_compact_workdir, ignore_errors=True)
             except Exception:
                 pass
 

@@ -466,75 +466,94 @@ def main():
                     _lower = tool_name.lower()
                     _log(f"USE_TOOL lowering CC native: {tool_name} → {_lower}")
                     tool_name = _lower
-                tool_args_raw = args.get("arguments")
-                # Tolerance: LLM sometimes forgets the "arguments" wrapper and
-                # places the tool args flat next to tool_name. Harvest them
-                # so the dispatch doesn't bomb with misleading "X is required"
-                # errors. Symmetric with the UI's flat-args unwrap.
-                if tool_args_raw is None:
-                    _harvested = {k: v for k, v in args.items() if k != "tool_name"}
-                    if _harvested:
-                        _log(f"USE_TOOL {tool_name} harvested flat args (missing 'arguments' wrapper): keys={list(_harvested.keys())}")
-                    tool_args_raw = _harvested
-                _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
-                # Unwrap JSON string arguments (CC sometimes double/triple-encodes)
-                tool_args = tool_args_raw
-                _decode_failed = False
-                _unwrap_passes = 0
-                for _ in range(3):
-                    if not isinstance(tool_args, str):
-                        break
-                    try:
-                        _prev = tool_args
-                        tool_args = json.loads(tool_args)
-                        _unwrap_passes += 1
-                    except json.JSONDecodeError as _je:
-                        # "Extra data" = valid JSON followed by junk (e.g. CC appends </invoke>)
-                        # Use raw_decode to parse only the first JSON object
-                        if "Extra data" in str(_je):
-                            try:
-                                tool_args, _ = json.JSONDecoder().raw_decode(tool_args)
-                                _unwrap_passes += 1
-                                _log(f"USE_TOOL {tool_name} raw_decode OK (stripped trailing junk)")
-                            except (json.JSONDecodeError, TypeError) as _je2:
-                                _log(f"USE_TOOL {tool_name} raw_decode also FAILED: {_je2}")
-                                _decode_failed = True
-                                break
-                        else:
-                            # Last resort: json-repair for structurally broken JSON
-                            # (e.g. unescaped quotes in bash commands)
-                            try:
-                                from json_repair import repair_json
-                                _repaired = repair_json(tool_args)
-                                tool_args = json.loads(_repaired)
-                                _unwrap_passes += 1
-                                _log(f"USE_TOOL {tool_name} json-repair OK (fixed malformed JSON)")
-                            except Exception as _je3:
-                                _log(f"USE_TOOL {tool_name} ALL decode attempts FAILED: "
-                                     f"json.loads={_je} json-repair={_je3} value={str(tool_args)[:200]}")
-                                _decode_failed = True
-                                break
-                    except TypeError as _je:
-                        _log(f"USE_TOOL {tool_name} JSON decode TypeError: {_je}")
-                        _decode_failed = True
-                        break
-                if _unwrap_passes > 0:
-                    _log(f"USE_TOOL {tool_name} unwrapped {_unwrap_passes} pass(es): {type(tool_args_raw).__name__} → {type(tool_args).__name__}")
-                # Decode failed on non-empty input → error (don't silently send {})
-                if _decode_failed and tool_args_raw and tool_args_raw != {} and tool_args_raw != "{}":
-                    result = (f"Error: failed to decode arguments for {tool_name}. "
-                              f"Arguments must be a JSON object, got: {str(tool_args_raw)[:200]}")
-                # Still a string after unwrap → same problem
-                elif isinstance(tool_args, str):
-                    _log(f"USE_TOOL {tool_name} args still string after unwrap: {tool_args[:200]}")
-                    result = (f"Error: arguments for {tool_name} must be a JSON object, "
-                              f"got string: {tool_args[:200]}")
+                # Reject empty tool_name with a clear, actionable message
+                # instead of letting it propagate to the relay (which used to
+                # respond "unknown tool ''" -- ambiguous: the LLM couldn't
+                # tell whether it had supplied a wrong name or none at all).
+                # Required by schema; checked here as defense-in-depth.
+                if not tool_name or not str(tool_name).strip():
+                    _other_keys = [k for k in args.keys() if k != "tool_name"]
+                    result = (
+                        "Error: missing required parameter 'tool_name'. "
+                        "use_tool requires {\"tool_name\": \"<name>\", "
+                        "\"arguments\": {...}}. Got keys: "
+                        f"{sorted(args.keys()) or '[]'}."
+                        + (f" (Did you forget to wrap your call -- the keys "
+                           f"{_other_keys} look like tool arguments without "
+                           f"a tool_name?)" if _other_keys else "")
+                    )
+                    _log(f"USE_TOOL REJECTED: empty tool_name, args_keys={sorted(args.keys())}")
                 else:
-                    _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
-                    result = client.request("execute_tool",
-                                            tool_name=tool_name,
-                                            arguments=tool_args)
-                    result = str(result) if result else "(no output)"
+                    tool_args_raw = args.get("arguments")
+                    # Tolerance: LLM sometimes forgets the "arguments" wrapper
+                    # and places the tool args flat next to tool_name.
+                    # Harvest them so the dispatch doesn't bomb with
+                    # misleading "X is required" errors. Symmetric with the
+                    # UI's flat-args unwrap.
+                    if tool_args_raw is None:
+                        _harvested = {k: v for k, v in args.items() if k != "tool_name"}
+                        if _harvested:
+                            _log(f"USE_TOOL {tool_name} harvested flat args (missing 'arguments' wrapper): keys={list(_harvested.keys())}")
+                        tool_args_raw = _harvested
+                    _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
+                    # Unwrap JSON string arguments (CC sometimes double/triple-encodes)
+                    tool_args = tool_args_raw
+                    _decode_failed = False
+                    _unwrap_passes = 0
+                    for _ in range(3):
+                        if not isinstance(tool_args, str):
+                            break
+                        try:
+                            _prev = tool_args
+                            tool_args = json.loads(tool_args)
+                            _unwrap_passes += 1
+                        except json.JSONDecodeError as _je:
+                            # "Extra data" = valid JSON followed by junk (e.g. CC appends </invoke>)
+                            # Use raw_decode to parse only the first JSON object
+                            if "Extra data" in str(_je):
+                                try:
+                                    tool_args, _ = json.JSONDecoder().raw_decode(tool_args)
+                                    _unwrap_passes += 1
+                                    _log(f"USE_TOOL {tool_name} raw_decode OK (stripped trailing junk)")
+                                except (json.JSONDecodeError, TypeError) as _je2:
+                                    _log(f"USE_TOOL {tool_name} raw_decode also FAILED: {_je2}")
+                                    _decode_failed = True
+                                    break
+                            else:
+                                # Last resort: json-repair for structurally broken JSON
+                                # (e.g. unescaped quotes in bash commands)
+                                try:
+                                    from json_repair import repair_json
+                                    _repaired = repair_json(tool_args)
+                                    tool_args = json.loads(_repaired)
+                                    _unwrap_passes += 1
+                                    _log(f"USE_TOOL {tool_name} json-repair OK (fixed malformed JSON)")
+                                except Exception as _je3:
+                                    _log(f"USE_TOOL {tool_name} ALL decode attempts FAILED: "
+                                         f"json.loads={_je} json-repair={_je3} value={str(tool_args)[:200]}")
+                                    _decode_failed = True
+                                    break
+                        except TypeError as _je:
+                            _log(f"USE_TOOL {tool_name} JSON decode TypeError: {_je}")
+                            _decode_failed = True
+                            break
+                    if _unwrap_passes > 0:
+                        _log(f"USE_TOOL {tool_name} unwrapped {_unwrap_passes} pass(es): {type(tool_args_raw).__name__} \u2192 {type(tool_args).__name__}")
+                    # Decode failed on non-empty input \u2192 error (don't silently send {})
+                    if _decode_failed and tool_args_raw and tool_args_raw != {} and tool_args_raw != "{}":
+                        result = (f"Error: failed to decode arguments for {tool_name}. "
+                                  f"Arguments must be a JSON object, got: {str(tool_args_raw)[:200]}")
+                    # Still a string after unwrap \u2192 same problem
+                    elif isinstance(tool_args, str):
+                        _log(f"USE_TOOL {tool_name} args still string after unwrap: {tool_args[:200]}")
+                        result = (f"Error: arguments for {tool_name} must be a JSON object, "
+                                  f"got string: {tool_args[:200]}")
+                    else:
+                        _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
+                        result = client.request("execute_tool",
+                                                tool_name=tool_name,
+                                                arguments=tool_args)
+                        result = str(result) if result else "(no output)"
             else:
                 result = f"Error: unknown tool '{name}'"
 

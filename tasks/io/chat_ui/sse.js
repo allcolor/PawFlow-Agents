@@ -301,7 +301,12 @@ function connectSSE(cid, onReady, opts) {
     // per-turn even before `done` fires).
     if (data.agent_name && typeof activeInteractions !== 'undefined') {
       const aKey = agentKey(data.agent_name);
-      if (activeInteractions[aKey] && (data.context_used || data.context_max)) {
+      // Same guard as the persistent cache below: require used>0 unless the
+      // event explicitly marks itself as an estimated reset (compact). A bare
+      // used=0/max=200000 payload must NOT wipe the live gauge.
+      if (activeInteractions[aKey]
+          && (data.context_max || 0) > 0
+          && ((data.context_used || 0) > 0 || data.estimated)) {
         activeInteractions[aKey].contextUsed = data.context_used || 0;
         activeInteractions[aKey].contextMax = data.context_max || 0;
         activeInteractions[aKey].contextPct = data.context_pct || 0;

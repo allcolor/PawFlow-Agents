@@ -659,8 +659,18 @@ class AgentCoreMixin:
                         # Persisting display_only would create duplicates at reload.
 
                         # Strip context-ack echoes the LLM may produce after compaction
+                        _raw_len = len(text) if text else 0
                         _had_text = bool(text and text.strip())
                         text = _strip_context_ack(text)
+                        _post_len = len(text) if text else 0
+                        if _raw_len and _post_len != _raw_len:
+                            # Loud log so a future lost-message investigation can
+                            # tell whether the strip pass swallowed real content
+                            # (raw>0, post=0) vs. just trimmed the ack prefix.
+                            logger.info(
+                                "[cc-callback] _strip_context_ack: raw=%d post=%d (stripped=%d) %s",
+                                _raw_len, _post_len, _raw_len - _post_len,
+                                "DROPPED-ENTIRELY" if _post_len == 0 else "prefix-trimmed")
 
                         if text:
                             msg = LLMMessage(
@@ -905,25 +915,35 @@ class AgentCoreMixin:
                                      "after": len(messages)})
                             except Exception:
                                 pass
-                            # Also clear the persisted context_usage gauge
-                            # baseline for this agent so the UI drops back
-                            # toward 0% immediately instead of waiting for
-                            # the next message_meta. The UI reads the map
-                            # stored at the "context_usage" extra (keyed by
-                            # agent name) — writing to a sibling key like
-                            # "context_usage::<agent>" is a no-op for the UI.
+                            # Also refresh the persisted context_usage gauge
+                            # baseline for this agent. Post-compact, the LLM
+                            # context isn't empty — it's summary + recent
+                            # (typically ~10-30k tokens). Computing the real
+                            # size via tiktoken gives the UI an accurate
+                            # starting point instead of a misleading 0%.
                             try:
+                                from core.token_counter import count_messages_tokens
+                                _serialized = self._serialize_messages(messages)
+                                _post_used = int(count_messages_tokens(_serialized))
+                                _post_max = int(ctx.get("max_context_size", 200000) or 200000)
+                                _post_pct = (_post_used / _post_max) if _post_max > 0 else 0.0
                                 _cu_map = _store.get_extra(
                                     conversation_id, "context_usage") or {}
-                                _cu_map.pop(_agent_name, None)
+                                _cu_map[_agent_name] = {
+                                    "used": _post_used,
+                                    "max": _post_max,
+                                    "pct": _post_pct,
+                                    "updated_at": time.time(),
+                                    "estimated": True,
+                                }
                                 _store.set_extra(
                                     conversation_id, "context_usage", _cu_map)
                                 _CEB.instance().publish_event(
                                     conversation_id, "message_meta",
                                     {"agent_name": _agent_name,
-                                     "context_used": 0,
-                                     "context_max": int(ctx.get("max_context_size", 200000) or 200000),
-                                     "context_pct": 0.0,
+                                     "context_used": _post_used,
+                                     "context_max": _post_max,
+                                     "context_pct": _post_pct,
                                      "estimated": True})
                             except Exception:
                                 pass

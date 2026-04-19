@@ -790,6 +790,17 @@ class AgentCoreMixin:
                         _agent_name = ctx.get("active_agent_name", "")
                         logger.warning("[agent:%s] CCCompactDetected — compacting PawFlow context for %s",
                                        conversation_id[:8], _agent_name)
+                        # Tell the UI: auto-compact started (shows the
+                        # 'Compacting (<agent>)' typing indicator).
+                        try:
+                            from core.conversation_event_bus import ConversationEventBus as _CEB
+                            _CEB.instance().publish_event(
+                                conversation_id, "compact_progress",
+                                {"stage": "start",
+                                 "detail": "auto-compact",
+                                 "agent": _agent_name})
+                        except Exception:
+                            pass
                         # User messages are persisted to the transcript at
                         # ingress (see agent_streaming.py) BEFORE
                         # send_user_message is called, so the compacted
@@ -876,9 +887,48 @@ class AgentCoreMixin:
                             llm_context = list(messages)
                             logger.info("[agent:%s] PawFlow compact done, new CC session will start",
                                         conversation_id[:8])
+                            # Tell the UI: auto-compact finished. Includes
+                            # before/after counts so the same UI path used
+                            # by /compact renders a nice summary message.
+                            try:
+                                from core.conversation_event_bus import ConversationEventBus as _CEB
+                                _CEB.instance().publish_event(
+                                    conversation_id, "compact_progress",
+                                    {"stage": "done",
+                                     "agent": _agent_name,
+                                     "before": len(_full_messages),
+                                     "after": len(messages)})
+                            except Exception:
+                                pass
+                            # Also clear the persisted context_usage gauge
+                            # baseline for this agent so the UI drops back
+                            # toward 0% immediately instead of waiting for
+                            # the next message_meta.
+                            try:
+                                _store.set_extra(
+                                    conversation_id,
+                                    f"context_usage::{_agent_name}", "")
+                                _CEB.instance().publish_event(
+                                    conversation_id, "message_meta",
+                                    {"agent_name": _agent_name,
+                                     "context_used": 0,
+                                     "context_max": int(ctx.get("max_context_size", 200000) or 200000),
+                                     "context_pct": 0.0,
+                                     "estimated": True})
+                            except Exception:
+                                pass
                         except Exception as compact_err:
                             logger.error("[agent:%s] PawFlow compact failed: %s",
                                          conversation_id[:8], compact_err)
+                            try:
+                                from core.conversation_event_bus import ConversationEventBus as _CEB
+                                _CEB.instance().publish_event(
+                                    conversation_id, "compact_progress",
+                                    {"stage": "error",
+                                     "agent": _agent_name,
+                                     "error": str(compact_err)})
+                            except Exception:
+                                pass
                             emitter.on_fatal_error(f"Compact failed: {compact_err}")
                             _fatal_error = True
                             _fatal_error_msg = f"Compact failed: {compact_err}"

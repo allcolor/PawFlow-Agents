@@ -46,11 +46,16 @@ function renderCtxGauge(usage, opts) {
 function setContextUsage(agentName, usage) {
   if (!agentName || !usage) return;
   const key = agentKey(agentName);
+  const realUsed = usage.used || usage.context_used || 0;
   window._contextUsage[key] = {
-    used: usage.used || usage.context_used || 0,
+    used: realUsed,
     max: usage.max || usage.context_max || 0,
     pct: usage.pct || usage.context_pct || 0,
     estimated: false,
+    // Pin the real baseline so subsequent estimation bumps compute
+    // baseline + cumulative_chars/4 (NOT used + chunk_chars/4, which
+    // would double-count history and runaway to 100%).
+    _baselineUsed: realUsed,
   };
   // Reset client-side estimation buffer — the next bumps will accumulate
   // on top of this fresh real value, not on top of stale chunks.
@@ -72,13 +77,18 @@ function bumpContextEstimate(agentName, chars) {
   if (!cached || !cached.max) return;
   window._contextEstChars = window._contextEstChars || {};
   window._contextEstChars[key] = (window._contextEstChars[key] || 0) + chars;
+  // Compute against the pinned baseline (last real value), NOT the
+  // currently-displayed `cached.used` which itself already includes a
+  // previous bump — that would compound exponentially.
+  const baseline = (cached._baselineUsed != null) ? cached._baselineUsed : (cached.used || 0);
   const estTokens = Math.round(window._contextEstChars[key] / 4);
-  const newUsed = (cached.used || 0) + estTokens;
+  const newUsed = baseline + estTokens;
   window._contextUsage[key] = {
     used: newUsed,
     max: cached.max,
     pct: cached.max > 0 ? newUsed / cached.max : 0,
     estimated: true,
+    _baselineUsed: baseline,
   };
   _refreshGaugeSurfaces(key);
 }

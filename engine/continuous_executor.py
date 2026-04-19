@@ -272,6 +272,17 @@ class ContinuousFlowExecutor:
         self._scheduler_thread.start()
         logger.info("ContinuousFlowExecutor started")
 
+        # Safety net: reclaim orphan / stale Claude Code session dirs
+        # accumulated across previous runs. Runs once per boot; idempotent.
+        try:
+            from core.conversation_store import ConversationStore as _CS
+            _removed = _CS.instance().cleanup_orphan_claude_sessions()
+            if _removed:
+                logger.info("Reclaimed %d orphan/stale CC session entry(ies) on boot",
+                            _removed)
+        except Exception as _e:
+            logger.debug("CC session cleanup on boot failed: %s", _e)
+
     def stop(self):
         """Stop the scheduler and all tasks."""
         self._stop_event.set()

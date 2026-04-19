@@ -429,3 +429,60 @@ class TestCleanupOrphanClaudeSessions:
                                       "dddddddddddd", mtime=old_ts)
         store.cleanup_orphan_claude_sessions()
         assert jf.exists(), "no known current sid → don't guess"
+
+    def test_prunes_companion_dir_alongside_jsonl(self, store, tmp_path,
+                                                    monkeypatch):
+        """Each CC session leaves a <sid>.jsonl AND a <sid>/ workdir
+        next to it. Both must be reclaimed when the jsonl is pruned."""
+        base = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        sess_dir = base / "alice" / sanitized
+        store.set_extra(cid, "claude_session:claude",
+                        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        old_ts = time.time() - 3600
+        stale_sid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        jf = self._mk_jsonl(sess_dir, stale_sid, mtime=old_ts)
+        companion = jf.with_suffix("")
+        companion.mkdir()
+        (companion / "scratch.txt").write_text("x")
+        store.cleanup_orphan_claude_sessions()
+        assert not jf.exists(), "stale jsonl must be pruned"
+        assert not companion.exists(), "companion dir must be pruned"
+
+    def test_invalidate_claude_sessions_wipes_disk(self, store, tmp_path,
+                                                     monkeypatch):
+        """invalidate_claude_sessions must clear extras AND wipe all
+        jsonls + companion dirs on disk — including the "current" one,
+        since it was just invalidated."""
+        base = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        sess_dir = base / "alice" / sanitized
+        current_sid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        stale_sid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        store.set_extra(cid, "claude_session:claude", current_sid)
+        # current (fresh mtime) + stale companion dir
+        current_jf = self._mk_jsonl(sess_dir, current_sid)
+        stale_jf = self._mk_jsonl(sess_dir, stale_sid,
+                                    mtime=time.time() - 3600)
+        stale_companion = stale_jf.with_suffix("")
+        stale_companion.mkdir()
+        store.invalidate_claude_sessions(cid)
+        # extras cleared
+        assert store.get_extra(cid, "claude_session:claude") == ""
+        # disk wiped (wipe_all bypasses mtime guard and live_sids)
+        assert not current_jf.exists()
+        assert not stale_jf.exists()
+        assert not stale_companion.exists()
+
+    def test_invalidate_noop_if_no_owner(self, store, tmp_path,
+                                           monkeypatch):
+        """If _cid_user has no owner for cid, skip disk wipe silently."""
+        self._setup(tmp_path, monkeypatch)
+        # No store.save → _cid_user has no entry for this cid
+        cid = "orphan_cid_0000000000"
+        # Should not raise
+        store.invalidate_claude_sessions(cid)

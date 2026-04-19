@@ -1746,12 +1746,30 @@ class ConversationStore:
 
         Called when the user manually modifies context (delete message,
         manual compact, etc.). Forces a fresh session on next message.
+
+        Also wipes the stale session jsonls + companion dirs on disk so
+        they don't pile up indefinitely across invalidations.
         """
         extras = self.get_extras(cid) or {}
         for key in list(extras.keys()):
             if key.startswith("claude_session:"):
                 self.set_extra(cid, key, "")
                 logger.info("Invalidated claude session '%s' for conv %s", key, cid[:8])
+        # Wipe stale session files on disk (all jsonls + companion dirs
+        # for this conv). Safe: we just cleared the "current" flags,
+        # so every jsonl under sess_dir is now obsolete.
+        try:
+            owner = self._cid_user.get(cid, "")
+            if not owner:
+                return
+            from core import paths as _paths
+            sanitized_cid = cid.replace(":", "_")
+            sess_dir = _paths.CLAUDE_SESSIONS_DIR / owner / sanitized_cid
+            if sess_dir.is_dir():
+                self._prune_stale_cc_sessions(sess_dir, cid, wipe_all=True)
+        except Exception as _e:
+            logger.debug("invalidate_claude_sessions disk prune failed for %s: %s",
+                         cid[:8], _e)
 
     # ── Bindings (repository associations) ────────────────────────────
 
@@ -2129,30 +2147,39 @@ class ConversationStore:
                                  sess_dir, _e)
         return removed
 
-    def _prune_stale_cc_sessions(self, sess_dir: Path, cid: str) -> int:
+    def _prune_stale_cc_sessions(self, sess_dir: Path, cid: str,
+                                  wipe_all: bool = False) -> int:
         """Delete CC session jsonls that are no longer the current session.
 
         CC writes session transcripts to
           <sess_dir>/<agent>/projects/-workspace/<session_id>.jsonl
-        (or similar; we glob all .jsonl under */projects/*).
+        and often drops a companion workdir <session_id>/ next to it.
         Current sessions are listed as extras["claude_session:<agent>"].
-        Anything else is dead weight and can go.
+        Anything else is dead weight and can go — both the .jsonl and
+        the companion dir sharing the same stem.
 
         Safety: skip files modified in the last 2 minutes so an
         in-flight CC process is never surprised.
+
+        wipe_all=True: ignore extras (live_sids={}) and mtime guard —
+        used by invalidate_claude_sessions when the caller has
+        deliberately killed the current session(s) and wants to nuke
+        all jsonls + companion dirs for this conv.
         """
+        import shutil
         import time as _time
         # Collect live session ids from extras (one per agent).
         live_sids = set()
-        try:
-            extras = self.get_extras(cid) or {}
-            for k, v in extras.items():
-                if isinstance(k, str) and k.startswith("claude_session:") and v:
-                    live_sids.add(str(v))
-        except Exception:
-            return 0
-        if not live_sids:
-            return 0  # nothing known — don't guess, leave alone
+        if not wipe_all:
+            try:
+                extras = self.get_extras(cid) or {}
+                for k, v in extras.items():
+                    if isinstance(k, str) and k.startswith("claude_session:") and v:
+                        live_sids.add(str(v))
+            except Exception:
+                return 0
+            if not live_sids:
+                return 0  # nothing known — don't guess, leave alone
         now = _time.time()
         removed = 0
         for jf in sess_dir.rglob("projects/*/*.jsonl"):
@@ -2160,10 +2187,14 @@ class ConversationStore:
                 stem = jf.stem
                 if stem in live_sids:
                     continue
-                if now - jf.stat().st_mtime < 120:
+                if not wipe_all and now - jf.stat().st_mtime < 120:
                     continue  # recently touched — may be active
                 jf.unlink()
                 removed += 1
+                # Companion workdir <sid>/ next to <sid>.jsonl
+                companion = jf.with_suffix("")
+                if companion.is_dir():
+                    shutil.rmtree(companion, ignore_errors=True)
             except Exception:
                 pass
         if removed:

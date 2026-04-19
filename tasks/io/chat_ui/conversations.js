@@ -223,8 +223,6 @@ function _renderHistory(data) {
   // click leaves the slow load_history(A) response rendering A's
   // messages into B's view.
   if (data.conversation_id && data.conversation_id !== conversationId) {
-    console.log('[history] dropping stale load_history for',
-                data.conversation_id, '(current:', conversationId, ')');
     return;
   }
   _histTaskBlocks = {};  // reset on full render

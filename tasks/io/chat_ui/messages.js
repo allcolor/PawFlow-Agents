@@ -124,7 +124,6 @@ function addMsg(role, text, extra) {
   const msgId = (extra && extra.msg_id) || '';
   if (msgId) {
     if (_seenMsgIds.has(msgId)) {
-      console.log('[dedup] skipping duplicate msg_id:', msgId);
       return null;
     }
     _seenMsgIds.add(msgId);

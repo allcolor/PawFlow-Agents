@@ -154,4 +154,14 @@ def api_call(server_url, method, path, body=None, session_token="",
 
     if resp.status >= 400:
         raise Exception(f"API {method} {path} -> {resp.status}: {data}")
-    return json.loads(data) if data else {}
+    if not data:
+        return {}
+    try:
+        return json.loads(data)
+    except json.JSONDecodeError:
+        ctype = resp.getheader("Content-Type", "")
+        snippet = data[:200].replace("\n", " ")
+        raise Exception(
+            f"API {method} {path} -> {resp.status} non-JSON response "
+            f"(Content-Type={ctype!r}): {snippet!r}"
+        )

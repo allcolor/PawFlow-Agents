@@ -59,6 +59,30 @@ class RelayThread:
             on_token_refresh=self._handle_token_refresh,
         )
 
+    def _api_retry(self, method, path, body=None, attempts=5):
+        """Like _api but retries transient boot-time failures.
+
+        The relay is often started right after pawflow; /api/ui may not
+        be fully ready yet (non-JSON response, connection refused, 5xx).
+        Backoff: 0.5s, 1s, 2s, 4s, 8s (capped).
+        """
+        delay = 0.5
+        last_err = None
+        for i in range(attempts):
+            try:
+                return self._api(method, path, body)
+            except Exception as e:
+                last_err = e
+                if i == attempts - 1:
+                    break
+                sys.stderr.write(
+                    f"[Relay] {method} {path} failed (attempt {i+1}/{attempts}): "
+                    f"{e} -- retrying in {delay:.1f}s\n"
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 8.0)
+        raise last_err
+
     def _handle_token_refresh(self, new_token):
         """Internal handler for transparent token refresh."""
         self.session_token = new_token
@@ -102,20 +126,21 @@ class RelayThread:
         self.port = find_free_port()
         self.ws_token = secrets.token_urlsafe(32)
 
-        # Delete old service if exists
+        # Delete old service if exists (retry: absorbs server boot race)
         try:
-            self._api("POST", "/api/ui",
+            self._api_retry("POST", "/api/ui",
                       {"action": "service_uninstall", "service_id": self.relay_id})
         except Exception:
             pass
 
-        # Create new service
+        # Create new service (retry: the first boot after pawflow start can
+        # return non-JSON/5xx while the server finishes loading handlers)
         config_str = f"port={self.port},path=/ws/relay,token={self.ws_token},mode=readwrite"
         if self.docker_image:
             config_str += f",docker_image={self.docker_image}"
         if self.allow_local:
             config_str += ",allow_local=true"
-        self._api("POST", "/api/ui", {
+        self._api_retry("POST", "/api/ui", {
             "action": "service_install",
             "service_type": "relay",
             "service_name": self.relay_id,

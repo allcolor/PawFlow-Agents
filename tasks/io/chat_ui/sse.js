@@ -309,7 +309,12 @@ function connectSSE(cid, onReady, opts) {
       }
     }
     // Persistent cache — feeds header badge + Resource Panel gauge.
-    if (data.agent_name && (data.context_used || data.context_max)
+    // Guard: silently drop spurious zero payloads (used=0/max=200000 from
+    // emitters that fell back to defaults without real provider usage) to
+    // avoid wiping the previously-displayed real value. Explicit resets
+    // (compact, etc.) carry estimated=true and ARE allowed through.
+    if (data.agent_name && (data.context_max || 0) > 0
+        && ((data.context_used || 0) > 0 || data.estimated)
         && typeof setContextUsage === 'function') {
       setContextUsage(data.agent_name, {
         used: data.context_used, max: data.context_max, pct: data.context_pct,
@@ -1052,8 +1057,11 @@ function connectSSE(cid, onReady, opts) {
       }
     }
     // Persistent cache — keeps gauge visible in header/Resource Panel
-    // after the agent leaves the active set.
-    if (doneAgent && (data.context_used || data.context_max)
+    // after the agent leaves the active set. Same guard as message_meta:
+    // drop used=0 payloads (fallback emits) but allow explicit estimated=true
+    // resets (compact, etc.).
+    if (doneAgent && (data.context_max || 0) > 0
+        && ((data.context_used || 0) > 0 || data.estimated)
         && typeof setContextUsage === 'function') {
       setContextUsage(doneAgent, {
         used: data.context_used, max: data.context_max, pct: data.context_pct,

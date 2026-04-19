@@ -100,6 +100,12 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         from tasks.ai.agent_loop import AgentLoopTask
         _exec = AgentLoopTask._live_instance or self
         active = []
+        # Persisted per-agent context-fill gauge (set by agent_core on each
+        # final message_meta). Attached to each active row so the floating
+        # panel can render the gauge immediately on page reload, without
+        # waiting for loadResources() to populate window._contextUsage.
+        from core.conversation_store import ConversationStore as _CS_active
+        _ctx_usage_map = _CS_active.instance().get_extra(conv_id, "context_usage") or {}
         with _exec._active_contexts_lock:
             import time as _time
             import re as _re_active
@@ -111,15 +117,20 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                     _tm = _re_active.search(r'::task::([^:]+)', _k)
                     if _tm:
                         _task_id = _tm.group(1)
-                    active.append({
-                        "agent_name": ctx.get("active_agent_name", ""),
+                    _aname = ctx.get("active_agent_name", "")
+                    _row = {
+                        "agent_name": _aname,
                         "task_id": _task_id,
                         "iteration": ctx.get("_iteration", 0),
                         "round": ctx.get("_round", 0),
                         "max_rounds": ctx.get("max_rounds", 0),
                         "last_tool": ctx.get("_last_tool", ""),
                         "duration_s": _time.time() - _started if _started else 0,
-                    })
+                    }
+                    _cu = _ctx_usage_map.get(_aname)
+                    if _cu:
+                        _row["context_usage"] = _cu
+                    active.append(_row)
         # Also include scheduled tasks (active but between turns)
         try:
             from core.conversation_store import ConversationStore

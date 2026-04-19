@@ -67,6 +67,7 @@ def _register_all_services():
 
     # Voice-cloning TTS services
     import services.fish_audio_voice_clone_service  # noqa: F401
+    import services.elevenlabs_voice_clone_service  # noqa: F401
 
     # Extra Pixazo capability services (3D, upscale, try-on, lipsync, trainer)
     import services.pixazo_capability_services  # noqa: F401

@@ -175,6 +175,11 @@ class AgentCoreMixin:
         client._agent_service = ctx.get("active_llm_service", "")
         client._event_cid = ctx.get("_event_cid", conversation_id)
         client._agent_ctx = ctx  # for SSE event enrichment (task_iteration etc)
+        # Config policy: used by providers to publish context-fill % via
+        # message_meta. Source is the PawFlow config (service/agent/task
+        # cascade resolved in agent_context.py); CC stream does not
+        # expose the model's real window.
+        client._max_context_size = int(ctx.get("max_context_size", 200000) or 200000)
 
         # Register active claude-code client for preempt (stdin injection)
         _agent_name_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id
@@ -218,7 +223,8 @@ class AgentCoreMixin:
         _client_base_url = getattr(client, "base_url", "") or ""
         if not isinstance(_client_base_url, str):
             _client_base_url = ""
-        def _agent_source(tok_in=0, tok_out=0, model_override=""):
+        def _agent_source(tok_in=0, tok_out=0, model_override="",
+                           tok_cache_creation=0, tok_cache_read=0):
             import re as _re
             src = {
                 "type": "agent", "name": ctx.get("active_agent_name", ""),
@@ -232,6 +238,16 @@ class AgentCoreMixin:
             if tok_in or tok_out:
                 src["tokens_in"] = tok_in
                 src["tokens_out"] = tok_out
+            # Context-fill policy: tok_in (OpenAI: prompt_tokens = full context;
+            # Anthropic: non-cached input) + cache tokens (Anthropic breakdown).
+            # context_max comes from PawFlow config (service/agent/task cascade).
+            _ctx_used = int(tok_in) + int(tok_cache_creation) + int(tok_cache_read)
+            if _ctx_used > 0:
+                _ctx_max = int(getattr(client, '_max_context_size', 0) or
+                               ctx.get("max_context_size", 200000) or 200000)
+                src["context_used"] = _ctx_used
+                src["context_max"] = _ctx_max
+                src["context_pct"] = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
             return src
         # SpawnAgentsHandler source tracking
         from core.tool_registry import SpawnAgentsHandler as _SAH
@@ -353,15 +369,22 @@ class AgentCoreMixin:
                 if _src.get("tokens_in") or _src.get("tokens_out") or _src.get("llm_service"):
                     from core.conversation_event_bus import ConversationEventBus
                     try:
+                        _payload = {
+                            "msg_id": msg.msg_id,
+                            "agent_name": _src.get("name", ""),
+                            "source": _src,
+                            "model": _src.get("model", ""),
+                            "provider": _src.get("provider", ""),
+                            "tokens_in": _src.get("tokens_in", 0),
+                            "tokens_out": _src.get("tokens_out", 0),
+                        }
+                        # Context-fill fields (only present when computed in source)
+                        if "context_used" in _src:
+                            _payload["context_used"] = _src["context_used"]
+                            _payload["context_max"] = _src["context_max"]
+                            _payload["context_pct"] = _src["context_pct"]
                         ConversationEventBus.instance().publish_event(
-                            ctx.get("_event_cid", conversation_id), "message_meta", {
-                                "msg_id": msg.msg_id,
-                                "source": _src,
-                                "model": _src.get("model", ""),
-                                "provider": _src.get("provider", ""),
-                                "tokens_in": _src.get("tokens_in", 0),
-                                "tokens_out": _src.get("tokens_out", 0),
-                            })
+                            ctx.get("_event_cid", conversation_id), "message_meta", _payload)
                     except Exception:
                         pass
 
@@ -1064,7 +1087,9 @@ class AgentCoreMixin:
                             # (turn_callback persisted it without tokens)
                             _cc_last_mid = getattr(client, '_last_turn_msg_id', '')
                             if _cc_last_mid and (response.tokens_in or response.tokens_out):
-                                _cc_src = _agent_source(response.tokens_in, response.tokens_out, response.model)
+                                _cc_src = _agent_source(response.tokens_in, response.tokens_out, response.model,
+                                                         tok_cache_creation=response.cache_creation_tokens,
+                                                         tok_cache_read=response.cache_read_tokens)
                                 # Update in-memory message
                                 for _m in reversed(messages):
                                     if getattr(_m, 'msg_id', '') == _cc_last_mid:
@@ -1087,14 +1112,18 @@ class AgentCoreMixin:
                         if not _resp_text and _has_thinking and not _need_more_retried:
                             logger.warning(f"[agent:{conversation_id[:8]}] thinking-only response (no text/tools), nudging")
                             _append(LLMMessage(role="assistant", content="",
-                                               source=_agent_source(response.tokens_in, response.tokens_out)))
+                                               source=_agent_source(response.tokens_in, response.tokens_out,
+                                                                    tok_cache_creation=response.cache_creation_tokens,
+                                                                    tok_cache_read=response.cache_read_tokens)))
                             _append(LLMMessage(role="user", content=(
                                 "[System: You produced reasoning but no visible response or tool calls. "
                                 "You MUST either call a tool or provide a text response to the user. "
                                 "Do not just think — act or respond.]")))
                             _need_more_retried = True
                             continue
-                        _src_no_tools = _agent_source(response.tokens_in, response.tokens_out, response.model)
+                        _src_no_tools = _agent_source(response.tokens_in, response.tokens_out, response.model,
+                                                      tok_cache_creation=response.cache_creation_tokens,
+                                                      tok_cache_read=response.cache_read_tokens)
                         action, msgs, final, _need_more_retried = self._handle_response_no_tools(
                             _resp_text, _client_provider, tool_defs,
                             _need_more_retried, source=_src_no_tools)
@@ -1118,7 +1147,9 @@ class AgentCoreMixin:
                         role="assistant", content=response.content,
                         tool_calls=response.tool_calls,
                         thinking=response.thinking or "",
-                        source=_agent_source(response.tokens_in, response.tokens_out, response.model)))
+                        source=_agent_source(response.tokens_in, response.tokens_out, response.model,
+                                             tok_cache_creation=response.cache_creation_tokens,
+                                             tok_cache_read=response.cache_read_tokens)))
 
                     if poll_silent and response.tool_calls:
                         poll_silent = False

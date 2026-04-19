@@ -96,9 +96,23 @@ class AgentActionsMixin:
 
         conversation_id = body.get("conversation_id", "")
 
-        # ALL actions run in background — ack immediately, result via SSE.
-        # If no conversation_id, run sync (no SSE channel to publish to).
-        if not conversation_id:
+        # Fast read-only actions MUST run sync and return their payload in
+        # the HTTP response -- they are called from the critical path of
+        # the UI loader (clear -> load_history -> render). If they were
+        # dispatched to bg and published via SSE 'command_result', the
+        # client has no SSE open yet (SSE is opened AFTER render in the
+        # canonical resumeConv flow), so the result would be buffered then
+        # discarded by the next subscribe(replay=False) -- leaving the
+        # load_history Observable pending forever and the webchat blank.
+        _SYNC_ACTIONS = {
+            "load_history", "list_conversations", "list_resources",
+            "list_services", "list_repo_agents", "list_active",
+            "get_permission_mode", "relay_list_available",
+            "get_agent_conv_config", "list_secrets",
+        }
+
+        # No conversation_id, or read-only action: run sync.
+        if not conversation_id or action in _SYNC_ACTIONS:
             for handler in _ACTION_HANDLERS:
                 result = handler(self, action, body, store, user_id, flowfile)
                 if result is not None:

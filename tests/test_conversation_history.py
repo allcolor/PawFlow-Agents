@@ -308,13 +308,16 @@ class TestAgentLoopActions(unittest.TestCase):
         assert body["conversations"][0]["conversation_id"] == "c1"
 
     def test_load_history_action(self):
-        """Actions are now processed async via SSE — verify accepted response."""
+        """load_history is a read-only sync action — verify payload in HTTP response."""
+        from core.conv_agent_config import add_agent_to_conv
         store = ConversationStore.instance()
         store.save("c1", [
             {"role": "system", "content": "You are helpful"},
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi there!"},
         ], ttl=60, user_id="alice@test.com")
+        add_agent_to_conv("c1", "assistant", llm_service="default",
+                          definition="assistant")
 
         task = self._make_task()
         ff = FlowFile(content=json.dumps({
@@ -325,11 +328,12 @@ class TestAgentLoopActions(unittest.TestCase):
         results = task.execute(ff)
 
         body = json.loads(results[0].get_content().decode())
-        assert body["status"] == "accepted"
-        assert body["action"] == "load_history"
+        assert body["conversation_id"] == "c1"
+        assert "messages" in body
+        assert body["message_count"] == 3
 
     def test_load_history_wrong_user(self):
-        """Actions are now async — verify accepted response."""
+        """load_history runs sync — wrong user gets 404."""
         store = ConversationStore.instance()
         store.save("c1", [{"role": "user", "content": "hi"}],
                    ttl=60, user_id="alice@test.com")
@@ -342,8 +346,7 @@ class TestAgentLoopActions(unittest.TestCase):
         ff.set_attribute("http.auth.principal", "bob@test.com")
         results = task.execute(ff)
 
-        body = json.loads(results[0].get_content().decode())
-        assert body["status"] == "accepted"
+        assert results[0].get_attribute("http.response.status") == "404"
 
     def test_load_history_missing_conv_id(self):
         task = self._make_task()

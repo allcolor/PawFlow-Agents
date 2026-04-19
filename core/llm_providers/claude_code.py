@@ -183,6 +183,51 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         except (OSError, BrokenPipeError):
             pass
 
+    def _kill_cc_hard(self, proc, session_id: str = "") -> None:
+        """Kill the claude-code subprocess on BOTH the host and inside the
+        pool container.
+
+        `proc.kill()` only kills the `docker exec` wrapper running on the
+        host. Without a container-side kill, the claude CLI inside the
+        pool container becomes an orphan (reparented to PID 1 inside the
+        container) and keeps running — emitting tool calls via MCP,
+        running its own auto-compact, writing to its session .jsonl.
+        Meanwhile PawFlow spawns a fresh session in the SAME pool
+        container for the same conv, so two zombies race on the same
+        files. Observed live: a session that PawFlow thought it killed
+        at 15:10:49 emitted a compact_boundary + continuation 2 min
+        later, concurrent with its replacement session.
+
+        Fixes that by pkill'ing the container-side claude process(es)
+        bound to this session_id. session_id is passed to `claude
+        --resume`, so matching on it in argv uniquely identifies the
+        zombie without killing concurrent sessions.
+        """
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        _container = getattr(self, '_pool_container_name', '') or ''
+        if not _container or not session_id:
+            return
+        try:
+            import subprocess as _sp
+            from pawflow_relay.utils import docker_cmd
+            # -f: match against full argv. claude CLI is launched with
+            # `claude -p --resume <sid> ...` so <sid> always appears.
+            # -9: SIGKILL (the CLI's auto-compact can catch SIGTERM and
+            # finish summarizing — we don't want that).
+            _sp.run(
+                docker_cmd() + ["exec", _container, "pkill", "-9", "-f",
+                                session_id],
+                capture_output=True, timeout=5,
+            )
+        except Exception as _ke:
+            logger.warning(
+                "[claude-code] container-side kill failed "
+                "(container=%s, sid=%s): %s",
+                _container, session_id[:12] if session_id else "?", _ke)
+
     def _cleanup_proc(self, proc) -> str:
         """Clean up a Claude Code subprocess. Returns captured stderr."""
         self._claude_proc = None
@@ -850,6 +895,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _turn_thinking: str = ""
         _tool_results: dict = {}  # tool_use_id → result text
         _current_msg_id: str = ""  # track message ID to detect incremental updates
+        # Latest usage observed on an assistant event — used to publish
+        # a fresh context-fill % to the webchat. The `result` event's
+        # usage may sum differently; the last assistant.message.usage
+        # reflects the actual prompt size of the final turn.
+        _latest_usage: dict = {}
         self._preempt_pending = 0  # reset at start of each stream
         self._had_preempts_this_turn = False
         self._result_emitted = False  # set True when CC emits final result
@@ -1030,37 +1080,26 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             if count >= _PHANTOM_THRESHOLD:
                 logger.warning(
                     "[claude-code] %d phantom tool calls in %ds window "
-                    "(latest: %s id=%s) -- triggering PawFlow compact",
+                    "(latest: %s id=%s) -- killing CC, PawFlow will compact",
                     count, _PHANTOM_WINDOW, tool_name, block_id)
-                # Drain-before-raise (same as compact_boundary): close
-                # stdin, arm a 15s force-kill timer, and let the parse
-                # loop consume buffered events so any real turn that
-                # preceded the phantom storm still gets persisted via
-                # turn_callback. The post-loop check raises
-                # CCCompactDetected once the stream exits naturally
-                # (result break / EOF) or the timer force-kills.
                 if _compact_pending[0]:
                     return
                 self._compacting = True
                 _compact_pending[0] = True
+                # Same rationale as the compact_boundary branch: flush any
+                # real pre-phantom turn still sitting in the per-turn
+                # accumulator, then kill host + container-side claude CLI
+                # immediately. No drain window — phantom tool calls are
+                # the symptom of a blown context and keeping the stream
+                # open only lets CC emit more garbage that we'd pollute
+                # the transcript with.
                 try:
-                    if proc.stdin and not proc.stdin.closed:
-                        proc.stdin.close()
-                except Exception:
-                    pass
-                def _force_kill_after_phantom_drain():
-                    try:
-                        if proc.poll() is None:
-                            logger.warning(
-                                "[claude-code] phantom-compact drain timeout "
-                                "-- force-killing CC")
-                            proc.kill()
-                    except Exception:
-                        pass
-                _t = threading.Timer(15.0, _force_kill_after_phantom_drain)
-                _t.daemon = True
-                _t.start()
-                _compact_drain_timer[0] = _t
+                    _flush_turn()
+                except Exception as _fe:
+                    logger.error(
+                        "[claude-code] pre-phantom-compact flush failed: %s",
+                        _fe, exc_info=True)
+                self._kill_cc_hard(proc, session_id)
 
         self._stall_killed = False  # set by watchdog — retry must be unconditional
 
@@ -1168,53 +1207,41 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                          conv_id)
                             continue
                         if _compact_pending[0]:
-                            # Already draining from a previous compact_boundary
-                            # in this same stream — just keep consuming events.
                             continue
-                        logger.warning("[claude-code] CC compacting detected (subtype=%s) "
-                                       "— draining stream before raising, "
-                                       "PawFlow will compact", subtype)
-                        # Set BEFORE signalling CC so a racing send_user_message
+                        logger.warning(
+                            "[claude-code] CC compacting detected (subtype=%s) "
+                            "— flushing pre-compact turn, killing CC, "
+                            "PawFlow will compact", subtype)
+                        # Set BEFORE killing so any racing send_user_message
                         # from another thread sees the flag and refuses,
-                        # routing the user message via PendingQueue instead
-                        # of writing to a stdin that's about to close.
+                        # routing the user message via PendingQueue.
                         self._compacting = True
                         _compact_pending[0] = True
-                        # Close stdin to signal CC cleanly (EOF) — DON'T kill.
-                        # We need to keep reading stdout so the per-msg_id
-                        # rollover in the parse loop can flush all pre-compact
-                        # assistant turns (text + tool_use + tool_result) via
-                        # turn_callback. The previous behaviour (proc.kill()
-                        # then raise immediately) dropped every event still
-                        # buffered in the pipe and any events CC would have
-                        # emitted for tool calls that had already completed
-                        # on CC's side but weren't yet streamed.
+                        # compact_boundary is the LAST useful event from CC
+                        # for this turn — everything that follows is CC's own
+                        # summary + post-compact work we do NOT want
+                        # ingested. Do not drain. But the turn that fired
+                        # compact may still hold unflushed events in the
+                        # per-turn accumulator: if CC streamed
+                        # tool_use + tool_result + assistant text inside the
+                        # same msg_id and compact_boundary fired before the
+                        # next msg_id rollover, those items were only in
+                        # CC's .jsonl and never made it to the PawFlow
+                        # transcript / webchat. Force-flush now so nothing
+                        # emitted pre-compact is lost.
                         try:
-                            if proc.stdin and not proc.stdin.closed:
-                                proc.stdin.close()
-                        except Exception:
-                            pass
-                        # Safety net: if CC keeps streaming past a reasonable
-                        # drain deadline (e.g. it ignored stdin EOF and is
-                        # running its own post-compact summarization we don't
-                        # want), force-kill so we don't block forever.
-                        def _force_kill_after_drain():
-                            try:
-                                if proc.poll() is None:
-                                    logger.warning(
-                                        "[claude-code] compact drain timeout "
-                                        "— force-killing CC")
-                                    proc.kill()
-                            except Exception:
-                                pass
-                        _t = threading.Timer(15.0, _force_kill_after_drain)
-                        _t.daemon = True
-                        _t.start()
-                        _compact_drain_timer[0] = _t
-                        # Continue reading stdout. When CC finishes emitting
-                        # (result event → break, or EOF → loop exits), the
-                        # post-loop block below raises CCCompactDetected.
-                        continue
+                            _flush_turn()
+                        except Exception as _fe:
+                            logger.error(
+                                "[claude-code] pre-compact flush failed: %s",
+                                _fe, exc_info=True)
+                        # Kill host AND container-side claude. Without the
+                        # container-side kill the claude CLI survives as an
+                        # orphan inside the pool container and keeps running
+                        # in parallel with the replacement session PawFlow
+                        # is about to spawn.
+                        self._kill_cc_hard(proc, session_id)
+                        break
                     if subtype == "init":
                         _stall_start_time = time.monotonic()
                         _got_assistant = False
@@ -1229,6 +1256,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
                     msg = event.get("message", {})
                     msg_id = msg.get("id", "")
+                    # Capture freshest usage — each assistant event carries
+                    # message.usage with current prompt size (input + cache).
+                    _u = msg.get("usage")
+                    if isinstance(_u, dict):
+                        _latest_usage = _u
 
                     # Claude Code sends INCREMENTAL updates for the same message:
                     # event 1: [thinking], event 2: [text], event 3: [tool_use]
@@ -1539,6 +1571,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             _last_msg_id = getattr(self, '_last_turn_msg_id', "") or ""
                         except Exception:
                             pass
+                        # Context-fill: exact value from CC stream's last
+                        # assistant.message.usage (prompt size at that point),
+                        # compared against PawFlow's configured max_context_size.
+                        _ctx_used = (_latest_usage.get("input_tokens", 0)
+                                     + _latest_usage.get("cache_creation_input_tokens", 0)
+                                     + _latest_usage.get("cache_read_input_tokens", 0))
+                        _ctx_max = int(getattr(self, '_max_context_size', 0) or 200000)
+                        _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
                         _pub("message_meta", {
                             "msg_id": _last_msg_id,
                             "agent_name": agent_name,
@@ -1554,6 +1594,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             "provider": "claude-code",
                             "tokens_in": _total_in,
                             "tokens_out": _total_out,
+                            "context_used": _ctx_used,
+                            "context_max": _ctx_max,
+                            "context_pct": _ctx_pct,
                             "num_turns": event.get("num_turns", _turn_count),
                             "duration_ms": event.get("duration_ms", 0),
                         })

@@ -908,11 +908,16 @@ class AgentCoreMixin:
                             # Also clear the persisted context_usage gauge
                             # baseline for this agent so the UI drops back
                             # toward 0% immediately instead of waiting for
-                            # the next message_meta.
+                            # the next message_meta. The UI reads the map
+                            # stored at the "context_usage" extra (keyed by
+                            # agent name) — writing to a sibling key like
+                            # "context_usage::<agent>" is a no-op for the UI.
                             try:
+                                _cu_map = _store.get_extra(
+                                    conversation_id, "context_usage") or {}
+                                _cu_map.pop(_agent_name, None)
                                 _store.set_extra(
-                                    conversation_id,
-                                    f"context_usage::{_agent_name}", "")
+                                    conversation_id, "context_usage", _cu_map)
                                 _CEB.instance().publish_event(
                                     conversation_id, "message_meta",
                                     {"agent_name": _agent_name,

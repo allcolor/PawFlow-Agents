@@ -1949,23 +1949,31 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 except Exception:
                     pass
 
-        usage = last_data.get("usage", {})
-        _ti = (usage.get("input_tokens", 0)
-               + usage.get("cache_read_input_tokens", 0)
-               + usage.get("cache_creation_input_tokens", 0))
-        _to = usage.get("output_tokens", 0)
-        if not _ti and not _to:
+        # Context-fill semantics: report the LAST assistant event's per-call
+        # usage (real prompt size at end of turn, ≤ context_max), NOT the
+        # `result.usage` summed across sub-calls (which balloons cache_read to
+        # N×prefix and makes the UI clamp at 100%). `_latest_usage` is captured
+        # at every assistant event in the stream loop.
+        _u_final = _latest_usage or last_data.get("usage", {})
+        _ti_in = _u_final.get("input_tokens", 0)
+        _ti_creation = _u_final.get("cache_creation_input_tokens", 0)
+        _ti_read = _u_final.get("cache_read_input_tokens", 0)
+        _to = _u_final.get("output_tokens", 0)
+        if not (_ti_in or _ti_creation or _ti_read or _to):
             for _mu in last_data.get("modelUsage", {}).values():
-                _ti += (_mu.get("inputTokens", 0) + _mu.get("input_tokens", 0)
-                        + _mu.get("cacheReadInputTokens", 0) + _mu.get("cache_read_input_tokens", 0)
-                        + _mu.get("cacheCreationInputTokens", 0) + _mu.get("cache_creation_input_tokens", 0))
+                _ti_in += _mu.get("inputTokens", 0) + _mu.get("input_tokens", 0)
+                _ti_read += _mu.get("cacheReadInputTokens", 0) + _mu.get("cache_read_input_tokens", 0)
+                _ti_creation += _mu.get("cacheCreationInputTokens", 0) + _mu.get("cache_creation_input_tokens", 0)
                 _to += _mu.get("outputTokens", 0) + _mu.get("output_tokens", 0)
+        _ti = _ti_in + _ti_creation + _ti_read
         return LLMResponse(
             content=full_content,
             model=last_data.get("model", model),
-            tokens_in=_ti,
+            tokens_in=_ti_in,
             tokens_out=_to,
             total_tokens=_ti + _to,
+            cache_creation_tokens=_ti_creation,
+            cache_read_tokens=_ti_read,
             finish_reason="stop",
             raw=last_data,
         )

@@ -213,12 +213,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         the same files.
 
         The container-side PID is captured at spawn from the shell
-        wrapper's `__PF_CLAUDE_PID=$!` stderr preamble (see
-        `ClaudeCodePool._exec_args`). Spawn uses `setsid ... &` so the
-        captured PID is the leader of a fresh process group; kill by
-        `-<PID>` (negative) SIGKILLs the WHOLE group, reaping claude
-        AND every Node worker it forked. Without the minus sign,
-        orphaned workers survive and keep writing to the session jsonl.
+        wrapper's `__PF_CLAUDE_PID=$$` stderr preamble (see
+        `ClaudeCodePool.exec_claude`). Bash chain-execs into
+        setpriv → claude, so $$ stays constant across the three
+        processes — the captured PID IS claude's PID. Under docker
+        exec, bash is the session leader of its exec, so claude's PGID
+        equals its PID. `kill -9 -<PID>` (negative) SIGKILLs the WHOLE
+        group, reaping claude AND every Node worker it forked. Without
+        the minus sign, orphaned workers survive and keep writing to
+        the session jsonl.
         """
         try:
             proc.kill()

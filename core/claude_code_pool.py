@@ -228,29 +228,35 @@ class ClaudeCodePool:
         #   mkdir -p /workspace
         #   mount --bind <session_dir> /workspace      (private to this ns)
         #   cd /workspace
-        #   setsid setpriv ... -- claude <args> &   (new session+pgroup)
-        #   printf "__PF_CLAUDE_PID=$!" 1>&2          (child PID = PGID)
-        #   wait $!                                   (forward exit code)
+        #   printf "__PF_CLAUDE_PID=$$" 1>&2          (bash PID = claude PID
+        #                                               after chained exec)
+        #   exec setpriv ... -- claude <args>
         #
-        # Why setsid + wait instead of exec?
-        # `claude` forks Node workers that become orphans if we only kill
-        # the root PID -- the session jsonl keeps growing after the kill.
-        # Wrapping the spawn in `setsid ... &` makes the child a session
-        # and process-group leader; its PID equals its PGID. The caller
-        # then uses `kill -9 -<PID>` (negative = whole pgroup) to reap
-        # EVERY Node worker atomically. `wait` ensures bash propagates
-        # exit status / signals back so PawFlow sees EOF on stdout.
+        # Why `exec` + $$ and NOT `setsid ... & + $!` ?
+        # `bash -c "<script>"` inside a container (the shape docker exec
+        # uses) does NOT populate $! when it backgrounds a command — an
+        # inescapable bash quirk (reproducible: `docker exec <c> bash -c
+        # 'sleep 1 & echo pid=$!'` prints `pid=`). The old `setsid & $!`
+        # pattern therefore always printed an empty PID, `wait $_cc_pid`
+        # errored with "not a pid or valid job spec", and the whole
+        # claude spawn failed 100% of the time.
+        #
+        # Chained `exec`: bash PID == setpriv PID == claude PID (exec
+        # replaces the process in place). Under docker exec, bash is
+        # already the session leader for its exec, so claude becomes
+        # the process-group leader (PID == PGID). `kill -9 -<PID>` with
+        # a NEGATIVE PID in `_kill_cc_hard` sends SIGKILL to the whole
+        # pgroup, reaping claude + every Node worker it forked — the
+        # original goal of 0e22927 without the bash-quirk footgun.
         import shlex
         _claude_quoted = " ".join(shlex.quote(str(a)) for a in claude_args)
         _shell_script = (
             f"mkdir -p /workspace && "
             f"mount --bind {shlex.quote(session_dir)} /workspace && "
             f"cd /workspace && "
-            f"setsid setpriv --reuid=1000 --regid=1000 --clear-groups "
-            f"-- claude {_claude_quoted} <&0 &\n"
-            f'_cc_pid=$!\n'
-            f'printf "__PF_CLAUDE_PID=%s\\n" "$_cc_pid" 1>&2\n'
-            f'wait "$_cc_pid"'
+            f'printf "__PF_CLAUDE_PID=%s\\n" "$$" 1>&2 && '
+            f"exec setpriv --reuid=1000 --regid=1000 --clear-groups "
+            f"-- claude {_claude_quoted}"
         )
         exec_args.extend([
             container_name,

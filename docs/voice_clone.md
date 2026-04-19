@@ -128,6 +128,12 @@ shows:
 - the voice name + provider label
 - a play button (`▶`) that streams `/files/<ref_audio_fid>` via
   `<audio>`
+- a rename button (`✎`) that fires the `rename_voice_clone`
+  server action after a browser `prompt()`; the new name is
+  normalised through `voice_clone_cache.safe_name` and a 409 is
+  returned if the target already exists. All other fields
+  (`ref_audio_*`, `voice_id`, `reference_text`, `language`) are
+  preserved — no provider round-trip, no cache invalidation.
 - a trash button (`✖`) that cascade-deletes after a confirm
 
 Data source: the `voices` array in the `list_resources` response

@@ -447,6 +447,7 @@ async function _renderResourcesData(data) {
             <span style="color:${pColor};font-size:9px;font-weight:600;border:1px solid ${pColor};border-radius:3px;padding:0 3px;">${pBadge}</span>
             <span style="color:#e0e0e0;font-size:12px;flex:1;">\u{1F399} ${escapeHtml(v.name)}<span style="color:#666;font-size:10px;">${prov}</span></span>
             ${previewBtn}
+            <span style="cursor:pointer;color:#8888aa;font-size:11px;padding:0 4px;" title="Rename voice clone" onclick="_renameVoiceClone('${escapeHtml(v.name)}')">\u270E</span>
             <span style="cursor:pointer;color:#d9534f;font-size:11px;padding:0 4px;" title="Delete voice clone (cascade)" onclick="_deleteVoiceClone('${escapeHtml(v.name)}')">\u2716</span>
           </div>`;
         });
@@ -1114,6 +1115,17 @@ function _deleteVoiceClone(name) {
     if (res.ref_audio_deleted) parts.push('ref audio purged');
     if (res.tts_cached_purged) parts.push(res.tts_cached_purged + ' cached rendering(s) purged');
     addMsg('system', 'Voice "' + name + '" deleted' + (parts.length ? ' (' + parts.join(', ') + ')' : ''));
+    setTimeout(loadResources, 200);
+  });
+}
+
+function _renameVoiceClone(name) {
+  const newName = prompt('Rename voice clone "' + name + '" to:', name);
+  if (!newName || newName === name) return;
+  action$('rename_voice_clone', { name, new_name: newName }).subscribe(res => {
+    if (res.error) { addMsg('system', 'Rename failed: ' + res.error); return; }
+    if (res.unchanged) { addMsg('system', 'Voice name unchanged.'); return; }
+    addMsg('system', 'Voice renamed: "' + name + '" → "' + res.name + '".');
     setTimeout(loadResources, 200);
   });
 }

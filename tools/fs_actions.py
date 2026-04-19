@@ -524,13 +524,52 @@ def _diagnose_edit_mismatch(old_string: str, text: str, filename: str) -> str:
 
 
 def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
-    """Exact string replacement with diff context."""
-    old_string = req.get("old_string", "")
+    """Edit a file, either by exact string replacement or by line range.
+
+    Two mutually-exclusive modes (matches EditHandler's JSON schema):
+      - string-based: req has `old_string` + `new_string` (+ `replace_all`)
+      - line-based:   req has `start_line` + `end_line` + `new_string`
+                      (1-based, inclusive end)
+
+    Previously only string-based was implemented; a line-based request
+    (no `old_string` in the payload) crashed with
+      "Missing 'old_string' parameter"
+    even though EditHandler advertises the line-based API and routes to
+    it. The line-based branch originally lived in the pawflow_relay.py
+    dispatcher copy, which had become dead code and was removed — but the
+    fs_actions copy (the one actually reached by the relay) never got it.
+    """
     new_string = req.get("new_string", "")
+    start_line = int(req.get("start_line", 0) or 0)
+    end_line = int(req.get("end_line", 0) or 0)
+    p = Path(path)
+
+    if start_line > 0 and end_line > 0:
+        text = p.read_text(encoding="utf-8")
+        lines = text.split("\n")
+        if start_line > len(lines) or end_line < start_line:
+            raise ValueError(
+                f"Invalid line range {start_line}-{end_line} for file "
+                f"{p.name} ({len(lines)} lines)")
+        s = max(0, start_line - 1)
+        e = min(len(lines), end_line)
+        removed = lines[s:e]
+        new_lines = new_string.split("\n")
+        lines[s:e] = new_lines
+        p.write_text("\n".join(lines), encoding="utf-8")
+        return {
+            "lines_replaced": f"{start_line}-{end_line}",
+            "lines_removed": len(removed),
+            "lines_inserted": len(new_lines),
+            "path": _rel(path, root_dir),
+        }
+
+    old_string = req.get("old_string", "")
     replace_all = req.get("replace_all", False)
     if not old_string:
-        raise ValueError("Missing 'old_string' parameter")
-    p = Path(path)
+        raise ValueError(
+            "Missing 'old_string' parameter (or provide start_line/end_line "
+            "for a line-based edit)")
     text = p.read_text(encoding="utf-8")
     count = text.count(old_string)
     if count == 0:

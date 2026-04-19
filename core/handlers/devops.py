@@ -43,7 +43,7 @@ class RunTestsHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Run pytest on test files. Returns pass/fail summary with first failure details. "
-            "Parameters: test_files (list), test_pattern (string, e.g. 'test_foo'), timeout (int, default 60)."
+            "Parameters: test_files (list), test_pattern (string, e.g. 'test_foo'), timeout (int, optional — no timeout by default)."
         )
 
     @property
@@ -62,7 +62,7 @@ class RunTestsHandler(ToolHandler):
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in seconds (default: 60)",
+                    "description": "Timeout in seconds. If omitted, no timeout is enforced (tests run to completion).",
                 },
                 "service": {
                     "type": "string",
@@ -79,7 +79,7 @@ class RunTestsHandler(ToolHandler):
         from core.handlers._arg_normalize import normalize_string_list
         test_files = normalize_string_list(arguments.get("test_files"))
         test_pattern = arguments.get("test_pattern", "")
-        timeout = arguments.get("timeout", 60)
+        timeout = arguments.get("timeout")  # None = uncapped (rely on real signals)
         service_name = arguments.get("service", "")
 
         if not test_files:

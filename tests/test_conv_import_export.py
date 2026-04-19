@@ -362,6 +362,42 @@ def test_cc_import_drops_empty_assistant_stub(store):
     assert msgs[1]["content"] == "real"
 
 
+def test_cc_import_creates_shared_context(store):
+    """shared.jsonl must mirror transcript so agents resuming the conv
+    actually see the prior messages. Regression: the UI "Shared" view
+    reported "divergé / aucun contexte" on every imported conv because
+    only transcript.jsonl was written."""
+    lines = [
+        json.dumps({"type": "user", "message": {"role": "user", "content": "Hello"}}),
+        json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "Hi there."},
+            {"type": "tool_use", "id": "tu_x", "name": "grep", "input": {"pattern": "foo"}},
+        ]}}),
+        json.dumps({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu_x", "content": "bar"},
+        ]}}),
+    ]
+    cid = _cc_execute(store, "\n".join(lines) + "\n")
+    conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
+    shared_path = conv_dir / "shared.jsonl"
+    assert shared_path.exists(), "shared.jsonl not created on CC import"
+    shared = [json.loads(l) for l in shared_path.read_text().splitlines() if l.strip()]
+    # Same count as transcript msgs (excluding meta line)
+    transcript = [json.loads(l) for l in (conv_dir / "transcript.jsonl").read_text().splitlines() if l.strip()]
+    trans_msgs = [m for m in transcript if m.get("t") == "msg"]
+    assert len(shared) == len(trans_msgs)
+    # Roles line up
+    assert [m["role"] for m in shared] == [m["role"] for m in trans_msgs]
+    # Shared entries don't carry the transcript-only `t` key
+    assert all("t" not in m for m in shared)
+    # tool_calls preserved
+    assistant_entry = next(m for m in shared if m["role"] == "assistant")
+    assert assistant_entry["tool_calls"][0]["name"] == "grep"
+    # Every entry has msg_id + ts + seq (required by _deserialize_messages)
+    for m in shared:
+        assert m.get("msg_id") and m.get("ts") and m.get("seq")
+
+
 def test_cc_import_registers_in_list_conversations(store):
     """After import, list_conversations must include the new conv."""
     lines = [json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}})]

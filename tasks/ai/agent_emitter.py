@@ -177,9 +177,12 @@ class StreamEmitter(AgentEmitter):
         # Use all_msg_ids from the full turn (survives flush)
         _all_ids = result.all_msg_ids or []
         _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
-        # Context fill: tokens_in = current prompt size (exact, from provider).
-        # context_max = PawFlow's configured max_context_size for this agent.
-        _ctx_used = int(result.tokens_in or 0)
+        # Context fill: include cache tokens (dominant for CC with prompt caching).
+        # tokens_in alone is input-only and tiny; real context usage is
+        # input + cache_creation + cache_read (per-call, Anthropic semantics).
+        _ctx_used = (int(result.tokens_in or 0)
+                     + int(getattr(result, 'cache_creation_tokens', 0) or 0)
+                     + int(getattr(result, 'cache_read_tokens', 0) or 0))
         _ctx_max = int(self.ctx.get("max_context_size", 0) or 200000)
         _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
         self._emit("done", {

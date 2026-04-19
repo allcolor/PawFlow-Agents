@@ -1050,7 +1050,11 @@ function connectSSE(cid, onReady, opts) {
     // list_active poll clears the row).
     if (doneAgent && typeof activeInteractions !== 'undefined') {
       const _aKey = agentKey(doneAgent);
-      if (activeInteractions[_aKey] && (data.context_used || data.context_max)) {
+      // Same guard as the persistent cache below: require used>0 unless the
+      // event explicitly marks itself as an estimated reset (compact).
+      if (activeInteractions[_aKey]
+          && (data.context_max || 0) > 0
+          && ((data.context_used || 0) > 0 || data.estimated)) {
         activeInteractions[_aKey].contextUsed = data.context_used || 0;
         activeInteractions[_aKey].contextMax = data.context_max || 0;
         activeInteractions[_aKey].contextPct = data.context_pct || 0;

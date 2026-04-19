@@ -2155,19 +2155,24 @@ class ConversationStore:
           <sess_dir>/<agent>/projects/-workspace/<session_id>.jsonl
         and often drops a companion workdir <session_id>/ next to it.
         Current sessions are listed as extras["claude_session:<agent>"].
-        Anything else is dead weight and can go — both the .jsonl and
+        Anything else is dead weight and can go - both the .jsonl and
         the companion dir sharing the same stem.
 
-        Safety: skip files modified in the last 2 minutes so an
-        in-flight CC process is never surprised.
+        wipe_all=True: ignore extras (live_sids={}) - used by
+        invalidate_claude_sessions when the caller has deliberately
+        killed the current session(s) and wants to nuke all jsonls +
+        companion dirs for this conv.
 
-        wipe_all=True: ignore extras (live_sids={}) and mtime guard —
-        used by invalidate_claude_sessions when the caller has
-        deliberately killed the current session(s) and wants to nuke
-        all jsonls + companion dirs for this conv.
+        Source of truth: extras["claude_session:<agent>"].
+        No mtime heuristic - the only callers are (a) the boot-time
+        orphan sweep, where no live CC process exists, and (b)
+        invalidate_claude_sessions with wipe_all=True, where the caller
+        has already killed the session. A hardcoded grace window would
+        be arbitrary AND wrong: too short, it wipes a live session
+        whose stall budget is larger; too long, it keeps real orphans
+        forever. extras is authoritative - trust it.
         """
         import shutil
-        import time as _time
         # Collect live session ids from extras (one per agent).
         live_sids = set()
         if not wipe_all:
@@ -2179,16 +2184,13 @@ class ConversationStore:
             except Exception:
                 return 0
             if not live_sids:
-                return 0  # nothing known — don't guess, leave alone
-        now = _time.time()
+                return 0  # nothing known - don't guess, leave alone
         removed = 0
         for jf in sess_dir.rglob("projects/*/*.jsonl"):
             try:
                 stem = jf.stem
                 if stem in live_sids:
                     continue
-                if not wipe_all and now - jf.stat().st_mtime < 120:
-                    continue  # recently touched — may be active
                 jf.unlink()
                 removed += 1
                 # Companion workdir <sid>/ next to <sid>.jsonl

@@ -115,6 +115,8 @@ _run_agent_loop()              -- The core loop
 
 Every assistant message and tool result is persisted to the conversation store via `ConversationWriter` as it is produced. SSE events are published in parallel so the UI updates in real time. Context-internal messages (compaction acknowledgments) are never persisted to the transcript.
 
+`ConversationWriter` runs one daemon thread per conversation behind a FIFO queue. `enqueue()` is non-blocking for throughput, so on process exit the queue may still hold items. The signal handler in `cli.py` calls `ConversationWriter.shutdown_all(wait_timeout=...)` **before** `os._exit(0)` to drain every queue - without this, in-flight writes die with the daemon thread and messages are lost. `shutdown_all` returns `False` if any queue times out; the caller logs this as data loss.
+
 ---
 
 ## 4. Context Management

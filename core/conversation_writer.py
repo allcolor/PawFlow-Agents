@@ -57,11 +57,56 @@ class ConversationWriter:
             return w
 
     @classmethod
-    def shutdown_all(cls):
+    def shutdown_all(cls, wait_timeout = 30.0):
+        """Drain every writer queue, then stop its thread.
+
+        MUST be called before process exit (e.g. in the signal handler
+        right before os._exit) - otherwise in-flight writes sitting in
+        the queue are silently dropped with the daemon thread.
+
+        Returns True iff every instance drained within the shared
+        wait budget. False = at least one write was abandoned; the
+        caller should log it loudly (data loss).
+        """
+        with cls._global_lock:
+            instances = list(cls._instances.values())
+        deadline = time.monotonic() + max(0.0, float(wait_timeout))
+        ok = True
+        for w in instances:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                ok = False
+                logger.error(
+                    "[conv-writer:%s] shutdown drain: out of budget with "
+                    "%d item(s) still queued - MESSAGES LOST",
+                    w._cid[:8], w._queue.qsize())
+                continue
+            if not w._drain(remaining):
+                ok = False
+                logger.error(
+                    "[conv-writer:%s] shutdown drain timed out with %d "
+                    "item(s) still queued - MESSAGES LOST",
+                    w._cid[:8], w._queue.qsize())
+        # Only stop threads AFTER draining - setting _stop first would
+        # make the writer loop exit while items may still be queued.
         with cls._global_lock:
             for w in cls._instances.values():
                 w._stop = True
             cls._instances.clear()
+        return ok
+
+    def _drain(self, wait_timeout):
+        """Block until every item enqueued so far has been written.
+
+        Uses a flush sentinel: since the writer thread is strictly FIFO,
+        the sentinel's event fires only after every prior item has been
+        processed. Returns False on timeout.
+        """
+        if not self._alive:
+            return True
+        evt = threading.Event()
+        self._queue.put({"_flush": True, "_done_event": evt})
+        return evt.wait(timeout=wait_timeout)
 
     def __init__(self, cid: str):
         self._cid = cid

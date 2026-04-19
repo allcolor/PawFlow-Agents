@@ -314,10 +314,24 @@ def cmd_start(args):
         t = threading.Thread(target=_stop_all, daemon=True)
         t.start()
         t.join(timeout=3)
+        # Drain the ConversationWriter FIFO BEFORE os._exit. The writer
+        # runs on a daemon thread; os._exit kills it instantly, and any
+        # message still in the queue is gone. Executors are stopped first
+        # so no new enqueues can race the drain.
+        try:
+            from core.conversation_writer import ConversationWriter
+            if not ConversationWriter.shutdown_all(wait_timeout=20.0):
+                logger.error(
+                    "ConversationWriter drain INCOMPLETE - some messages "
+                    "were not persisted before shutdown")
+        except Exception as _cw_err:
+            logger.error("ConversationWriter drain failed: %s", _cw_err,
+                         exc_info=True)
         # Nothing we spawned should outlive us. Reap every CC pool +
         # VNC-login container we created before exiting.
         _kill_spawned_docker_containers()
         os._exit(0)
+
 
     def _kill_spawned_docker_containers():
         """Hard-kill all containers this PawFlow server spawned.
@@ -358,13 +372,17 @@ def cmd_start(args):
     import atexit as _atexit
     _atexit.register(_kill_spawned_docker_containers)
 
-    # Guardian thread: force-exit after 5s of shutdown
+    # Guardian thread: force-exit if the shutdown handler hangs.
+    # Budget must cover: executor stop (3s) + ConversationWriter drain
+    # (up to 20s) + docker reap (~5s), with slack. Force-exit BEFORE the
+    # drain finishes would re-introduce the message-loss bug we are
+    # fixing here, so the guardian sits well past the drain budget.
     def _force_exit_guardian():
         import time as _t
         while not _shutting_down:
             _t.sleep(0.5)
-        _t.sleep(5)
-        logger.warning("Shutdown timeout — force exit")
+        _t.sleep(45)
+        logger.warning("Shutdown timeout - force exit")
         os._exit(1)
     import threading as _th_guard
     _guardian = _th_guard.Thread(target=_force_exit_guardian, daemon=True)

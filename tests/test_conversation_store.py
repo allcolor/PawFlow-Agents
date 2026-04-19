@@ -333,9 +333,9 @@ class TestCleanupOrphanClaudeSessions:
     only the one recorded in extras[claude_session:<agent>] is current.
     cleanup_orphan_claude_sessions must:
       (a) wipe whole dirs whose conv is dead / one-shot (_compact etc.)
-      (b) for live convs, prune stale jsonls whose stem isn't in extras
-          and whose mtime is >120s old
-      (c) leave the current-session jsonl and recently-touched jsonls.
+      (b) for live convs, prune every jsonl whose stem isn't in extras
+          (extras is the single source of truth - no mtime heuristic)
+      (c) leave the current-session jsonl alone.
     """
 
     def _setup(self, tmp_path, monkeypatch):
@@ -402,8 +402,13 @@ class TestCleanupOrphanClaudeSessions:
         assert current.exists(), "current session jsonl must survive"
         assert not stale.exists(), "stale session jsonl must be pruned"
 
-    def test_spares_recently_touched_jsonl(self, store, tmp_path,
-                                            monkeypatch):
+    def test_prunes_unregistered_jsonl_regardless_of_mtime(
+            self, store, tmp_path, monkeypatch):
+        """extras is the single source of truth. A jsonl whose stem is
+        not in extras[claude_session:*] is pruned - we do NOT use an
+        mtime grace window. Mtime-based sparing previously resurrected
+        orphans and could wipe live sessions whose stall timeout was
+        larger than the hardcoded grace window."""
         base = self._setup(tmp_path, monkeypatch)
         cid = store.generate_id()
         store.save(cid, [], user_id="alice")
@@ -414,7 +419,9 @@ class TestCleanupOrphanClaudeSessions:
         fresh = self._mk_jsonl(sess_dir, "cccccccc-cccc-cccc-cccc-"
                                          "cccccccccccc")  # mtime=now
         store.cleanup_orphan_claude_sessions()
-        assert fresh.exists(), "recent jsonl must be spared (<120s)"
+        assert not fresh.exists(), (
+            "jsonl not registered in extras must be pruned "
+            "(extras is authoritative)")
 
     def test_no_extras_keeps_everything(self, store, tmp_path,
                                          monkeypatch):

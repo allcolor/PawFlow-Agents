@@ -102,12 +102,15 @@ class RelayThread:
             return False
 
     def _reregister_service(self):
-        """Re-register the relay service on the server (keeps same port/token)."""
-        try:
-            self._api("POST", "/api/ui",
-                      {"action": "service_uninstall", "service_id": self.relay_id})
-        except Exception:
-            pass
+        """Re-register the relay service on the server (keeps same port/token).
+
+        Does NOT pre-uninstall: `service_install` is idempotent on the
+        server (same config + already-live = no-op). The earlier
+        uninstall-then-install pattern tore down the live WS pool on
+        every re-register, which flipped is_connected() to False, which
+        fired another re-register — self-reinforcing loop observed in
+        the wild.
+        """
         config_str = f"port={self.port},path=/ws/relay,token={self.ws_token},mode=readwrite"
         if self.docker_image:
             config_str += f",docker_image={self.docker_image}"

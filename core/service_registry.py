@@ -288,7 +288,22 @@ class ServiceRegistry:
         description: str = "",
         enabled: bool = True,
     ) -> ServiceDef:
-        """Install a new service definition."""
+        """Install a new service definition.
+
+        Idempotent: if a service with the same id already exists with the
+        same service_type, config, and enabled flag, AND has a live-
+        connected instance, this is a no-op — the existing ServiceDef is
+        returned unchanged.
+
+        Why this matters: PawCode's relay health check re-registers the
+        relay service (uninstall + install) every time it thinks the
+        relay is disconnected. The uninstall tears down the RelayService
+        instance, which closes the live WS to the container — so the
+        *next* health check also sees pool=0, triggering another
+        re-register. Self-reinforcing churn, observed live. With the
+        short-circuit below, a same-config install is silently accepted
+        and the existing WS stays alive.
+        """
         sid = self._resolve_scope_id(scope, scope_id)
         self._ensure_loaded(scope, scope_id)
 
@@ -301,12 +316,36 @@ class ServiceRegistry:
         except Exception:
             raise ValueError(f"Unknown service type: {service_type}")
 
+        # Idempotent short-circuit: same definition already live → no-op.
+        # Compare the load-bearing fields (type + config + enabled); we
+        # ignore description and timestamps (not connection-relevant).
+        _new_config = config or {}
+        with self._data_lock:
+            _existing_def = self._definitions.get(sid, {}).get(service_id)
+            _existing_live = self._live_instances.get(sid, {}).get(service_id)
+        if (_existing_def is not None
+                and _existing_def.service_type == service_type
+                and _existing_def.enabled == enabled
+                and _existing_def.config == _new_config
+                and (_existing_live is not None
+                     or not enabled)):
+            # Optional in-place description update (no reconnect needed).
+            if description and _existing_def.description != description:
+                with self._data_lock:
+                    _existing_def.description = description
+                self._save(scope, sid)
+            logger.info(
+                "Install no-op for %s service '%s' (scope_id=%s) — "
+                "same config, already live",
+                scope, service_id, sid[:8] if len(sid) > 8 else sid)
+            return _existing_def
+
         svc_def = ServiceDef(
             service_id=service_id,
             service_type=service_type,
             scope=scope,
             scope_id=sid,
-            config=config or {},
+            config=_new_config,
             enabled=enabled,
             description=description,
             created_at=time.time(),
@@ -314,7 +353,7 @@ class ServiceRegistry:
 
         # Prevent resource conflicts across all scopes
         self._check_resource_conflict(
-            service_type, config or {},
+            service_type, _new_config,
             exclude_scope_id=sid, exclude_service_id=service_id,
         )
 

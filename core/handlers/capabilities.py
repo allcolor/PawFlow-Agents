@@ -907,6 +907,7 @@ class SpeakHandler(_CapabilityHandlerBase):
                 filename=filename,
                 audio_bytes=audio_bytes,
                 content_type=content_type,
+                ref_audio_hash=ref_hash,
             )
         except Exception as e:
             return f"Error storing synthesized audio: {e}"
@@ -914,3 +915,57 @@ class SpeakHandler(_CapabilityHandlerBase):
         _cache.touch(self._user_id, voice)
         url = f"fs://filestore/{fid}/{filename}"
         return f"Speech synthesized: {url}\nfile_id: {fid}"
+
+
+class DeleteVoiceHandler(_CapabilityHandlerBase):
+    """Delete a previously registered voice clone — full cascade.
+
+    Removes the user's `voice_clones` entry, the stored reference-audio
+    file, every rendered TTS audio that was cached for this voice, and
+    (for paradigm-B providers such as ElevenLabs) the voice_id on the
+    provider itself so quota is freed upstream.
+    """
+
+    @property
+    def name(self) -> str:
+        return "delete_voice"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Delete a voice clone registered via `clone_voice`. Frees the "
+            "provider voice_id (ElevenLabs et al.), removes the stored "
+            "reference audio sample and drops every cached synthesis "
+            "rendered from this voice. Irreversible."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "voice": {"type": "string", "description": "Name of the voice clone to delete (as returned by `clone_voice`)."},
+            },
+            "required": ["voice"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        voice = (arguments.get("voice") or "").strip()
+        if not voice:
+            return "Error: `voice` is required"
+        from core import voice_clone_cache as _cache
+        # The service may not be configured anymore — we still delete
+        # local state, only the provider cleanup step is skipped.
+        svc, _ = self._get_service()
+        entry = _cache.get_by_name(self._user_id, voice)
+        if entry is None:
+            return f"Error: unknown voice clone {voice!r}"
+        result = _cache.cascade_delete(self._user_id, voice, svc)
+        parts = [f"Voice clone {voice!r} deleted."]
+        if result["voice_id"]:
+            parts.append("Provider voice_id freed.")
+        if result["ref_audio"]:
+            parts.append("Reference audio removed.")
+        if result["tts_cached"]:
+            parts.append(f"{result['tts_cached']} cached rendering(s) purged.")
+        return " ".join(parts)

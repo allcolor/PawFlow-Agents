@@ -88,6 +88,7 @@ from core.handlers import (  # noqa: F401
     SpeechToVideoHandler,
     CloneVoiceHandler,
     SpeakHandler,
+    DeleteVoiceHandler,
     WebSearchHandler,
 )
 
@@ -273,6 +274,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(SpeechToVideoHandler())
     registry.register(CloneVoiceHandler())
     registry.register(SpeakHandler())
+    registry.register(DeleteVoiceHandler())
     registry.register(RememberHandler())
     registry.register(RecallHandler())
     registry.register(SemanticRecallHandler())

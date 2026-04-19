@@ -379,3 +379,120 @@ def test_speak_handler_provider_mismatch(monkeypatch):
     _wire_handler(sh, _fish(), user_id=uid, conv=conv)
     out = sh.execute({"voice": "alien", "text": "Hi"})
     assert "was created with provider" in out
+
+
+# ── hash_audio normalization ───────────────────────────────────────────
+
+
+def test_hash_audio_falls_back_to_raw_without_ffmpeg(monkeypatch):
+    """When ffmpeg is absent, hash_audio must hash raw bytes deterministically."""
+    monkeypatch.setattr(_cache, "_FFMPEG", None)
+    import hashlib
+    payload = b"raw-audio-bytes"
+    assert _cache.hash_audio(payload) == hashlib.sha256(payload).hexdigest()
+
+
+def test_hash_audio_uses_pcm_when_ffmpeg_decodes(monkeypatch):
+    """When ffmpeg can decode, the hash is taken over normalized PCM.
+
+    We stub `_normalize_pcm` to return deterministic "PCM" bytes so we can
+    assert hash_audio matched the PCM path (different from raw hash).
+    """
+    import hashlib
+    monkeypatch.setattr(_cache, "_FFMPEG", "/fake/ffmpeg")
+    monkeypatch.setattr(_cache, "_normalize_pcm", lambda b: b"PCM-" + b)
+    payload = b"encoded-mp3"
+    expected = hashlib.sha256(b"PCM-encoded-mp3").hexdigest()
+    assert _cache.hash_audio(payload) == expected
+
+
+def test_hash_audio_equivalent_encodings_hash_the_same(monkeypatch):
+    """Two distinct byte payloads that decode to the same PCM get one hash."""
+    monkeypatch.setattr(_cache, "_FFMPEG", "/fake/ffmpeg")
+    # Any two inputs → same PCM. If hash_audio uses normalization, they must
+    # hash identically.
+    monkeypatch.setattr(_cache, "_normalize_pcm",
+                          lambda b: b"PCM-DETERMINISTIC")
+    assert _cache.hash_audio(b"mp3-variant-1") == _cache.hash_audio(b"mp3-variant-2")
+
+
+# ── cascade_delete + DeleteVoiceHandler ─────────────────────────
+
+
+def test_cascade_delete_removes_entry_and_tts_cache(monkeypatch):
+    """cascade_delete must drop the entry, ref audio and rendered TTS files."""
+    uid, conv = "u_cascade", "c_cascade"
+    # Register a voice.
+    _cache.save(uid, {
+        "name": "tbd",
+        "provider": "fishAudioVoiceClone",
+        "ref_audio_hash": "hcasc",
+        "ref_audio_fid": "",
+    })
+    # Cache one rendered TTS output keyed on the same ref hash.
+    key = _cache.tts_cache_key("hcasc", "bonjour",
+                                provider="fishAudioVoiceClone")
+    fid = _cache.tts_store(
+        user_id=uid, conversation_id=conv,
+        cache_key=key,
+        filename="out.mp3", audio_bytes=b"RENDERED",
+        ref_audio_hash="hcasc",
+    )
+    assert _cache.tts_find(uid, conv, key) == fid
+
+    out = _cache.cascade_delete(uid, "tbd", service=None)
+    assert out["entry"] is True
+    assert out["tts_cached"] == 1
+    # Entry gone.
+    assert _cache.get_by_name(uid, "tbd") is None
+    # TTS cache gone.
+    assert _cache.tts_find(uid, conv, key) is None
+
+
+def test_cascade_delete_calls_provider_for_voice_id():
+    """Paradigm-B voices (voice_id set) must trigger service.delete_voice_id."""
+    uid = "u_cascade_vid"
+    _cache.save(uid, {
+        "name": "el",
+        "provider": "elevenLabsVoiceClone",
+        "voice_id": "EL_VID_42",
+        "ref_audio_hash": "hvid",
+    })
+
+    calls = []
+
+    class _FakeSvc:
+        TYPE = "elevenLabsVoiceClone"
+
+        def delete_voice_id(self, vid):
+            calls.append(vid)
+            return True
+
+    out = _cache.cascade_delete(uid, "el", service=_FakeSvc())
+    assert calls == ["EL_VID_42"]
+    assert out["voice_id"] is True
+    assert out["entry"] is True
+
+
+def test_delete_voice_handler_happy_path():
+    from core.handlers.capabilities import DeleteVoiceHandler
+    uid, conv = "u_del_h", "c_del_h"
+    _cache.save(uid, {
+        "name": "gone",
+        "provider": "fishAudioVoiceClone",
+        "ref_audio_hash": "hgone",
+    })
+
+    h = DeleteVoiceHandler()
+    _wire_handler(h, _fish(), user_id=uid, conv=conv)
+    out = h.execute({"voice": "gone"})
+    assert "deleted" in out.lower()
+    assert _cache.get_by_name(uid, "gone") is None
+
+
+def test_delete_voice_handler_unknown_voice():
+    from core.handlers.capabilities import DeleteVoiceHandler
+    h = DeleteVoiceHandler()
+    _wire_handler(h, _fish(), user_id="u_dhm", conv="c_dhm")
+    out = h.execute({"voice": "ghost"})
+    assert "unknown voice clone" in out.lower()

@@ -26,6 +26,8 @@ Data model for a voice_clones entry:
 import hashlib
 import logging
 import re
+import shutil
+import subprocess
 import time
 from typing import Any, Dict, List, Optional
 
@@ -34,6 +36,9 @@ from core.repository import ScopedRepository, SCOPE_USER
 logger = logging.getLogger(__name__)
 
 _RTYPE = "voice_clones"
+
+# Detect ffmpeg once at import — used for content-stable hashing.
+_FFMPEG = shutil.which("ffmpeg")
 
 # Accept letters, digits, dash, underscore — map everything else to "_".
 _NAME_RE = re.compile(r"[^A-Za-z0-9_\-]+")
@@ -46,14 +51,48 @@ def safe_name(name: str) -> str:
     return cleaned[:80]
 
 
+def _normalize_pcm(audio_bytes: bytes) -> Optional[bytes]:
+    """Decode audio to PCM s16le 16 kHz mono via ffmpeg.
+
+    Returns the raw PCM bytes or None if ffmpeg is unavailable or the
+    input cannot be decoded (test payloads, non-audio blobs). Callers
+    MUST treat None as "fall back to raw hashing".
+    """
+    if not _FFMPEG or not audio_bytes:
+        return None
+    try:
+        proc = subprocess.run(
+            [_FFMPEG, "-hide_banner", "-loglevel", "error",
+             "-i", "pipe:0",
+             "-f", "s16le", "-ac", "1", "-ar", "16000",
+             "pipe:1"],
+            input=audio_bytes, capture_output=True, timeout=30, check=False,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return None
+        return proc.stdout
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.debug("voice_clone_cache._normalize_pcm: %s", e)
+        return None
+
+
 def hash_audio(audio_bytes: bytes) -> str:
     """Compute a stable content hash for a reference audio blob.
 
-    Currently SHA-256 of the raw bytes. Normalisation to PCM 16 kHz mono
-    is a nice-to-have future optimisation — it would raise cache hit rate
-    across different encodings of the same source — but the raw hash is
-    already correct for the common case (same file uploaded twice).
+    When ffmpeg is available and the payload is decodable, the bytes are
+    first decoded to PCM s16le 16 kHz mono so that different encodings of
+    the same source (same sample saved at another bitrate, ID3 tags
+    changed, …) hash to the same value. This lifts cache hit-rate
+    dramatically in practice.
+
+    If ffmpeg is absent, or the payload cannot be decoded (tests, raw
+    blobs), we fall back to SHA-256 of the raw bytes. Behaviour is
+    deterministic within a given deployment — deploy a server that has
+    ffmpeg installed (the relay-dev image already does).
     """
+    pcm = _normalize_pcm(audio_bytes)
+    if pcm is not None:
+        return hashlib.sha256(pcm).hexdigest()
     return hashlib.sha256(audio_bytes).hexdigest()
 
 
@@ -181,8 +220,14 @@ def tts_find(user_id: str, conversation_id: str, cache_key: str) -> Optional[str
 def tts_store(user_id: str, conversation_id: str,
               cache_key: str,
               filename: str, audio_bytes: bytes,
-              content_type: str = "audio/mpeg") -> str:
-    """Cache a rendered TTS audio file. Returns the FileStore file_id."""
+              content_type: str = "audio/mpeg",
+              ref_audio_hash: str = "") -> str:
+    """Cache a rendered TTS audio file. Returns the FileStore file_id.
+
+    `ref_audio_hash` is stored alongside so `cascade_delete` can purge
+    every rendered output produced for this voice when the user removes
+    the voice clone resource.
+    """
     if not user_id or not conversation_id:
         raise ValueError("tts_store: user_id and conversation_id required")
     from core.file_store import FileStore
@@ -196,14 +241,101 @@ def tts_store(user_id: str, conversation_id: str,
         ttl=0,
         category=_TTS_CATEGORY,
     )
-    # Tag the entry with the cache key so `tts_find` can lookup by key.
+    # Tag the entry with the cache key so `tts_find` can lookup by key,
+    # and with the ref-audio hash so `cascade_delete` can find siblings.
     try:
         with store._store_lock:
             store._ensure_loaded()
             e = store._entries.get(file_id)
             if e is not None:
                 e["voice_cache_key"] = cache_key
+                if ref_audio_hash:
+                    e["voice_ref_hash"] = ref_audio_hash
         store._save_index()
     except Exception as e:
         logger.debug("voice_clone_cache.tts_store tag: %s", e)
     return file_id
+
+
+def _purge_ref_audio(user_id: str, file_id: str) -> bool:
+    """Delete the reference-audio FileStore entry owned by `user_id`."""
+    if not user_id or not file_id:
+        return False
+    try:
+        from core.file_store import FileStore
+        return FileStore.instance().delete(file_id, user_id=user_id)
+    except Exception as e:
+        logger.debug("voice_clone_cache._purge_ref_audio: %s", e)
+        return False
+
+
+def _purge_tts_cache(user_id: str, ref_audio_hash: str) -> int:
+    """Drop every rendered-TTS cache entry keyed on this voice's hash.
+
+    The TTS cache key is derived from (provider, ref_audio_hash, language,
+    text). We cannot match on the hash alone — but we CAN match on a
+    prefix stored alongside the file's metadata (voice_cache_key). Since
+    keys are opaque SHA-256 hexes we instead recompute and match via the
+    auxiliary tag `voice_ref_hash` written below.
+    Returns the number of files deleted.
+    """
+    if not user_id or not ref_audio_hash:
+        return 0
+    try:
+        from core.file_store import FileStore
+        store = FileStore.instance()
+        victims: List[str] = []
+        for entry in store.list_by_category(_TTS_CATEGORY):
+            if entry.get("user_id") != user_id:
+                continue
+            if entry.get("voice_ref_hash") != ref_audio_hash:
+                continue
+            fid = entry.get("id") or entry.get("file_id")
+            if fid:
+                victims.append(fid)
+        for fid in victims:
+            store.delete(fid, user_id=user_id)
+        return len(victims)
+    except Exception as e:
+        logger.debug("voice_clone_cache._purge_tts_cache: %s", e)
+        return 0
+
+
+def cascade_delete(user_id: str, name: str, service) -> Dict[str, Any]:
+    """Delete a voice clone fully: provider + ref audio + TTS cache + entry.
+
+    `service` is the active BaseVoiceCloneService instance (or None). When
+    the entry was registered with a persistent `voice_id` (paradigm B),
+    `service.delete_voice_id` is called so the quota is freed upstream.
+
+    Returns a dict summarising what was removed:
+        {"entry": bool, "voice_id": bool, "ref_audio": bool,
+         "tts_cached": int}
+    """
+    result = {"entry": False, "voice_id": False,
+              "ref_audio": False, "tts_cached": 0}
+    entry = get_by_name(user_id, name)
+    if entry is None:
+        return result
+
+    voice_id = entry.get("voice_id") or ""
+    if voice_id and service is not None:
+        try:
+            ok = bool(service.delete_voice_id(voice_id))
+        except Exception as e:
+            logger.warning(
+                "cascade_delete: provider delete_voice_id(%s) failed: %s",
+                voice_id, e)
+            ok = False
+        result["voice_id"] = ok
+
+    ref_fid = entry.get("ref_audio_fid") or ""
+    if ref_fid:
+        result["ref_audio"] = _purge_ref_audio(user_id, ref_fid)
+
+    ref_hash = entry.get("ref_audio_hash") or ""
+    if ref_hash:
+        result["tts_cached"] = _purge_tts_cache(user_id, ref_hash)
+
+    result["entry"] = delete(user_id, name)
+    return result

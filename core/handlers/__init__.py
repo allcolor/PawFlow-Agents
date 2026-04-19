@@ -63,6 +63,7 @@ from core.handlers.capabilities import (  # noqa: F401
     SpeechToVideoHandler,
     CloneVoiceHandler,
     SpeakHandler,
+    DeleteVoiceHandler,
 )
 from core.handlers.memory import (  # noqa: F401
     RememberHandler,

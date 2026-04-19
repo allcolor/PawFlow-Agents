@@ -652,6 +652,47 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             result["flows"] = flows
         except Exception:
             result["flows"] = []
+        # Flow templates (Flows Repository on disk under data/repository/flows/).
+        # Walks global + caller's user scope; each flow lives at
+        # <scope>/<package>/<flow_name>/{latest.json, versions/X.Y.Z.json}.
+        try:
+            from core.paths import REPOSITORY_DIR
+            templates = []
+            roots = [("global", REPOSITORY_DIR / "flows" / "global")]
+            if user_id:
+                roots.append(("user",
+                              REPOSITORY_DIR / "flows" / "users" / user_id))
+            for scope_label, root in roots:
+                if not root.is_dir():
+                    continue
+                for latest in root.rglob("latest.json"):
+                    flow_dir = latest.parent
+                    try:
+                        ptr = json.loads(latest.read_text(encoding="utf-8"))
+                        version = (ptr.get("version") or "").strip()
+                        if not version:
+                            continue
+                        vfile = flow_dir / "versions" / f"{version}.json"
+                        if not vfile.is_file():
+                            continue
+                        raw = json.loads(vfile.read_text(encoding="utf-8"))
+                        templates.append({
+                            "id": raw.get("id") or flow_dir.name,
+                            "name": raw.get("name") or flow_dir.name,
+                            "version": version,
+                            "description": raw.get("description") or "",
+                            "scope": raw.get("scope") or scope_label,
+                            "tasks_count": len(raw.get("tasks", {}) or {}),
+                            "services_count": len(raw.get("services", {}) or {}),
+                        })
+                    except Exception as _e:
+                        logger.debug("list_resources flow_templates: skip %s: %s",
+                                     latest, _e)
+            templates.sort(key=lambda t: (t["scope"], t["name"]))
+            result["flow_templates"] = templates
+        except Exception as e:
+            logger.debug("list_resources flow_templates failed: %s", e)
+            result["flow_templates"] = []
         # Include user role so frontend can enable admin features
         _user_role = flowfile.get_attribute("http.auth.roles") or "viewer"
         result["user_role"] = _user_role

@@ -1138,30 +1138,54 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "list_available_flows":
+        # Flow templates are stored under
+        #   data/repository/flows/global/<package>/<flow_name>/latest.json
+        #   data/repository/flows/users/<uid>/<package>/<flow_name>/latest.json
+        # Each <flow_name>/ contains latest.json (a {"version": "X.Y.Z"}
+        # pointer) plus versions/<version>.json (the real flow definition).
+        # We walk both global and the caller's user scope.
         try:
-            from pathlib import Path as _Path
-            flows_dir = _Path("flows")
+            from core.paths import REPOSITORY_DIR
             templates = []
-            if flows_dir.is_dir():
-                for fp in sorted(flows_dir.glob("*.json")):
+            roots = [("global", REPOSITORY_DIR / "flows" / "global")]
+            if user_id:
+                roots.append(("user",
+                              REPOSITORY_DIR / "flows" / "users" / user_id))
+            for scope_label, root in roots:
+                if not root.is_dir():
+                    continue
+                for latest in root.rglob("latest.json"):
+                    flow_dir = latest.parent
                     try:
-                        raw = json.loads(fp.read_text(encoding="utf-8"))
+                        ptr = json.loads(latest.read_text(encoding="utf-8"))
+                        version = (ptr.get("version") or "").strip()
+                        if not version:
+                            continue
+                        vfile = flow_dir / "versions" / f"{version}.json"
+                        if not vfile.is_file():
+                            continue
+                        raw = json.loads(vfile.read_text(encoding="utf-8"))
                         templates.append({
-                            "id": raw.get("id", fp.stem),
-                            "name": raw.get("name", fp.stem),
-                            "version": raw.get("version", ""),
-                            "description": raw.get("description", ""),
-                            "scope": raw.get("scope", "independent"),
-                            "tasks_count": len(raw.get("tasks", {})),
-                            "services_count": len(raw.get("services", {})),
-                            "file_path": str(fp),
+                            "id": raw.get("id") or flow_dir.name,
+                            "name": raw.get("name") or flow_dir.name,
+                            "version": version,
+                            "description": raw.get("description") or "",
+                            "scope": raw.get("scope") or scope_label,
+                            "tasks_count": len(raw.get("tasks", {}) or {}),
+                            "services_count": len(raw.get("services", {}) or {}),
+                            "file_path": str(vfile),
                         })
-                    except Exception:
-                        pass
-            flowfile.set_content(json.dumps({"templates": templates}, ensure_ascii=False).encode())
+                    except Exception as e:
+                        logger.debug("list_available_flows: skip %s: %s",
+                                     latest, e)
+            templates.sort(key=lambda t: (t["scope"], t["name"]))
+            flowfile.set_content(
+                json.dumps({"templates": templates},
+                           ensure_ascii=False).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
+
 
     if action == "deploy_flow":
         template_id = body.get("template_id", "")
@@ -1176,26 +1200,41 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
             return [flowfile]
         try:
-            from pathlib import Path as _Path
+            from core.paths import REPOSITORY_DIR
             from core.deployment_registry import DeploymentRegistry
-            flows_dir = _Path("flows")
+            # Resolve template_id (matches raw["id"] or the flow_dir name)
+            # by walking the same scope tree used by list_available_flows.
             tpath = None
-            for fp in flows_dir.glob("*.json"):
-                try:
-                    raw = json.loads(fp.read_text(encoding="utf-8"))
-                    if raw.get("id", fp.stem) == template_id:
-                        tpath = fp
-                        break
-                except Exception:
-                    pass
-            if not tpath:
-                candidate = flows_dir / f"{template_id}.json"
-                if candidate.exists():
-                    tpath = candidate
+            roots = [REPOSITORY_DIR / "flows" / "global"]
+            if user_id:
+                roots.append(REPOSITORY_DIR / "flows" / "users" / user_id)
+            for root in roots:
+                if not root.is_dir():
+                    continue
+                for latest in root.rglob("latest.json"):
+                    flow_dir = latest.parent
+                    try:
+                        ptr = json.loads(latest.read_text(encoding="utf-8"))
+                        version = (ptr.get("version") or "").strip()
+                        if not version:
+                            continue
+                        vfile = flow_dir / "versions" / f"{version}.json"
+                        if not vfile.is_file():
+                            continue
+                        raw = json.loads(vfile.read_text(encoding="utf-8"))
+                        if (raw.get("id") or flow_dir.name) == template_id:
+                            tpath = vfile
+                            break
+                    except Exception:
+                        continue
+                if tpath:
+                    break
             if not tpath:
                 flowfile.set_content(json.dumps(
-                    {"error": f"Template '{template_id}' not found in flows/"}).encode())
+                    {"error": f"Template '{template_id}' not found in "
+                              "data/repository/flows/"}).encode())
                 return [flowfile]
+
 
             # Read flow scope from template (runtime dependency declaration)
             flow_config = json.loads(tpath.read_text(encoding="utf-8"))

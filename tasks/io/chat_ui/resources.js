@@ -94,7 +94,7 @@ function _scopeBadge(s) {
 // next switch but never leaks across conversations or sessions.
 const _ALL_SECTIONS = [
   'agent','_agent_repo','skill','mcp','_mcp_repo','prompt','voice',
-  '_tool','task_def','_running','_svc','_relay','_flow','_param','_secret'
+  '_tool','task_def','_running','_svc','_relay','_flow','_flow_repo','_param','_secret'
 ];
 const _collapsedSections = {};
 function _resetCollapsedSectionsToInitial() {
@@ -116,9 +116,16 @@ function _toggleSection(id) {
 //   opts.createTitle     tooltip for '+' (default 'Create new'; for
 //                        rtype='agent' defaults to 'Add agent to conversation')
 //   opts.createOnclick   override the '+' click handler
-//   opts.refreshOnclick  if set, render a refresh button LEFT of '+'
-//                        (matches MCP Repository layout)
+//   opts.refreshOnclick  override the refresh click handler (default:
+//                        loadResources() - sufficient for every section
+//                        that reads from the ResourceStore or from conv
+//                        extras, both of which hit disk on every call).
+//                        Use 'reload_disk + loadResources' for sections
+//                        backed by a live registry (Services,
+//                        Deployed Flows) where the in-memory state must
+//                        be rebuilt from disk before the list refetch.
 //   opts.refreshTitle    tooltip for the refresh button
+//   opts.hideRefresh     hide the refresh button (default: show)
 //   opts.hideCreate      hide the '+' button entirely
 function _sectionHeader(title, rtype, opts) {
   opts = opts || {};
@@ -129,9 +136,12 @@ function _sectionHeader(title, rtype, opts) {
     : `showResourceCreator('${rtype}')`;
   const createTitle = opts.createTitle
     || (rtype === 'agent' ? 'Add agent to conversation' : 'Create new');
-  const refreshBtn = opts.refreshOnclick
-    ? `<span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="${opts.refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>`
-    : '';
+  // Refresh: shown by default on every section (every listing reads
+  // from disk, and the user may edit those files manually out-of-band).
+  const refreshOnclick = opts.refreshOnclick
+    || "event.stopPropagation();loadResources()";
+  const refreshBtn = opts.hideRefresh ? ''
+    : `<span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>`;
   const createBtn = opts.hideCreate ? ''
     : `<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${createOnclick}" title="${createTitle}">+</span>`;
   const collapsed = _collapsedSections[rtype] || false;
@@ -142,8 +152,10 @@ function _sectionHeader(title, rtype, opts) {
   </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};max-height:260px;overflow-y:auto;">`;
 }
 // _repoSectionHeader(title, rtype, opts?)
-//   opts.createOnclick  if set, render a '+' button next to the refresh
-//   opts.createTitle    tooltip for the '+' button (default 'Create new')
+//   opts.createOnclick   if set, render a '+' button next to the refresh
+//   opts.createTitle     tooltip for the '+' button (default 'Create new')
+//   opts.refreshOnclick  override the refresh handler (default loadResources)
+//   opts.refreshTitle    tooltip for the refresh button
 function _repoSectionHeader(title, rtype, opts) {
   opts = opts || {};
   const collapsed = _collapsedSections[rtype] || false;
@@ -151,13 +163,15 @@ function _repoSectionHeader(title, rtype, opts) {
   const createBtn = opts.createOnclick
     ? `<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${opts.createOnclick}" title="${opts.createTitle || 'Create new'}">+</span>`
     : '';
+  const refreshOnclick = opts.refreshOnclick
+    || "event.stopPropagation();loadResources()";
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
     <span style="cursor:pointer;color:#888;font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
     <span style="display:flex;gap:4px;align-items:center;">
-      <span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="loadResources()" title="Refresh from disk">\u21BB</span>
+      <span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>
       ${createBtn}
     </span>
-  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
+  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' };">`;
 }
 function _sectionFooter() { return '</div>'; }
 
@@ -405,8 +419,10 @@ async function _renderResourcesData(data) {
       }
     }
     html += _sectionFooter();
-    // ── Skills ──
-    html += _sectionHeader('Skills', 'skill');
+    // ── Skills Repository ──
+    html += _repoSectionHeader('Skills Repository', 'skill', {
+      createOnclick: "showResourceCreator('skill')",
+    });
     { const allSkills = data.skills || [];
       if (allSkills.length) {
         allSkills.forEach(s => {
@@ -471,8 +487,10 @@ async function _renderResourcesData(data) {
     }
     html += _sectionFooter();
 
-    // ── Prompts (click to paste into chat input) ──
-    html += _sectionHeader('Prompts', 'prompt');
+    // ── Prompts Repository (click to paste into chat input) ──
+    html += _repoSectionHeader('Prompts Repository', 'prompt', {
+      createOnclick: "showResourceCreator('prompt')",
+    });
     if (!_collapsedSections['prompt']) {
       const prompts = data.prompts || [];
       if (prompts.length) {
@@ -492,8 +510,10 @@ async function _renderResourcesData(data) {
     }
     html += _sectionFooter();
 
-    // ── Voices (cloned voices, user scope) ──
-    html += _sectionHeader('Voices', 'voice');
+    // ── Voices Repository (cloned voices, user scope) ──
+    html += _repoSectionHeader('Voices Repository', 'voice', {
+      createOnclick: "showResourceCreator('voice')",
+    });
     if (!_collapsedSections['voice']) {
       const voices = data.voices || [];
       if (voices.length) {
@@ -535,8 +555,36 @@ async function _renderResourcesData(data) {
     }
     html += _sectionFooter();
 
-    // ── Task Definitions ──
-    html += _sectionHeader('Tasks', 'task_def');
+    // ── Tasks (running instances in this conversation) ──
+    // Always visible, even when empty - this is where users look for
+    // 'what tasks are active in this conv right now'. No '+' here:
+    // launching a task happens through the context menu of a task_def
+    // entry in Tasks Repository (just below).
+    html += _sectionHeader('Tasks', '_running', {
+      hideCreate: true,
+    });
+    { const running = data.running_tasks || [];
+      if (running.length) {
+        running.forEach(t => {
+          const statusColor = t.status === 'active' ? '#4ecdc4' : t.status === 'paused' ? '#f0ad4e' : '#666';
+          const statusIcon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : '\u23F9';
+          const label = (t.task_def_name || (t.task || '').substring(0, 30) || t.task_id) + ' \u2192 ' + t.agent;
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
+            <span style="color:${statusColor};font-size:11px;">${statusIcon}</span>
+            <span style="color:#8888aa;font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
+            <span style="color:#555;font-size:10px;">[${t.iterations}/${t.max_iterations}]</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No tasks running</div>';
+      }
+    }
+    html += _sectionFooter();
+
+    // ── Tasks Repository (definitions, muted style like Agent Repository) ──
+    html += _repoSectionHeader('Tasks Repository', 'task_def', {
+      createOnclick: "showResourceCreator('task_def')",
+    });
     { const allTasks = data.task_defs || [];
       if (allTasks.length) {
         allTasks.forEach(t => {
@@ -550,21 +598,6 @@ async function _renderResourcesData(data) {
       }
     }
     html += _sectionFooter();
-    // Running task instances (active/paused)
-    if (data.running_tasks && data.running_tasks.length) {
-      html += _sectionHeader('Running Tasks', '_running');
-      data.running_tasks.forEach(t => {
-        const statusColor = t.status === 'active' ? '#4ecdc4' : t.status === 'paused' ? '#f0ad4e' : '#666';
-        const statusIcon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : '\u23F9';
-        const label = (t.task_def_name || (t.task || '').substring(0, 30) || t.task_id) + ' \u2192 ' + t.agent;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
-          <span style="color:${statusColor};font-size:11px;">${statusIcon}</span>
-          <span style="color:#8888aa;font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
-          <span style="color:#555;font-size:10px;">[${t.iterations}/${t.max_iterations}]</span>
-        </div>`;
-      });
-      html += _sectionFooter();
-    }
     // Services (install with '+', reload from disk with ↻ on the left)
     html += _sectionHeader('Services', '_svc', {
       refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
@@ -655,7 +688,10 @@ async function _renderResourcesData(data) {
       }
       html += _sectionFooter();
     }
-    // Deployed flows (deploy with '+', reload from disk with ↻ on the left)
+    // ── Flows (running deployed instances; deploy a new one with '+',
+    //    rebuild registry with ↻ since the deploy list is live state).
+    //    Naming mirrors Tasks: this section = active state in the conv,
+    //    "Flows Repository" below = catalog on disk.
     html += _sectionHeader('Flows', '_flow', {
       refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
       refreshTitle: 'Reload from disk',
@@ -672,6 +708,27 @@ async function _renderResourcesData(data) {
       });
     } else {
       html += '<div style="color:#555;font-size:10px;margin-left:8px;">No deployed flows</div>';
+    }
+    html += _sectionFooter();
+    // ── Flows Repository (flow templates on disk under
+    //    data/repository/flows/*.json) ──
+    html += _repoSectionHeader('Flows Repository', '_flow_repo', {
+      createOnclick: "showDeployFlowDialog()",
+      createTitle: 'Deploy flow from template',
+    });
+    { const tpls = data.flow_templates || [];
+      if (tpls.length) {
+        tpls.forEach(t => {
+          const ver = t.version ? ` v${escapeHtml(t.version)}` : '';
+          const desc = t.description ? ` title="${escapeHtml(t.description)}"` : '';
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog('${escapeHtml(t.id)}')">
+            ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(t.name)}${ver}</span>
+            <span style="color:#555;font-size:10px;">[${t.tasks_count} tasks]</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No flow templates under flows/</div>';
+      }
     }
     html += _sectionFooter();
     // Variables & Secrets + Linked Accounts (async, appended when ready)

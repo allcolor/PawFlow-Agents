@@ -1,15 +1,24 @@
 // Connect SSE for a conversation
 var _sseOnReadyCallback = null;
 
-function connectSSE(cid, onReady) {
+function connectSSE(cid, onReady, opts) {
   if (eventSource) eventSource.close();
   if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
   _sseOnReadyCallback = onReady || null;
   startActiveSync();
   sseRetryCount = 0;  // reset so onopen doesn't think we're reconnecting
   const token = getToken();
+  // noReplay=true: caller is an explicit reload/switch that just refetched
+  // the authoritative history from disk. The server must discard any
+  // buffered events for this conv instead of replaying them -- otherwise
+  // the client _seenMsgIds gets populated with ids from the replayed
+  // message_meta/done events before _renderHistory runs, and addMsg() dedups
+  // legitimate history entries out of the render (transcript truncation).
+  // A reload means reload, not replay.
+  const _noReplay = !!(opts && opts.noReplay);
   const url = SSE_URL + '?conversation_id=' + encodeURIComponent(cid)
-    + (token ? '&token=' + encodeURIComponent(token) : '');
+    + (token ? '&token=' + encodeURIComponent(token) : '')
+    + (_noReplay ? '&replay=false' : '');
   eventSource = new EventSource(url);
 
   // ── Task block grouping ─────────────────────────────────────────

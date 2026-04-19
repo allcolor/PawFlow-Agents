@@ -53,28 +53,37 @@ class ConversationEventBus:
         self._buffer: Dict[str, List[Tuple[float, SSEEvent]]] = {}
         self._lock = threading.Lock()
 
-    def subscribe(self, conversation_id: str) -> SSEWriter:
+    def subscribe(self, conversation_id: str, replay: bool = True) -> SSEWriter:
         """Subscribe to events for a conversation. Returns an SSEWriter.
 
-        Replays any buffered events that were published before this subscriber
-        connected (handles the race between agent start and SSE connect).
+        When ``replay=True`` (default), buffered events published before this
+        subscriber connected are delivered first -- handles the race between
+        agent start and SSE connect on initial page load or auto-reconnect
+        after a transient network drop.
+
+        When ``replay=False``, the buffer for this conversation is popped
+        and discarded. Used by explicit reload/switch paths: the client has
+        just refetched the authoritative transcript from disk, so any
+        still-buffered events would only produce duplicates and dedup races
+        in the UI. A reload means reload -- not replay.
         """
         writer = SSEWriter()
         with self._lock:
             if conversation_id not in self._subscribers:
                 self._subscribers[conversation_id] = set()
             self._subscribers[conversation_id].add(writer)
-
-            # Replay buffered events
+            # Pop the buffer either way so it doesn't grow forever.
             buffered = self._buffer.pop(conversation_id, [])
 
-        # Replay outside the lock
-        for _ts, event in buffered:
-            if not writer.is_closed:
-                writer.send(event)
-
-        logger.debug(f"EventBus: new subscriber for conv={conversation_id} "
-                     f"(replayed {len(buffered)} buffered events)")
+        if replay:
+            for _ts, event in buffered:
+                if not writer.is_closed:
+                    writer.send(event)
+            logger.debug(f"EventBus: new subscriber for conv={conversation_id} "
+                         f"(replayed {len(buffered)} buffered events)")
+        else:
+            logger.debug(f"EventBus: new subscriber for conv={conversation_id} "
+                         f"(discarded {len(buffered)} buffered events, replay=False)")
         return writer
 
     def unsubscribe(self, conversation_id: str, writer: SSEWriter):

@@ -40,14 +40,17 @@ class AgentSSEStreamTask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        # Extract conversation_id from query params
+        # Extract conversation_id + replay flag from query params
         conversation_id = flowfile.get_attribute("http.query.conversation_id") or ""
-        if not conversation_id:
-            # Try parsing from query string
+        replay_param = flowfile.get_attribute("http.query.replay")
+        if not conversation_id or replay_param is None:
             query = flowfile.get_attribute("http.query") or ""
             import urllib.parse
             params = dict(urllib.parse.parse_qsl(query))
-            conversation_id = params.get("conversation_id", "")
+            if not conversation_id:
+                conversation_id = params.get("conversation_id", "")
+            if replay_param is None:
+                replay_param = params.get("replay")
 
         if not conversation_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
@@ -55,9 +58,16 @@ class AgentSSEStreamTask(BaseTask):
             flowfile.set_attribute("http.response.header.Content-Type", "application/json")
             return [flowfile]
 
+        # replay defaults to True for backward compatibility (initial page
+        # load, auto-reconnect). Explicit reload/switch in the UI passes
+        # ?replay=false so buffered events are discarded, not replayed.
+        replay = True
+        if isinstance(replay_param, str) and replay_param.lower() in ("0", "false", "no"):
+            replay = False
+
         # Subscribe to events
         bus = ConversationEventBus.instance()
-        writer = bus.subscribe(conversation_id)
+        writer = bus.subscribe(conversation_id, replay=replay)
 
         # Set up SSE streaming response
         timeout = int(self.config.get("timeout", 600))

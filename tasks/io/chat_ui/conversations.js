@@ -136,13 +136,18 @@ function resumeConv(cid, force) {
   // wait we used to fire load_history while still subscribed to the
   // OLD conv's SSE, so the NEW conv's command_result never reached
   // _commandResult$ and the whole UI hung on "Chargement...".
+  // noReplay: this is an explicit reload/switch. We're about to refetch
+  // the authoritative 50-message history from disk -- anything still in
+  // the SSE replay buffer (TTL 60s) would only collide with that, with
+  // dedup races that truncate the transcript when switching between two
+  // full convs. A reload means reload, not replay.
   connectSSE(cid, () => {
     action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
       .subscribe(data => {
         _renderHistory(data);
         startPollTimer();
       });
-  });
+  }, { noReplay: true });
 }
 
 // Thin alias for "reload the current conv" — same canonical path as
@@ -180,20 +185,6 @@ function _renderHistory(data) {
     document.getElementById('status').textContent = t('error');
     return;
   }
-  // Canonical rule (user-validated): rendering history is ALWAYS
-  // "vider + loader 50 + afficher". Between the initial DOM/_seenMsgIds
-  // clear in resumeConv and this render callback, the SSE replay buffer
-  // (TTL ~60s) can deliver `message_meta` / `done` events for the new
-  // conv that add msg_ids to _seenMsgIds, which then makes addMsg() below
-  // dedup legitimate history entries and truncate the transcript --
-  // deterministically when switching between two full convs, and
-  // silently OK when an empty conv clears the buffer in between.
-  // Re-clearing here makes _renderHistory self-contained: whatever SSE
-  // leaked in between gets wiped, and history always renders in full.
-  _expectingClear = true;
-  document.getElementById('messages').innerHTML = '';
-  _expectingClear = false;
-  _seenMsgIds.clear();
   _histTaskBlocks = {};  // reset on full render
   nicknameMap = data.nicknames || {};
   for (const m of (data.messages || [])) {

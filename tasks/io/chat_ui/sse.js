@@ -292,6 +292,17 @@ function connectSSE(cid, onReady, opts) {
   // Per-message metadata: attaches model/tokens to the correct element by msg_id
   eventSource.addEventListener('message_meta', (e) => {
     const data = JSON.parse(e.data);
+    // Update active-panel context fill for the emitting agent (CC streams this
+    // per-turn even before `done` fires).
+    if (data.agent_name && typeof activeInteractions !== 'undefined') {
+      const aKey = agentKey(data.agent_name);
+      if (activeInteractions[aKey] && (data.context_used || data.context_max)) {
+        activeInteractions[aKey].contextUsed = data.context_used || 0;
+        activeInteractions[aKey].contextMax = data.context_max || 0;
+        activeInteractions[aKey].contextPct = data.context_pct || 0;
+        updateActivePanel();
+      }
+    }
     if (!data.msg_id) return;
     // Register msg_id to prevent poll/replay duplicates
     if (typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
@@ -1007,6 +1018,16 @@ function connectSSE(cid, onReady, opts) {
       return;
     }
     _cancelledAgents.delete(doneAgent.toLowerCase());  // allow new events for next turn
+    // Stash final context fill on the active-panel entry (visible until next
+    // list_active poll clears the row).
+    if (doneAgent && typeof activeInteractions !== 'undefined') {
+      const _aKey = agentKey(doneAgent);
+      if (activeInteractions[_aKey] && (data.context_used || data.context_max)) {
+        activeInteractions[_aKey].contextUsed = data.context_used || 0;
+        activeInteractions[_aKey].contextMax = data.context_max || 0;
+        activeInteractions[_aKey].contextPct = data.context_pct || 0;
+      }
+    }
     // Finalize any open thinking block for this agent
     finalizeThinking(doneAgent);
     // Close any pending tool calls owned by THIS agent only — other

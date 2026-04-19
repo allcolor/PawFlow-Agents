@@ -177,6 +177,11 @@ class StreamEmitter(AgentEmitter):
         # Use all_msg_ids from the full turn (survives flush)
         _all_ids = result.all_msg_ids or []
         _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
+        # Context fill: tokens_in = current prompt size (exact, from provider).
+        # context_max = PawFlow's configured max_context_size for this agent.
+        _ctx_used = int(result.tokens_in or 0)
+        _ctx_max = int(self.ctx.get("max_context_size", 0) or 200000)
+        _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
         self._emit("done", {
             "response": result.response_content,
             "msg_id": _last_id,
@@ -186,6 +191,9 @@ class StreamEmitter(AgentEmitter):
             "base_url": result.base_url,
             "tokens_in": result.tokens_in,
             "tokens_out": result.tokens_out,
+            "context_used": _ctx_used,
+            "context_max": _ctx_max,
+            "context_pct": _ctx_pct,
             "duration_ms": result.duration_ms,
             "cost_usd": result.cost_usd,
             "source": result.source,

@@ -60,11 +60,29 @@ function updateActivePanel() {
     const hue = Math.abs([...displayName].reduce((h,c) => (h * 31 + c.charCodeAt(0)) | 0, 0)) % 360;
     const color = 'hsl(' + hue + ',70%,65%)';
     const apiName = info.name;
+    // Context-fill gauge (from message_meta: context_used/max/pct).
+    // Orange warning >=80% (approaching auto-compact / window limit).
+    let ctxHtml = '';
+    if (info.contextMax && info.contextMax > 0) {
+      const pct = Math.max(0, Math.min(1, info.contextPct || (info.contextUsed / info.contextMax)));
+      const pctInt = Math.round(pct * 100);
+      const usedK = Math.round((info.contextUsed || 0) / 1000);
+      const maxK = Math.round(info.contextMax / 1000);
+      const gColor = (pct >= 0.80) ? '#f0ad4e' : '#4ecdc4';
+      const barPx = Math.round(pct * 60);
+      ctxHtml = '<span class="a-ctx" title="Context ' + usedK + 'k/' + maxK + 'k (' + pctInt + '%)">'
+        + '<span class="a-ctx-bar" style="display:inline-block;width:60px;height:6px;background:#222;border-radius:3px;vertical-align:middle;overflow:hidden;">'
+        + '<span style="display:inline-block;width:' + barPx + 'px;height:100%;background:' + gColor + ';"></span>'
+        + '</span>'
+        + '<span style="font-size:10px;color:' + gColor + ';margin-left:4px;">' + pctInt + '%</span>'
+        + '</span>';
+    }
     return '<div class="active-row">'
       + '<span class="a-spinner" style="color:' + color + '">\u2733</span>'
       + '<span class="a-name" style="color:' + color + '">' + escapeHtml(displayName) + '</span>'
       + '<span class="a-msg">' + preview + '</span>'
       + '<span class="a-status">' + escapeHtml(statusText) + '</span>'
+      + ctxHtml
       + '<span class="a-time">' + timeStr + '</span>'
       + '<span class="a-actions">'
       + '<button title="Interrupt (force answer)" onclick="interruptSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x23F8;</button>'
@@ -116,6 +134,9 @@ function syncActiveFromServer() {
         totalTools: a.total_tools || (existing ? (existing.totalTools || 0) : 0),
         status: a.status || (existing ? existing.status : 'thinking'),
         msgPreview: a.message_preview || '',
+        contextUsed: existing ? existing.contextUsed : 0,
+        contextMax: existing ? existing.contextMax : 0,
+        contextPct: existing ? existing.contextPct : 0,
         updatedAt: now,
       };
     }

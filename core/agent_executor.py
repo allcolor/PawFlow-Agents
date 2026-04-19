@@ -440,6 +440,16 @@ class SubAgentExecutor:
             client._conversation_id = _delegate_conv_id
             client._agent_name = task.agent_name or ""
             client._user_id = task.user_id or ""
+            # Expose max_context_size so CC provider can publish context-fill
+            # % via message_meta. Resolved from service config (200k default).
+            _svc_max_ctx = 200000
+            if resolved_svc and getattr(resolved_svc, 'config', None):
+                try:
+                    _svc_max_ctx = int(resolved_svc.config.get(
+                        "max_context_size", _svc_max_ctx) or _svc_max_ctx)
+                except (TypeError, ValueError):
+                    pass
+            client._max_context_size = _svc_max_ctx
             # Suppress raw provider SSE events to the parent bus — the
             # SubAgentExecutor already emits sub_agent_* events that the UI
             # uses to render delegate sub-blocks. Leaving _event_cid at the

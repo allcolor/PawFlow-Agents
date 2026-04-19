@@ -206,8 +206,17 @@ function updateActiveAgentBadge() {
   const hue = Math.abs(h) % 360;
   badge.style.background = 'hsl(' + hue + ',60%,25%)';
   badge.style.color = 'hsl(' + hue + ',80%,80%)';
-  badge.textContent = '\u2192 ' + displayAgentName(agent);
   badge.title = !agent ? 'Default agent' : 'Active: ' + agent + ' — click to switch back';
+  // Compose label + inline context gauge (if we have a cached value for this agent)
+  const label = '\u2192 ' + displayAgentName(agent);
+  let gaugeHtml = '';
+  try {
+    const usage = (window._contextUsage || {})[(agent || '').toLowerCase()];
+    if (usage && typeof renderCtxGauge === 'function') {
+      gaugeHtml = '<span style="margin-left:8px;">' + renderCtxGauge(usage, {width: 50}) + '</span>';
+    }
+  } catch (e) {}
+  badge.innerHTML = escapeHtml(label) + gaugeHtml;
   badge.style.display = '';
 }
 

@@ -7,6 +7,50 @@ let activeTimer = null;
 
 function agentKey(name) { return (name || '').toLowerCase(); }
 
+// ── Persistent context-window usage cache ──
+// Shared across the header badge + Resource Panel agents. Populated from
+// list_resources (load-time) and from SSE message_meta/done (real-time).
+// Keyed by lowercase agent instance name.
+window._contextUsage = window._contextUsage || {};
+
+// Unified gauge renderer — used by active-agents panel, header badge, and
+// Resource Panel Agents section. `usage` is {used, max, pct} (pct 0..1).
+function renderCtxGauge(usage, opts) {
+  if (!usage || !usage.max) return '';
+  opts = opts || {};
+  const width = opts.width || 60;
+  const pct = Math.max(0, Math.min(1, usage.pct || (usage.used / usage.max)));
+  const pctInt = Math.round(pct * 100);
+  const usedK = Math.round((usage.used || 0) / 1000);
+  const maxK = Math.round(usage.max / 1000);
+  const color = (pct >= 0.80) ? '#f0ad4e' : '#4ecdc4';
+  const barPx = Math.round(pct * width);
+  return '<span class="ctx-gauge" title="Context ' + usedK + 'k/' + maxK + 'k (' + pctInt + '%)" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
+    + '<span style="display:inline-block;width:' + width + 'px;height:6px;background:#222;border-radius:3px;overflow:hidden;">'
+    + '<span style="display:block;width:' + barPx + 'px;height:100%;background:' + color + ';"></span>'
+    + '</span>'
+    + '<span style="font-size:10px;color:' + color + ';">' + pctInt + '%</span>'
+    + '</span>';
+}
+
+// Update cache and refresh all UI surfaces that display the gauge.
+function setContextUsage(agentName, usage) {
+  if (!agentName || !usage) return;
+  const key = agentKey(agentName);
+  window._contextUsage[key] = {
+    used: usage.used || usage.context_used || 0,
+    max: usage.max || usage.context_max || 0,
+    pct: usage.pct || usage.context_pct || 0,
+  };
+  if (typeof updateActiveAgentBadge === 'function'
+      && typeof selectedAgent !== 'undefined'
+      && agentKey(selectedAgent) === key) {
+    updateActiveAgentBadge();
+  }
+  const row = document.querySelector('#res-section-agent [data-ctx-agent="' + key + '"]');
+  if (row) row.innerHTML = renderCtxGauge(window._contextUsage[key]);
+}
+
 // ── SSE hints (fast UI update between polls) ──
 // Active agents come ONLY from syncActiveFromServer (list_active).
 // SSE events do NOT add agents to activeInteractions.

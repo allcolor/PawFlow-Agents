@@ -383,6 +383,25 @@ class AgentCoreMixin:
                             _payload["context_used"] = _src["context_used"]
                             _payload["context_max"] = _src["context_max"]
                             _payload["context_pct"] = _src["context_pct"]
+                            # Persist per-agent so the UI can show the gauge
+                            # permanently across turns (not just transiently
+                            # while the agent is in the active-panel).
+                            try:
+                                from core.conversation_store import ConversationStore as _CS
+                                _store = _CS.instance()
+                                _pcid = ctx.get("_event_cid", conversation_id)
+                                _agent_for_persist = _src.get("name", "")
+                                if _agent_for_persist:
+                                    _cu_map = _store.get_extra(_pcid, "context_usage") or {}
+                                    _cu_map[_agent_for_persist] = {
+                                        "used": _src["context_used"],
+                                        "max": _src["context_max"],
+                                        "pct": _src["context_pct"],
+                                        "updated_at": int(time.time()),
+                                    }
+                                    _store.set_extra(_pcid, "context_usage", _cu_map)
+                            except Exception:
+                                pass
                         ConversationEventBus.instance().publish_event(
                             ctx.get("_event_cid", conversation_id), "message_meta", _payload)
                     except Exception:

@@ -303,6 +303,13 @@ function connectSSE(cid, onReady, opts) {
         updateActivePanel();
       }
     }
+    // Persistent cache — feeds header badge + Resource Panel gauge.
+    if (data.agent_name && (data.context_used || data.context_max)
+        && typeof setContextUsage === 'function') {
+      setContextUsage(data.agent_name, {
+        used: data.context_used, max: data.context_max, pct: data.context_pct,
+      });
+    }
     if (!data.msg_id) return;
     // Register msg_id to prevent poll/replay duplicates
     if (typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
@@ -1027,6 +1034,14 @@ function connectSSE(cid, onReady, opts) {
         activeInteractions[_aKey].contextMax = data.context_max || 0;
         activeInteractions[_aKey].contextPct = data.context_pct || 0;
       }
+    }
+    // Persistent cache — keeps gauge visible in header/Resource Panel
+    // after the agent leaves the active set.
+    if (doneAgent && (data.context_used || data.context_max)
+        && typeof setContextUsage === 'function') {
+      setContextUsage(doneAgent, {
+        used: data.context_used, max: data.context_max, pct: data.context_pct,
+      });
     }
     // Finalize any open thinking block for this agent
     finalizeThinking(doneAgent);

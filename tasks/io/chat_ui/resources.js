@@ -322,11 +322,24 @@ async function _renderResourcesData(data) {
       data.agents.forEach(function(a) {
         var isPrimary = a.active;
         var aName = escapeHtml(a.name);
+        var aKeyLc = (a.name || '').toLowerCase();
         var primaryColor = isPrimary ? '#4ecdc4' : '#555';
         var textColor = isPrimary ? '#e0e0e0' : '#aaa';
         var primaryTitle = isPrimary ? 'Primary agent' : 'Set as primary';
         var primaryArrow = isPrimary ? '&#9654;' : '&#9655;';
         var autoconvTag = a.autoconv ? '<span style="font-size:9px;color:#4ecdc4;margin-left:2px;">' + String.fromCodePoint(0x1F504) + '</span>' : '';
+        // Hydrate the global cache from the server value so the header badge
+        // and subsequent in-place refreshes stay in sync without waiting for SSE.
+        if (a.context_usage && typeof setContextUsage === 'function') {
+          // Update cache silently: we're already inside a full render, so
+          // don't trigger recursive re-renders — just store the value.
+          window._contextUsage = window._contextUsage || {};
+          window._contextUsage[aKeyLc] = {
+            used: a.context_usage.used || 0,
+            max: a.context_usage.max || 0,
+            pct: a.context_usage.pct || 0,
+          };
+        }
         html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + (a.scope||'') + '\',\'' + (a.autoconv||'') + '\');return false;">'
           + '<span style="cursor:pointer;font-size:10px;color:' + primaryColor + ';" title="' + primaryTitle + '"'
           + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + primaryArrow + '</span>'
@@ -336,6 +349,14 @@ async function _renderResourcesData(data) {
           + autoconvTag
           + '<span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Remove from conversation"'
           + ' onclick="_removeAgentFromConv(this.dataset.n)" data-n="' + aName + '">&times;</span>'
+          + '</div>';
+        // Per-agent context-window gauge (persisted on the conversation,
+        // updated in-place via setContextUsage on SSE message_meta/done).
+        var _ctxUsage = (window._contextUsage || {})[aKeyLc];
+        var _ctxHtml = (typeof renderCtxGauge === 'function' && _ctxUsage)
+          ? renderCtxGauge(_ctxUsage) : '';
+        html += '<div style="margin-left:24px;margin-bottom:3px;min-height:6px;" data-ctx-agent="' + escapeHtml(aKeyLc) + '">'
+          + _ctxHtml
           + '</div>';
         // Show LLM service + assigned skills as small tags
         var aLlm = a.llm_service || '';
@@ -355,6 +376,12 @@ async function _renderResourcesData(data) {
       html += '<div style="margin-left:8px;font-size:11px;color:#555;">No agents — <span style="color:#6c5ce7;cursor:pointer;" onclick="showAddAgentToConvDialog()">+ Add</span></div>';
     }
     html += _sectionFooter();
+    // After the Agents section is rebuilt, refresh the header badge so its
+    // inline gauge picks up any freshly-hydrated cache value.
+    if (typeof updateActiveAgentBadge === 'function'
+        && typeof selectedAgent !== 'undefined' && selectedAgent) {
+      setTimeout(updateActiveAgentBadge, 0);
+    }
 
     // Agent Repository (repo agents not yet in conv, collapsed by default)
     html += _repoSectionHeader("Agent Repository", "_agent_repo", {

@@ -178,6 +178,17 @@ As a last resort, messages are brute-force truncated: per-message character budg
 
 Auto-compaction runs when messages exceed 90% of `max_context_size`. It is skipped when a Claude Code session is active (CC manages its own context).
 
+### Context-usage gauge (per-agent)
+
+At the end of each turn, `agent_core` receives the provider's real `usage` (input/output tokens) and derives `context_used / context_max / context_pct`. These fields are:
+
+1. **Emitted** on the `message_meta` SSE event (and `done`), so the chat UI's active-agents panel, header badge, and Resource Panel can update in real time.
+2. **Persisted** on the conversation under the `context_usage` extra as a dict keyed by agent instance name: `{"<agent>": {"used": int, "max": int, "pct": float, "updated_at": int}}`.
+
+Persistence is per-agent and keyed on the instance name (not the definition), which means each agent card in the Resource Panel shows its own gauge and the header badge shows the gauge for `selectedAgent`. The value is written from the final `message_meta` of a turn -- so it reflects the provider's real post-turn usage, and survives idle periods until the next turn updates it.
+
+`list_resources` surfaces this value as `agents[i].context_usage` so the UI can hydrate its cache at load time without waiting for an SSE event.
+
 ---
 
 ## 5. Multi-Agent

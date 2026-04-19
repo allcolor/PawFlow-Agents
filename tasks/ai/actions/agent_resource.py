@@ -423,6 +423,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         conv_agent_cfgs = get_all_agent_configs(conv_id) if conv_id else {}
         conv_agent_names = list(conv_agent_cfgs.keys())
 
+        # Per-agent context-window usage (persisted by agent_core on each
+        # final message_meta) — keyed by agent instance name.
+        context_usage_map = store.get_extra(conv_id, "context_usage") or {} if conv_id else {}
+
         agents_out = []
         for aname in conv_agent_names:
             a = rs.get_any("agent", aname, uid)
@@ -437,6 +441,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "llm_service": acfg.get("llm_service", ""),
                 "assigned_skills": acfg.get("skills") or [],
             }
+            _cu = context_usage_map.get(aname)
+            if _cu:
+                entry["context_usage"] = _cu
             if conv_id:
                 ac_cfg = store.get_extra(conv_id, f"random_thought::{aname.lower()}") or {}
                 if ac_cfg.get("enabled"):

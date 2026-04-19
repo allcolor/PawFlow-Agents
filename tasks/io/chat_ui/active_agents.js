@@ -156,14 +156,30 @@ function updateActivePanel() {
     const hue = Math.abs([...displayName].reduce((h,c) => (h * 31 + c.charCodeAt(0)) | 0, 0)) % 360;
     const color = 'hsl(' + hue + ',70%,65%)';
     const apiName = info.name;
-    // Context-fill gauge (from message_meta: context_used/max/pct).
-    // Orange warning >=80% (approaching auto-compact / window limit).
+    // Context-fill gauge. Source priority:
+    //  1. activeInteractions[key] fields (set by message_meta SSE handler)
+    //  2. window._contextUsage cache (persistent, hydrated by list_resources
+    //     at conv load + updated on message_meta). Falling back to the cache
+    //     is essential: on a fresh agent row created by syncActiveFromServer
+    //     before any message_meta has fired, the instance-local fields are 0
+    //     but the persistent cache already has the last known value.
+    let ctxUsed = info.contextUsed || 0;
+    let ctxMax = info.contextMax || 0;
+    let ctxPct = info.contextPct || 0;
+    if (!ctxMax && window._contextUsage) {
+      const cached = window._contextUsage[agentKey(apiName)];
+      if (cached && cached.max) {
+        ctxUsed = cached.used || 0;
+        ctxMax = cached.max;
+        ctxPct = cached.pct || 0;
+      }
+    }
     let ctxHtml = '';
-    if (info.contextMax && info.contextMax > 0) {
-      const pct = Math.max(0, Math.min(1, info.contextPct || (info.contextUsed / info.contextMax)));
+    if (ctxMax > 0) {
+      const pct = Math.max(0, Math.min(1, ctxPct || (ctxUsed / ctxMax)));
       const pctInt = Math.round(pct * 100);
-      const usedK = Math.round((info.contextUsed || 0) / 1000);
-      const maxK = Math.round(info.contextMax / 1000);
+      const usedK = Math.round(ctxUsed / 1000);
+      const maxK = Math.round(ctxMax / 1000);
       const gColor = (pct >= 0.80) ? '#f0ad4e' : '#4ecdc4';
       const barPx = Math.round(pct * 60);
       ctxHtml = '<span class="a-ctx" title="Context ' + usedK + 'k/' + maxK + 'k (' + pctInt + '%)">'

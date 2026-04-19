@@ -466,7 +466,16 @@ def main():
                     _lower = tool_name.lower()
                     _log(f"USE_TOOL lowering CC native: {tool_name} → {_lower}")
                     tool_name = _lower
-                tool_args_raw = args.get("arguments", {})
+                tool_args_raw = args.get("arguments")
+                # Tolerance: LLM sometimes forgets the "arguments" wrapper and
+                # places the tool args flat next to tool_name. Harvest them
+                # so the dispatch doesn't bomb with misleading "X is required"
+                # errors. Symmetric with the UI's flat-args unwrap.
+                if tool_args_raw is None:
+                    _harvested = {k: v for k, v in args.items() if k != "tool_name"}
+                    if _harvested:
+                        _log(f"USE_TOOL {tool_name} harvested flat args (missing 'arguments' wrapper): keys={list(_harvested.keys())}")
+                    tool_args_raw = _harvested
                 _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
                 # Unwrap JSON string arguments (CC sometimes double/triple-encodes)
                 tool_args = tool_args_raw

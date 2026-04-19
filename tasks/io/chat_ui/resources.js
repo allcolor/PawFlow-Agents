@@ -428,6 +428,34 @@ async function _renderResourcesData(data) {
     }
     html += _sectionFooter();
 
+    // ── Voices (cloned voices, user scope) ──
+    html += _sectionHeader('Voices', 'voice');
+    if (!_collapsedSections['voice']) {
+      const voices = data.voices || [];
+      if (voices.length) {
+        voices.forEach(v => {
+          const paradigm = v.paradigm || 'zero-shot';
+          const pBadge = paradigm === 'voice_id' ? 'id' : 'zs';
+          const pColor = paradigm === 'voice_id' ? '#4ecdc4' : '#888';
+          const prov = v.provider ? ` (${escapeHtml(v.provider)})` : '';
+          const previewUrl = v.ref_audio_fid
+            ? `/files/${encodeURIComponent(v.ref_audio_fid)}` : '';
+          const previewBtn = previewUrl
+            ? `<span style="cursor:pointer;color:#6c5ce7;font-size:11px;padding:0 4px;" title="Preview reference audio" onclick="_previewVoice('${escapeHtml(previewUrl)}')">\u25B6</span>`
+            : '';
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="${escapeHtml(v.provider)} \u2014 ${paradigm}">
+            <span style="color:${pColor};font-size:9px;font-weight:600;border:1px solid ${pColor};border-radius:3px;padding:0 3px;">${pBadge}</span>
+            <span style="color:#e0e0e0;font-size:12px;flex:1;">\u{1F399} ${escapeHtml(v.name)}<span style="color:#666;font-size:10px;">${prov}</span></span>
+            ${previewBtn}
+            <span style="cursor:pointer;color:#d9534f;font-size:11px;padding:0 4px;" title="Delete voice clone (cascade)" onclick="_deleteVoiceClone('${escapeHtml(v.name)}')">\u2716</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No voice clones. Use <code>clone_voice</code> to register one.</div>';
+      }
+    }
+    html += _sectionFooter();
+
     // ── Tools (always available, no linking) ──
     html += _sectionHeader('Tools', '_tool');
     if (!_collapsedSections['_tool']) {
@@ -1065,6 +1093,28 @@ function _usePrompt(name, hasParams) {
         document.getElementById('promptParamOverlay').remove();
       });
     };
+  });
+}
+
+// ── Voice clones ─────────────────────────────────────────────────
+function _previewVoice(url) {
+  // Stop any previously playing preview before starting a new one.
+  try { if (window._voicePreviewAudio) window._voicePreviewAudio.pause(); } catch (e) {}
+  const a = new Audio(url);
+  window._voicePreviewAudio = a;
+  a.play().catch(err => addMsg('system', 'Audio preview failed: ' + err.message));
+}
+
+function _deleteVoiceClone(name) {
+  if (!confirm('Delete voice clone "' + name + '"?\n\nThis cascade-deletes:\n  • the provider voice_id (if paradigm B)\n  • the reference audio\n  • every cached TTS rendering')) return;
+  action$('delete_voice_clone', { name }).subscribe(res => {
+    if (res.error) { addMsg('system', 'Delete failed: ' + res.error); return; }
+    const parts = [];
+    if (res.voice_id_deleted) parts.push('provider voice_id freed');
+    if (res.ref_audio_deleted) parts.push('ref audio purged');
+    if (res.tts_cached_purged) parts.push(res.tts_cached_purged + ' cached rendering(s) purged');
+    addMsg('system', 'Voice "' + name + '" deleted' + (parts.length ? ' (' + parts.join(', ') + ')' : ''));
+    setTimeout(loadResources, 200);
   });
 }
 

@@ -500,6 +500,26 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "has_parameters": bool(p.get("parameters")),
         } for p in all_prompts]
 
+        # Voice clones: user-scope registered voices (voice_clone_cache)
+        voices_out = []
+        try:
+            from core import voice_clone_cache as _vcache
+            for v in _vcache.list_for_user(uid):
+                voices_out.append({
+                    "name": v.get("name", ""),
+                    "provider": v.get("provider", ""),
+                    "paradigm": "voice_id" if v.get("voice_id") else "zero-shot",
+                    "language": v.get("language", ""),
+                    "ref_audio_fid": v.get("ref_audio_fid", ""),
+                    "ref_audio_filename": v.get("ref_audio_filename", ""),
+                    "ref_audio_content_type":
+                        v.get("ref_audio_content_type", ""),
+                    "created_at": v.get("created_at", 0),
+                    "last_used_at": v.get("last_used_at", 0),
+                })
+        except Exception as e:
+            logger.debug("list_resources: voice_clones failed: %s", e)
+
         result = {
             "agents": agents_out,
             "repo_agent_count": repo_agent_count,
@@ -508,6 +528,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "mcp_servers": mcps_out,
             "task_defs": tasks_out,
             "prompts": prompts_out,
+            "voices": voices_out,
         }
         # Task instances for this conversation
         if conv_id:
@@ -646,6 +667,88 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"{rtype} '{rname}' not found"}).encode())
             return [flowfile]
         flowfile.set_content(json.dumps(item, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "delete_voice_clone":
+        # Cascade-delete a registered voice clone from the user scope:
+        # purges provider voice_id (paradigm B), ref audio, cached TTS
+        # files, and the repository entry itself.
+        vname = body.get("name", "").strip()
+        if not vname:
+            flowfile.set_content(json.dumps({"error": "Missing name"}).encode())
+            return [flowfile]
+        from core import voice_clone_cache as _vcache
+        entry = _vcache.get_by_name(user_id, vname)
+        if entry is None:
+            flowfile.set_content(json.dumps({"error": f"voice clone {vname!r} not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        # Try to resolve a service of the same provider TYPE so we can
+        # free the upstream voice_id quota (paradigm B). If the provider
+        # service is not deployed, cascade_delete still removes local
+        # state with service=None.
+        svc = None
+        provider = entry.get("provider") or ""
+        if provider:
+            try:
+                from core.service_registry import ServiceRegistry
+                reg = ServiceRegistry.get_instance()
+                for sdef in reg.resolve_by_type(provider, user_id=user_id):
+                    svc = reg.resolve(sdef.service_id, user_id=user_id)
+                    if svc is not None:
+                        break
+            except Exception as e:
+                logger.debug("delete_voice_clone: service resolve: %s", e)
+        outcome = _vcache.cascade_delete(user_id, vname, svc)
+        flowfile.set_content(json.dumps({
+            "ok": bool(outcome.get("entry")),
+            "name": vname,
+            "provider": provider,
+            "voice_id_deleted": bool(outcome.get("voice_id")),
+            "ref_audio_deleted": bool(outcome.get("ref_audio")),
+            "tts_cached_purged": int(outcome.get("tts_cached", 0)),
+        }).encode())
+        return [flowfile]
+
+    if action == "rename_voice_clone":
+        # Rename a voice clone entry in place. provider voice_id,
+        # ref_audio_fid and cache tags are unchanged — only the
+        # user-visible identifier changes.
+        old = body.get("name", "").strip()
+        new = body.get("new_name", "").strip()
+        if not old or not new:
+            flowfile.set_content(json.dumps({
+                "error": "Missing name or new_name",
+            }).encode())
+            return [flowfile]
+        from core import voice_clone_cache as _vcache
+        new_safe = _vcache.safe_name(new)
+        entry = _vcache.get_by_name(user_id, old)
+        if entry is None:
+            flowfile.set_content(json.dumps({
+                "error": f"voice clone {old!r} not found",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        if new_safe == entry.get("name"):
+            flowfile.set_content(json.dumps({
+                "ok": True, "name": new_safe, "unchanged": True,
+            }).encode())
+            return [flowfile]
+        if _vcache.get_by_name(user_id, new_safe) is not None:
+            flowfile.set_content(json.dumps({
+                "error": f"voice clone {new_safe!r} already exists",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "409")
+            return [flowfile]
+        renamed = dict(entry)
+        renamed["name"] = new_safe
+        renamed.pop("created_at", None)
+        _vcache.save(user_id, renamed)
+        _vcache.delete(user_id, old)
+        flowfile.set_content(json.dumps({
+            "ok": True, "name": new_safe, "previous_name": old,
+        }).encode())
         return [flowfile]
 
     if action == "update_resource":

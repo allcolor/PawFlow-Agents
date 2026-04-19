@@ -21,6 +21,8 @@ _CONTEXT_ACK_PATTERNS = (
     "Understood. I'll read the conversation history file to get full context, then continue from the recent messages.",
     "Understood, continuing.",
     "Understood.",
+    "I'll re-read these files now to restore my working context.",
+    "I'll re-read these files now to restore context.",
 )
 
 def _strip_context_ack(text: str) -> str:
@@ -902,19 +904,11 @@ class AgentCoreMixin:
                             llm_context = list(messages)
                             logger.info("[agent:%s] PawFlow compact done, new CC session will start",
                                         conversation_id[:8])
-                            # Tell the UI: auto-compact finished. Includes
-                            # before/after counts so the same UI path used
-                            # by /compact renders a nice summary message.
-                            try:
-                                from core.conversation_event_bus import ConversationEventBus as _CEB
-                                _CEB.instance().publish_event(
-                                    conversation_id, "compact_progress",
-                                    {"stage": "done",
-                                     "agent": _agent_name,
-                                     "before": len(_full_messages),
-                                     "after": len(messages)})
-                            except Exception:
-                                pass
+                            # _compact() already emits its own compact_progress:done
+                            # with accurate before/after counts (post bucket-filter).
+                            # Do NOT duplicate here with _full_messages count which
+                            # would confuse the UI (showing the raw transcript count
+                            # as 'before' ignores that most msgs are already bucketed).
                             # Also refresh the persisted context_usage gauge
                             # baseline for this agent. Post-compact, the LLM
                             # context isn't empty — it's summary + recent

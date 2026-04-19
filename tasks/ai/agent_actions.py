@@ -431,38 +431,32 @@ class AgentActionsMixin:
 
     @staticmethod
     def _clear_claude_session(conv_id: str, agent_name: str):
-        """Clear Claude Code session_id so next call starts fresh with new context.
+        """Clear Claude Code session_id + purge stale jsonl on disk.
 
         Called after rebuild/compact/summary/restart — the context changed,
-        so Claude Code must start a new session with the updated context.
-        Also cleans up dead session data (transcripts, cache) from the workdir.
+        so Claude Code must start a new session with the updated context
+        and the old session jsonl must not survive (orphan workers may
+        still be writing to it).
+
+        Delegates to `ConversationStore.invalidate_claude_session_for_agent`
+        which knows the real on-disk layout:
+            CLAUDE_SESSIONS_DIR/<user>/<conv>/claude/projects/-workspace/<sid>.jsonl
+        plus the companion `<sid>/` directory.
         """
+        if not conv_id:
+            return
         try:
             from core.conversation_store import ConversationStore
             store = ConversationStore.instance()
-            key = f"claude_session:{agent_name or 'default'}"
-            old = store.get_extra(conv_id, key)
-            if old:
-                store.set_extra(conv_id, key, "")
-                logger.info("Cleared Claude Code session for %s/%s",
-                            conv_id[:8], agent_name)
-        except Exception:
-            pass
-        # Clean up dead session data from workdir
-        try:
-            import os
-            import shutil
-            from core.llm_providers.claude_code import _get_sessions_base
-            if not conv_id or not agent_name:
-                raise ValueError(f"BUG: conv_id={conv_id!r}, agent_name={agent_name!r}")
-            workdir = os.path.join(_get_sessions_base(), conv_id, agent_name)
-            for subdir in ("projects", "sessions", ".cache"):
-                _path = os.path.join(workdir, subdir)
-                if os.path.isdir(_path):
-                    shutil.rmtree(_path, ignore_errors=True)
-                    logger.info("Cleaned up %s/%s/%s", conv_id[:8], agent_name, subdir)
-        except Exception:
-            pass
+            if agent_name:
+                store.invalidate_claude_session_for_agent(conv_id, agent_name)
+            else:
+                # Shared context changed — invalidate every agent's CC session
+                # in this conversation (clears extras + purges jsonls on disk).
+                store.invalidate_claude_sessions(conv_id)
+        except Exception as _e:
+            logger.warning("_clear_claude_session failed for %s/%s: %s",
+                           conv_id[:8], agent_name, _e)
 
     def _run_bg_context_op(self, conv_id: str, op_name: str, fn, flowfile):
         """Run a context operation in background with lock + SSE progress.

@@ -500,11 +500,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 user_id=user_id,
             )
             after_tokens = self._estimate_tokens(compacted)
-            # Invalidate the compacted agent's CC session
-            if _compact_agent_name:
-                store.set_extra(_compact_conv, f"claude_session:{_compact_agent_name}", "")
-            else:
-                store.invalidate_claude_sessions(_compact_conv)
+            # CC session invalidation (extra clear + jsonl+companion purge on disk)
+            # is handled by `_run_bg_context_op` via `_clear_claude_session` after
+            # _do_compact returns. Do NOT clear the extra here — that would
+            # make the subsequent purge a no-op (helper bails early on empty sid).
             return {"before": before, "after": len(compacted),
                     "tokens_before": estimated, "tokens_after": after_tokens,
                     "agent": _compact_agent_name or "shared",

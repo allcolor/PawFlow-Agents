@@ -16,6 +16,100 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 
 
+# ── Tool-call synopsis helpers ───────────────────────────────────
+# Shared by _serialize_messages_for_cli (CC prompt) AND the compaction
+# summarizer input (old_conversation). Without them, assistant messages
+# that only contain tool_calls (no text) and role='tool' results are
+# dropped on serialization, erasing all evidence of work done between
+# two free-text turns (commit SHAs, test results, file edits…).
+
+_TOOL_ARG_TRUNC = 120
+_TOOL_RESULT_TRUNC = 400
+
+
+def summarize_tool_call(name: str, args: Any) -> str:
+    """One-line synopsis: ``name(key="val", key=<list:N>, ...)``.
+
+    Unwraps the MCP wrapper (``mcp__pawflow__use_tool``) so the real
+    inner tool is shown. String values are truncated to ``_TOOL_ARG_TRUNC``.
+    """
+    if not name:
+        name = "<tool>"
+    # Unwrap MCP bridge wrapper
+    if name in ("mcp__pawflow__use_tool", "use_tool") and isinstance(args, dict):
+        inner_name = args.get("tool_name") or args.get("name") or ""
+        inner_args = args.get("arguments", {})
+        if inner_name:
+            return summarize_tool_call(inner_name, inner_args)
+    if not isinstance(args, dict):
+        return f"{name}(...)"
+    parts: List[str] = []
+    for k, v in args.items():
+        if isinstance(v, str):
+            vs = v if len(v) <= _TOOL_ARG_TRUNC else v[:_TOOL_ARG_TRUNC - 3] + "..."
+            # escape double quotes in value
+            vs = vs.replace('"', '\\"')
+            parts.append(f'{k}="{vs}"')
+        elif isinstance(v, (list, tuple)):
+            parts.append(f"{k}=<list:{len(v)}>")
+        elif isinstance(v, dict):
+            parts.append(f"{k}=<dict:{len(v)}>")
+        elif v is None:
+            parts.append(f"{k}=None")
+        else:
+            parts.append(f"{k}={v}")
+    return f"{name}({', '.join(parts)})"
+
+
+def textualize_message(m: Any) -> Optional[str]:
+    """Return a text-only representation of an arbitrary LLMMessage.
+
+    - assistant with free text → the text (tool_calls appended as synopsis)
+    - assistant tool-call-only → ``[ran: NAME(args); NAME(args)]``
+    - tool result → ``[tool_result: <snippet>]`` truncated to 400 chars
+    - user / system → text content (multipart collapsed)
+    - empty / unknown → None (caller may skip)
+
+    This is used both when serializing history for a fresh CC session
+    and when building the summarizer's input — both contexts need every
+    tool action to leave a readable trace.
+    """
+    role = getattr(m, "role", "")
+    content = getattr(m, "content", "")
+    text = m.text_content if isinstance(content, list) else (content or "")
+    tool_calls = getattr(m, "tool_calls", None) or []
+
+    if role == "assistant":
+        body = text.strip() if isinstance(text, str) else ""
+        if tool_calls:
+            synopsis = "; ".join(
+                summarize_tool_call(
+                    getattr(tc, "name", "") or "",
+                    getattr(tc, "arguments", {}) or {},
+                )
+                for tc in tool_calls
+            )
+            if body:
+                return f"{body}\n[ran: {synopsis}]"
+            return f"[ran: {synopsis}]"
+        return body or None
+
+    if role == "tool":
+        if not isinstance(text, str):
+            text = str(text)
+        snippet = text.strip()
+        if not snippet:
+            return None
+        if len(snippet) > _TOOL_RESULT_TRUNC:
+            snippet = snippet[:_TOOL_RESULT_TRUNC] + f"...[+{len(text) - _TOOL_RESULT_TRUNC}c]"
+        return f"[tool_result: {snippet}]"
+
+    if role in ("user", "system"):
+        return text.strip() if isinstance(text, str) and text.strip() else None
+
+    return None
+
+
 class LLMCliSharedMixin:
     """Methods shared across CLI and HTTP providers."""
 
@@ -132,23 +226,29 @@ class LLMCliSharedMixin:
                 if text.strip():
                     history_lines.append(f"<message role=\"user\">\n{text}\n</message>")
             elif m.role == "assistant":
-                # Skip tool-call-only messages (no text content)
-                assistant_text = text.strip()
-                if not assistant_text and m.tool_calls:
-                    continue  # tool dispatch message, no conversational content
-                if not assistant_text:
+                # Keep tool-call-only messages as a synopsis so CC sees the
+                # full trail of work (commits, tests, edits) after compaction
+                # — dropping them erased the evidence between two free-text
+                # turns and made CC rediscover its own work on every resume.
+                rendered = textualize_message(m)
+                if not rendered:
                     continue
                 source = getattr(m, "source", None) or {}
                 agent_name = source.get("name", "") if isinstance(source, dict) else ""
                 attr = ' role="assistant"'
                 if agent_name:
                     attr += f' agent="{agent_name}"'
-                # Don't include tool_calls in serialized history — CC manages its own tools
-                history_lines.append(f"<message{attr}>\n{assistant_text}\n</message>")
+                history_lines.append(f"<message{attr}>\n{rendered}\n</message>")
                 has_history = True
             elif m.role == "tool":
-                # Skip tool results entirely — CC reads tools via MCP, not prompt
-                continue
+                # Truncated tool result — CC dispatches its own tools live,
+                # but on resume/compact the historical results are needed
+                # to understand what happened.
+                rendered = textualize_message(m)
+                if not rendered:
+                    continue
+                history_lines.append(f'<message role="tool">\n{rendered}\n</message>')
+                has_history = True
 
         # Build system prompt
         tool_prompt = self._build_tool_prompt(tools) if tools else ""

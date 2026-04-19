@@ -85,7 +85,7 @@ class TestSerializeMessages(unittest.TestCase):
         self.assertIn('role="assistant"', user_text)
 
     def test_tool_calls_in_history(self):
-        """Tool-call-only assistant msgs and tool results are now stripped."""
+        """Tool calls render as synopsis and tool results are included truncated."""
         msgs = [
             LLMMessage(role="user", content="Search"),
             LLMMessage(
@@ -97,12 +97,42 @@ class TestSerializeMessages(unittest.TestCase):
         ]
         _, user_text = self.client._serialize_messages_for_cli(msgs, None)
         self.assertIn("Searching...", user_text)
-        # Tool calls and tool results are no longer serialized (CC manages its own tools)
+        # Raw <tool_call> XML stays out (CC manages its own tool calls),
+        # but a human-readable synopsis of what was called is preserved.
         self.assertNotIn("<tool_call>", user_text)
-        self.assertNotIn("Found 5 results", user_text)
-        self.assertNotIn('role="tool"', user_text)
-        # Tool calls and tool results are stripped from CLI prompt history
+        self.assertIn("[ran:", user_text)
+        self.assertIn("web_search", user_text)
+        # Tool result is rendered as a tagged snippet in a role="tool" message.
+        self.assertIn('role="tool"', user_text)
+        self.assertIn("[tool_result:", user_text)
+        self.assertIn("Found 5 results", user_text)
         self.assertIn("conversation_history", user_text)
+
+    def test_tool_only_assistant_has_ran_synopsis(self):
+        """Assistant with no free text but tool_calls renders as '[ran: ...]'."""
+        msgs = [
+            LLMMessage(role="user", content="Do it"),
+            LLMMessage(
+                role="assistant", content="",
+                tool_calls=[LLMToolCall(id="tc1", name="bash",
+                                         arguments={"command": "ls -la"})],
+            ),
+            LLMMessage(role="tool", content="total 0", tool_call_id="tc1"),
+        ]
+        _, user_text = self.client._serialize_messages_for_cli(msgs, None)
+        self.assertIn("[ran:", user_text)
+        self.assertIn("bash", user_text)
+        self.assertIn('command="ls -la"', user_text)
+
+    def test_tool_result_truncation(self):
+        """Tool results longer than the limit are suffixed with a remainder count."""
+        big = "x" * 1000
+        msgs = [
+            LLMMessage(role="tool", content=big, tool_call_id="tc1"),
+        ]
+        _, user_text = self.client._serialize_messages_for_cli(msgs, None)
+        self.assertIn("[tool_result:", user_text)
+        self.assertIn("...[+", user_text)  # truncation marker
 
     def test_system_with_tools(self):
         msgs = [

@@ -31,8 +31,14 @@ def _select_recent_messages(
     """Find split point: keep recent messages with guaranteed conversation ratio.
 
     Algorithm:
-    1. Walk backward, collect the last min_conversation user/assistant messages
-    2. Include ALL messages between them (tool, system, etc.) — the recent window
+    1. Walk backward, collect the last ``min_conversation`` user/assistant
+       messages **with non-empty text content**. Assistant turns that only
+       carry ``tool_calls`` (empty text) do NOT count — otherwise a session
+       that just did 25 bash/edit calls would preserve "25 messages" that
+       all disappear on re-serialization to the LLM (the CLI serializer
+       used to drop tool-only turns).
+    2. Include ALL messages between them (tool, system, tool-call-only) —
+       the recent window carries the full tool plumbing.
     3. If total > max_total, drop oldest tool/system messages until <= max_total
 
     Returns the split index (messages[split:] = recent to keep).
@@ -42,14 +48,17 @@ def _select_recent_messages(
     if n <= start_idx + min_conversation:
         return start_idx  # not enough messages to compact
 
-    # Step 1: walk backward to find min_conversation user/assistant messages;
-    # include every message in between.
+    # Step 1: walk backward to find min_conversation user/assistant messages
+    # WITH TEXT; include every message in between.
     conv_count = 0
     scan = n
     while scan > start_idx and conv_count < min_conversation:
         scan -= 1
-        if messages[scan].role in ("user", "assistant"):
-            conv_count += 1
+        m = messages[scan]
+        if m.role in ("user", "assistant"):
+            _txt = m.text_content if isinstance(m.content, list) else (m.content or "")
+            if isinstance(_txt, str) and _txt.strip():
+                conv_count += 1
 
     split = scan
     total = n - split
@@ -653,13 +662,47 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         old_messages = messages[start_idx:split_point]
         recent_messages = messages[split_point:]
 
-        # Filter old messages for summarizer: only conversation (no tool plumbing)
-        old_conversation = [
-            m for m in old_messages
-            if m.role in ("user", "assistant") and not getattr(m, "tool_calls", None)
-            and not (m.role == "user" and isinstance(m.content, str)
-                     and m.content.startswith("[System:"))
-        ]
+        # Build summarizer input from old messages. Keep conversation turns
+        # AND preserve tool calls as synopsis + truncated tool results, so
+        # the summary captures concrete work (commit SHAs, file edits, test
+        # results) — not just the free-text chatter around them. Previously
+        # this filtered out everything with `tool_calls`, which meant the
+        # summary never saw the actual actions and summaries would claim
+        # "Phase 3 in progress, not committed" even when commits had landed.
+        from core.llm_providers.cli_shared import textualize_message as _textualize
+        old_conversation: List[LLMMessage] = []
+        for m in old_messages:
+            # Drop system-injected user notes (re-read hints etc.)
+            if (m.role == "user" and isinstance(m.content, str)
+                    and m.content.startswith("[System:")):
+                continue
+            if m.role == "user":
+                old_conversation.append(m)
+                continue
+            if m.role == "assistant":
+                _rendered = _textualize(m)
+                if not _rendered:
+                    continue
+                # Clone to a plain-text assistant message so the summarizer
+                # reads commits/edits as content, not as opaque tool_calls.
+                old_conversation.append(LLMMessage(
+                    role="assistant",
+                    content=_rendered,
+                    source=getattr(m, "source", None),
+                    timestamp=m.timestamp,
+                    seq=m.seq,
+                ))
+                continue
+            if m.role == "tool":
+                _rendered = _textualize(m)
+                if not _rendered:
+                    continue
+                old_conversation.append(LLMMessage(
+                    role="user",  # summarizer sees it as narrative context
+                    content=_rendered,
+                    timestamp=m.timestamp,
+                    seq=m.seq,
+                ))
         if not old_conversation:
             old_conversation = old_messages[-2:] if len(old_messages) > 1 else old_messages
 
@@ -773,19 +816,22 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         # If a historical header exists (bucket store), it already contains
         # the new bucket we just added. Use it as-is. Otherwise fall back to
         # the standalone fresh summary (cold start, bucket store disabled).
+        _postamble = (
+            "The recent messages below are the current state.\n"
+            "Do NOT restart or re-propose completed work.\n\n"
+            "If you need more detail than the summary above (e.g. exact "
+            "commit SHAs, full test output, file contents you edited, tool "
+            "arguments, error tracebacks), call `read_history` with a "
+            "keyword or message range — the full transcript is preserved "
+            "there. Do NOT assume missing info means the work was not done; "
+            "check the transcript first."
+        )
         if _historical_header:
-            _body = (
-                f"{_historical_header}\n"
-                f"The recent messages below are the current state. "
-                f"Do NOT restart or re-propose completed work. "
-                f"Use read_history tool to access older messages if needed."
-            )
+            _body = f"{_historical_header}\n{_postamble}"
         else:
             _body = (
-                f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
-                f"The recent messages below are the current state. "
-                f"Do NOT restart or re-propose completed work. "
-                f"Use read_history tool to access older messages if needed."
+                f"[Conversation summary — earlier messages compacted]\n\n"
+                f"{summary}\n\n{_postamble}"
             )
         # Summary + ack are synthetic messages created at compact time,
         # but they conceptually belong BEFORE the recent messages (they

@@ -881,8 +881,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             def _has_real_args(t):
                 tid = t.get("id", "")
                 result = _tool_results.get(tid, "")
-                # Drop phantom tool calls with empty/ignored results
-                if result and "no command provided" in str(result):
+                # Drop phantom bash calls whose result is literally
+                # "no command provided". MUST be scoped to bash: a substring
+                # match on any tool swallows legitimate Read results whose
+                # content happens to include that string (e.g. reads of this
+                # very file around lines 885/1310).
+                _tname = t.get("name", "")
+                if _tname == "mcp__pawflow__use_tool" and isinstance(t.get("arguments"), dict):
+                    from core.llm_client import _TOOL_ALIASES
+                    _inner_tool = t["arguments"].get("tool_name", "")
+                    _tname = _TOOL_ALIASES.get(_inner_tool, _inner_tool)
+                if _tname == "bash" and result and "no command provided" in str(result):
                     return False
                 args = t.get("arguments", {})
                 if not args or args == {}:
@@ -1306,8 +1315,18 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             # Skip meta tool results from SSE
                             if _tr_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
                                 continue
-                            # Skip empty/phantom tool results from SSE
-                            if not result_str or result_str == "" or "no command provided" in result_str:
+                            # Skip empty tool results from SSE.
+                            # Phantom-bash suppression ("no command provided")
+                            # is bash-specific: checking it as a substring on any
+                            # tool's result was swallowing legitimate Read results
+                            # of files that literally contain the string "no
+                            # command provided" in their source (e.g. this very
+                            # file around line 1310). Result: the tool bubble
+                            # stayed pending forever, deterministically, for that
+                            # exact page of the file.
+                            if not result_str or result_str == "":
+                                continue
+                            if _tr_name == "bash" and "no command provided" in result_str:
                                 continue
                             _tr_event = {
                                 "tool": _tr_name,

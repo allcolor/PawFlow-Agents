@@ -422,6 +422,25 @@ def main():
                     result = str(result)
             elif name == "use_tool":
                 tool_name = args.get("tool_name", "")
+                # Unwrap double-wrapped calls: use_tool(tool_name='use_tool', arguments={tool_name:X, arguments:Y})
+                # Symmetric to summarize_tool_call in cli_shared.py — if the LLM
+                # nested the bridge wrapper inside itself, peel until we hit a
+                # real tool. Bounded to prevent pathological loops.
+                _unwrap_budget = 3
+                while (tool_name in ("mcp__pawflow__use_tool", "use_tool")
+                       and _unwrap_budget > 0):
+                    _inner_args = args.get("arguments", {})
+                    if isinstance(_inner_args, str):
+                        try:
+                            _inner_args = json.loads(_inner_args)
+                        except (json.JSONDecodeError, TypeError):
+                            break
+                    if not isinstance(_inner_args, dict) or "tool_name" not in _inner_args:
+                        break
+                    _log(f"USE_TOOL unwrap double-wrap: {tool_name} → {_inner_args.get('tool_name')}")
+                    args = _inner_args
+                    tool_name = args.get("tool_name", "")
+                    _unwrap_budget -= 1
                 # Map hallucinated/legacy tool names to real PawFlow names
                 _TOOL_ALIASES = {
                     # CC hallucinations (common LLM mistakes)

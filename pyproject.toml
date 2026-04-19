@@ -117,6 +117,12 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# .pylib holds vendored/pinned deps installed into the repo itself
+# (fastavro, pyarrow, tiktoken, regex, requests, certifi...) so they
+# survive Docker relay restarts without re-running pip. Must be on
+# sys.path for both pytest and the running app -- root conftest.py
+# handles the latter; this entry handles pytest collection.
+pythonpath = [".", ".pylib"]
 addopts = "-v --tb=short"
 filterwarnings = [
     "ignore::pytest.PytestReturnNotNoneWarning",

@@ -2107,6 +2107,7 @@ class ConversationStore:
         base = _paths.CLAUDE_SESSIONS_DIR
         if not base.is_dir():
             return 0
+        conv_base = _paths.CONVERSATIONS_DIR
         self._ensure_loaded()
         # Map sanitized-name -> real cid so we can both filter live
         # convs AND look up their extras (for stale-session pruning).
@@ -2136,6 +2137,38 @@ class ConversationStore:
                     removed += self._prune_stale_cc_sessions(
                         sess_dir, live_cid)
                     continue
+                # SAFETY NET: before rmtree'ing, double-check that no
+                # conversation directory with this sanitized cid exists
+                # on disk. The in-memory cache can be incomplete at boot
+                # (observed: cleanup fires via the ContinuousFlowExecutor
+                # boot hook before/while conversations are being scanned,
+                # cache empty → every live session dir classified as
+                # orphan → wiped. Main conv's extras['claude_session']
+                # then pointed at a jsonl that no longer existed, CC
+                # --resume failed with "No conversation found", fallback
+                # to a new session blew away the agent's working memory).
+                # Trusting the disk here is authoritative — if the conv
+                # dir exists, the CC session is NOT an orphan regardless
+                # of cache state.
+                if not _is_one_shot:
+                    _conv_dir = conv_base / user_dir.name / sess_dir.name
+                    if _conv_dir.is_dir():
+                        logger.warning(
+                            "[cc-cleanup] refusing to delete %s/%s: "
+                            "conv dir exists on disk but wasn't in "
+                            "_cache at cleanup time (cache race with "
+                            "boot-time _ensure_loaded). Pruning stale "
+                            "jsonls inside instead.",
+                            user_dir.name, sess_dir.name)
+                        # Best-effort: prune old jsonls using the real
+                        # cid (conv_dir.name with __ → : reverse).
+                        _recovered_cid = sess_dir.name.replace("__", ":")
+                        try:
+                            removed += self._prune_stale_cc_sessions(
+                                sess_dir, _recovered_cid)
+                        except Exception:
+                            pass
+                        continue
                 try:
                     shutil.rmtree(sess_dir, ignore_errors=True)
                     removed += 1

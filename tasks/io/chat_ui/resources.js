@@ -171,7 +171,7 @@ function _repoSectionHeader(title, rtype, opts) {
       <span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>
       ${createBtn}
     </span>
-  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' };">`;
+  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
 }
 function _sectionFooter() { return '</div>'; }
 

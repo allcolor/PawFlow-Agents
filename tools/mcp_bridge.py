@@ -520,19 +520,26 @@ def main():
                                     _decode_failed = True
                                     break
                             else:
-                                # Last resort: json-repair for structurally broken JSON
-                                # (e.g. unescaped quotes in bash commands)
-                                try:
-                                    from json_repair import repair_json
-                                    _repaired = repair_json(tool_args)
-                                    tool_args = json.loads(_repaired)
-                                    _unwrap_passes += 1
-                                    _log(f"USE_TOOL {tool_name} json-repair OK (fixed malformed JSON)")
-                                except Exception as _je3:
-                                    _log(f"USE_TOOL {tool_name} ALL decode attempts FAILED: "
-                                         f"json.loads={_je} json-repair={_je3} value={str(tool_args)[:200]}")
-                                    _decode_failed = True
-                                    break
+                                # Used to fall back to `json_repair.repair_json`
+                                # here for structurally broken JSON (unescaped
+                                # inner quotes in bash/edit payloads). Removed:
+                                # json_repair silently MANGLES JS ternary
+                                # patterns. Reproducer:
+                                #   repair_json('{"new_string":"<div style="a:${x ? \\'none\\' : \\'block\\'}">"}')
+                                #   → {"new_string":"<div style=", "display":{"none":"block"}}
+                                # The `? 'none' : 'block'` is re-read as
+                                # {"none":"block"} and the `?` is dropped, so
+                                # every Edit on a JS template literal with a
+                                # ternary got written back to disk with the
+                                # `: 'block'` branch stripped. Observed
+                                # repeatedly on resources.js (3+ incidents).
+                                # Fail fast now — the error message below
+                                # tells the caller to re-send with proper
+                                # JSON escaping, and that always fixes it.
+                                _log(f"USE_TOOL {tool_name} JSON decode FAILED: "
+                                     f"{_je} value={str(tool_args)[:200]}")
+                                _decode_failed = True
+                                break
                         except TypeError as _je:
                             _log(f"USE_TOOL {tool_name} JSON decode TypeError: {_je}")
                             _decode_failed = True

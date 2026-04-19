@@ -707,6 +707,63 @@ class TestCancelForceKillsContainerSide(unittest.TestCase):
         self.assertIsNone(client._pool_container_name)
 
 
+class TestKillCcHardSidFallback(unittest.TestCase):
+    """_kill_cc_hard MUST fall back to self._current_session_id when the
+    session_id param is empty. Without this, the FIRST session of a
+    workdir (no --resume passed, so the local session_id var in the
+    stream loop is '') causes pkill to be skipped and CC to survive
+    as a zombie inside the pool container -- observed live: CC kept
+    writing to its jsonl and making MCP calls for ~3 minutes after
+    compact_boundary because pkill was never invoked.
+    """
+
+    def _client(self):
+        return LLMClient(provider="claude-code", config={"api_key": "k"})
+
+    def test_falls_back_to_current_session_id_when_param_empty(self):
+        client = self._client()
+        client._current_session_id = "sid-from-init-event"
+        client._pool_container_name = "pool-1"
+        proc = MagicMock(); proc.kill = MagicMock()
+        with patch("subprocess.run") as mock_run, \
+             patch("pawflow_relay.utils.docker_cmd", return_value=["docker"]):
+            mock_run.return_value = MagicMock(returncode=0, stderr=b"")
+            client._kill_cc_hard(proc, session_id="")  # empty param
+        # pkill MUST have been called with the fallback sid, not skipped.
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("pkill", cmd)
+        self.assertIn("sid-from-init-event", cmd)
+
+    def test_param_takes_precedence_over_attribute(self):
+        client = self._client()
+        client._current_session_id = "attr-sid"
+        client._pool_container_name = "pool-1"
+        proc = MagicMock()
+        with patch("subprocess.run") as mock_run, \
+             patch("pawflow_relay.utils.docker_cmd", return_value=["docker"]):
+            mock_run.return_value = MagicMock(returncode=0, stderr=b"")
+            client._kill_cc_hard(proc, session_id="explicit-sid")
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("explicit-sid", cmd)
+        self.assertNotIn("attr-sid", cmd)
+
+    def test_logs_loud_error_when_both_empty(self):
+        client = self._client()
+        client._current_session_id = ""
+        client._pool_container_name = ""
+        proc = MagicMock()
+        with patch("subprocess.run") as mock_run, \
+             patch("core.llm_providers.claude_code.logger") as mock_log:
+            client._kill_cc_hard(proc, session_id="")
+        mock_run.assert_not_called()
+        # Silent skip = next zombie -- the early return MUST log .error()
+        mock_log.error.assert_called_once()
+        msg = mock_log.error.call_args[0][0]
+        self.assertIn("SKIPPED", msg)
+        self.assertIn("ORPHANED", msg)
+
+
 class TestProviderInProviders(unittest.TestCase):
     """Test that claude-code and gemini-cli are in PROVIDERS."""
 

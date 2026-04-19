@@ -230,13 +230,32 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         bound to this session_id. session_id is passed to `claude
         --resume`, so matching on it in argv uniquely identifies the
         zombie without killing concurrent sessions.
+
+        The session_id parameter is a fallback only -- the authoritative
+        sid is `self._current_session_id`, captured from CC's `init`
+        event and valid even on the FIRST session of a workdir (no
+        `--resume` was passed, so the local `session_id` var in the
+        stream loop is empty -- using only that param caused the
+        early-return zombie bug observed live: CC kept writing to its
+        jsonl and making MCP calls for ~3 minutes after compact_boundary
+        because pkill was skipped on empty sid).
         """
         try:
             proc.kill()
         except Exception:
             pass
+        sid = (session_id
+               or getattr(self, '_current_session_id', '')
+               or '')
         _container = getattr(self, '_pool_container_name', '') or ''
-        if not _container or not session_id:
+        if not _container or not sid:
+            # MUST be loud: silent skip = CC zombie surviving in container,
+            # making MCP calls / consuming OAuth tokens / writing to jsonl
+            # for minutes after we thought it was dead.
+            logger.error(
+                "[claude-code] _kill_cc_hard SKIPPED -- container=%r sid=%r "
+                "-- CC PROCESS LIKELY ORPHANED IN CONTAINER",
+                _container, sid)
             return
         try:
             import subprocess as _sp
@@ -244,17 +263,31 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # -f: match against full argv. claude CLI is launched with
             # `claude -p --resume <sid> ...` so <sid> always appears.
             # -9: SIGKILL (the CLI's auto-compact can catch SIGTERM and
-            # finish summarizing — we don't want that).
-            _sp.run(
+            # finish summarizing -- we don't want that).
+            _r = _sp.run(
                 docker_cmd() + ["exec", _container, "pkill", "-9", "-f",
-                                session_id],
+                                sid],
                 capture_output=True, timeout=5,
             )
+            # pkill rc: 0=killed, 1=no match, 2=syntax, 3=fatal.
+            # Anything != 0 must be visible -- silent rc=1 hides 'sid
+            # not in argv' which is the next zombie waiting to happen.
+            if _r.returncode != 0:
+                logger.warning(
+                    "[claude-code] pkill returned rc=%d for sid=%s in "
+                    "container=%s (stderr=%s) -- process may have been "
+                    "already dead, OR our argv match failed",
+                    _r.returncode, sid[:12], _container,
+                    _r.stderr.decode('utf-8', 'replace')[:200].strip())
+            else:
+                logger.info(
+                    "[claude-code] container-side pkill OK: sid=%s "
+                    "container=%s", sid[:12], _container)
         except Exception as _ke:
-            logger.warning(
-                "[claude-code] container-side kill failed "
-                "(container=%s, sid=%s): %s",
-                _container, session_id[:12] if session_id else "?", _ke)
+            logger.error(
+                "[claude-code] container-side kill FAILED "
+                "(container=%s, sid=%s): %s -- CC may be orphaned",
+                _container, sid[:12] if sid else "?", _ke)
 
     def _check_preempt_in_jsonl(self, jsonl_path: str,
                                  sent_texts: list) -> str:

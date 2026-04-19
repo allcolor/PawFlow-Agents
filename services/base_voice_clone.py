@@ -5,15 +5,16 @@ Contract: clone_speak(text, reference_audio_url, **kwargs)
 
 Two provider paradigms are supported via the same method:
 
-  A. **Zero-shot** (Fish Audio, F5-TTS, CosyVoice, XTTS, OpenVoice)
-     The reference audio is sent at every call. No state on provider side.
-     Cache layer stores the final rendered audio keyed on
-     (ref_audio_hash, text, params).
-
-  B. **Voice-ID persistent** (ElevenLabs, PlayHT, Cartesia, Resemble)
+  A. **Voice-ID persistent** (ElevenLabs, PlayHT, Cartesia, Resemble)
      The provider hosts the cloned voice and returns an opaque voice_id.
-     Providers implementing this paradigm should override `ensure_voice_id`
-     to create/reuse a voice_id, and store it via the cache layer.
+     Providers implementing this paradigm MUST override `ensure_voice_id`
+     to create/reuse a voice_id, and SHOULD override `delete_voice_id`
+     so cascade cleanup can free the upstream quota slot.
+
+  B. **Zero-shot** (Fish Audio, F5-TTS, CosyVoice, XTTS, OpenVoice)
+     The reference audio is sent at every call. No state on provider side.
+     `ensure_voice_id` returns "" (the default) — the cache layer stores
+     the final rendered audio keyed on (ref_audio_hash, text, params).
 
 Every provider still exposes a single public method `clone_speak` — the
 paradigm is internal. The handler calls clone_speak() and lets the provider
@@ -29,7 +30,7 @@ class BaseVoiceCloneService(BaseService):
     """Abstract base for all voice-cloning TTS services.
 
     Implementations MUST override `clone_speak`. They SHOULD override
-    `ensure_voice_id` if the provider uses voice_id caching (paradigm B).
+    `ensure_voice_id` if the provider uses voice_id caching (paradigm A).
     """
 
     @abstractmethod
@@ -68,8 +69,8 @@ class BaseVoiceCloneService(BaseService):
                         **kwargs) -> str:
         """Optional: create or reuse a persistent voice_id on the provider.
 
-        Providers in paradigm A (zero-shot) should leave this unimplemented
-        (returns empty string). Providers in paradigm B (ElevenLabs, PlayHT,
+        Providers in paradigm B (zero-shot) should leave this unimplemented
+        (returns empty string). Providers in paradigm A (ElevenLabs, PlayHT,
         ...) override it to POST the sample once, cache the voice_id, and
         return it.
 

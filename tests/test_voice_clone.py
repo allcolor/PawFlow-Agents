@@ -182,6 +182,15 @@ def test_cache_save_and_find_by_hash():
     assert _cache.find_by_hash(uid, "otherProvider", "h123") is None
     # Scoped by user
     assert _cache.find_by_hash("u_other", "fishAudioVoiceClone", "h123") is None
+    # provider_version="" disables the check — still a hit.
+    assert _cache.find_by_hash(
+        uid, "fishAudioVoiceClone", "h123", provider_version="") is not None
+    # Matching provider_version — hit.
+    assert _cache.find_by_hash(
+        uid, "fishAudioVoiceClone", "h123", provider_version="1") is not None
+    # Mismatching provider_version — treated as stale, miss.
+    assert _cache.find_by_hash(
+        uid, "fishAudioVoiceClone", "h123", provider_version="2") is None
 
 
 def test_cache_delete_round_trip():
@@ -362,6 +371,41 @@ def test_speak_handler_synth_and_cache_hit(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_speak_handler_purges_entry_on_provider_404(monkeypatch):
+    """Paradigm A: if the provider reports the voice_id is gone (404),
+    the SpeakHandler must cascade-delete the stale local entry and ask
+    the caller to re-register instead of leaving a dead pointer."""
+    from core.handlers.capabilities import SpeakHandler
+    from core import ServiceError
+
+    uid, conv = "u_stale", "c_stale"
+    # Persistent-voice_id entry — paradigm A.
+    _cache.save(uid, {
+        "name": "ghost",
+        "provider": "elevenLabsVoiceClone",
+        "voice_id": "EL_DEAD",
+        "ref_audio_hash": "hghost",
+        "ref_audio_fid": "",
+    })
+    assert _cache.get_by_name(uid, "ghost") is not None
+
+    class _StaleSvc:
+        TYPE = "elevenLabsVoiceClone"
+
+        def clone_speak(self, **kwargs):
+            raise ServiceError(
+                "ElevenLabs API error POST /v1/text-to-speech/EL_DEAD "
+                "(404): {'detail':'voice_not_found'}")
+
+    sh = SpeakHandler()
+    _wire_handler(sh, _StaleSvc(), user_id=uid, conv=conv)
+    out = sh.execute({"voice": "ghost", "text": "Hi"})
+    assert "no longer exists" in out.lower()
+    assert "re-register" in out.lower()
+    # Local entry must have been purged by cascade_delete.
+    assert _cache.get_by_name(uid, "ghost") is None
+
+
 def test_speak_handler_provider_mismatch(monkeypatch):
     """A voice registered with provider A cannot be used with provider B."""
     from core.handlers.capabilities import SpeakHandler
@@ -450,7 +494,7 @@ def test_cascade_delete_removes_entry_and_tts_cache(monkeypatch):
 
 
 def test_cascade_delete_calls_provider_for_voice_id():
-    """Paradigm-B voices (voice_id set) must trigger service.delete_voice_id."""
+    """Paradigm-A voices (voice_id set) must trigger service.delete_voice_id."""
     uid = "u_cascade_vid"
     _cache.save(uid, {
         "name": "el",

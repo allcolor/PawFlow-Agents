@@ -704,7 +704,10 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
         ref_hash = _cache.hash_audio(ref_bytes)
 
         # Already cloned with this exact audio on this provider?
-        existing = _cache.find_by_hash(self._user_id, provider, ref_hash)
+        # Pass `provider_version` so entries from an older API contract
+        # are treated as stale and re-cloned against the current version.
+        existing = _cache.find_by_hash(
+            self._user_id, provider, ref_hash, provider_version)
         if existing:
             _cache.touch(self._user_id, existing.get("name", name))
             return (f"Voice clone already exists: name={existing['name']} "
@@ -728,7 +731,7 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
         except Exception as e:
             return f"Error storing reference audio in FileStore: {e}"
 
-        # Paradigm B providers (ElevenLabs, ...) create a voice_id up-front.
+        # Paradigm A providers (ElevenLabs, ...) create a voice_id up-front.
         voice_id = ""
         if hasattr(svc, "ensure_voice_id"):
             try:
@@ -883,6 +886,28 @@ class SpeakHandler(_CapabilityHandlerBase):
                 **kwargs,
             )
         except Exception as e:
+            # Paradigm A: if the provider reports the voice_id is gone
+            # (404 / 410 / not_found), our cached entry is stale. Cascade-
+            # delete local state and ask the caller to re-register so the
+            # next `speak` call doesn't hit the same dead voice_id.
+            msg = str(e)
+            stale = (
+                entry.get("voice_id")
+                and (" 404" in msg or " 410" in msg
+                     or "not_found" in msg.lower()
+                     or "voice_not_found" in msg.lower()))
+            if stale:
+                try:
+                    _cache.cascade_delete(self._user_id, voice, service=None)
+                except Exception as de:
+                    logger.warning(
+                        "speak: cascade_delete after stale voice_id failed: %s",
+                        de)
+                return (
+                    f"Error: voice clone {voice!r} no longer exists on "
+                    f"provider {provider} (got: {e}). Local entry purged "
+                    f"\u2014 re-register via `clone_voice` before calling "
+                    f"`speak` again.")
             return f"Error synthesizing speech: {e}"
 
         audio_bytes = r.get("audio_bytes") or r.get("bytes") or b""
@@ -922,7 +947,7 @@ class DeleteVoiceHandler(_CapabilityHandlerBase):
 
     Removes the user's `voice_clones` entry, the stored reference-audio
     file, every rendered TTS audio that was cached for this voice, and
-    (for paradigm-B providers such as ElevenLabs) the voice_id on the
+    (for paradigm-A providers such as ElevenLabs) the voice_id on the
     provider itself so quota is freed upstream.
     """
 

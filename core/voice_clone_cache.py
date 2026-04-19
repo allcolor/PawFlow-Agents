@@ -97,8 +97,15 @@ def hash_audio(audio_bytes: bytes) -> str:
 
 
 def find_by_hash(user_id: str, provider: str,
-                 ref_audio_hash: str) -> Optional[Dict[str, Any]]:
+                 ref_audio_hash: str,
+                 provider_version: str = "") -> Optional[Dict[str, Any]]:
     """Find an existing voice clone for this (user, provider, audio hash).
+
+    When ``provider_version`` is non-empty, entries whose stored version
+    does not match are treated as stale (different API contract) and
+    skipped — the handler will re-clone against the current provider
+    version. When ``provider_version`` is empty, the check is disabled
+    (callers that don't care about versioning still hit the cache).
 
     Returns the entry dict or None.
     """
@@ -109,6 +116,8 @@ def find_by_hash(user_id: str, provider: str,
         if entry.get("provider") != provider:
             continue
         if entry.get("ref_audio_hash") != ref_audio_hash:
+            continue
+        if provider_version and entry.get("provider_version") != provider_version:
             continue
         return entry
     return None
@@ -305,7 +314,7 @@ def cascade_delete(user_id: str, name: str, service) -> Dict[str, Any]:
     """Delete a voice clone fully: provider + ref audio + TTS cache + entry.
 
     `service` is the active BaseVoiceCloneService instance (or None). When
-    the entry was registered with a persistent `voice_id` (paradigm B),
+    the entry was registered with a persistent `voice_id` (paradigm A),
     `service.delete_voice_id` is called so the quota is freed upstream.
 
     Returns a dict summarising what was removed:

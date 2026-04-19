@@ -671,7 +671,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
     if action == "delete_voice_clone":
         # Cascade-delete a registered voice clone from the user scope:
-        # purges provider voice_id (paradigm B), ref audio, cached TTS
+        # purges provider voice_id (paradigm A), ref audio, cached TTS
         # files, and the repository entry itself.
         vname = body.get("name", "").strip()
         if not vname:
@@ -684,7 +684,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         # Try to resolve a service of the same provider TYPE so we can
-        # free the upstream voice_id quota (paradigm B). If the provider
+        # free the upstream voice_id quota (paradigm A). If the provider
         # service is not deployed, cascade_delete still removes local
         # state with service=None.
         svc = None

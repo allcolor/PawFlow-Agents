@@ -25,7 +25,7 @@ may be an absolute HTTP(S) URL or an `fs://filestore/<id>/<name>`
 reference. The bytes are fetched, PCM-normalised, hashed, stored
 in the FileStore under category `voice_clone_ref`, and a
 `voice_clones` entry is persisted in the ScopedRepository at
-`scope=user`. For paradigm B providers (see below) the sample is
+`scope=user`. For paradigm A providers (see below) the sample is
 also uploaded to the provider and a stable `voice_id` is cached in
 the entry.
 
@@ -39,7 +39,7 @@ entirely.
 
 ### `delete_voice(voice)`
 
-Cascade-delete a voice clone: provider-side `voice_id` (paradigm B
+Cascade-delete a voice clone: provider-side `voice_id` (paradigm A
 only), reference audio, every cached TTS rendering keyed on the
 voice, and finally the repository entry. Mirrors the UI
 "Voices" panel trash button.
@@ -48,17 +48,7 @@ voice, and finally the repository entry. Mirrors the UI
 
 Two concrete providers are wired, one per paradigm.
 
-### Paradigm A — zero-shot per request (Fish Audio)
-
-`services/fish_audio_voice_clone_service.py` — every `speak` call
-posts `/v1/tts` with the raw reference audio (base64) and the
-target text inside the same JSON body. No provider-side state,
-no up-front registration step. `ensure_voice_id` returns `""`,
-`delete_voice_id` is a no-op. Cheap and stateless, at the cost of
-re-uploading the sample on every call. Good default for one-off
-or short-lived clones.
-
-### Paradigm B — persistent voice_id (ElevenLabs)
+### Paradigm A — persistent voice_id (ElevenLabs)
 
 `services/elevenlabs_voice_clone_service.py` — the first
 `clone_voice` uploads the sample via multipart POST
@@ -69,11 +59,21 @@ config — the sample is never re-sent. Quota-bounded by the
 ElevenLabs plan (Starter 10, Creator 30, Pro 160) — deleting a
 clone calls `DELETE /v1/voices/{voice_id}` to free the slot.
 
+### Paradigm B — zero-shot per request (Fish Audio)
+
+`services/fish_audio_voice_clone_service.py` — every `speak` call
+posts `/v1/tts` with the raw reference audio (base64) and the
+target text inside the same JSON body. No provider-side state,
+no up-front registration step. `ensure_voice_id` returns `""`,
+`delete_voice_id` is a no-op. Cheap and stateless, at the cost of
+re-uploading the sample on every call. Good default for one-off
+or short-lived clones.
+
 ### Deciding which paradigm the handler uses
 
 The handler is provider-agnostic. The service's `ensure_voice_id`
-method returns `""` for paradigm A services and a non-empty string
-for paradigm B. Downstream code branches on
+method returns `""` for paradigm B services and a non-empty string
+for paradigm A. Downstream code branches on
 `bool(entry["voice_id"])` — no if/elif on provider names.
 
 ## Caching
@@ -102,7 +102,7 @@ Two cache layers, both keyed in `core/voice_clone_cache.py`:
 
 | Step | What is removed                                   | Provider call          |
 |------|---------------------------------------------------|------------------------|
-| 1    | `voice_id` on the provider (paradigm B only)      | `service.delete_voice_id` |
+| 1    | `voice_id` on the provider (paradigm A only)      | `service.delete_voice_id` |
 | 2    | Reference audio FileStore entry                   | —                      |
 | 3    | Every cached TTS rendering keyed on this voice    | —                      |
 | 4    | The `voice_clones` entry itself                   | —                      |
@@ -150,7 +150,7 @@ Each entry in the ScopedRepository (`type=voice_clones`,
   "name":                  str,
   "provider":              str,   # e.g. "fishAudioVoiceClone"
   "provider_version":      str,   # bump on API contract change
-  "voice_id":              str,   # empty for paradigm A
+  "voice_id":              str,   # empty for paradigm B
   "ref_audio_hash":        str,   # sha256(PCM s16le 16k mono)
   "ref_audio_fid":         str,   # FileStore id
   "ref_audio_filename":    str,
@@ -170,7 +170,7 @@ Subclass `services/base_voice_clone.py::BaseVoiceCloneService`:
 1. Fill `TYPE`, `VERSION`, `NAME`, `DESCRIPTION`.
 2. Implement `_create_connection` (validate credentials).
 3. Override `clone_speak(text, voice_id=..., reference_audio_bytes=..., ...)`.
-4. For paradigm B, also override `ensure_voice_id(...)` and
+4. For paradigm A, also override `ensure_voice_id(...)` and
    `delete_voice_id(voice_id)`.
 5. Register via `ServiceFactory.register(...)` at module load.
 6. Import the module from `tasks/__init__.py` under

@@ -1107,7 +1107,7 @@ function _previewVoice(url) {
 }
 
 function _deleteVoiceClone(name) {
-  if (!confirm('Delete voice clone "' + name + '"?\n\nThis cascade-deletes:\n  • the provider voice_id (if paradigm B)\n  • the reference audio\n  • every cached TTS rendering')) return;
+  if (!confirm('Delete voice clone "' + name + '"?\n\nThis cascade-deletes:\n  • the provider voice_id (if paradigm A)\n  • the reference audio\n  • every cached TTS rendering')) return;
   action$('delete_voice_clone', { name }).subscribe(res => {
     if (res.error) { addMsg('system', 'Delete failed: ' + res.error); return; }
     const parts = [];

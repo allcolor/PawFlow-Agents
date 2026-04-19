@@ -1,4 +1,4 @@
-"""ElevenLabs voice-cloning TTS service (paradigm B: persistent voice_id).
+"""ElevenLabs voice-cloning TTS service (paradigm A: persistent voice_id).
 
 ElevenLabs maintains a library of named voices server-side. Cloning a
 voice is a two-step affair:
@@ -196,6 +196,27 @@ class ElevenLabsVoiceCloneService(BaseVoiceCloneService):
         if not reference_audio_bytes:
             raise ServiceError(
                 "ensure_voice_id requires reference_audio_bytes")
+
+        # Pre-flight quota check: fail fast with an actionable message
+        # instead of wasting the upload on a guaranteed 4xx. Non-quota
+        # errors (network, auth) fall through — /voices/add remains
+        # authoritative and will surface its own error.
+        try:
+            sub_data, _ = self._request("GET", "/v1/user/subscription")
+            sub = json.loads(sub_data)
+            used = int(sub.get("voice_slots_used") or 0)
+            limit = int(sub.get("voice_limit") or 0)
+            if limit and used >= limit:
+                raise ServiceError(
+                    f"ElevenLabs voice quota reached ({used}/{limit} "
+                    f"slots used). Delete an existing voice with "
+                    f"`delete_voice` before cloning a new one, or "
+                    f"upgrade your plan.")
+        except ServiceError:
+            raise
+        except Exception as e:
+            logger.debug("[EL] quota pre-check skipped: %s", e)
+
         voice_name = (name or f"pawflow-{uuid.uuid4().hex[:8]}")[:80]
         ct, body = _build_multipart(
             fields={"name": voice_name,

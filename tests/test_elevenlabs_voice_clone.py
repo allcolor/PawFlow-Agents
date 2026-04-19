@@ -1,4 +1,4 @@
-"""Tests for ElevenLabsVoiceCloneService (paradigm B: persistent voice_id).
+"""Tests for ElevenLabsVoiceCloneService (paradigm A: persistent voice_id).
 
 Network is mocked at `http.client.HTTPSConnection`. We assert:
   - parameter schema exposes api_key as sensitive + required
@@ -66,7 +66,9 @@ def test_ensure_voice_id_posts_multipart_and_returns_id():
         )
 
     assert vid == "vid-abc123"
-    _cls.assert_called_once()
+    # Two HTTPS calls: GET /v1/user/subscription (quota pre-check) then
+    # POST /v1/voices/add. The last request is the upload.
+    assert _cls.call_count == 2
     method, path = conn.request.call_args.args[:2]
     assert method == "POST"
     assert path == "/v1/voices/add"
@@ -86,6 +88,27 @@ def test_ensure_voice_id_requires_bytes():
     svc = _svc()
     with pytest.raises(ServiceError, match="reference_audio_bytes"):
         svc.ensure_voice_id(name="alice")
+
+
+def test_ensure_voice_id_blocks_when_quota_reached():
+    """Pre-flight quota check: refuse upload when voice_slots_used >= limit."""
+    svc = _svc()
+    conn = _mock_conn(
+        status=200,
+        body=json.dumps({"voice_slots_used": 30,
+                          "voice_limit": 30}).encode(),
+        content_type="application/json",
+    )
+    with patch("services.elevenlabs_voice_clone_service."
+               "http.client.HTTPSConnection", return_value=conn) as _cls:
+        with pytest.raises(ServiceError, match="quota"):
+            svc.ensure_voice_id(
+                reference_audio_bytes=b"REFERENCE_WAV", name="alice")
+    # Only the subscription GET was attempted — upload never ran.
+    assert _cls.call_count == 1
+    method, path = conn.request.call_args.args[:2]
+    assert method == "GET"
+    assert path == "/v1/user/subscription"
 
 
 def test_ensure_voice_id_surfaces_missing_id():

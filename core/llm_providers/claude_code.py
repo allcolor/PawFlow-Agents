@@ -879,20 +879,13 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # Drop phantom tool calls: empty inner args + no result (never executed)
             # For MCP wrapped calls, check the inner arguments, not the wrapper
             def _has_real_args(t):
-                tid = t.get("id", "")
-                result = _tool_results.get(tid, "")
-                # Drop phantom bash calls whose result is literally
-                # "no command provided". MUST be scoped to bash: a substring
-                # match on any tool swallows legitimate Read results whose
-                # content happens to include that string (e.g. reads of this
-                # very file around lines 885/1310).
-                _tname = t.get("name", "")
-                if _tname == "mcp__pawflow__use_tool" and isinstance(t.get("arguments"), dict):
-                    from core.llm_client import _TOOL_ALIASES
-                    _inner_tool = t["arguments"].get("tool_name", "")
-                    _tname = _TOOL_ALIASES.get(_inner_tool, _inner_tool)
-                if _tname == "bash" and result and "no command provided" in str(result):
-                    return False
+                # Phantom detection is input-only: empty args, empty bash
+                # command, or all-whitespace values. Output-based matching
+                # ("no command provided" in result) was removed — a tool's
+                # OUTPUT can legitimately contain any phrase (git log of a
+                # commit whose message is about the filter itself, grep
+                # over this source file, etc.) and we were silently
+                # dropping real calls + results from the transcript.
                 args = t.get("arguments", {})
                 if not args or args == {}:
                     return False
@@ -1315,18 +1308,18 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             # Skip meta tool results from SSE
                             if _tr_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
                                 continue
-                            # Skip empty tool results from SSE.
-                            # Phantom-bash suppression ("no command provided")
-                            # is bash-specific: checking it as a substring on any
-                            # tool's result was swallowing legitimate Read results
-                            # of files that literally contain the string "no
-                            # command provided" in their source (e.g. this very
-                            # file around line 1310). Result: the tool bubble
-                            # stayed pending forever, deterministically, for that
-                            # exact page of the file.
-                            if not result_str or result_str == "":
-                                continue
-                            if _tr_name == "bash" and "no command provided" in result_str:
+                            # Suppress the tool_result SSE iff we suppressed the
+                            # matching tool_call (phantom: empty args / empty
+                            # bash command / all-empty args — see filters above).
+                            # Output-based detection ("no command provided" in
+                            # result_str) was wrong in two ways — it swallowed
+                            # legitimate Read results containing the phrase in
+                            # source, AND legitimate bash output containing it
+                            # (git log picks up commit e59a188's own message:
+                            # 'Fix: scope "no command provided" phantom filter
+                            # to bash only' on any command touching this file).
+                            # Phantom detection is input-only.
+                            if tc_id and tc_id not in _emitted_sse_tcs:
                                 continue
                             _tr_event = {
                                 "tool": _tr_name,

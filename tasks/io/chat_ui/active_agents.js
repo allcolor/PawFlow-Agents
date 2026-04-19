@@ -174,20 +174,14 @@ function updateActivePanel() {
         ctxPct = cached.pct || 0;
       }
     }
+    // Use the unified renderCtxGauge — it uses display:block on the bar fill
+    // which renders correctly. The previous inline markup used inline-block +
+    // height:100% on the fill, a browser quirk where inline-block does not
+    // establish a reliable containing block for percentage heights, so the
+    // colored bar collapsed to 0px (only the % number was visible).
     let ctxHtml = '';
     if (ctxMax > 0) {
-      const pct = Math.max(0, Math.min(1, ctxPct || (ctxUsed / ctxMax)));
-      const pctInt = Math.round(pct * 100);
-      const usedK = Math.round(ctxUsed / 1000);
-      const maxK = Math.round(ctxMax / 1000);
-      const gColor = (pct >= 0.80) ? '#f0ad4e' : '#4ecdc4';
-      const barPx = Math.round(pct * 60);
-      ctxHtml = '<span class="a-ctx" title="Context ' + usedK + 'k/' + maxK + 'k (' + pctInt + '%)">'
-        + '<span class="a-ctx-bar" style="display:inline-block;width:60px;height:6px;background:#222;border-radius:3px;vertical-align:middle;overflow:hidden;">'
-        + '<span style="display:inline-block;width:' + barPx + 'px;height:100%;background:' + gColor + ';"></span>'
-        + '</span>'
-        + '<span style="font-size:10px;color:' + gColor + ';margin-left:4px;">' + pctInt + '%</span>'
-        + '</span>';
+      ctxHtml = renderCtxGauge({ used: ctxUsed, max: ctxMax, pct: ctxPct }, { width: 60 });
     }
     return '<div class="active-row">'
       + '<span class="a-spinner" style="color:' + color + '">\u2733</span>'

@@ -1025,6 +1025,31 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     "from": agent_name or "",
                     "to": _tm["source_agent"],
                 }
+            # Persist context-fill so the gauge survives across reloads
+            # without waiting for the next turn. CC emits message_meta
+            # directly here (not via agent_core's _agent_source path), so
+            # this is the ONLY place where the per-agent context_usage map
+            # gets written for CC turns.
+            if (event_type == "message_meta"
+                    and isinstance(data, dict)
+                    and (data.get("context_used") or 0) > 0
+                    and (data.get("context_max") or 0) > 0
+                    and agent_name):
+                try:
+                    from core.conversation_store import ConversationStore as _CS_pub
+                    _store_pub = _CS_pub.instance()
+                    _cu_map = _store_pub.get_extra(
+                        _event_cid, "context_usage") or {}
+                    _cu_map[agent_name] = {
+                        "used": int(data["context_used"]),
+                        "max": int(data["context_max"]),
+                        "pct": float(data.get("context_pct") or 0),
+                        "updated_at": int(time.time()),
+                    }
+                    _store_pub.set_extra(
+                        _event_cid, "context_usage", _cu_map)
+                except Exception:
+                    pass
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(

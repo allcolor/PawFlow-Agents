@@ -689,7 +689,8 @@ async function _renderResourcesData(data) {
 
     // ── Tools Repository (always available, no linking) ──
     repoHtml += _repoSectionHeader('Tools Repository', '_tool', {
-      hideCreate: true,
+      createOnclick: "showResourceCreator('_tool')",
+      createTitle: 'Create new tool',
     });
     if (!_collapsedSections['_tool']) {
       const tools = window._cachedTools || [];

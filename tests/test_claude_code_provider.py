@@ -663,7 +663,7 @@ class TestStreamContinuesPastResultWhenPreemptPending(unittest.TestCase):
 
 
 class TestCancelForceKillsContainerSide(unittest.TestCase):
-    """force=True must pkill the container-side claude CLI, not just the
+    """force=True must kill the container-side claude CLI, not just the
     host docker-exec wrapper. Prevents zombie sessions that keep writing
     to the shared .jsonl after the user clicked Stop."""
 
@@ -675,26 +675,29 @@ class TestCancelForceKillsContainerSide(unittest.TestCase):
         client._claude_proc = proc
         return client, proc
 
-    def test_force_stop_calls_kill_cc_hard_with_session(self):
+    def test_force_stop_calls_kill_cc_hard(self):
         client, proc = self._client_with_proc()
         client._current_session_id = "sess-abc"
         client._pool_container_name = None
         with patch.object(client, "_kill_cc_hard") as mock_hard:
             client.cancel_claude_code(force=True)
-        mock_hard.assert_called_once_with(proc, "sess-abc")
+        # force=True MUST invoke _kill_cc_hard with the proc. The kill
+        # itself now uses the captured container PID (not session_id).
+        mock_hard.assert_called_once_with(proc)
         self.assertIsNone(client._claude_proc)
         self.assertEqual(client._current_session_id, "")
 
     def test_force_stop_without_session_still_kills(self):
         client, proc = self._client_with_proc()
         # No session id yet (init event never fired) — still must call
-        # _kill_cc_hard so proc.kill() runs; the container-side pkill
-        # inside _kill_cc_hard will early-return on empty session_id.
+        # _kill_cc_hard so proc.kill() runs. _kill_cc_hard will use the
+        # captured container PID; if no PID was captured it logs loudly
+        # and returns (tested separately in TestKillCcHardByPid).
         client._current_session_id = ""
         client._pool_container_name = None
         with patch.object(client, "_kill_cc_hard") as mock_hard:
             client.cancel_claude_code(force=True)
-        mock_hard.assert_called_once_with(proc, "")
+        mock_hard.assert_called_once_with(proc)
 
     def test_force_stop_releases_pool_slot(self):
         client, proc = self._client_with_proc()
@@ -707,57 +710,58 @@ class TestCancelForceKillsContainerSide(unittest.TestCase):
         self.assertIsNone(client._pool_container_name)
 
 
-class TestKillCcHardSidFallback(unittest.TestCase):
-    """_kill_cc_hard MUST fall back to self._current_session_id when the
-    session_id param is empty. Without this, the FIRST session of a
-    workdir (no --resume passed, so the local session_id var in the
-    stream loop is '') causes pkill to be skipped and CC to survive
-    as a zombie inside the pool container -- observed live: CC kept
-    writing to its jsonl and making MCP calls for ~3 minutes after
-    compact_boundary because pkill was never invoked.
+class TestKillCcHardByPid(unittest.TestCase):
+    """_kill_cc_hard MUST kill by captured container-side PID, not by
+    argv-matching the session id. Argv matching was unreliable on fresh
+    sessions (no --resume, so sid not in argv) and caused zombie CC
+    processes surviving for minutes after compact_boundary. The pool's
+    shell wrapper emits `__PF_CLAUDE_PID=<n>` on stderr at spawn; the
+    provider's drain thread captures it into `_cc_container_pid` and
+    kill by PID is deterministic.
     """
 
     def _client(self):
         return LLMClient(provider="claude-code", config={"api_key": "k"})
 
-    def test_falls_back_to_current_session_id_when_param_empty(self):
+    def test_kills_by_captured_pid(self):
         client = self._client()
-        client._current_session_id = "sid-from-init-event"
+        client._cc_container_pid = 4242
         client._pool_container_name = "pool-1"
         proc = MagicMock(); proc.kill = MagicMock()
         with patch("subprocess.run") as mock_run, \
              patch("pawflow_relay.utils.docker_cmd", return_value=["docker"]):
             mock_run.return_value = MagicMock(returncode=0, stderr=b"")
-            client._kill_cc_hard(proc, session_id="")  # empty param
-        # pkill MUST have been called with the fallback sid, not skipped.
+            client._kill_cc_hard(proc)
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
-        self.assertIn("pkill", cmd)
-        self.assertIn("sid-from-init-event", cmd)
+        self.assertIn("kill", cmd)
+        self.assertIn("-9", cmd)
+        self.assertIn("4242", cmd)
+        self.assertIn("pool-1", cmd)
 
-    def test_param_takes_precedence_over_attribute(self):
+    def test_logs_loud_error_when_no_pid(self):
         client = self._client()
-        client._current_session_id = "attr-sid"
+        client._cc_container_pid = 0
         client._pool_container_name = "pool-1"
         proc = MagicMock()
         with patch("subprocess.run") as mock_run, \
-             patch("pawflow_relay.utils.docker_cmd", return_value=["docker"]):
-            mock_run.return_value = MagicMock(returncode=0, stderr=b"")
-            client._kill_cc_hard(proc, session_id="explicit-sid")
-        cmd = mock_run.call_args[0][0]
-        self.assertIn("explicit-sid", cmd)
-        self.assertNotIn("attr-sid", cmd)
+             patch("core.llm_providers.claude_code.logger") as mock_log:
+            client._kill_cc_hard(proc)
+        mock_run.assert_not_called()
+        mock_log.error.assert_called_once()
+        msg = mock_log.error.call_args[0][0]
+        self.assertIn("SKIPPED", msg)
+        self.assertIn("ORPHANED", msg)
 
-    def test_logs_loud_error_when_both_empty(self):
+    def test_logs_loud_error_when_no_container(self):
         client = self._client()
-        client._current_session_id = ""
+        client._cc_container_pid = 4242
         client._pool_container_name = ""
         proc = MagicMock()
         with patch("subprocess.run") as mock_run, \
              patch("core.llm_providers.claude_code.logger") as mock_log:
-            client._kill_cc_hard(proc, session_id="")
+            client._kill_cc_hard(proc)
         mock_run.assert_not_called()
-        # Silent skip = next zombie -- the early return MUST log .error()
         mock_log.error.assert_called_once()
         msg = mock_log.error.call_args[0][0]
         self.assertIn("SKIPPED", msg)

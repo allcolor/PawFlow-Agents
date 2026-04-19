@@ -167,30 +167,19 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         if force:
             logger.info("FORCE KILLING Claude Code subprocess (pid=%d)", proc.pid)
             self._claude_proc = None
-            # Kill BOTH the host `docker exec` wrapper AND the claude CLI
-            # running inside the pool container. proc.kill() alone only
-            # reaps the host-side wrapper; the container-side CLI becomes
-            # an orphan (reparented to PID 1) and keeps emitting tool
-            # calls / running auto-compact / writing to its session .jsonl.
-            # _kill_cc_hard sends pkill -9 -f <session_id> into the pool
-            # container so the zombie can't outlive the user's stop click.
-            _sid = getattr(self, '_current_session_id', '') or ''
-            try:
-                self._kill_cc_hard(proc, _sid)
-            except Exception:
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+            # Kill the container-side claude CLI by its captured PID
+            # (from the shell wrapper's __PF_CLAUDE_PID=$$ preamble) AND
+            # the host-side docker exec wrapper. Without the container-side
+            # kill, the CLI becomes an orphan (reparented to PID 1) and
+            # keeps emitting tool calls / running auto-compact / writing
+            # to its session .jsonl.
+            self._kill_cc_hard(proc)
             # Pool mode: release the slot (the container stays up for
             # other sessions; _kill_cc_hard only killed the CLI inside it).
             _pool_name = getattr(self, '_pool_container_name', None)
             if _pool_name:
-                try:
-                    from core.claude_code_pool import ClaudeCodePool
-                    ClaudeCodePool.instance().release(_pool_name)
-                except Exception:
-                    pass
+                from core.claude_code_pool import ClaudeCodePool
+                ClaudeCodePool.instance().release(_pool_name)
                 self._pool_container_name = None
             self._current_session_id = ""
             return
@@ -211,83 +200,54 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         except (OSError, BrokenPipeError):
             pass
 
-    def _kill_cc_hard(self, proc, session_id: str = "") -> None:
-        """Kill the claude-code subprocess on BOTH the host and inside the
-        pool container.
+    def _kill_cc_hard(self, proc) -> None:
+        """Kill the claude-code subprocess on BOTH the host and inside
+        the pool container, deterministically by PID.
 
-        `proc.kill()` only kills the `docker exec` wrapper running on the
-        host. Without a container-side kill, the claude CLI inside the
-        pool container becomes an orphan (reparented to PID 1 inside the
-        container) and keeps running — emitting tool calls via MCP,
-        running its own auto-compact, writing to its session .jsonl.
-        Meanwhile PawFlow spawns a fresh session in the SAME pool
-        container for the same conv, so two zombies race on the same
-        files. Observed live: a session that PawFlow thought it killed
-        at 15:10:49 emitted a compact_boundary + continuation 2 min
-        later, concurrent with its replacement session.
+        `proc.kill()` only reaps the host-side `docker exec` wrapper.
+        Without a container-side kill, the claude CLI becomes an orphan
+        (reparented to PID 1 inside the container) and keeps running —
+        emitting tool calls via MCP, running its own auto-compact,
+        writing to its session .jsonl — while PawFlow spawns a fresh
+        session in the SAME pool container, creating zombie races on
+        the same files.
 
-        Fixes that by pkill'ing the container-side claude process(es)
-        bound to this session_id. session_id is passed to `claude
-        --resume`, so matching on it in argv uniquely identifies the
-        zombie without killing concurrent sessions.
-
-        The session_id parameter is a fallback only -- the authoritative
-        sid is `self._current_session_id`, captured from CC's `init`
-        event and valid even on the FIRST session of a workdir (no
-        `--resume` was passed, so the local `session_id` var in the
-        stream loop is empty -- using only that param caused the
-        early-return zombie bug observed live: CC kept writing to its
-        jsonl and making MCP calls for ~3 minutes after compact_boundary
-        because pkill was skipped on empty sid).
+        The container-side PID is captured at spawn from the shell
+        wrapper's `__PF_CLAUDE_PID=$$` stderr preamble (see
+        `ClaudeCodePool._exec_args`). `bash` prints `$$`, then execs
+        `setpriv` which execs `claude`, all sharing the same PID — so
+        the captured value is the final claude PID.
         """
         try:
             proc.kill()
         except Exception:
             pass
-        sid = (session_id
-               or getattr(self, '_current_session_id', '')
-               or '')
         _container = getattr(self, '_pool_container_name', '') or ''
-        if not _container or not sid:
-            # MUST be loud: silent skip = CC zombie surviving in container,
-            # making MCP calls / consuming OAuth tokens / writing to jsonl
-            # for minutes after we thought it was dead.
+        _pid = int(getattr(self, '_cc_container_pid', 0) or 0)
+        if not _container or not _pid:
             logger.error(
-                "[claude-code] _kill_cc_hard SKIPPED -- container=%r sid=%r "
-                "-- CC PROCESS LIKELY ORPHANED IN CONTAINER",
-                _container, sid)
+                "[claude-code] _kill_cc_hard SKIPPED -- container=%r "
+                "pid=%d -- CC PROCESS LIKELY ORPHANED", _container, _pid)
             return
-        try:
-            import subprocess as _sp
-            from pawflow_relay.utils import docker_cmd
-            # -f: match against full argv. claude CLI is launched with
-            # `claude -p --resume <sid> ...` so <sid> always appears.
-            # -9: SIGKILL (the CLI's auto-compact can catch SIGTERM and
-            # finish summarizing -- we don't want that).
-            _r = _sp.run(
-                docker_cmd() + ["exec", _container, "pkill", "-9", "-f",
-                                sid],
-                capture_output=True, timeout=5,
-            )
-            # pkill rc: 0=killed, 1=no match, 2=syntax, 3=fatal.
-            # Anything != 0 must be visible -- silent rc=1 hides 'sid
-            # not in argv' which is the next zombie waiting to happen.
-            if _r.returncode != 0:
-                logger.warning(
-                    "[claude-code] pkill returned rc=%d for sid=%s in "
-                    "container=%s (stderr=%s) -- process may have been "
-                    "already dead, OR our argv match failed",
-                    _r.returncode, sid[:12], _container,
-                    _r.stderr.decode('utf-8', 'replace')[:200].strip())
-            else:
-                logger.info(
-                    "[claude-code] container-side pkill OK: sid=%s "
-                    "container=%s", sid[:12], _container)
-        except Exception as _ke:
-            logger.error(
-                "[claude-code] container-side kill FAILED "
-                "(container=%s, sid=%s): %s -- CC may be orphaned",
-                _container, sid[:12] if sid else "?", _ke)
+        import subprocess as _sp
+        from pawflow_relay.utils import docker_cmd
+        # SIGKILL: CC's auto-compact can catch SIGTERM and finish
+        # summarizing; we want it dead NOW.
+        _r = _sp.run(
+            docker_cmd() + ["exec", _container, "kill", "-9", str(_pid)],
+            capture_output=True, timeout=5,
+        )
+        if _r.returncode == 0:
+            logger.info(
+                "[claude-code] container-side kill OK: pid=%d "
+                "container=%s", _pid, _container)
+        else:
+            # rc=1 typically means process already dead (kill ESRCH).
+            logger.warning(
+                "[claude-code] kill -9 pid=%d returned rc=%d in "
+                "container=%s (stderr=%s) -- likely already dead",
+                _pid, _r.returncode, _container,
+                _r.stderr.decode('utf-8', 'replace')[:200].strip())
 
     def _check_preempt_in_jsonl(self, jsonl_path: str,
                                  sent_texts: list) -> str:
@@ -376,9 +336,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     def _cleanup_proc(self, proc) -> str:
         """Clean up a Claude Code subprocess. Returns captured stderr."""
         self._claude_proc = None
-        # Session is over — drop the tracked id so a later force-stop
-        # doesn't pkill into a stale/reused container.
+        # Session is over — drop the tracked PID and session id so a
+        # later force-stop doesn't kill into a stale/reused container.
         self._current_session_id = ""
+        self._cc_container_pid = 0
         # Pool mode: release slot (don't kill the container)
         _pool_name = getattr(self, '_pool_container_name', None)
         if _pool_name:
@@ -393,11 +354,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             proc.wait(timeout=3)
         except Exception:
             pass
-        # NOW read stderr (process is dead, read won't block)
+        # NOW read stderr from the drain buffer (live thread owns the fd)
         stderr = ""
         try:
-            if proc.stderr and not proc.stderr.closed:
-                stderr = proc.stderr.read() or ""
+            stderr = "".join(getattr(self, "_stderr_buffer", []) or [])
         except Exception:
             pass
         # Close all streams
@@ -895,6 +855,37 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # need preempt/cancel and must not overwrite the main agent's proc.
             if not getattr(self, '_ephemeral_stream', False):
                 self._claude_proc = proc
+            # Capture the container-side claude PID from the shell wrapper's
+            # stderr preamble (`__PF_CLAUDE_PID=<n>` emitted by the pool's
+            # shell script before `exec setpriv ... claude`). Saves us from
+            # pkill/argv matching which breaks on fresh sessions where CC's
+            # sid isn't in argv (no `--resume`). A tiny daemon thread drains
+            # stderr continuously so the pipe can't fill; captured content
+            # is buffered for post-mortem inspection.
+            self._cc_container_pid = 0
+            self._stderr_buffer = []
+            def _drain_stderr():
+                try:
+                    for _line in proc.stderr:
+                        self._stderr_buffer.append(_line)
+                        if (not self._cc_container_pid
+                                and '__PF_CLAUDE_PID=' in _line):
+                            try:
+                                _pid_str = _line.split(
+                                    '__PF_CLAUDE_PID=', 1)[1].strip()
+                                self._cc_container_pid = int(_pid_str)
+                                logger.info(
+                                    "[claude-code] captured container PID=%d "
+                                    "(container=%s)",
+                                    self._cc_container_pid,
+                                    self._pool_container_name)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            import threading as _th
+            _th.Thread(target=_drain_stderr, daemon=True,
+                       name="cc-stderr-drain").start()
         except FileNotFoundError:
             _bin = "docker" if _containerize else self.claude_binary
             if self._pool_container_name:
@@ -935,7 +926,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         except BrokenPipeError:
             stderr = ""
             try:
-                stderr = proc.stderr.read().strip()
+                stderr = "".join(
+                    getattr(self, "_stderr_buffer", []) or []
+                ).strip()
             except Exception:
                 pass
             proc.wait()
@@ -1259,7 +1252,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     logger.error(
                         "[claude-code] pre-phantom-compact flush failed: %s",
                         _fe, exc_info=True)
-                self._kill_cc_hard(proc, session_id)
+                self._kill_cc_hard(proc)
 
         self._stall_killed = False  # set by watchdog — retry must be unconditional
 
@@ -1332,10 +1325,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # _prepare_agent_context (which checks for session to skip compact).
                     sid = event.get("session_id", "")
                     if sid:
-                        # Publish on self so cancel_claude_code(force=True)
-                        # can target the container-side CLI via pkill -9 -f <sid>.
-                        # Without this, force-stop leaves a zombie claude CLI
-                        # inside the pool container.
                         self._current_session_id = sid
                     if sid and conv_id:
                         if session_id and sid != session_id:
@@ -1407,7 +1396,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         # orphan inside the pool container and keeps running
                         # in parallel with the replacement session PawFlow
                         # is about to spawn.
-                        self._kill_cc_hard(proc, session_id)
+                        self._kill_cc_hard(proc)
                         break
                     if subtype == "init":
                         _stall_start_time = time.monotonic()

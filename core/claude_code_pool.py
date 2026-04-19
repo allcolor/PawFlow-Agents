@@ -232,10 +232,15 @@ class ClaudeCodePool:
         #        --clear-groups -- claude <args>
         import shlex
         _claude_quoted = " ".join(shlex.quote(str(a)) for a in claude_args)
+        # Print our shell PID to stderr BEFORE `exec` so the caller can
+        # save it and kill by PID directly (no argv/pkill matching). `exec`
+        # replaces the bash process with setpriv, which in turn execs claude
+        # — all three share the same container-side PID ($$).
         _shell_script = (
             f"mkdir -p /workspace && "
             f"mount --bind {shlex.quote(session_dir)} /workspace && "
             f"cd /workspace && "
+            f'printf "__PF_CLAUDE_PID=%s\\n" "$$" 1>&2 && '
             f"exec setpriv --reuid=1000 --regid=1000 --clear-groups "
             f"-- claude {_claude_quoted}"
         )

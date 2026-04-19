@@ -97,6 +97,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         if getattr(self, '_result_emitted', False):
             logger.info("Preempt arrived after CC result — refusing send: %.100s", text)
             return False
+        # Capture user-supplied text BEFORE catchup-prefix mutation; the
+        # original (or its non-empty suffix) is what we'll match against
+        # CC's session jsonl in _check_preempt_in_jsonl.
+        _original_text = text
         try:
             # Multi-agent catch-up: inject messages from other agents before user msg
             conv_id = getattr(self, '_conversation_id', "")
@@ -132,6 +136,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             proc.stdin.write(msg + "\n")
             proc.stdin.flush()
             self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
+            # Remember the EXACT text we sent so the result-time jsonl
+            # check can locate it. Skip the multi-agent catchup prefix
+            # (built locally above) — only the user-supplied tail is
+            # written verbatim by CC. Use the original `text` parameter
+            # before catchup mutation for a clean match key.
+            try:
+                self._sent_preempt_texts.append(_original_text)
+            except AttributeError:
+                self._sent_preempt_texts = [_original_text]
             logger.info("Sent preempt message to Claude Code (pending=%d): %.100s",
                         self._preempt_pending, text)
             return True
@@ -154,17 +167,32 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         if force:
             logger.info("FORCE KILLING Claude Code subprocess (pid=%d)", proc.pid)
             self._claude_proc = None
+            # Kill BOTH the host `docker exec` wrapper AND the claude CLI
+            # running inside the pool container. proc.kill() alone only
+            # reaps the host-side wrapper; the container-side CLI becomes
+            # an orphan (reparented to PID 1) and keeps emitting tool
+            # calls / running auto-compact / writing to its session .jsonl.
+            # _kill_cc_hard sends pkill -9 -f <session_id> into the pool
+            # container so the zombie can't outlive the user's stop click.
+            _sid = getattr(self, '_current_session_id', '') or ''
             try:
-                proc.kill()
-                # Pool mode: just kill the exec process, release the slot
-                # (don't kill the container — other sessions may be using it)
-                _pool_name = getattr(self, '_pool_container_name', None)
-                if _pool_name:
+                self._kill_cc_hard(proc, _sid)
+            except Exception:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            # Pool mode: release the slot (the container stays up for
+            # other sessions; _kill_cc_hard only killed the CLI inside it).
+            _pool_name = getattr(self, '_pool_container_name', None)
+            if _pool_name:
+                try:
                     from core.claude_code_pool import ClaudeCodePool
                     ClaudeCodePool.instance().release(_pool_name)
-                    self._pool_container_name = None
-            except OSError:
-                pass
+                except Exception:
+                    pass
+                self._pool_container_name = None
+            self._current_session_id = ""
             return
 
         # Graceful interrupt: send interrupt message on stdin.
@@ -228,9 +256,96 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 "(container=%s, sid=%s): %s",
                 _container, session_id[:12] if session_id else "?", _ke)
 
+    def _check_preempt_in_jsonl(self, jsonl_path: str,
+                                 sent_texts: list) -> str:
+        """Inspect CC's session jsonl to determine if a queued preempt has
+        already been answered by the just-completed result event.
+
+        Returns one of:
+          - 'done'    — every sent preempt is followed by an assistant
+                        event in the jsonl. CC integrated/answered it
+                        inline; safe to break the stream loop.
+          - 'pending' — at least one preempt sits at a position AFTER the
+                        last assistant event. CC has read stdin but hasn't
+                        responded yet — keep the stream open for the next
+                        turn's events.
+          - 'unread'  — our preempt text(s) are not yet in the jsonl. CC
+                        has not yet read stdin; keep the stream open and
+                        let the watchdog enforce the timeout if it never
+                        does.
+          - 'unknown' — jsonl unreadable / no sent_texts to match. Caller
+                        should fall back to the default \"keep open with
+                        budget\" behavior.
+
+        Match strategy: literal substring search of each sent text in the
+        user-message content. We use the ORIGINAL user text (without the
+        catchup prefix) so the substring is what CC stored verbatim.
+        """
+        if not sent_texts or not jsonl_path:
+            return 'unknown'
+        try:
+            with open(jsonl_path, 'rb') as _f:
+                _raw = _f.read()
+        except OSError:
+            return 'unknown'
+        last_assistant_pos = -1
+        last_preempt_pos = -1
+        # Per-preempt found flag so 'done' really means ALL of them got
+        # an assistant event after — not just the most recent.
+        _found_flags = [False] * len(sent_texts)
+        # Position (line index) at which each preempt was last seen.
+        _preempt_positions = [-1] * len(sent_texts)
+        for i, _line in enumerate(_raw.splitlines()):
+            if not _line.strip():
+                continue
+            try:
+                _entry = json.loads(_line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            _etype = _entry.get('type', '')
+            if _etype == 'assistant':
+                last_assistant_pos = i
+                continue
+            if _etype != 'user':
+                continue
+            _msg = _entry.get('message', {}) or {}
+            _content = _msg.get('content', '')
+            _text_blob = ''
+            if isinstance(_content, str):
+                _text_blob = _content
+            elif isinstance(_content, list):
+                for _p in _content:
+                    if isinstance(_p, dict) and _p.get('type') == 'text':
+                        _text_blob += _p.get('text', '') or ''
+            if not _text_blob:
+                continue
+            for _idx, _sent in enumerate(sent_texts):
+                # Substring match — CC may prefix our text with catchup,
+                # so we look for the user-supplied tail. Skip empties.
+                if _sent and _sent in _text_blob:
+                    _found_flags[_idx] = True
+                    _preempt_positions[_idx] = i
+                    last_preempt_pos = max(last_preempt_pos, i)
+        # Decide.
+        if not any(_found_flags):
+            return 'unread'
+        # Any preempt with no assistant event after it → still pending.
+        for _idx, _pos in enumerate(_preempt_positions):
+            if _found_flags[_idx] and _pos > last_assistant_pos:
+                return 'pending'
+        # Every found preempt has an assistant event after it.
+        # If some preempts are still unfound (unread), 'pending' wins
+        # (we treat partially-unread as 'wait' — conservative).
+        if not all(_found_flags):
+            return 'unread'
+        return 'done'
+
     def _cleanup_proc(self, proc) -> str:
         """Clean up a Claude Code subprocess. Returns captured stderr."""
         self._claude_proc = None
+        # Session is over — drop the tracked id so a later force-stop
+        # doesn't pkill into a stale/reused container.
+        self._current_session_id = ""
         # Pool mode: release slot (don't kill the container)
         _pool_name = getattr(self, '_pool_container_name', None)
         if _pool_name:
@@ -904,6 +1019,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         self._had_preempts_this_turn = False
         self._result_emitted = False  # set True when CC emits final result
         self._compacting = False  # set True when CC compact_boundary fires
+        # Track text of every preempt sent via stdin during this stream so
+        # we can locate it in CC's session jsonl by content match. Used by
+        # _check_preempt_in_jsonl to determine whether CC has already
+        # responded to the preempt (last assistant after preempt) or not.
+        self._sent_preempt_texts: list = []
 
         # Compact-drain state: when CC emits compact_boundary we don't
         # kill+raise immediately anymore. We close CC's stdin (EOF signal),
@@ -953,8 +1073,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 # MCP wrapper: check inner arguments
                 if t.get("name") == "mcp__pawflow__use_tool" and isinstance(args, dict):
                     inner = args.get("arguments", {})
+                    # Tolerate flat args: LLM sometimes forgets the "arguments"
+                    # wrapper and places tool args at the top level next to
+                    # tool_name. Harvest them so the call isn't dropped as
+                    # phantom. Symmetric with mcp_bridge.py's flat-args harvest.
                     if not inner or inner == {}:
-                        return False
+                        _flat = {k: v for k, v in args.items() if k != "tool_name"}
+                        if not _flat:
+                            return False
+                        inner = _flat
                     # bash with empty/whitespace command (resolve aliases)
                     from core.llm_client import _TOOL_ALIASES
                     inner_tool = args.get("tool_name", "")
@@ -1111,7 +1238,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     if elapsed >= _STALL_TIMEOUT:
                         logger.warning(
                             "[claude-code] Stall detected (%.0fs with no assistant "
-                            "response) — killing process for retry", elapsed)
+                            "response, budget=%.0fs) — killing process for retry",
+                            elapsed, _STALL_TIMEOUT)
                         self._stall_killed = True
                         try:
                             proc.kill()
@@ -1136,13 +1264,13 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 if not hasattr(_stall_watchdog, '_dbg_count'):
                     _stall_watchdog._dbg_count = 0
                 _stall_watchdog._dbg_count += 1
-                if _stall_watchdog._dbg_count % 3 == 0:  # every 30s
+                if _stall_watchdog._dbg_count % 6 == 0:  # every 30s (5s wake × 6)
                     logger.debug(
                         '[claude-code] watchdog state: stall_start=%.1f got_assistant=%s '
-                        'last_tr=%.1f pending=%s',
+                        'last_tr=%.1f pending=%s budget=%.0fs',
                         _stall_start_time, _got_assistant,
-                        _last_tool_result_time, _pending_tool_ids)
-                _watchdog_stop.wait(10)  # check every 10s
+                        _last_tool_result_time, _pending_tool_ids, _STALL_TIMEOUT)
+                _watchdog_stop.wait(5)
 
         _watchdog_thread = threading.Thread(target=_stall_watchdog, daemon=True)
         _watchdog_thread.start()
@@ -1170,6 +1298,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # Must be in ConversationStore before any preempt triggers
                     # _prepare_agent_context (which checks for session to skip compact).
                     sid = event.get("session_id", "")
+                    if sid:
+                        # Publish on self so cancel_claude_code(force=True)
+                        # can target the container-side CLI via pkill -9 -f <sid>.
+                        # Without this, force-stop leaves a zombie claude CLI
+                        # inside the pool container.
+                        self._current_session_id = sid
                     if sid and conv_id:
                         if session_id and sid != session_id:
                             logger.warning(
@@ -1600,6 +1734,90 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             "num_turns": event.get("num_turns", _turn_count),
                             "duration_ms": event.get("duration_ms", 0),
                         })
+                    # If one or more preempts were injected via stdin
+                    # BEFORE this result event, CC may already be processing
+                    # them in a new turn (observed live: CC reads stdin right
+                    # after emitting `result` and starts a fresh assistant
+                    # turn). Breaking here would kill the subprocess while
+                    # CC is generating the preempt's response, losing it.
+                    # Decision flow (deterministic via CC's session jsonl):
+                    #   - 'done': every queued preempt has an assistant
+                    #      message AFTER it in jsonl → break safely.
+                    #   - 'pending': preempt visible in jsonl AFTER last
+                    #      assistant → CC has read stdin and WILL respond;
+                    #      keep the stream open with NO timeout (response
+                    #      may take up to ~250s for complex queries).
+                    #   - 'unread'/'unknown' after 3s poll: stdin not seen
+                    #      by CC → likely lost; break and let PendingQueue
+                    #      re-trigger on the next turn.
+                    if getattr(self, '_preempt_pending', 0) > 0:
+                        _sent = list(getattr(self, '_sent_preempt_texts', []))
+                        _sid = getattr(self, '_current_session_id', '') or ''
+                        _jsonl = os.path.join(
+                            workdir, 'projects', '-workspace',
+                            f"{_sid}.jsonl") if _sid else ''
+                        _pstatus = self._check_preempt_in_jsonl(_jsonl, _sent)
+                        # CC writes a stdin preempt to its session jsonl
+                        # the moment it reads from stdin, which can happen
+                        # ~tens of ms AFTER it emits result. If we don't
+                        # see the preempt yet, poll briefly for it to land
+                        # before deciding the preempt was lost.
+                        if _pstatus in ('unread', 'unknown'):
+                            _poll_until = time.monotonic() + 3.0
+                            while time.monotonic() < _poll_until:
+                                time.sleep(0.2)
+                                if proc.poll() is not None:
+                                    break
+                                _pstatus = self._check_preempt_in_jsonl(
+                                    _jsonl, _sent)
+                                if _pstatus not in ('unread', 'unknown'):
+                                    break
+                        if _pstatus == 'done':
+                            # CC integrated the preempt mid-turn; the just-
+                            # emitted assistant message IS the response.
+                            logger.info(
+                                "[claude-code] result emitted; jsonl shows "
+                                "all %d preempt(s) answered inline — break",
+                                len(_sent))
+                            self._had_preempts_this_turn = True
+                            self._preempt_pending = 0
+                            self._sent_preempt_texts = []
+                            self._result_emitted = True
+                            break
+                        if _pstatus == 'pending':
+                            # CC has read stdin (preempt is in jsonl) but
+                            # has not yet produced the response. CC WILL
+                            # respond — there is no useful upper bound on
+                            # how long that takes (could be 250s for a
+                            # complex query). Keep the stream open with NO
+                            # timeout: the for-loop blocks on stdout for
+                            # the next assistant event, and EOF on proc
+                            # death exits cleanly via the finally block.
+                            logger.info(
+                                "[claude-code] result emitted; CC has read "
+                                "%d preempt(s) (jsonl=pending) — keeping "
+                                "stream open with NO timeout, waiting for "
+                                "CC's response", self._preempt_pending)
+                            self._had_preempts_this_turn = True
+                            self._preempt_pending = 0
+                            continue
+                        # 'unread' / 'unknown' after polling: CC has not
+                        # acknowledged stdin. Most likely it exited or is
+                        # silently stuck. Don't wait further; let pawflow
+                        # re-deliver via PendingQueue on the next turn.
+                        # _had_preempts_this_turn stays False so the
+                        # caller knows to re-trigger if drained user msgs
+                        # exist.
+                        logger.warning(
+                            "[claude-code] result emitted; %d preempt(s) "
+                            "NOT visible in jsonl after 3s poll "
+                            "(status=%s) — preempt likely lost, breaking. "
+                            "PendingQueue will re-trigger.",
+                            self._preempt_pending, _pstatus)
+                        self._preempt_pending = 0
+                        self._sent_preempt_texts = []
+                        self._result_emitted = True
+                        break
                     # CC emitted its final result. Mark this so future
                     # preempts are refused (caller routes via PendingQueue).
                     self._result_emitted = True

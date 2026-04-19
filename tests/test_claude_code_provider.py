@@ -333,6 +333,380 @@ class TestSendUserMessageSentinel(unittest.TestCase):
         self.assertIn("hello live", sent)
 
 
+class TestCheckPreemptInJsonl(unittest.TestCase):
+    """Deterministic check used at result-time to decide whether to break
+    or wait for CC's next turn. Looks at preempt position vs. last
+    assistant in CC's session jsonl.
+    """
+
+    def setUp(self):
+        self.client = LLMClient(
+            provider="claude-code",
+            config={"api_key": "k"})
+        import tempfile
+        self._tmpdir = tempfile.mkdtemp()
+        import os
+        self.jsonl = os.path.join(self._tmpdir, "sess.jsonl")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _write(self, lines):
+        with open(self.jsonl, 'w') as f:
+            for ln in lines:
+                f.write(json.dumps(ln) + "\n")
+
+    def test_done_when_assistant_after_preempt(self):
+        """preempt user msg followed by assistant → 'done'."""
+        self._write([
+            {"type": "user", "message": {"role": "user",
+                                          "content": "original"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "first"}]}},
+            {"type": "user", "message": {"role": "user",
+                                          "content": "my-preempt-marker"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "answer-to-preempt"}]}},
+        ])
+        self.assertEqual(
+            self.client._check_preempt_in_jsonl(
+                self.jsonl, ["my-preempt-marker"]),
+            'done')
+
+    def test_pending_when_preempt_after_last_assistant(self):
+        """preempt is the last entry, no assistant after → 'pending'.
+
+        This is the bug-trigger case: pawflow would break, killing CC
+        mid-generation of the response.
+        """
+        self._write([
+            {"type": "user", "message": {"role": "user",
+                                          "content": "original"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "plan-text"}]}},
+            {"type": "user", "message": {"role": "user",
+                                          "content": "my-preempt-marker"}},
+        ])
+        self.assertEqual(
+            self.client._check_preempt_in_jsonl(
+                self.jsonl, ["my-preempt-marker"]),
+            'pending')
+
+    def test_unread_when_preempt_not_in_jsonl(self):
+        """CC hasn't read stdin yet — preempt isn't recorded."""
+        self._write([
+            {"type": "user", "message": {"role": "user",
+                                          "content": "original"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "plan-text"}]}},
+        ])
+        self.assertEqual(
+            self.client._check_preempt_in_jsonl(
+                self.jsonl, ["my-preempt-marker"]),
+            'unread')
+
+    def test_unknown_when_no_sent_texts(self):
+        self._write([{"type": "assistant",
+                      "message": {"content": []}}])
+        self.assertEqual(
+            self.client._check_preempt_in_jsonl(self.jsonl, []),
+            'unknown')
+
+    def test_unknown_when_jsonl_missing(self):
+        self.assertEqual(
+            self.client._check_preempt_in_jsonl(
+                "/nonexistent/path.jsonl", ["x"]),
+            'unknown')
+
+    def test_pending_when_one_of_many_unanswered(self):
+        """Two preempts, only first answered → second is pending."""
+        self._write([
+            {"type": "user", "message": {"role": "user",
+                                          "content": "first-preempt"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "answer-1"}]}},
+            {"type": "user", "message": {"role": "user",
+                                          "content": "second-preempt"}},
+        ])
+        self.assertEqual(
+            self.client._check_preempt_in_jsonl(
+                self.jsonl, ["first-preempt", "second-preempt"]),
+            'pending')
+
+    def test_substring_match_with_catchup_prefix(self):
+        """CC may store preempt with a multi-agent catchup prefix —
+        substring match must still find the original tail."""
+        self._write([
+            {"type": "user", "message": {"role": "user",
+                                          "content": "[catchup]\n\nmy-original-text"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "reply"}]}},
+        ])
+        self.assertEqual(
+            self.client._check_preempt_in_jsonl(
+                self.jsonl, ["my-original-text"]),
+            'done')
+
+    def test_list_content_blocks_text(self):
+        """User message content can be a list of blocks (multimodal)."""
+        self._write([
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "text", "text": "my-preempt-marker"},
+                {"type": "image", "source": {"data": "..."}}]}},
+        ])
+        # Preempt found, no assistant after → pending
+        self.assertEqual(
+            self.client._check_preempt_in_jsonl(
+                self.jsonl, ["my-preempt-marker"]),
+            'pending')
+
+
+class TestStreamContinuesPastResultWhenPreemptPending(unittest.TestCase):
+    """When a preempt is injected via stdin BEFORE CC emits `result`, CC
+    may already be processing it in a new turn. Breaking on that first
+    result would kill the subprocess mid-generation of the preempt's
+    response, losing it entirely. The stream loop must keep reading
+    until the NEXT result (the one for the turn that actually processed
+    the preempt). Observed live on session da32e9e5 where the user's
+    message reached CC's session.jsonl but CC's response to it was
+    killed before reaching PawFlow.
+    """
+
+    def setUp(self):
+        self.client = LLMClient(
+            provider="claude-code",
+            config={"api_key": "test-key", "default_model": "sonnet"})
+        self.client._conversation_id = "test-conv"
+        self.client._agent_name = "test-agent"
+        self.client._user_id = "test-user"
+        self._cred_patcher = patch.object(self.client, '_setup_credentials')
+        self._cred_patcher.start()
+        self.addCleanup(self._cred_patcher.stop)
+
+    def test_stream_continues_past_result_when_preempt_pending(self):
+        client = self.client
+
+        # The generator bumps _preempt_pending right before yielding the
+        # first `result` line, mirroring the real race: CC has already
+        # received the stdin preempt before emitting result.
+        def _stdout_gen():
+            yield json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "Turn1"}]}}) + "\n"
+            client._preempt_pending = 1
+            yield json.dumps({
+                "type": "result", "result": "", "model": "sonnet",
+                "usage": {"input_tokens": 10, "output_tokens": 5}}) + "\n"
+            yield json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "Turn2-after-preempt"}]}}) + "\n"
+            yield json.dumps({
+                "type": "result", "result": "", "model": "sonnet",
+                "usage": {"input_tokens": 20, "output_tokens": 8}}) + "\n"
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = _stdout_gen()
+        mock_proc.returncode = 0
+
+        turns = []
+        # jsonl shows preempt was read by CC but no assistant after →
+        # 'pending' → keep stream open with NO timeout.
+        with patch.object(client, '_pool_popen',
+                          return_value=(mock_proc, None)), \
+             patch.object(client, '_check_preempt_in_jsonl',
+                          return_value='pending'):
+            client.complete_stream(
+                [LLMMessage(role="user", content="Hi")],
+                turn_callback=lambda text, tc: turns.append(text),
+            )
+
+        all_text = " ".join(turns)
+        # BOTH turns must be flushed — the post-preempt turn is the
+        # whole point of Option A.
+        self.assertIn("Turn1", all_text)
+        self.assertIn("Turn2-after-preempt", all_text)
+        # agent_core reads _had_preempts_this_turn to decide whether to
+        # re-trigger a new turn for drained-but-already-processed msgs.
+        self.assertTrue(client._had_preempts_this_turn)
+        # Counter must be reset so a stale value doesn't keep the loop
+        # alive past the next legitimate result.
+        self.assertEqual(client._preempt_pending, 0)
+        # Final result (second one) sets _result_emitted.
+        self.assertTrue(client._result_emitted)
+
+    def test_stream_breaks_when_preempt_answered_inline(self):
+        """jsonl status 'done': CC integrated the preempt into the just-
+        emitted assistant message. Break immediately — nothing more to
+        wait for. _had_preempts_this_turn is True so the caller knows.
+        """
+        client = self.client
+
+        # Bump _preempt_pending mid-stream (after complete_stream's reset)
+        # so the result branch sees the preempt and consults jsonl.
+        def _stdout_gen():
+            yield json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "Inline-answer"}]}}) + "\n"
+            client._preempt_pending = 1
+            yield json.dumps({
+                "type": "result", "result": "", "model": "sonnet",
+                "usage": {"input_tokens": 10, "output_tokens": 5}}) + "\n"
+            yield json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "SHOULD-NOT-SEE"}]}}) + "\n"
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = _stdout_gen()
+        mock_proc.returncode = 0
+
+        turns = []
+        with patch.object(client, '_pool_popen',
+                          return_value=(mock_proc, None)), \
+             patch.object(client, '_check_preempt_in_jsonl',
+                          return_value='done'):
+            client.complete_stream(
+                [LLMMessage(role="user", content="Hi")],
+                turn_callback=lambda text, tc: turns.append(text),
+            )
+
+        all_text = " ".join(turns)
+        self.assertIn("Inline-answer", all_text)
+        self.assertNotIn("SHOULD-NOT-SEE", all_text)
+        self.assertTrue(client._had_preempts_this_turn)
+        self.assertEqual(client._preempt_pending, 0)
+        self.assertTrue(client._result_emitted)
+
+    def test_stream_breaks_when_preempt_unread_after_poll(self):
+        """jsonl status stays 'unread' across the poll window: CC never
+        acknowledged stdin (likely exited). Break with warning; counter
+        reset; PendingQueue will re-trigger.
+        """
+        client = self.client
+
+        def _stdout_gen():
+            yield json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "Only"}]}}) + "\n"
+            client._preempt_pending = 1
+            yield json.dumps({
+                "type": "result", "result": "", "model": "sonnet",
+                "usage": {"input_tokens": 10, "output_tokens": 5}}) + "\n"
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = _stdout_gen()
+        mock_proc.returncode = 0
+        # poll=None means proc looks alive; the post-result poll loop
+        # will iterate until the 3s budget elapses (sleep is patched).
+        mock_proc.poll.return_value = None
+
+        turns = []
+        with patch.object(client, '_pool_popen',
+                          return_value=(mock_proc, None)), \
+             patch.object(client, '_check_preempt_in_jsonl',
+                          return_value='unread'), \
+             patch('core.llm_providers.claude_code.time.sleep'):
+            client.complete_stream(
+                [LLMMessage(role="user", content="Hi")],
+                turn_callback=lambda text, tc: turns.append(text),
+            )
+
+        # Counter must be reset even when preempt is lost — we don't
+        # want a stale value affecting the next stream.
+        self.assertEqual(client._preempt_pending, 0)
+        self.assertFalse(client._had_preempts_this_turn)
+        self.assertTrue(client._result_emitted)
+
+
+    def test_stream_breaks_on_first_result_when_no_preempt(self):
+        """Without pending preempts, first result must end the stream —
+        don't introduce unnecessary latency in the common case."""
+        client = self.client
+        events = [
+            json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "Only"}]}}) + "\n",
+            json.dumps({
+                "type": "result", "result": "", "model": "sonnet",
+                "usage": {"input_tokens": 10, "output_tokens": 5}}) + "\n",
+            # Must NOT be consumed — loop should have broken.
+            json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "SHOULD-NOT-SEE"}]}}) + "\n",
+        ]
+        mock_stdout = MagicMock()
+        mock_stdout.__iter__ = MagicMock(return_value=iter(events))
+        mock_proc = MagicMock()
+        mock_proc.stdout = mock_stdout
+        mock_proc.returncode = 0
+
+        turns = []
+        with patch.object(client, '_pool_popen',
+                          return_value=(mock_proc, None)):
+            client.complete_stream(
+                [LLMMessage(role="user", content="Hi")],
+                turn_callback=lambda text, tc: turns.append(text),
+            )
+
+        all_text = " ".join(turns)
+        self.assertIn("Only", all_text)
+        self.assertNotIn("SHOULD-NOT-SEE", all_text)
+        self.assertTrue(client._result_emitted)
+        self.assertFalse(client._had_preempts_this_turn)
+
+
+class TestCancelForceKillsContainerSide(unittest.TestCase):
+    """force=True must pkill the container-side claude CLI, not just the
+    host docker-exec wrapper. Prevents zombie sessions that keep writing
+    to the shared .jsonl after the user clicked Stop."""
+
+    def _client_with_proc(self):
+        client = LLMClient(provider="claude-code", config={"api_key": "k"})
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.pid = 4242
+        client._claude_proc = proc
+        return client, proc
+
+    def test_force_stop_calls_kill_cc_hard_with_session(self):
+        client, proc = self._client_with_proc()
+        client._current_session_id = "sess-abc"
+        client._pool_container_name = None
+        with patch.object(client, "_kill_cc_hard") as mock_hard:
+            client.cancel_claude_code(force=True)
+        mock_hard.assert_called_once_with(proc, "sess-abc")
+        self.assertIsNone(client._claude_proc)
+        self.assertEqual(client._current_session_id, "")
+
+    def test_force_stop_without_session_still_kills(self):
+        client, proc = self._client_with_proc()
+        # No session id yet (init event never fired) — still must call
+        # _kill_cc_hard so proc.kill() runs; the container-side pkill
+        # inside _kill_cc_hard will early-return on empty session_id.
+        client._current_session_id = ""
+        client._pool_container_name = None
+        with patch.object(client, "_kill_cc_hard") as mock_hard:
+            client.cancel_claude_code(force=True)
+        mock_hard.assert_called_once_with(proc, "")
+
+    def test_force_stop_releases_pool_slot(self):
+        client, proc = self._client_with_proc()
+        client._current_session_id = "sess-xyz"
+        client._pool_container_name = "pool-container-1"
+        with patch.object(client, "_kill_cc_hard"), \
+             patch("core.claude_code_pool.ClaudeCodePool") as mock_pool:
+            client.cancel_claude_code(force=True)
+        mock_pool.instance.return_value.release.assert_called_once_with("pool-container-1")
+        self.assertIsNone(client._pool_container_name)
+
+
 class TestProviderInProviders(unittest.TestCase):
     """Test that claude-code and gemini-cli are in PROVIDERS."""
 

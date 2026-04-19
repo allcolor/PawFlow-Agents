@@ -92,7 +92,7 @@ function deleteMsg(btn) {
   if (!mid) { msg.remove(); return; }
   action$('delete_message', { msg_id: mid }).subscribe(data => {
     if (data.deleted) {
-      reloadConv();
+      resumeConv(conversationId, true);
     }
   });
 }
@@ -160,7 +160,7 @@ function deleteSelectedMessages() {
   action$('delete_message', { msg_ids: ids }).subscribe(data => {
     if (data.deleted) {
       clearMsgSelection();
-      reloadConv();
+      resumeConv(conversationId, true);
       return;
     }
     clearMsgSelection();

@@ -24,7 +24,7 @@ function connectSSE(cid, onReady, opts) {
   // ── Task block grouping ─────────────────────────────────────────
   const _taskBlocks = {};
 
-  // Expose a reset hook so reloadConv() (which clears #messages but
+  // Expose a reset hook so resumeConv (which clears #messages but
   // keeps the SSE socket open) can drop stale DOM references — without
   // it, subsequent live events keep targeting detached nodes and the
   // freshly-reloaded transcript ends up out of order or truncated.

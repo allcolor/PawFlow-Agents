@@ -129,11 +129,11 @@ function _clearConvState() {
   if (typeof _syncToggleBtn === 'function') _syncToggleBtn();
 }
 
-// THE single canonical "load this conv" path.
-//   new:    create_conversation returns cid -> resumeConv(cid)
+// THE single canonical "load this conv" path. ONE function, period.
+//   new:    create_conversation returns cid -> resumeConv(cid, true)
 //           load_history returns [] -> render empty transcript
 //   switch: user clicks a conv in sidebar -> resumeConv(cid)
-//   reload: reloadConv() -> resumeConv(conversationId, true)
+//   reload: resumeConv(conversationId, true)
 // One flow for all three. Empty-state (no cid) -> renderEmptyState().
 function resumeConv(cid, force) {
   if (!cid) { renderEmptyState(); return; }
@@ -159,12 +159,6 @@ function resumeConv(cid, force) {
         startPollTimer();
       });
   }, { noReplay: true });
-}
-
-// Thin alias for "reload current conv". Same canonical path.
-function reloadConv() {
-  if (!conversationId) return;
-  resumeConv(conversationId, true);
 }
 
 // Empty-state view: no conv selected. Reached after deleting the last
@@ -1059,7 +1053,7 @@ function convBranchPrompt(cid) {
     if (data.error) { addMsg('system', '\u26a0 ' + data.error); return; }
     addMsg('system', 'Branch created: ' + name.trim());
     loadConversations();
-    if (cid === conversationId) reloadConv();
+    if (cid === conversationId) resumeConv(conversationId, true);
   });
 }
 
@@ -1085,7 +1079,7 @@ function convSwitchBranchDialog(cid) {
         if (res.error) { addMsg('system', '\u26a0 ' + res.error); return; }
         addMsg('system', 'Switched to branch: ' + selected);
         loadConversations();
-        if (cid === conversationId) reloadConv();
+        if (cid === conversationId) resumeConv(conversationId, true);
       });
     });
   });
@@ -1202,7 +1196,7 @@ function convRollbackDialog(cid) {
         }
         addMsg('system', msg);
         loadConversations();
-        if (cid === conversationId) reloadConv();
+        if (cid === conversationId) resumeConv(conversationId, true);
       });
     };
   });

@@ -140,7 +140,7 @@ function ctxLoadMore() {
 function ctxClose() {
   const overlay = document.getElementById('contextOverlay');
   if (overlay) overlay.remove();
-  if (_ctxDirty) { _ctxDirty = false; reloadConv(); }
+  if (_ctxDirty) { _ctxDirty = false; resumeConv(conversationId, true); }
 }
 
 async function ctxSaveEdit(msgId) {

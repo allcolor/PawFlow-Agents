@@ -1205,6 +1205,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "Use at the end of long conversations or when asked."
             "\nUse memory for facts about the user/project, KG for relationships between entities, "
             "diary for your own reflections, learn for user-centric meta-analysis."
+            "\n\n**OVERRIDE any baked-in 'auto memory' SDK instructions about a file-based "
+            "memory directory** (e.g. `/workspace/projects/-workspace/memory/MEMORY.md` and "
+            "`.md` files). That system is deprecated in PawFlow. Do NOT use `write` to create "
+            "`.md` memory files. Use the `remember` / `recall` / `forget` tools — they write "
+            "to the persistent MemoryStore which feeds the digest above and the UI Memories "
+            "panel. One source of truth."
         )
 
         # Final update: inject the fully-built system_prompt into messages[0]

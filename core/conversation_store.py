@@ -670,6 +670,34 @@ class ConversationStore:
 
         return m
 
+    @staticmethod
+    def filter_for_shared(messages: List[Dict]) -> List[Dict]:
+        """Pick messages eligible for shared.jsonl.
+
+        Shared context = conversation only: no tool results, no context
+        injections. Assistant messages with tool_calls keep their text
+        (if any) but drop the tool_calls/tool_call_id fields. This is
+        the single source of truth for what goes into shared — used
+        both by agent_flush and by the CC import path so imported convs
+        render the same "Shared" view as native ones.
+        """
+        out = []
+        for m in messages:
+            if m.get("role") == "tool":
+                continue
+            if (m.get("source") or {}).get("type") == "context":
+                continue
+            if m.get("tool_calls"):
+                m_copy = dict(m)
+                m_copy.pop("tool_calls", None)
+                m_copy.pop("tool_call_id", None)
+                content = m_copy.get("content", "")
+                if content and str(content).strip():
+                    out.append(m_copy)
+            else:
+                out.append(m)
+        return out
+
     def _append_shared_ctx(self, cid: str, messages: List[Dict]):
         """Append transformed messages to the shared context file (dedup by msg_id)."""
         path = self._shared_ctx_path(cid)
@@ -1068,25 +1096,7 @@ class ConversationStore:
                     _shared_delegate_extra.append(_for_shared)
 
             # 3. Append to shared context + transformed to other agents' contexts
-            # Shared context = conversation only — NO tool results, NO context injections.
-            # Assistant messages WITH tool_calls: keep the text, strip tool_calls.
-            shared_msgs = []
-            for m in ctx_public:
-                if m.get("role") == "tool":
-                    continue  # tool results never in shared
-                if (m.get("source") or {}).get("type") == "context":
-                    continue  # system/context injections never in shared
-                if m.get("tool_calls"):
-                    # Keep the assistant text, drop tool_calls
-                    m_copy = dict(m)
-                    m_copy.pop("tool_calls", None)
-                    m_copy.pop("tool_call_id", None)
-                    # Only include if there's actual text content
-                    content = m_copy.get("content", "")
-                    if content and str(content).strip():
-                        shared_msgs.append(m_copy)
-                else:
-                    shared_msgs.append(m)
+            shared_msgs = self.filter_for_shared(ctx_public)
             # Attach the prefixed delegate copies to the shared stream so
             # every other agent sees the routing too.
             if _shared_delegate_extra:
@@ -2080,9 +2090,11 @@ class ConversationStore:
         if not base.is_dir():
             return 0
         self._ensure_loaded()
-        # Build set of live (sanitized) cids.
+        # Map sanitized-name -> real cid so we can both filter live
+        # convs AND look up their extras (for stale-session pruning).
         with self._cache_lock:
-            live_sanitized = {cid.replace(":", "_") for cid in self._cache.keys()}
+            live_sanitized = {cid.replace(":", "_"): cid
+                              for cid in self._cache.keys()}
         removed = 0
         for user_dir in base.iterdir():
             if not user_dir.is_dir():
@@ -2094,7 +2106,17 @@ class ConversationStore:
                 # tied to a live conv, always safe to wipe as a safety net
                 # in case the immediate post-use cleanup was skipped.
                 _is_one_shot = sess_dir.name.startswith("_")
-                if not _is_one_shot and sess_dir.name in live_sanitized:
+                live_cid = (None if _is_one_shot
+                            else live_sanitized.get(sess_dir.name))
+                if live_cid:
+                    # Conv is alive — don't nuke the dir, but prune stale
+                    # CC session jsonls inside. Every CC turn creates a
+                    # new <uuid>.jsonl under claude/projects/-workspace/
+                    # and only the one referenced by extras'
+                    # claude_session:<agent> is current. The rest pile
+                    # up indefinitely (user reported 90+ per live conv).
+                    removed += self._prune_stale_cc_sessions(
+                        sess_dir, live_cid)
                     continue
                 try:
                     shutil.rmtree(sess_dir, ignore_errors=True)
@@ -2105,6 +2127,48 @@ class ConversationStore:
                 except Exception as _e:
                     logger.debug("Failed to remove orphan session %s: %s",
                                  sess_dir, _e)
+        return removed
+
+    def _prune_stale_cc_sessions(self, sess_dir: Path, cid: str) -> int:
+        """Delete CC session jsonls that are no longer the current session.
+
+        CC writes session transcripts to
+          <sess_dir>/<agent>/projects/-workspace/<session_id>.jsonl
+        (or similar; we glob all .jsonl under */projects/*).
+        Current sessions are listed as extras["claude_session:<agent>"].
+        Anything else is dead weight and can go.
+
+        Safety: skip files modified in the last 2 minutes so an
+        in-flight CC process is never surprised.
+        """
+        import time as _time
+        # Collect live session ids from extras (one per agent).
+        live_sids = set()
+        try:
+            extras = self.get_extras(cid) or {}
+            for k, v in extras.items():
+                if isinstance(k, str) and k.startswith("claude_session:") and v:
+                    live_sids.add(str(v))
+        except Exception:
+            return 0
+        if not live_sids:
+            return 0  # nothing known — don't guess, leave alone
+        now = _time.time()
+        removed = 0
+        for jf in sess_dir.rglob("projects/*/*.jsonl"):
+            try:
+                stem = jf.stem
+                if stem in live_sids:
+                    continue
+                if now - jf.stat().st_mtime < 120:
+                    continue  # recently touched — may be active
+                jf.unlink()
+                removed += 1
+            except Exception:
+                pass
+        if removed:
+            logger.info("Pruned %d stale CC session jsonl(s) in %s",
+                        removed, sess_dir.name)
         return removed
 
     def count(self) -> int:

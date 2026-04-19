@@ -757,19 +757,18 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             # entries without seq + ts, so missing seq would make the
             # imported conv unusable by any agent.
             _seq_counter = [0]
-            # Shared context mirrors the transcript but without the `t`
-            # wrapper — without this the LLM-facing context ("Shared"
-            # view in the UI) is empty on imported convs and any agent
-            # resuming the conv sees nothing.
-            shared_entries = []
+            # Raw messages collected for later shared.jsonl population.
+            # We don't hand-roll the shared filter — ConversationStore
+            # owns that logic (skip tools, skip context injections,
+            # strip tool_calls, keep source/badges). See
+            # ConversationStore.filter_for_shared.
+            raw_msgs = []
             def _emit(obj):
                 if obj.get("role") != "system" and not obj.get("seq"):
                     _seq_counter[0] += 1
                     obj["seq"] = _seq_counter[0]
                 transcript_lines.append(json.dumps(obj, ensure_ascii=False))
-                # Feed shared.jsonl (drop the transcript-only `t` key)
-                ctx_entry = {k: v for k, v in obj.items() if k != "t"}
-                shared_entries.append(ctx_entry)
+                raw_msgs.append({k: v for k, v in obj.items() if k != "t"})
             # Claude CLI stuffs meta blocks into the user transcript:
             #   <local-command-caveat>...</local-command-caveat>
             #   <command-name>...</command-name><command-message>...</command-message><command-args>...</command-args>
@@ -897,11 +896,12 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             # their LLM context from here (or from their own agent dir, which
             # falls back to shared). Without this file the "Shared" view
             # shows "divergé / aucun contexte" and the agent has no memory.
-            if shared_entries:
-                (conv_dir / "shared.jsonl").write_text(
-                    "\n".join(json.dumps(e, ensure_ascii=False) for e in shared_entries) + "\n",
-                    encoding="utf-8",
-                )
+            # Use ConversationStore's filter so imported convs match native
+            # ones exactly (no tool rows, tool_calls stripped, source kept).
+            store._cid_user[cid] = user_id  # required for _conv_dir lookups
+            shared_msgs = store.filter_for_shared(raw_msgs)
+            if shared_msgs:
+                store._append_shared_ctx(cid, shared_msgs)
             # Create minimal extras
             agent_name = list(agent_mapping.keys())[0] if agent_mapping else "claude"
             agent_cfg = agent_mapping.get(agent_name, {"definition": "claude", "params": {"name": agent_name}, "llm_service": ""})

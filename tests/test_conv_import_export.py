@@ -363,10 +363,12 @@ def test_cc_import_drops_empty_assistant_stub(store):
 
 
 def test_cc_import_creates_shared_context(store):
-    """shared.jsonl must mirror transcript so agents resuming the conv
-    actually see the prior messages. Regression: the UI "Shared" view
-    reported "divergé / aucun contexte" on every imported conv because
-    only transcript.jsonl was written."""
+    """shared.jsonl must match what ConversationStore.filter_for_shared
+    produces for a native conv: no tool rows, no context injections,
+    assistant tool_calls stripped (text-only), source/badges preserved.
+    Regression: the UI "Shared" view reported "divergé / aucun contexte"
+    on every imported conv because only transcript.jsonl was written.
+    """
     lines = [
         json.dumps({"type": "user", "message": {"role": "user", "content": "Hello"}}),
         json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
@@ -382,17 +384,20 @@ def test_cc_import_creates_shared_context(store):
     shared_path = conv_dir / "shared.jsonl"
     assert shared_path.exists(), "shared.jsonl not created on CC import"
     shared = [json.loads(l) for l in shared_path.read_text().splitlines() if l.strip()]
-    # Same count as transcript msgs (excluding meta line)
-    transcript = [json.loads(l) for l in (conv_dir / "transcript.jsonl").read_text().splitlines() if l.strip()]
-    trans_msgs = [m for m in transcript if m.get("t") == "msg"]
-    assert len(shared) == len(trans_msgs)
-    # Roles line up
-    assert [m["role"] for m in shared] == [m["role"] for m in trans_msgs]
-    # Shared entries don't carry the transcript-only `t` key
-    assert all("t" not in m for m in shared)
-    # tool_calls preserved
-    assistant_entry = next(m for m in shared if m["role"] == "assistant")
-    assert assistant_entry["tool_calls"][0]["name"] == "grep"
+    # Shared is agent-neutral: both entries become role=user after
+    # _transform_for_shared. The second entry is the ex-assistant
+    # (prefixed with [Agent claude]) — tool_result is dropped, and
+    # the tool_use block got stripped from its tool_calls field.
+    assert len(shared) == 2
+    assert all(m["role"] == "user" for m in shared)
+    # tool_calls stripped
+    assert all("tool_calls" not in m for m in shared)
+    # Agent turn keeps its source badge and text (prefixed)
+    agent_turn = shared[1]
+    assert "Hi there." in agent_turn["content"]
+    assert agent_turn["content"].startswith("[Agent claude")
+    assert agent_turn["source"]["type"] == "agent"
+    assert agent_turn["source"]["name"] == "claude"
     # Every entry has msg_id + ts + seq (required by _deserialize_messages)
     for m in shared:
         assert m.get("msg_id") and m.get("ts") and m.get("seq")

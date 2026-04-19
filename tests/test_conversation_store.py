@@ -323,3 +323,109 @@ class TestAgentFlush:
         store.agent_flush(cid, "bot", public_messages=pub,
                           private_messages=[], user_id="newuser")
         assert store.exists(cid)
+
+
+# ── cleanup_orphan_claude_sessions / _prune_stale_cc_sessions ────────
+
+class TestCleanupOrphanClaudeSessions:
+    """CC writes a new <uuid>.jsonl per turn under
+    sessions/claude/<user>/<sanitized_cid>/claude/projects/-workspace/;
+    only the one recorded in extras[claude_session:<agent>] is current.
+    cleanup_orphan_claude_sessions must:
+      (a) wipe whole dirs whose conv is dead / one-shot (_compact etc.)
+      (b) for live convs, prune stale jsonls whose stem isn't in extras
+          and whose mtime is >120s old
+      (c) leave the current-session jsonl and recently-touched jsonls.
+    """
+
+    def _setup(self, tmp_path, monkeypatch):
+        from core import paths as _paths
+        base = tmp_path / "sessions" / "claude"
+        base.mkdir(parents=True)
+        monkeypatch.setattr(_paths, "CLAUDE_SESSIONS_DIR", base)
+        return base
+
+    def _mk_jsonl(self, sess_dir, session_id, agent="claude",
+                  mtime=None):
+        proj = sess_dir / agent / "projects" / "-workspace"
+        proj.mkdir(parents=True, exist_ok=True)
+        jf = proj / f"{session_id}.jsonl"
+        jf.write_text("{}\n")
+        if mtime is not None:
+            import os
+            os.utime(jf, (mtime, mtime))
+        return jf
+
+    def test_removes_dir_for_dead_conv(self, store, tmp_path,
+                                        monkeypatch):
+        base = self._setup(tmp_path, monkeypatch)
+        orphan = base / "alice" / "deadcid0000000000"
+        orphan.mkdir(parents=True)
+        (orphan / "creds.json").write_text("{}")
+        removed = store.cleanup_orphan_claude_sessions()
+        assert removed >= 1
+        assert not orphan.exists()
+
+    def test_removes_one_shot_dirs(self, store, tmp_path, monkeypatch):
+        base = self._setup(tmp_path, monkeypatch)
+        one_shot = base / "alice" / "_compact"
+        one_shot.mkdir(parents=True)
+        (one_shot / "x").write_text("")
+        removed = store.cleanup_orphan_claude_sessions()
+        assert removed >= 1
+        assert not one_shot.exists()
+
+    def test_preserves_live_conv_dir(self, store, tmp_path, monkeypatch):
+        base = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        sess_dir = base / "alice" / sanitized
+        sess_dir.mkdir(parents=True)
+        store.cleanup_orphan_claude_sessions()
+        assert sess_dir.exists()
+
+    def test_prunes_stale_jsonl_in_live_conv(self, store, tmp_path,
+                                              monkeypatch):
+        base = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        sess_dir = base / "alice" / sanitized
+        current_sid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        store.set_extra(cid, "claude_session:claude", current_sid)
+        old_ts = time.time() - 3600  # 1h old
+        current = self._mk_jsonl(sess_dir, current_sid, mtime=old_ts)
+        stale = self._mk_jsonl(sess_dir, "bbbbbbbb-bbbb-bbbb-bbbb-"
+                                         "bbbbbbbbbbbb", mtime=old_ts)
+        store.cleanup_orphan_claude_sessions()
+        assert current.exists(), "current session jsonl must survive"
+        assert not stale.exists(), "stale session jsonl must be pruned"
+
+    def test_spares_recently_touched_jsonl(self, store, tmp_path,
+                                            monkeypatch):
+        base = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        sess_dir = base / "alice" / sanitized
+        store.set_extra(cid, "claude_session:claude",
+                        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        fresh = self._mk_jsonl(sess_dir, "cccccccc-cccc-cccc-cccc-"
+                                         "cccccccccccc")  # mtime=now
+        store.cleanup_orphan_claude_sessions()
+        assert fresh.exists(), "recent jsonl must be spared (<120s)"
+
+    def test_no_extras_keeps_everything(self, store, tmp_path,
+                                         monkeypatch):
+        base = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        sess_dir = base / "alice" / sanitized
+        # No claude_session:* extras recorded.
+        old_ts = time.time() - 3600
+        jf = self._mk_jsonl(sess_dir, "dddddddd-dddd-dddd-dddd-"
+                                      "dddddddddddd", mtime=old_ts)
+        store.cleanup_orphan_claude_sessions()
+        assert jf.exists(), "no known current sid → don't guess"

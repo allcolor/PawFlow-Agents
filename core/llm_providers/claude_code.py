@@ -213,10 +213,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         the same files.
 
         The container-side PID is captured at spawn from the shell
-        wrapper's `__PF_CLAUDE_PID=$$` stderr preamble (see
-        `ClaudeCodePool._exec_args`). `bash` prints `$$`, then execs
-        `setpriv` which execs `claude`, all sharing the same PID — so
-        the captured value is the final claude PID.
+        wrapper's `__PF_CLAUDE_PID=$!` stderr preamble (see
+        `ClaudeCodePool._exec_args`). Spawn uses `setsid ... &` so the
+        captured PID is the leader of a fresh process group; kill by
+        `-<PID>` (negative) SIGKILLs the WHOLE group, reaping claude
+        AND every Node worker it forked. Without the minus sign,
+        orphaned workers survive and keep writing to the session jsonl.
         """
         try:
             proc.kill()
@@ -231,20 +233,22 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             return
         import subprocess as _sp
         from pawflow_relay.utils import docker_cmd
-        # SIGKILL: CC's auto-compact can catch SIGTERM and finish
-        # summarizing; we want it dead NOW.
+        # SIGKILL the entire process group (negative PID). claude CLI
+        # forks Node workers; killing only the root PID leaves them
+        # orphaned (reparented to PID 1) and they keep running.
         _r = _sp.run(
-            docker_cmd() + ["exec", _container, "kill", "-9", str(_pid)],
+            docker_cmd() + ["exec", _container,
+                             "kill", "-9", f"-{_pid}"],
             capture_output=True, timeout=5,
         )
         if _r.returncode == 0:
             logger.info(
-                "[claude-code] container-side kill OK: pid=%d "
+                "[claude-code] container-side kill OK: pgid=%d "
                 "container=%s", _pid, _container)
         else:
-            # rc=1 typically means process already dead (kill ESRCH).
+            # rc=1 typically means group already gone (kill ESRCH).
             logger.warning(
-                "[claude-code] kill -9 pid=%d returned rc=%d in "
+                "[claude-code] kill -9 -pgid=%d returned rc=%d in "
                 "container=%s (stderr=%s) -- likely already dead",
                 _pid, _r.returncode, _container,
                 _r.stderr.decode('utf-8', 'replace')[:200].strip())

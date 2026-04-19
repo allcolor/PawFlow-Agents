@@ -228,21 +228,29 @@ class ClaudeCodePool:
         #   mkdir -p /workspace
         #   mount --bind <session_dir> /workspace      (private to this ns)
         #   cd /workspace
-        #   exec setpriv --reuid=1000 --regid=1000 \
-        #        --clear-groups -- claude <args>
+        #   setsid setpriv ... -- claude <args> &   (new session+pgroup)
+        #   printf "__PF_CLAUDE_PID=$!" 1>&2          (child PID = PGID)
+        #   wait $!                                   (forward exit code)
+        #
+        # Why setsid + wait instead of exec?
+        # `claude` forks Node workers that become orphans if we only kill
+        # the root PID -- the session jsonl keeps growing after the kill.
+        # Wrapping the spawn in `setsid ... &` makes the child a session
+        # and process-group leader; its PID equals its PGID. The caller
+        # then uses `kill -9 -<PID>` (negative = whole pgroup) to reap
+        # EVERY Node worker atomically. `wait` ensures bash propagates
+        # exit status / signals back so PawFlow sees EOF on stdout.
         import shlex
         _claude_quoted = " ".join(shlex.quote(str(a)) for a in claude_args)
-        # Print our shell PID to stderr BEFORE `exec` so the caller can
-        # save it and kill by PID directly (no argv/pkill matching). `exec`
-        # replaces the bash process with setpriv, which in turn execs claude
-        # — all three share the same container-side PID ($$).
         _shell_script = (
             f"mkdir -p /workspace && "
             f"mount --bind {shlex.quote(session_dir)} /workspace && "
             f"cd /workspace && "
-            f'printf "__PF_CLAUDE_PID=%s\\n" "$$" 1>&2 && '
-            f"exec setpriv --reuid=1000 --regid=1000 --clear-groups "
-            f"-- claude {_claude_quoted}"
+            f"setsid setpriv --reuid=1000 --regid=1000 --clear-groups "
+            f"-- claude {_claude_quoted} <&0 &\n"
+            f'_cc_pid=$!\n'
+            f'printf "__PF_CLAUDE_PID=%s\\n" "$_cc_pid" 1>&2\n'
+            f'wait "$_cc_pid"'
         )
         exec_args.extend([
             container_name,

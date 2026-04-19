@@ -493,3 +493,51 @@ class TestCleanupOrphanClaudeSessions:
         cid = "orphan_cid_0000000000"
         # Should not raise
         store.invalidate_claude_sessions(cid)
+
+    def test_invalidate_per_agent_clears_extra_and_prunes_its_jsonl(
+            self, store, tmp_path, monkeypatch):
+        """invalidate_claude_session_for_agent clears ONE agent's extra
+        and prunes ITS stale jsonl, but leaves other agents' live
+        sessions intact (extras authoritative via wipe_all=False).
+        Used after PawFlow compact to avoid orphan jsonls piling up.
+        """
+        base = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        sess_dir = base / "alice" / sanitized
+        claude_sid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        other_sid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        # Two live agents, each with its own jsonl.
+        store.set_extra(cid, "claude_session:claude", claude_sid)
+        store.set_extra(cid, "claude_session:other", other_sid)
+        claude_jf = self._mk_jsonl(sess_dir, claude_sid)
+        other_jf = self._mk_jsonl(sess_dir, other_sid)
+        # Invalidate ONLY 'claude'.
+        store.invalidate_claude_session_for_agent(cid, "claude")
+        # 'claude' extra cleared, 'other' untouched.
+        assert store.get_extra(cid, "claude_session:claude") == ""
+        assert store.get_extra(cid, "claude_session:other") == other_sid
+        # 'claude' jsonl gone (no longer in live_sids), 'other' still
+        # present because extras still names it as live.
+        assert not claude_jf.exists()
+        assert other_jf.exists()
+
+    def test_invalidate_per_agent_prunes_companion_dir(
+            self, store, tmp_path, monkeypatch):
+        """After compact, both <sid>.jsonl AND the <sid>/ workdir must
+        be reclaimed so the session dir stops growing."""
+        base = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        sanitized = cid.replace(":", "_")
+        sess_dir = base / "alice" / sanitized
+        sid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        store.set_extra(cid, "claude_session:claude", sid)
+        jf = self._mk_jsonl(sess_dir, sid)
+        companion = jf.with_suffix("")
+        companion.mkdir()
+        (companion / "scratch.txt").write_text("x")
+        store.invalidate_claude_session_for_agent(cid, "claude")
+        assert not jf.exists()
+        assert not companion.exists()

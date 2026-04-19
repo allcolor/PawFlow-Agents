@@ -1779,7 +1779,60 @@ class ConversationStore:
             logger.debug("invalidate_claude_sessions disk prune failed for %s: %s",
                          cid[:8], _e)
 
-    # ── Bindings (repository associations) ────────────────────────────
+    def invalidate_claude_session_for_agent(self, cid: str,
+                                             agent_name: str) -> None:
+        """Clear the claude-code session for ONE agent, purging its
+        jsonl + companion dir on disk.
+
+        Per-agent variant of `invalidate_claude_sessions`. Used after
+        PawFlow compact: we killed that agent's CC session and want its
+        stale jsonl gone, without touching other agents' live sessions
+        in the same conversation.
+
+        Implementation deletes by exact sid path rather than going
+        through `_prune_stale_cc_sessions`, because the latter returns
+        early when `live_sids` is empty (its contract is "don't guess")
+        and we'd just have cleared the only extra for a single-agent
+        conversation.
+        """
+        if not agent_name:
+            return
+        key = f"claude_session:{agent_name}"
+        extras = self.get_extras(cid) or {}
+        sid = str(extras.get(key) or "")
+        if sid:
+            self.set_extra(cid, key, "")
+            logger.info("Invalidated claude session '%s' for conv %s",
+                        key, cid[:8])
+        if not sid:
+            return
+        # Delete the specific jsonl + companion dir for this sid only.
+        try:
+            owner = self._cid_user.get(cid, "")
+            if not owner:
+                return
+            from core import paths as _paths
+            import shutil as _shutil
+            sanitized_cid = cid.replace(":", "_")
+            sess_dir = _paths.CLAUDE_SESSIONS_DIR / owner / sanitized_cid
+            if not sess_dir.is_dir():
+                return
+            for jf in sess_dir.rglob(f"projects/*/{sid}.jsonl"):
+                try:
+                    jf.unlink()
+                    logger.info("Pruned CC session jsonl %s for %s/%s",
+                                jf.name, cid[:8], agent_name)
+                    companion = jf.with_suffix("")
+                    if companion.is_dir():
+                        _shutil.rmtree(companion, ignore_errors=True)
+                except OSError:
+                    pass
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_session_for_agent disk prune failed "
+                "for %s/%s: %s", cid[:8], agent_name, _e)
+
+    # ── Bindings (repository associations) ──────────────────
 
     def _bindings_path(self, cid: str) -> Path:
         return self._conv_dir(cid) / "bindings.json"

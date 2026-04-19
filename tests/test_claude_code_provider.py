@@ -718,12 +718,17 @@ class TestKillCcHardByPid(unittest.TestCase):
     shell wrapper emits `__PF_CLAUDE_PID=<n>` on stderr at spawn; the
     provider's drain thread captures it into `_cc_container_pid` and
     kill by PID is deterministic.
+
+    Pool spawns claude via `setsid ... &` so the captured PID is a
+    process-group leader. _kill_cc_hard must pass `-<PID>` (negative)
+    to kill the WHOLE pgroup (claude + Node workers), otherwise
+    orphaned workers keep writing to the session jsonl.
     """
 
     def _client(self):
         return LLMClient(provider="claude-code", config={"api_key": "k"})
 
-    def test_kills_by_captured_pid(self):
+    def test_kills_entire_process_group(self):
         client = self._client()
         client._cc_container_pid = 4242
         client._pool_container_name = "pool-1"
@@ -736,7 +741,10 @@ class TestKillCcHardByPid(unittest.TestCase):
         cmd = mock_run.call_args[0][0]
         self.assertIn("kill", cmd)
         self.assertIn("-9", cmd)
-        self.assertIn("4242", cmd)
+        # Negative PID == kill the process group, not just the leader.
+        self.assertIn("-4242", cmd)
+        # Positive PID alone would be wrong (leaves Node workers alive).
+        self.assertNotIn("4242", [c for c in cmd if c == "4242"])
         self.assertIn("pool-1", cmd)
 
     def test_logs_loud_error_when_no_pid(self):

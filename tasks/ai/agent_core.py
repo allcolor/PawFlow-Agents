@@ -873,12 +873,17 @@ class AgentCoreMixin:
                             logger.info("[agent:%s] PawFlow compact: %d → %d messages",
                                         conversation_id[:8], len(_full_messages), len(messages))
 
-                            # 3. Save compacted context + clear CC session (context changed)
+                            # 3. Save compacted context + invalidate CC
+                            # session: clear the extra AND purge the
+                            # stale jsonl + companion dir on disk.
+                            # Otherwise the killed session's jsonl
+                            # keeps piling up (orphan workers also
+                            # wrote to it) and fills the session dir.
                             _store.save_agent_context(
                                 conversation_id, _agent_name,
                                 self._serialize_messages(messages))
-                            _store.set_extra(
-                                conversation_id, f"claude_session:{_agent_name}", "")
+                            _store.invalidate_claude_session_for_agent(
+                                conversation_id, _agent_name)
                             ctx["_claude_has_session"] = False
 
                             # 4. Prepare for new CC session — PawFlow ctx

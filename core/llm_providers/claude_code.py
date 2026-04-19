@@ -1425,9 +1425,29 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     msg_id = msg.get("id", "")
                     # Capture freshest usage — each assistant event carries
                     # message.usage with current prompt size (input + cache).
+                    # Emit a live `message_meta` so the webchat gauge updates
+                    # mid-turn instead of waiting for the final `result`.
+                    # Skip when usage didn't actually change (CC sometimes
+                    # re-emits the same assistant event for incremental
+                    # blocks of the same msg_id).
                     _u = msg.get("usage")
-                    if isinstance(_u, dict):
+                    if isinstance(_u, dict) and _u != _latest_usage:
                         _latest_usage = _u
+                        _ctx_used_live = (_u.get("input_tokens", 0)
+                                          + _u.get("cache_creation_input_tokens", 0)
+                                          + _u.get("cache_read_input_tokens", 0))
+                        _ctx_max_live = int(getattr(self, '_max_context_size',
+                                                    0) or 200000)
+                        _ctx_pct_live = (_ctx_used_live / _ctx_max_live
+                                         if _ctx_max_live > 0 else 0.0)
+                        _pub("message_meta", {
+                            "msg_id": msg_id,
+                            "agent_name": agent_name,
+                            "context_used": _ctx_used_live,
+                            "context_max": _ctx_max_live,
+                            "context_pct": _ctx_pct_live,
+                            "live": True,  # flag: mid-turn (real, not estimate)
+                        })
 
                     # Claude Code sends INCREMENTAL updates for the same message:
                     # event 1: [thinking], event 2: [text], event 3: [tool_use]

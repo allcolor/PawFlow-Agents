@@ -763,6 +763,23 @@ class AgentCoreMixin:
                                 logger.debug("[agent:%s] token recovery after compact: %s",
                                              conversation_id[:8], _rt_err)
                         try:
+                            # Flush the async ConversationWriter queue BEFORE
+                            # reading shared.jsonl. turn_callback enqueues each
+                            # CC turn (tool_use/tool_result/text) via
+                            # ConversationWriter.enqueue() which is
+                            # non-blocking — messages live in a background
+                            # queue until the writer thread drains them to
+                            # disk. Without this flush, compact reads a stale
+                            # view and drops every turn that CC emitted in
+                            # the seconds leading up to compact_boundary.
+                            try:
+                                from core.conversation_writer import ConversationWriter
+                                ConversationWriter.for_conversation(
+                                    conversation_id).flush(timeout=15.0)
+                            except Exception as _fl_err:
+                                logger.warning(
+                                    "[agent:%s] writer flush before compact "
+                                    "failed: %s", conversation_id[:8], _fl_err)
                             # 1. Load SHARED context from disk (not the agent-specific one).
                             # Compaction always starts from the shared timeline: the
                             # per-agent context is a personalized view that already

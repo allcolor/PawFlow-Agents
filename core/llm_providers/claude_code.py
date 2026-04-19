@@ -1030,15 +1030,37 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             if count >= _PHANTOM_THRESHOLD:
                 logger.warning(
                     "[claude-code] %d phantom tool calls in %ds window "
-                    "(latest: %s id=%s) — triggering PawFlow compact",
+                    "(latest: %s id=%s) -- triggering PawFlow compact",
                     count, _PHANTOM_WINDOW, tool_name, block_id)
+                # Drain-before-raise (same as compact_boundary): close
+                # stdin, arm a 15s force-kill timer, and let the parse
+                # loop consume buffered events so any real turn that
+                # preceded the phantom storm still gets persisted via
+                # turn_callback. The post-loop check raises
+                # CCCompactDetected once the stream exits naturally
+                # (result break / EOF) or the timer force-kills.
+                if _compact_pending[0]:
+                    return
+                self._compacting = True
+                _compact_pending[0] = True
                 try:
-                    proc.kill()
-                except OSError:
+                    if proc.stdin and not proc.stdin.closed:
+                        proc.stdin.close()
+                except Exception:
                     pass
-                from core.llm_client import CCCompactDetected
-                raise CCCompactDetected(
-                    f"Too many phantom tool calls ({count} in {_PHANTOM_WINDOW}s)")
+                def _force_kill_after_phantom_drain():
+                    try:
+                        if proc.poll() is None:
+                            logger.warning(
+                                "[claude-code] phantom-compact drain timeout "
+                                "-- force-killing CC")
+                            proc.kill()
+                    except Exception:
+                        pass
+                _t = threading.Timer(15.0, _force_kill_after_phantom_drain)
+                _t.daemon = True
+                _t.start()
+                _compact_drain_timer[0] = _t
 
         self._stall_killed = False  # set by watchdog — retry must be unconditional
 

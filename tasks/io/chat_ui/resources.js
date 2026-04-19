@@ -88,11 +88,22 @@ function _scopeBadge(s) {
   return `<span style="font-size:9px;padding:0 3px;border-radius:3px;background:${colors[s]||'#444'};color:#ccc;margin-right:3px;" title="${s}">${labels[s]||s[0]}</span>`;
 }
 
-// Collapsed state per section (persisted in localStorage)
-const _collapsedSections = JSON.parse(localStorage.getItem('pawflow_collapsed_sections') || '{}');
+// Collapsed state per section. NOT persisted: the panel resets to a
+// predictable initial state (only Agents open) on every page load and
+// every conversation switch. Toggling within a conv is kept until the
+// next switch but never leaks across conversations or sessions.
+const _ALL_SECTIONS = [
+  'agent','_agent_repo','skill','mcp','_mcp_repo','prompt','voice',
+  '_tool','task_def','_running','_svc','_relay','_flow','_param','_secret'
+];
+const _collapsedSections = {};
+function _resetCollapsedSectionsToInitial() {
+  for (const k of Object.keys(_collapsedSections)) delete _collapsedSections[k];
+  for (const k of _ALL_SECTIONS) _collapsedSections[k] = (k !== 'agent');
+}
+_resetCollapsedSectionsToInitial();
 function _toggleSection(id) {
   _collapsedSections[id] = !_collapsedSections[id];
-  localStorage.setItem('pawflow_collapsed_sections', JSON.stringify(_collapsedSections));
   const el = document.getElementById('res-section-' + id);
   if (el) el.style.display = _collapsedSections[id] ? 'none' : 'block';
   const arrow = document.getElementById('res-arrow-' + id);
@@ -100,29 +111,52 @@ function _toggleSection(id) {
   // Opening a repository or runtime section → refresh from disk
   if (!_collapsedSections[id] && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_flow')) loadResources();
 }
-// Default collapsed: variables, secrets
-if (!('_param' in _collapsedSections)) _collapsedSections['_param'] = true;
-if (!('_secret' in _collapsedSections)) _collapsedSections['_secret'] = true;
 
-function _sectionHeader(title, rtype) {
+// _sectionHeader(title, rtype, opts?)
+//   opts.createTitle     tooltip for '+' (default 'Create new'; for
+//                        rtype='agent' defaults to 'Add agent to conversation')
+//   opts.createOnclick   override the '+' click handler
+//   opts.refreshOnclick  if set, render a refresh button LEFT of '+'
+//                        (matches MCP Repository layout)
+//   opts.refreshTitle    tooltip for the refresh button
+//   opts.hideCreate      hide the '+' button entirely
+function _sectionHeader(title, rtype, opts) {
+  opts = opts || {};
   const isParamSecret = rtype === '_param' || rtype === '_secret';
-  const onclick = isParamSecret
-    ? `_showParamEditor('','',${rtype === '_secret'},true)`
-    : rtype === 'agent' ? 'showAddAgentToConvDialog()' : `showResourceCreator('${rtype}')`;
+  const createOnclick = opts.createOnclick !== undefined ? opts.createOnclick
+    : isParamSecret ? `_showParamEditor('','',${rtype === '_secret'},true)`
+    : rtype === 'agent' ? 'showAddAgentToConvDialog()'
+    : `showResourceCreator('${rtype}')`;
+  const createTitle = opts.createTitle
+    || (rtype === 'agent' ? 'Add agent to conversation' : 'Create new');
+  const refreshBtn = opts.refreshOnclick
+    ? `<span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="${opts.refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>`
+    : '';
+  const createBtn = opts.hideCreate ? ''
+    : `<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${createOnclick}" title="${createTitle}">+</span>`;
   const collapsed = _collapsedSections[rtype] || false;
   const arrow = collapsed ? '\u25B6' : '\u25BC';
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
     <span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
-    <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${onclick}" title="Create new">+</span>
+    <span style="display:flex;gap:4px;align-items:center;">${refreshBtn}${createBtn}</span>
   </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};max-height:260px;overflow-y:auto;">`;
 }
-function _repoSectionHeader(title, rtype) {
-  if (!(rtype in _collapsedSections)) _collapsedSections[rtype] = true;
+// _repoSectionHeader(title, rtype, opts?)
+//   opts.createOnclick  if set, render a '+' button next to the refresh
+//   opts.createTitle    tooltip for the '+' button (default 'Create new')
+function _repoSectionHeader(title, rtype, opts) {
+  opts = opts || {};
   const collapsed = _collapsedSections[rtype] || false;
   const arrow = collapsed ? '\u25B6' : '\u25BC';
+  const createBtn = opts.createOnclick
+    ? `<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${opts.createOnclick}" title="${opts.createTitle || 'Create new'}">+</span>`
+    : '';
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
     <span style="cursor:pointer;color:#888;font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
-    <span style="cursor:pointer;font-size:11px;color:#888;padding:0 4px;" onclick="loadResources()" title="Refresh from disk">\u21BB</span>
+    <span style="display:flex;gap:4px;align-items:center;">
+      <span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="loadResources()" title="Refresh from disk">\u21BB</span>
+      ${createBtn}
+    </span>
   </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
 }
 function _sectionFooter() { return '</div>'; }
@@ -323,7 +357,10 @@ async function _renderResourcesData(data) {
     html += _sectionFooter();
 
     // Agent Repository (repo agents not yet in conv, collapsed by default)
-    html += _repoSectionHeader("Agent Repository", "_agent_repo");
+    html += _repoSectionHeader("Agent Repository", "_agent_repo", {
+      createOnclick: "showResourceCreator('agent')",
+      createTitle: "Create new agent",
+    });
     if (!_collapsedSections["_agent_repo"]) {
       var repoAgents = (data.repo_agents || []).filter(function(a) { return !a.in_conversation; });
       if (repoAgents.length) {
@@ -501,9 +538,12 @@ async function _renderResourcesData(data) {
       });
       html += _sectionFooter();
     }
-    // Services (always show for [+] install button + reload from disk)
-    html += _sectionHeader('Services', '_svc').replace('</div><div',
-      '<span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="event.stopPropagation();fireAction(\'reload_disk\',{});setTimeout(loadResources,300)" title="Reload from disk">\u21BB</span></div><div');
+    // Services (install with '+', reload from disk with ↻ on the left)
+    html += _sectionHeader('Services', '_svc', {
+      refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
+      refreshTitle: 'Reload from disk',
+      createTitle: 'Install service',
+    });
     if (data.services && data.services.length) {
       data.services.forEach(s => {
         const statusDot = !s.enabled ? '\u{1F534}'
@@ -588,9 +628,12 @@ async function _renderResourcesData(data) {
       }
       html += _sectionFooter();
     }
-    // Deployed flows (always show section for [+] deploy button + reload from disk)
-    html += _sectionHeader('Flows', '_flow').replace('</div><div',
-      '<span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="event.stopPropagation();fireAction(\'reload_disk\',{});setTimeout(loadResources,300)" title="Reload from disk">\u21BB</span></div><div');
+    // Deployed flows (deploy with '+', reload from disk with ↻ on the left)
+    html += _sectionHeader('Flows', '_flow', {
+      refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
+      refreshTitle: 'Reload from disk',
+      createTitle: 'Deploy flow',
+    });
     if (data.flows && data.flows.length) {
       data.flows.forEach(f => {
         const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';

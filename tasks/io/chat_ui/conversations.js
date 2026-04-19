@@ -88,6 +88,12 @@ function renameConvInline(e, cid) {
 // Clears the webchat DOM and every conv-scoped global. Caller sets
 // `conversationId` afterwards (to a cid or null).
 function _clearConvState() {
+  // Resource panel: reset all sections to initial state (only Agents
+  // open). See resources.js — user-facing rule: switching conv must
+  // always reopen the panel in the same predictable layout.
+  if (typeof _resetCollapsedSectionsToInitial === 'function') {
+    _resetCollapsedSectionsToInitial();
+  }
   if (eventSource) { eventSource.close(); eventSource = null; }
   if (typeof sseReconnectTimer !== 'undefined' && sseReconnectTimer) {
     clearTimeout(sseReconnectTimer); sseReconnectTimer = null;

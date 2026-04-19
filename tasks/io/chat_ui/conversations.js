@@ -70,30 +70,29 @@ function renameConvInline(e, cid) {
   input.onkeydown = (ev) => { if (ev.key === 'Enter') finish(); if (ev.key === 'Escape') loadConversations(); };
 }
 
-// The ONE canonical "load this conv into the chat view" function.
-// Used by: clicking a conv in the sidebar, reloadConv (context editor
-// close, etc.), _switchAfterDelete, and the import flow.
+// ─────────────────────────────────────────────────────────────────
+// SINGLE canonical load path.
 //
-// Uses the atomic "fetch first, THEN clear + open SSE + render" pattern.
-// Clearing state or opening the new SSE BEFORE the history payload is
-// in hand creates a race where SSE events arriving during the network
-// round trip land in _seenMsgIds and get deduped out of the history
-// render — the visible transcript ends up truncated. This pattern is
-// the one proven to work by context-editor-close; all reload paths
-// now go through it, no duplicated spaghetti.
-function resumeConv(cid, force) {
-  if (!cid) return;
-  if (cid === conversationId && !force) return;
-  document.getElementById('status').textContent = t('loading');
+// User's mental model (and the only one implemented):
+//     new | switch | reload  ->  1) clear webchat + state
+//                                 2) load_history(cid, 50)  // [] if fresh
+//                                 3) render
+//
+// resumeConv(cid) is THE entry point. Every caller goes through it:
+// sidebar click, Refresh menu, post-delete switch, post-import,
+// context-editor close, newChat post-create, attachments changes, etc.
+// renderEmptyState() handles the "no conv selected" view (after deleting
+// the last conv). No duplicate clear/load logic anywhere.
+// ─────────────────────────────────────────────────────────────────
 
-  // Phase 1 — clear + swap SSE to the new conv FIRST. All server actions
-  // are async: /api/ui returns {status:"accepted"} and the real result
-  // arrives as a `command_result` SSE event on the target conv channel.
-  // If we fire load_history before the SSE is subscribed to `cid`, the
-  // result is published with nobody listening and the subscribe below
-  // waits forever — "Chargement..." freezes and clicking any conv does
-  // nothing (observed regression after the refreshCurrentConv refactor).
+// Clears the webchat DOM and every conv-scoped global. Caller sets
+// `conversationId` afterwards (to a cid or null).
+function _clearConvState() {
   if (eventSource) { eventSource.close(); eventSource = null; }
+  if (typeof sseReconnectTimer !== 'undefined' && sseReconnectTimer) {
+    clearTimeout(sseReconnectTimer); sseReconnectTimer = null;
+  }
+  stopPollTimer();
   _expectingClear = true;
   document.getElementById('messages').innerHTML = '';
   _expectingClear = false;
@@ -103,6 +102,10 @@ function resumeConv(cid, force) {
   _histTaskBlocks = {};
   clearAllStreams();
   sending = false;
+  var _sendBtn = document.getElementById('sendBtn');
+  if (_sendBtn) _sendBtn.disabled = false;
+  var _stopBtn = document.getElementById('stopBtn');
+  if (_stopBtn) _stopBtn.style.display = 'none';
   if (typeof window._sseClearLiveBlocks === 'function') window._sseClearLiveBlocks();
   if (typeof activeInteractions !== 'undefined') {
     for (const k of Object.keys(activeInteractions)) delete activeInteractions[k];
@@ -115,32 +118,40 @@ function resumeConv(cid, force) {
       clearTimeout(_imageFlushTimer); _imageFlushTimer = null;
     }
   }
+  pendingAgent = null;
   selectedAgent = '';
+  if (typeof updateActiveAgentBadge === 'function') updateActiveAgentBadge();
   if (typeof nicknameMap !== 'undefined') nicknameMap = {};
   if (typeof _autoScroll !== 'undefined') _autoScroll = true;
+  sseEverConnected = false;
+  sseHadError = false;
+  document.getElementById('sidebar').classList.add('collapsed');
+  if (typeof _syncToggleBtn === 'function') _syncToggleBtn();
+}
+
+// THE single canonical "load this conv" path.
+//   new:    create_conversation returns cid -> resumeConv(cid)
+//           load_history returns [] -> render empty transcript
+//   switch: user clicks a conv in sidebar -> resumeConv(cid)
+//   reload: reloadConv() -> resumeConv(conversationId, true)
+// One flow for all three. Empty-state (no cid) -> renderEmptyState().
+function resumeConv(cid, force) {
+  if (!cid) { renderEmptyState(); return; }
+  if (cid === conversationId && !force) return;
+  document.getElementById('status').textContent = t('loading');
+
+  _clearConvState();
   conversationId = cid;
   _setInputEnabled(true);
   highlightConv(cid);
   updateDeleteBtn();
-  document.getElementById('sidebar').classList.add('collapsed');
-  _syncToggleBtn();
-  sseEverConnected = false;
-  sseHadError = false;
-  stopPollTimer();
 
-  // Phase 2 — connectSSE triggers onReady once EventSource is OPEN on
-  // `cid`, which is when it's safe to fire load_history. Before OPEN,
-  // the server's `command_result` publish on this conv channel buffers
-  // into the EventBus replay buffer (up to 60 s TTL) — once we're
-  // subscribed the replay delivers the missing event. But without this
-  // wait we used to fire load_history while still subscribed to the
-  // OLD conv's SSE, so the NEW conv's command_result never reached
-  // _commandResult$ and the whole UI hung on "Chargement...".
-  // noReplay: this is an explicit reload/switch. We're about to refetch
-  // the authoritative 50-message history from disk -- anything still in
-  // the SSE replay buffer (TTL 60s) would only collide with that, with
-  // dedup races that truncate the transcript when switching between two
-  // full convs. A reload means reload, not replay.
+  // Open SSE first with noReplay: we're about to refetch the authoritative
+  // 50 from disk, so any buffered events for this conv on the server bus
+  // must be discarded -- otherwise their msg_ids land in _seenMsgIds
+  // before render and dedup truncates the transcript. On SSE open, fire
+  // load_history. _renderHistory has a stale guard: a late response from
+  // a prior switch (rapid A->B click) will not pollute the current DOM.
   connectSSE(cid, () => {
     action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
       .subscribe(data => {
@@ -150,11 +161,27 @@ function resumeConv(cid, force) {
   }, { noReplay: true });
 }
 
-// Thin alias for "reload the current conv" — same canonical path as
-// switch/delete/import. No duplicated logic.
+// Thin alias for "reload current conv". Same canonical path.
 function reloadConv() {
   if (!conversationId) return;
   resumeConv(conversationId, true);
+}
+
+// Empty-state view: no conv selected. Reached after deleting the last
+// conv or when create_conversation fails. Single place owning this UI.
+function renderEmptyState() {
+  _clearConvState();
+  conversationId = null;
+  addMsg('system', t('newConv'));
+  document.getElementById('status').textContent = t('ready');
+  var fp = document.getElementById('filesPanel'); if (fp) fp.style.display = 'none';
+  var sp = document.getElementById('schedsPanel'); if (sp) sp.style.display = 'none';
+  var pp = document.getElementById('plansPanel'); if (pp) pp.style.display = 'none';
+  if (typeof permissionMode !== 'undefined') permissionMode = 'default';
+  if (typeof updatePermissionBadge === 'function') updatePermissionBadge();
+  highlightConv(null);
+  _setInputEnabled(false);
+  var inp = document.getElementById('input'); if (inp) inp.focus();
 }
 
 // Shared across render + loadMore so task blocks persist
@@ -183,6 +210,15 @@ function _renderHistory(data) {
   if (!data || data.error) {
     addMsg('error', (data && data.error) || t('loadError'));
     document.getElementById('status').textContent = t('error');
+    return;
+  }
+  // Stale guard: a late load_history response from a prior switch must
+  // NOT render into the current conv's DOM. Without this, a rapid A->B
+  // click leaves the slow load_history(A) response rendering A's
+  // messages into B's view.
+  if (data.conversation_id && data.conversation_id !== conversationId) {
+    console.log('[history] dropping stale load_history for',
+                data.conversation_id, '(current:', conversationId, ')');
     return;
   }
   _histTaskBlocks = {};  // reset on full render
@@ -423,8 +459,7 @@ function _switchAfterDelete(deletedCid) {
     if (next) {
       resumeConv(next.conversation_id, true);
     } else {
-      _doNewChat();
-      _setInputEnabled(false);
+      renderEmptyState();
     }
   });
 }

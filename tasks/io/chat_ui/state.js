@@ -166,34 +166,6 @@ function _setInputEnabled(enabled) {
   if (btn) { btn.disabled = !enabled; btn.style.opacity = enabled ? '1' : '0.4'; }
 }
 
-function _doNewChat() {
-  if (eventSource) { eventSource.close(); eventSource = null; }
-  stopPollTimer();
-  conversationId = null;
-  pendingAgent = null;
-  selectedAgent = '';
-  updateActiveAgentBadge();
-  serverMsgCount = 0;
-  clearAllStreams();
-  sending = false;
-  document.getElementById('sendBtn').disabled = false;
-  _expectingClear = true;
-  document.getElementById('messages').innerHTML = '';
-  _expectingClear = false;
-  addMsg('system', t('newConv'));
-  document.getElementById('status').textContent = t('ready');
-  document.getElementById('filesPanel').style.display = 'none';
-  document.getElementById('schedsPanel').style.display = 'none';
-  document.getElementById('plansPanel').style.display = 'none';
-  permissionMode = 'default';
-  updatePermissionBadge();
-  highlightConv(null);
-  // Close sidebar on mobile
-  document.getElementById('sidebar').classList.add('collapsed');
-  _syncToggleBtn();
-  document.getElementById('input').focus();
-}
-
 async function newChat() {
   var result = await _pickAgentsForNewConv();
   if (!result || !result.agents || result.agents.length === 0) return;
@@ -203,15 +175,10 @@ async function newChat() {
   if (result.default_relay) params.default_relay = result.default_relay;
   action$('create_conversation', params).subscribe(data => {
     if (data.conversation_id) {
-      _doNewChat();
-      conversationId = data.conversation_id;
-      _setInputEnabled(true);
-      connectSSE(conversationId, () => {
-        loadConversations();
-        highlightConv(conversationId);
-        loadResources();
-        loadPermissionMode();
-      });
+      // Unified path: refresh sidebar + route through resumeConv like switch/reload.
+      // resumeConv handles clear + load_history(50) + render (0 messages for a fresh conv).
+      loadConversations();
+      resumeConv(data.conversation_id, true);
     } else {
       addMsg('error', data.error || 'Failed to create conversation');
     }

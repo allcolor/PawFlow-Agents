@@ -1025,37 +1025,49 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     "from": agent_name or "",
                     "to": _tm["source_agent"],
                 }
-            # Persist context-fill so the gauge survives across reloads
-            # without waiting for the next turn. CC emits message_meta
-            # directly here (not via agent_core's _agent_source path), so
-            # this is the ONLY place where the per-agent context_usage map
-            # gets written for CC turns.
-            if (event_type == "message_meta"
-                    and isinstance(data, dict)
-                    and (data.get("context_used") or 0) > 0
-                    and (data.get("context_max") or 0) > 0
-                    and agent_name):
-                try:
-                    from core.conversation_store import ConversationStore as _CS_pub
-                    _store_pub = _CS_pub.instance()
-                    _cu_map = _store_pub.get_extra(
-                        _event_cid, "context_usage") or {}
-                    _cu_map[agent_name] = {
-                        "used": int(data["context_used"]),
-                        "max": int(data["context_max"]),
-                        "pct": float(data.get("context_pct") or 0),
-                        "updated_at": int(time.time()),
-                    }
-                    _store_pub.set_extra(
-                        _event_cid, "context_usage", _cu_map)
-                except Exception:
-                    pass
+            # Publish FIRST so any downstream persistence work can never
+            # starve the webchat. Earlier 056b99e added a context_usage
+            # persist (set_extra) right here BEFORE publish_event — on the
+            # CC stream parse thread — which stalled tool_call /
+            # tool_result delivery to the UI whenever the conv extras
+            # lock was contended. The persistence now lives in a single
+            # per-turn write via turn_callback (see _flush_turn in
+            # agent_core / emitter), not per-event.
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
                     _event_cid, event_type, data)
             except Exception:
                 pass
+            # Persist context-fill (best-effort, AFTER publish so slow
+            # disk/lock cannot block event delivery). Fire-and-forget on a
+            # daemon thread — we only care the file eventually reflects
+            # the latest gauge value; losing one write on a restart is
+            # fine, the next turn rewrites it.
+            if (event_type == "message_meta"
+                    and isinstance(data, dict)
+                    and (data.get("context_used") or 0) > 0
+                    and (data.get("context_max") or 0) > 0
+                    and agent_name):
+                def _persist_ctx_fill(cid=_event_cid, an=agent_name,
+                                       used=int(data["context_used"]),
+                                       mx=int(data["context_max"]),
+                                       pct=float(data.get("context_pct") or 0)):
+                    try:
+                        from core.conversation_store import ConversationStore as _CS_pub
+                        _store_pub = _CS_pub.instance()
+                        _cu_map = _store_pub.get_extra(
+                            cid, "context_usage") or {}
+                        _cu_map[an] = {
+                            "used": used, "max": mx, "pct": pct,
+                            "updated_at": int(time.time()),
+                        }
+                        _store_pub.set_extra(cid, "context_usage", _cu_map)
+                    except Exception:
+                        pass
+                threading.Thread(
+                    target=_persist_ctx_fill, daemon=True,
+                    name=f"ctx-usage-persist-{agent_name[:8]}").start()
 
         # Read streaming output — accumulate per turn
         content_parts: List[str] = []  # final result text

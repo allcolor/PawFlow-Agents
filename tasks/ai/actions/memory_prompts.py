@@ -22,6 +22,13 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
                 entries = ms.list_by_agent(user_id, agent_filter)
             else:
                 entries = ms.list_all(user_id)
+            # Newest first — users open this panel to see what was just
+            # captured, not to scroll through 30-day-old auto-extracts.
+            entries = sorted(
+                entries,
+                key=lambda e: (e.updated_at or e.created_at or 0),
+                reverse=True,
+            )
             result = [{
                 "id": e.id, "text": e.text, "tags": e.tags,
                 "created_at": e.created_at, "updated_at": e.updated_at,

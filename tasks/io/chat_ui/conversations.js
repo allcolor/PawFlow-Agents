@@ -130,35 +130,47 @@ function _clearConvState() {
 }
 
 // THE single canonical "load this conv" path. ONE function, period.
-//   new:    create_conversation returns cid -> resumeConv(cid, true)
-//           load_history returns [] -> render empty transcript
-//   switch: user clicks a conv in sidebar -> resumeConv(cid)
-//   reload: resumeConv(conversationId, true)
-// One flow for all three. Empty-state (no cid) -> renderEmptyState().
+//
+// What "loading a conv" means (user's mental model, verbatim):
+//   1. CLEAR webchat  -> chat is completely empty
+//   2. LOAD histo(50) -> we have at most 50 messages in hand
+//   3. DISPLAY them   -> rendered on screen
+//   4. THEN open SSE  -> live stream of FUTURE events only
+//
+// Order matters. SSE is opened LAST, after the history is on screen.
+// If SSE were opened first, live events arriving during the load_history
+// RTT would populate _seenMsgIds and addMsg() would dedup legitimate
+// history rows out of the render (transcript truncation). With load-
+// first, _seenMsgIds is seeded by the rendered history, so any later
+// SSE event whose msg_id matches an already-rendered message is
+// correctly deduped, and brand-new msg_ids render fresh.
 function resumeConv(cid, force) {
   if (!cid) { renderEmptyState(); return; }
   if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
 
+  // 1. CLEAR -- DOM empty, every conv-scoped global reset, SSE closed.
   _clearConvState();
   conversationId = cid;
   _setInputEnabled(true);
   highlightConv(cid);
   updateDeleteBtn();
 
-  // Open SSE first with noReplay: we're about to refetch the authoritative
-  // 50 from disk, so any buffered events for this conv on the server bus
-  // must be discarded -- otherwise their msg_ids land in _seenMsgIds
-  // before render and dedup truncates the transcript. On SSE open, fire
-  // load_history. _renderHistory has a stale guard: a late response from
-  // a prior switch (rapid A->B click) will not pollute the current DOM.
-  connectSSE(cid, () => {
-    action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
-      .subscribe(data => {
-        _renderHistory(data);
-        startPollTimer();
-      });
-  }, { noReplay: true });
+  // 2. LOAD histo(50). No SSE is open yet: nothing can pollute
+  //    _seenMsgIds before render.
+  action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
+    .subscribe(data => {
+      // Stale guard: a late response from a prior switch (rapid A->B
+      // click) must not render into the current conv's DOM.
+      if (cid !== conversationId) return;
+      // 3. DISPLAY.
+      _renderHistory(data);
+      // 4. Open SSE for live future events. noReplay=true: we just
+      //    refetched the authoritative transcript from disk; any still-
+      //    buffered events on the server bus would just be duplicates
+      //    of what we already rendered, so discard them.
+      connectSSE(cid, () => startPollTimer(), { noReplay: true });
+    });
 }
 
 // Empty-state view: no conv selected. Reached after deleting the last

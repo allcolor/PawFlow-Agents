@@ -855,6 +855,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         self._result_emitted = False  # set True when CC emits final result
         self._compacting = False  # set True when CC compact_boundary fires
 
+        # Compact-drain state: when CC emits compact_boundary we don't
+        # kill+raise immediately anymore. We close CC's stdin (EOF signal),
+        # let the parse loop drain remaining events (per-msg_id flushes
+        # persist each turn through turn_callback), then raise
+        # CCCompactDetected once CC has finished streaming. Killing too
+        # early lost already-emitted tool_use/tool_result blocks that were
+        # still in the pipe buffer — resulting in gaps in shared.jsonl
+        # between the last persisted turn and the compact trigger.
+        _compact_pending = [False]
+        _compact_drain_timer = [None]
+
         def _inject_catchup():
             """Check for new messages from other agents and inject via stdin."""
             if not conv_id or not agent_name:
@@ -1116,7 +1127,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 sid)
                         except Exception:
                             pass
-                    # compact_boundary → kill CC + PawFlow compact; init → arm stall watchdog
+                    # compact_boundary → drain CC stream + PawFlow compact; init → arm stall watchdog
                     subtype = event.get("subtype", "")
                     if subtype == "compact_boundary" or (
                             subtype == "status" and event.get("status") == "compacting"):
@@ -1134,16 +1145,54 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                          "sentinel '%s' — letting it continue",
                                          conv_id)
                             continue
+                        if _compact_pending[0]:
+                            # Already draining from a previous compact_boundary
+                            # in this same stream — just keep consuming events.
+                            continue
                         logger.warning("[claude-code] CC compacting detected (subtype=%s) "
-                                       "— killing CC, PawFlow will compact", subtype)
-                        # Set BEFORE kill so a racing send_user_message from
-                        # another thread sees the flag and refuses, routing
-                        # the user message via PendingQueue instead of writing
-                        # to a stdin that's about to close.
+                                       "— draining stream before raising, "
+                                       "PawFlow will compact", subtype)
+                        # Set BEFORE signalling CC so a racing send_user_message
+                        # from another thread sees the flag and refuses,
+                        # routing the user message via PendingQueue instead
+                        # of writing to a stdin that's about to close.
                         self._compacting = True
-                        proc.kill()
-                        from core.llm_client import CCCompactDetected
-                        raise CCCompactDetected("CC auto-compact detected")
+                        _compact_pending[0] = True
+                        # Close stdin to signal CC cleanly (EOF) — DON'T kill.
+                        # We need to keep reading stdout so the per-msg_id
+                        # rollover in the parse loop can flush all pre-compact
+                        # assistant turns (text + tool_use + tool_result) via
+                        # turn_callback. The previous behaviour (proc.kill()
+                        # then raise immediately) dropped every event still
+                        # buffered in the pipe and any events CC would have
+                        # emitted for tool calls that had already completed
+                        # on CC's side but weren't yet streamed.
+                        try:
+                            if proc.stdin and not proc.stdin.closed:
+                                proc.stdin.close()
+                        except Exception:
+                            pass
+                        # Safety net: if CC keeps streaming past a reasonable
+                        # drain deadline (e.g. it ignored stdin EOF and is
+                        # running its own post-compact summarization we don't
+                        # want), force-kill so we don't block forever.
+                        def _force_kill_after_drain():
+                            try:
+                                if proc.poll() is None:
+                                    logger.warning(
+                                        "[claude-code] compact drain timeout "
+                                        "— force-killing CC")
+                                    proc.kill()
+                            except Exception:
+                                pass
+                        _t = threading.Timer(15.0, _force_kill_after_drain)
+                        _t.daemon = True
+                        _t.start()
+                        _compact_drain_timer[0] = _t
+                        # Continue reading stdout. When CC finishes emitting
+                        # (result event → break, or EOF → loop exits), the
+                        # post-loop block below raises CCCompactDetected.
+                        continue
                     if subtype == "init":
                         _stall_start_time = time.monotonic()
                         _got_assistant = False
@@ -1491,6 +1540,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     self._result_emitted = True
                     break
 
+            # Loop exited naturally (result break or stdout EOF). If a
+            # compact_boundary fired during this stream, raise now — all
+            # pre-compact events have been drained through turn_callback
+            # via the per-msg_id rollover in the main loop.
+            if _compact_pending[0]:
+                from core.llm_client import CCCompactDetected
+                raise CCCompactDetected("CC auto-compact detected")
+
         except _CC401Retry:
             # 401 mid-stream: credentials already refreshed, retry once
             logger.info("[claude-code] retrying after 401 token refresh")
@@ -1500,6 +1557,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         finally:
             # Stop compact stall watchdog
             _watchdog_stop.set()
+            # Cancel compact-drain timeout timer if still pending
+            # (loop exited cleanly before deadline, or via an exception
+            # that wasn't the compact path at all).
+            try:
+                _t = _compact_drain_timer[0]
+                if _t is not None:
+                    _t.cancel()
+            except Exception:
+                pass
             # Flush any pending turn (ensures last text is persisted even if interrupted)
             try:
                 _flush_turn()

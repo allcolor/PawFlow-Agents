@@ -441,45 +441,54 @@ class AgentCompactionMixin(AgentSummarizeMixin):
     def _consolidate_buckets(self, bucket_docs: list, client: LLMClient,
                               user_id: str = "", conversation_id: str = "",
                               agent_name: str = "") -> str:
-        """Consolidate K bucket summaries into one super-bucket summary.
+        """Consolidate N prior phase summaries into ONE higher-level summary.
 
-        Unlike a regular compact (which summarizes raw conversation), this
-        takes N already-compacted summaries and produces a tighter
-        super-summary. Goal: drop work that was started AND finished within
-        this window, collapse redundant threads, preserve only decisions
-        still in force. Target output ≤ 1/3 of combined input.
+        Inputs may be a mix of level-1 buckets (single compacts) and
+        already-consolidated level>=2 super-buckets. The prompt is
+        explicit about this so the LLM does not try to re-expand an
+        input that is already a summary-of-summaries.
+
+        Target output size: ~1/3 of concatenated input, computed with
+        tiktoken (precise) rather than chars/4 (estimate).
         """
         if not bucket_docs:
             return ""
-        # Build the concatenated input
         parts = []
         for d in bucket_docs:
+            lv = int(d.get("level", 1))
             parts.append(
-                f"\n=== Bucket {d.get('bucket_id')} "
-                f"(seq {d.get('first_seq')}..{d.get('last_seq')}) ===\n"
+                f"\n=== Phase {d.get('bucket_id')} (level={lv}, "
+                f"seq {d.get('first_seq')}..{d.get('last_seq')}) ===\n"
                 f"{d.get('summary', '')}\n"
             )
         combined = "".join(parts)
-        total_len = len(combined)
-        target_tokens = max(1000, total_len // (3 * 4))  # ~1/3 length, 4 chars/tok
+        try:
+            from core.token_counter import count_tokens
+            total_tokens = count_tokens(combined)
+        except Exception:
+            total_tokens = len(combined) // 4
+        target_tokens = max(1000, total_tokens // 3)
 
         instructions = (
-            "You are consolidating several bucket summaries into ONE "
-            "super-summary. Each bucket follows the 7-section structure "
-            "(USER_INTENT, DECISIONS, FILES_MODIFIED, ERRORS, "
-            "CURRENT_STATE, PENDING, CONTEXT).\n\n"
+            "You are consolidating several prior phase summaries into ONE "
+            "higher-level summary. Some inputs are already consolidations "
+            "of earlier phases (see level= in each header) - do NOT try "
+            "to re-expand them, treat them as already-distilled material.\n\n"
+            "Each phase follows the 7-section structure (USER_INTENT, "
+            "DECISIONS, FILES_MODIFIED, ERRORS, CURRENT_STATE, PENDING, "
+            "CONTEXT).\n\n"
             "RULES:\n"
-            "- Preserve concrete facts, file paths, and decisions that "
-            "are still in force at the END of the window.\n"
+            "- Preserve concrete facts, file paths, commit SHAs, and "
+            "decisions that are still in force at the END of the window.\n"
+            "- If a later phase contradicts or supersedes an earlier one, "
+            "KEEP ONLY the later version - the older one is outdated.\n"
             "- DROP topics that were started AND finished within this "
-            "window (a feature planned → designed → shipped should only "
-            "mention 'shipped').\n"
+            "window (a feature planned -> designed -> shipped should "
+            "only mention 'shipped').\n"
             "- DROP abandoned or superseded lines of work entirely.\n"
-            "- Collapse redundant bullets across buckets.\n"
+            "- Collapse redundant bullets across phases.\n"
             f"- Output must be at most {target_tokens} tokens (~1/3 of input)."
         )
-        # Reuse _summarize_messages — it handles the file-based tool loop
-        # for CC and the direct path for API providers.
         from core.llm_client import LLMMessage
         synth = [LLMMessage(role="user", content=combined)]
         try:
@@ -773,8 +782,9 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     first_ts=min(_tss), last_ts=max(_tss),
                     summary=summary, model=_model,
                 )
-                # Rollup: K buckets → 1 super-bucket (delete the K originals)
-                if _bucket_store.should_rollup():
+                # Rollup: if the header exceeds 1/3 of ctx, consolidate all
+                # objects except the most recent into one new higher-level SB.
+                if _bucket_store.should_rollup(max_tokens):
                     try:
                         _sb_inputs = _bucket_store.get_consolidation_input()
                         _sb_text = self._consolidate_buckets(

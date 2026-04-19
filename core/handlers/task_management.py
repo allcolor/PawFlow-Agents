@@ -106,11 +106,8 @@ def _append_task_log(conversation_id: str, task_id: str, entry: dict):
 class LinkResourceHandler(ToolHandler):
     """Link or unlink repository resources to the current conversation.
 
-    Resources must be linked before they can be used:
-      - tasks: must be linked before assignment to an agent
-      - skills: must be linked before assignment to an agent
-      - mcps: must be linked before use in this conversation
-      - relays: must be linked before use in this conversation
+    Only relays are linkable. Everything else is auto-available when
+    accessible in scope (global + user + conversation).
     """
 
     def __init__(self):
@@ -124,10 +121,9 @@ class LinkResourceHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Link or unlink a repository resource to this conversation.\n"
-            "Resources must be linked before they can be used:\n"
-            "- mcps: link before use (tools become available to agents)\n"
-            "- relays: link before use (relay-specific: set_default, per-agent binding via /relay)\n\n"
+            "Link or unlink a relay to this conversation.\n"
+            "Only relays are linkable (set_default, per-agent binding via /relay).\n"
+            "MCPs/skills/tasks/agents are auto-available when in scope.\n\n"
             "Actions: link, unlink, list"
         )
 
@@ -142,7 +138,7 @@ class LinkResourceHandler(ToolHandler):
                 },
                 "resource_type": {
                     "type": "string",
-                    "enum": ["mcps", "relays"],
+                    "enum": ["relays"],
                 },
                 "name": {
                     "type": "string",
@@ -177,14 +173,6 @@ class LinkResourceHandler(ToolHandler):
             return "Error: name is required for link/unlink"
 
         if action == "link":
-            # Relays are runtime services, not repo resources
-            if rtype != "relays":
-                from core.resource_store import ResourceStore
-                _singular = {"tasks": "task_def", "skills": "skill", "mcps": "mcp"}
-                rs_type = _singular.get(rtype, rtype)
-                if not ResourceStore.instance().get_any(
-                        rs_type, name, self._user_id):
-                    return f"Error: {rtype[:-1]} '{name}' not found in repository"
             link(self._conversation_id, rtype, name)
             return f"{rtype[:-1].title()} '{name}' linked to this conversation."
 

@@ -460,10 +460,6 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "in_conversation": a["name"] in set(conv_agent_names),
         } for a in all_repo_agents]
 
-        # Linked resources
-        from core.conv_links import get_linked
-        _linked_mcps = set(get_linked(conv_id, "mcps")) if conv_id else set()
-
         # Skills: show all from repo, mark assigned_to
         all_skills = rs.list_all("skill", uid, conversation_id=conv_id)
         skills_out = []
@@ -478,13 +474,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "assigned_to": assigned_to,
             })
 
-        # MCPs: show all from repo, mark linked
+        # MCPs: all in-scope (global + user + conv) are auto-active.
+        # No "linked" flag — presence in the repo == available in the conv.
         all_mcps = rs.list_all("mcp", uid, conversation_id=conv_id)
         mcps_out = [{
             "name": m["name"],
             "url": m.get("url", ""),
             "scope": m.get("_scope", ""),
-            "linked": m["name"] in _linked_mcps,
         } for m in all_mcps]
 
         # Tasks: show all from repo

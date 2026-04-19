@@ -93,8 +93,8 @@ function _scopeBadge(s) {
 // every conversation switch. Toggling within a conv is kept until the
 // next switch but never leaks across conversations or sessions.
 const _ALL_SECTIONS = [
-  'agent','_agent_repo','skill','mcp','_mcp_repo','prompt','voice',
-  '_tool','task_def','_running','_svc','_relay','_flow','_flow_repo','_param','_secret'
+  'agent','_running','_flow','_svc','_relay','_param','_secret',
+  '_agent_repo','skill','prompt','voice','task_def','_mcp_repo','_tool','_flow_repo'
 ];
 const _collapsedSections = {};
 function _resetCollapsedSectionsToInitial() {
@@ -329,9 +329,15 @@ function _renderResourcesFromSSE(data) {
 async function _renderResourcesData(data) {
   try {
     const el = document.getElementById('resourcesContent');
-    let html = '';
+
+    // ─────────────────────────────────────────────────────────────
+    // LIVE sections (conversation state): Agents, Tasks, Flows,
+    // Services, Relays. Built synchronously into `liveHtml`.
+    // ─────────────────────────────────────────────────────────────
+    let liveHtml = '';
+
     // Agents (conversation members)
-    html += _sectionHeader('Agents', 'agent');
+    liveHtml += _sectionHeader('Agents', 'agent');
     if (data.agents && data.agents.length) {
       data.agents.forEach(function(a) {
         var isPrimary = a.active;
@@ -354,7 +360,7 @@ async function _renderResourcesData(data) {
             pct: a.context_usage.pct || 0,
           };
         }
-        html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + (a.scope||'') + '\',\'' + (a.autoconv||'') + '\');return false;">'
+        liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + (a.scope||'') + '\',\'' + (a.autoconv||'') + '\');return false;">'
           + '<span style="cursor:pointer;font-size:10px;color:' + primaryColor + ';" title="' + primaryTitle + '"'
           + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + primaryArrow + '</span>'
           + _scopeBadge(a.scope)
@@ -369,27 +375,27 @@ async function _renderResourcesData(data) {
         var _ctxUsage = (window._contextUsage || {})[aKeyLc];
         var _ctxHtml = (typeof renderCtxGauge === 'function' && _ctxUsage)
           ? renderCtxGauge(_ctxUsage) : '';
-        html += '<div style="margin-left:24px;margin-bottom:3px;min-height:6px;" data-ctx-agent="' + escapeHtml(aKeyLc) + '">'
+        liveHtml += '<div style="margin-left:24px;margin-bottom:3px;min-height:6px;" data-ctx-agent="' + escapeHtml(aKeyLc) + '">'
           + _ctxHtml
           + '</div>';
         // Show LLM service + assigned skills as small tags
         var aLlm = a.llm_service || '';
         var aSkills = a.assigned_skills || [];
         if (aLlm || aSkills.length) {
-          html += '<div style="margin-left:24px;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:3px;">';
+          liveHtml += '<div style="margin-left:24px;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:3px;">';
           if (aLlm) {
-            html += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#1a2a3e;color:#64b5f6;">' + escapeHtml(aLlm) + '</span>';
+            liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#1a2a3e;color:#64b5f6;">' + escapeHtml(aLlm) + '</span>';
           }
           aSkills.forEach(function(sk) {
-            html += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#2a1a4e;color:#b39ddb;">' + escapeHtml(sk) + '</span>';
+            liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#2a1a4e;color:#b39ddb;">' + escapeHtml(sk) + '</span>';
           });
-          html += '</div>';
+          liveHtml += '</div>';
         }
       });
     } else {
-      html += '<div style="margin-left:8px;font-size:11px;color:#555;">No agents — <span style="color:#6c5ce7;cursor:pointer;" onclick="showAddAgentToConvDialog()">+ Add</span></div>';
+      liveHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No agents — <span style="color:#6c5ce7;cursor:pointer;" onclick="showAddAgentToConvDialog()">+ Add</span></div>';
     }
-    html += _sectionFooter();
+    liveHtml += _sectionFooter();
     // After the Agents section is rebuilt, refresh the header badge so its
     // inline gauge picks up any freshly-hydrated cache value.
     if (typeof updateActiveAgentBadge === 'function'
@@ -397,170 +403,12 @@ async function _renderResourcesData(data) {
       setTimeout(updateActiveAgentBadge, 0);
     }
 
-    // Agent Repository (repo agents not yet in conv, collapsed by default)
-    html += _repoSectionHeader("Agent Repository", "_agent_repo", {
-      createOnclick: "showResourceCreator('agent')",
-      createTitle: "Create new agent",
-    });
-    if (!_collapsedSections["_agent_repo"]) {
-      var repoAgents = (data.repo_agents || []).filter(function(a) { return !a.in_conversation; });
-      if (repoAgents.length) {
-        repoAgents.forEach(function(a) {
-          var aName = escapeHtml(a.name);
-          html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
-            + _scopeBadge(a.scope)
-            + '<span style="color:#888;font-size:12px;flex:1;">' + aName + '</span>'
-            + '<span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Add to conversation"'
-            + ' onclick="_addAgentToConv(this.dataset.n)" data-n="' + aName + '">+</span>'
-            + '</div>';
-        });
-      } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">All agents are in this conversation</div>';
-      }
-    }
-    html += _sectionFooter();
-    // ── Skills Repository ──
-    html += _repoSectionHeader('Skills Repository', 'skill', {
-      createOnclick: "showResourceCreator('skill')",
-    });
-    { const allSkills = data.skills || [];
-      if (allSkills.length) {
-        allSkills.forEach(s => {
-          const assignedTo = s.assigned_to || [];
-          const assignedTag = assignedTo.length ? ' <span style="color:#555;font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'skill','${escapeHtml(s.name)}','${s.scope||''}');return false;">
-            ${_scopeBadge(s.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(s.name)}${assignedTag}</span>
-          </div>`;
-        });
-      } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No skills defined</div>';
-      }
-    }
-    html += _sectionFooter();
-
-    // ── MCP Servers (linked to conv) ──
-    { const _mcpCollapsed = _collapsedSections['mcp'] || false;
-      const _mcpArrow = _mcpCollapsed ? '\u25B6' : '\u25BC';
-      html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-        <span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection('mcp')"><span id="res-arrow-mcp">${_mcpArrow}</span> MCP</span>
-      </div><div id="res-section-mcp" style="display:${_mcpCollapsed ? 'none' : 'block'};max-height:260px;overflow-y:auto;">`;
-    }
-    { const linked = (data.mcp_servers || []).filter(m => m.linked);
-      if (linked.length) {
-        linked.forEach(m => {
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'mcp','${m.name}','${m.scope||''}');return false;">
-            ${_scopeBadge(m.scope)}<span style="color:#e0e0e0;font-size:12px;">${escapeHtml(m.name)}</span>
-            <span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"
-              onclick="fireAction('unlink_mcp',{name:'${escapeHtml(m.name)}'});setTimeout(loadResources,400)">&times;</span>
-          </div>`;
-        });
-      } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No MCP servers linked</div>';
-      }
-    }
-    html += _sectionFooter();
-    // MCP Repository (collapsed, with create button)
-    { if (!('_mcp_repo' in _collapsedSections)) _collapsedSections['_mcp_repo'] = true;
-      const _mrCollapsed = _collapsedSections['_mcp_repo'] || false;
-      const _mrArrow = _mrCollapsed ? '\u25B6' : '\u25BC';
-      html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-        <span style="cursor:pointer;color:#888;font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('_mcp_repo')"><span id="res-arrow-_mcp_repo">${_mrArrow}</span> MCP Repository</span>
-        <span style="display:flex;gap:4px;">
-          <span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="loadResources()" title="Refresh from disk">\u21BB</span>
-          <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="showResourceCreator('mcp')" title="Create new">+</span>
-        </span>
-      </div><div id="res-section-_mcp_repo" style="display:${_mrCollapsed ? 'none' : 'block'};">`;
-    }
-    if (!_collapsedSections['_mcp_repo']) {
-      const repoMcps = (data.mcp_servers || []).filter(m => !m.linked);
-      if (repoMcps.length) {
-        repoMcps.forEach(m => {
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp','${escapeHtml(m.name)}','${m.scope||''}');return false;">
-            ${_scopeBadge(m.scope)}<span style="color:#888;font-size:12px;flex:1;">${escapeHtml(m.name)}</span>
-            <span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Link to conversation"
-              onclick="event.stopPropagation();fireAction('link_mcp',{name:'${escapeHtml(m.name)}'});setTimeout(loadResources,400)">+</span>
-          </div>`;
-        });
-      } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No MCP servers defined</div>';
-      }
-    }
-    html += _sectionFooter();
-
-    // ── Prompts Repository (click to paste into chat input) ──
-    html += _repoSectionHeader('Prompts Repository', 'prompt', {
-      createOnclick: "showResourceCreator('prompt')",
-    });
-    if (!_collapsedSections['prompt']) {
-      const prompts = data.prompts || [];
-      if (prompts.length) {
-        prompts.forEach(p => {
-          const title = p.title || p.name;
-          const icon = p.has_parameters ? '\u{1F4DD}' : '\u{1F4CB}';
-          const desc = p.description ? ' title="' + escapeHtml(p.description) + '"' : '';
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
-            onclick="_usePrompt('${escapeHtml(p.name)}',${p.has_parameters})" oncontextmenu="showResourceMenu(event,'prompt','${p.name}','${p.scope||''}');return false;">
-            ${_scopeBadge(p.scope)}<span style="font-size:11px">${icon}</span>
-            <span style="font-size:12px;color:#c0c0d0">${escapeHtml(title)}</span>
-          </div>`;
-        });
-      } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No prompts</div>';
-      }
-    }
-    html += _sectionFooter();
-
-    // ── Voices Repository (cloned voices, user scope) ──
-    html += _repoSectionHeader('Voices Repository', 'voice', {
-      createOnclick: "showResourceCreator('voice')",
-    });
-    if (!_collapsedSections['voice']) {
-      const voices = data.voices || [];
-      if (voices.length) {
-        voices.forEach(v => {
-          const paradigm = v.paradigm || 'zero-shot';
-          const pBadge = paradigm === 'voice_id' ? 'id' : 'zs';
-          const pColor = paradigm === 'voice_id' ? '#4ecdc4' : '#888';
-          const prov = v.provider ? ` (${escapeHtml(v.provider)})` : '';
-          const previewUrl = v.ref_audio_fid
-            ? `/files/${encodeURIComponent(v.ref_audio_fid)}` : '';
-          const previewBtn = previewUrl
-            ? `<span style="cursor:pointer;color:#6c5ce7;font-size:11px;padding:0 4px;" title="Preview reference audio" onclick="_previewVoice('${escapeHtml(previewUrl)}')">\u25B6</span>`
-            : '';
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="${escapeHtml(v.provider)} \u2014 ${paradigm}">
-            <span style="color:${pColor};font-size:9px;font-weight:600;border:1px solid ${pColor};border-radius:3px;padding:0 3px;">${pBadge}</span>
-            <span style="color:#e0e0e0;font-size:12px;flex:1;">\u{1F399} ${escapeHtml(v.name)}<span style="color:#666;font-size:10px;">${prov}</span></span>
-            ${previewBtn}
-            <span style="cursor:pointer;color:#8888aa;font-size:11px;padding:0 4px;" title="Rename voice clone" onclick="_renameVoiceClone('${escapeHtml(v.name)}')">\u270E</span>
-            <span style="cursor:pointer;color:#d9534f;font-size:11px;padding:0 4px;" title="Delete voice clone (cascade)" onclick="_deleteVoiceClone('${escapeHtml(v.name)}')">\u2716</span>
-          </div>`;
-        });
-      } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No voice clones. Use <code>clone_voice</code> to register one.</div>';
-      }
-    }
-    html += _sectionFooter();
-
-    // ── Tools (always available, no linking) ──
-    html += _sectionHeader('Tools', '_tool');
-    if (!_collapsedSections['_tool']) {
-      const tools = window._cachedTools || [];
-      tools.forEach(t => {
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog('${escapeHtml(t.name)}')">
-          <span style="color:#6c5ce7;font-size:11px">\u26A1</span>
-          <span style="font-size:12px;color:#c0c0d0">${escapeHtml(t.name)}</span>
-        </div>`;
-      });
-      if (!tools.length) html += '<div style="margin-left:8px;font-size:11px;color:#666">Loading...</div>';
-    }
-    html += _sectionFooter();
-
     // ── Tasks (running instances in this conversation) ──
     // Always visible, even when empty - this is where users look for
     // 'what tasks are active in this conv right now'. No '+' here:
     // launching a task happens through the context menu of a task_def
-    // entry in Tasks Repository (just below).
-    html += _sectionHeader('Tasks', '_running', {
+    // entry in Tasks Repository (further below).
+    liveHtml += _sectionHeader('Tasks', '_running', {
       hideCreate: true,
     });
     { const running = data.running_tasks || [];
@@ -569,37 +417,43 @@ async function _renderResourcesData(data) {
           const statusColor = t.status === 'active' ? '#4ecdc4' : t.status === 'paused' ? '#f0ad4e' : '#666';
           const statusIcon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : '\u23F9';
           const label = (t.task_def_name || (t.task || '').substring(0, 30) || t.task_id) + ' \u2192 ' + t.agent;
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
+          liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
             <span style="color:${statusColor};font-size:11px;">${statusIcon}</span>
             <span style="color:#8888aa;font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
             <span style="color:#555;font-size:10px;">[${t.iterations}/${t.max_iterations}]</span>
           </div>`;
         });
       } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No tasks running</div>';
+        liveHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No tasks running</div>';
       }
     }
-    html += _sectionFooter();
+    liveHtml += _sectionFooter();
 
-    // ── Tasks Repository (definitions, muted style like Agent Repository) ──
-    html += _repoSectionHeader('Tasks Repository', 'task_def', {
-      createOnclick: "showResourceCreator('task_def')",
+    // ── Flows (running deployed instances; deploy a new one with '+',
+    //    rebuild registry with ↻ since the deploy list is live state).
+    //    Naming mirrors Tasks: this section = active state in the conv,
+    //    "Flows Repository" below = catalog on disk.
+    liveHtml += _sectionHeader('Flows', '_flow', {
+      refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
+      refreshTitle: 'Reload from disk',
+      createTitle: 'Deploy flow',
     });
-    { const allTasks = data.task_defs || [];
-      if (allTasks.length) {
-        allTasks.forEach(t => {
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'task_def','${escapeHtml(t.name)}','${t.scope||''}');return false;">
-            ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
-            <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
-          </div>`;
-        });
-      } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No task definitions</div>';
-      }
+    if (data.flows && data.flows.length) {
+      data.flows.forEach(f => {
+        const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
+        const statusColor = f.status === 'running' ? '#4ecdc4' : f.status === 'stopped' ? '#666' : '#e94560';
+        const flowCtx = ` oncontextmenu="showFlowInstanceMenu(event,'${f.instance_id}','${f.status}','${f.scope}');return false;"`;
+        liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
+          ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${f.flow_name || f.instance_id}</span>
+        </div>`;
+      });
+    } else {
+      liveHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No deployed flows</div>';
     }
-    html += _sectionFooter();
+    liveHtml += _sectionFooter();
+
     // Services (install with '+', reload from disk with ↻ on the left)
-    html += _sectionHeader('Services', '_svc', {
+    liveHtml += _sectionHeader('Services', '_svc', {
       refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
       refreshTitle: 'Reload from disk',
       createTitle: 'Install service',
@@ -614,21 +468,22 @@ async function _renderResourcesData(data) {
           dockerTag = ' \u{1F433}' + (img ? ` [${img}]` : '');
         }
         const svcCtx = ` oncontextmenu="showServiceMenu(event,'${s.service_id}','${s.scope}',${s.enabled});return false;"`;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${svcCtx}>
+        liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${svcCtx}>
           ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;">${statusDot} <b>${s.service_id}</b> <span style="color:#555">(${s.service_type})</span>${dockerTag}</span>
         </div>`;
       });
     } else {
-      html += '<div style="color:#555;font-size:10px;margin-left:8px;">No services installed</div>';
+      liveHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No services installed</div>';
     }
-    html += _sectionFooter();
+    liveHtml += _sectionFooter();
+
     // Relay bindings for this conversation (always show section)
     {
       if (!('_relay' in _collapsedSections)) _collapsedSections['_relay'] = false;
       var rbCollapsed = _collapsedSections['_relay'] || false;
       var rbArrow = rbCollapsed ? '\u25B6' : '\u25BC';
       var rbDisplay = rbCollapsed ? 'none' : 'block';
-      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
+      liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
         + '<span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection(\'_relay\')">'
         + '<span id="res-arrow-_relay">' + rbArrow + '</span> Relays</span>'
         + '<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="_showRelayLinkDialog()" title="Link relay">+</span>'
@@ -674,7 +529,7 @@ async function _renderResourcesData(data) {
           var _rbDefaultLocal = (_rb.default_local || {})[rid] || {};
           var _detWithLocal = Object.assign({}, det, {_default_local: _rbDefaultLocal});
           var _detJson = escapeHtml(JSON.stringify(_detWithLocal).replace(/'/g, "\\'"));
-          html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="_showRelayInfoDialog(\'' + escapeHtml(rid) + '\',' + _detJson + ');return false;">'
+          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="_showRelayInfoDialog(\'' + escapeHtml(rid) + '\',' + _detJson + ');return false;">'
             + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + titleText + '"' + clickDefault + '>' + icon + '</span>'
             + '<span style="font-size:11px;">' + connDot + '</span>'
             + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>'
@@ -684,35 +539,173 @@ async function _renderResourcesData(data) {
             + '</div>' + pathInfo;
         });
       } else {
-        html += '<div style="color:#555;font-size:10px;margin-left:8px;">No relays linked</div>';
+        liveHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No relays linked</div>';
       }
-      html += _sectionFooter();
+      liveHtml += _sectionFooter();
     }
-    // ── Flows (running deployed instances; deploy a new one with '+',
-    //    rebuild registry with ↻ since the deploy list is live state).
-    //    Naming mirrors Tasks: this section = active state in the conv,
-    //    "Flows Repository" below = catalog on disk.
-    html += _sectionHeader('Flows', '_flow', {
-      refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
-      refreshTitle: 'Reload from disk',
-      createTitle: 'Deploy flow',
+
+    // ─────────────────────────────────────────────────────────────
+    // REPO sections (catalog on disk): Agent Repo, Skills Repo,
+    // Prompts Repo, Voices Repo, Tasks Repo, MCP Repo, Tools Repo,
+    // Flows Repo. Built synchronously into `repoHtml`.
+    // Variables + Secrets come BEFORE these via the async block.
+    // ─────────────────────────────────────────────────────────────
+    let repoHtml = '';
+
+    // Agent Repository (repo agents not yet in conv, collapsed by default)
+    repoHtml += _repoSectionHeader("Agent Repository", "_agent_repo", {
+      createOnclick: "showResourceCreator('agent')",
+      createTitle: "Create new agent",
     });
-    if (data.flows && data.flows.length) {
-      data.flows.forEach(f => {
-        const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
-        const statusColor = f.status === 'running' ? '#4ecdc4' : f.status === 'stopped' ? '#666' : '#e94560';
-        const flowCtx = ` oncontextmenu="showFlowInstanceMenu(event,'${f.instance_id}','${f.status}','${f.scope}');return false;"`;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
-          ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${f.flow_name || f.instance_id}</span>
+    if (!_collapsedSections["_agent_repo"]) {
+      var repoAgents = (data.repo_agents || []).filter(function(a) { return !a.in_conversation; });
+      if (repoAgents.length) {
+        repoAgents.forEach(function(a) {
+          var aName = escapeHtml(a.name);
+          repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+            + _scopeBadge(a.scope)
+            + '<span style="color:#888;font-size:12px;flex:1;">' + aName + '</span>'
+            + '<span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Add to conversation"'
+            + ' onclick="_addAgentToConv(this.dataset.n)" data-n="' + aName + '">+</span>'
+            + '</div>';
+        });
+      } else {
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">All agents are in this conversation</div>';
+      }
+    }
+    repoHtml += _sectionFooter();
+
+    // ── Skills Repository ──
+    repoHtml += _repoSectionHeader('Skills Repository', 'skill', {
+      createOnclick: "showResourceCreator('skill')",
+    });
+    { const allSkills = data.skills || [];
+      if (allSkills.length) {
+        allSkills.forEach(s => {
+          const assignedTo = s.assigned_to || [];
+          const assignedTag = assignedTo.length ? ' <span style="color:#555;font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'skill','${escapeHtml(s.name)}','${s.scope||''}');return false;">
+            ${_scopeBadge(s.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(s.name)}${assignedTag}</span>
+          </div>`;
+        });
+      } else {
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No skills defined</div>';
+      }
+    }
+    repoHtml += _sectionFooter();
+
+    // ── Prompts Repository (click to paste into chat input) ──
+    repoHtml += _repoSectionHeader('Prompts Repository', 'prompt', {
+      createOnclick: "showResourceCreator('prompt')",
+    });
+    if (!_collapsedSections['prompt']) {
+      const prompts = data.prompts || [];
+      if (prompts.length) {
+        prompts.forEach(p => {
+          const title = p.title || p.name;
+          const icon = p.has_parameters ? '\u{1F4DD}' : '\u{1F4CB}';
+          const desc = p.description ? ' title="' + escapeHtml(p.description) + '"' : '';
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
+            onclick="_usePrompt('${escapeHtml(p.name)}',${p.has_parameters})" oncontextmenu="showResourceMenu(event,'prompt','${p.name}','${p.scope||''}');return false;">
+            ${_scopeBadge(p.scope)}<span style="font-size:11px">${icon}</span>
+            <span style="font-size:12px;color:#c0c0d0">${escapeHtml(title)}</span>
+          </div>`;
+        });
+      } else {
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No prompts</div>';
+      }
+    }
+    repoHtml += _sectionFooter();
+
+    // ── Voices Repository (cloned voices, user scope) ──
+    repoHtml += _repoSectionHeader('Voices Repository', 'voice', {
+      createOnclick: "showResourceCreator('voice')",
+    });
+    if (!_collapsedSections['voice']) {
+      const voices = data.voices || [];
+      if (voices.length) {
+        voices.forEach(v => {
+          const paradigm = v.paradigm || 'zero-shot';
+          const pBadge = paradigm === 'voice_id' ? 'id' : 'zs';
+          const pColor = paradigm === 'voice_id' ? '#4ecdc4' : '#888';
+          const prov = v.provider ? ` (${escapeHtml(v.provider)})` : '';
+          const previewUrl = v.ref_audio_fid
+            ? `/files/${encodeURIComponent(v.ref_audio_fid)}` : '';
+          const previewBtn = previewUrl
+            ? `<span style="cursor:pointer;color:#6c5ce7;font-size:11px;padding:0 4px;" title="Preview reference audio" onclick="_previewVoice('${escapeHtml(previewUrl)}')">\u25B6</span>`
+            : '';
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="${escapeHtml(v.provider)} \u2014 ${paradigm}">
+            <span style="color:${pColor};font-size:9px;font-weight:600;border:1px solid ${pColor};border-radius:3px;padding:0 3px;">${pBadge}</span>
+            <span style="color:#e0e0e0;font-size:12px;flex:1;">\u{1F399} ${escapeHtml(v.name)}<span style="color:#666;font-size:10px;">${prov}</span></span>
+            ${previewBtn}
+            <span style="cursor:pointer;color:#8888aa;font-size:11px;padding:0 4px;" title="Rename voice clone" onclick="_renameVoiceClone('${escapeHtml(v.name)}')">\u270E</span>
+            <span style="cursor:pointer;color:#d9534f;font-size:11px;padding:0 4px;" title="Delete voice clone (cascade)" onclick="_deleteVoiceClone('${escapeHtml(v.name)}')">\u2716</span>
+          </div>`;
+        });
+      } else {
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No voice clones. Use <code>clone_voice</code> to register one.</div>';
+      }
+    }
+    repoHtml += _sectionFooter();
+
+    // ── Tasks Repository (definitions, muted style like Agent Repository) ──
+    repoHtml += _repoSectionHeader('Tasks Repository', 'task_def', {
+      createOnclick: "showResourceCreator('task_def')",
+    });
+    { const allTasks = data.task_defs || [];
+      if (allTasks.length) {
+        allTasks.forEach(t => {
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'task_def','${escapeHtml(t.name)}','${t.scope||''}');return false;">
+            ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
+            <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
+          </div>`;
+        });
+      } else {
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No task definitions</div>';
+      }
+    }
+    repoHtml += _sectionFooter();
+
+    // ── MCP Repository (all in-scope MCPs are auto-active — no linking) ──
+    // Presence in the repo == available to the conversation. Any MCP visible
+    // in global + user + conv scope is automatically registered.
+    repoHtml += _repoSectionHeader('MCP Repository', '_mcp_repo', {
+      createOnclick: "showResourceCreator('mcp')",
+      createTitle: 'Create new',
+    });
+    if (!_collapsedSections['_mcp_repo']) {
+      const mcps = data.mcp_servers || [];
+      if (mcps.length) {
+        mcps.forEach(m => {
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp','${escapeHtml(m.name)}','${m.scope||''}');return false;">
+            ${_scopeBadge(m.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(m.name)}</span>
+          </div>`;
+        });
+      } else {
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No MCP servers defined</div>';
+      }
+    }
+    repoHtml += _sectionFooter();
+
+    // ── Tools Repository (always available, no linking) ──
+    repoHtml += _repoSectionHeader('Tools Repository', '_tool', {
+      hideCreate: true,
+    });
+    if (!_collapsedSections['_tool']) {
+      const tools = window._cachedTools || [];
+      tools.forEach(t => {
+        repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog('${escapeHtml(t.name)}')">
+          <span style="color:#6c5ce7;font-size:11px">\u26A1</span>
+          <span style="font-size:12px;color:#c0c0d0">${escapeHtml(t.name)}</span>
         </div>`;
       });
-    } else {
-      html += '<div style="color:#555;font-size:10px;margin-left:8px;">No deployed flows</div>';
+      if (!tools.length) repoHtml += '<div style="margin-left:8px;font-size:11px;color:#666">Loading...</div>';
     }
-    html += _sectionFooter();
+    repoHtml += _sectionFooter();
+
     // ── Flows Repository (flow templates on disk under
     //    data/repository/flows/*.json) ──
-    html += _repoSectionHeader('Flows Repository', '_flow_repo', {
+    repoHtml += _repoSectionHeader('Flows Repository', '_flow_repo', {
       createOnclick: "showDeployFlowDialog()",
       createTitle: 'Deploy flow from template',
     });
@@ -721,42 +714,47 @@ async function _renderResourcesData(data) {
         tpls.forEach(t => {
           const ver = t.version ? ` v${escapeHtml(t.version)}` : '';
           const desc = t.description ? ` title="${escapeHtml(t.description)}"` : '';
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog('${escapeHtml(t.id)}')">
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog('${escapeHtml(t.id)}')">
             ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(t.name)}${ver}</span>
             <span style="color:#555;font-size:10px;">[${t.tasks_count} tasks]</span>
           </div>`;
         });
       } else {
-        html += '<div style="margin-left:8px;font-size:11px;color:#555;">No flow templates under flows/</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No flow templates under flows/</div>';
       }
     }
-    html += _sectionFooter();
-    // Variables & Secrets + Linked Accounts (async, appended when ready)
-    if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
-    // Fetch params/secrets and linked accounts, then render all at once
+    repoHtml += _sectionFooter();
+
+    // ─────────────────────────────────────────────────────────────
+    // Async: Variables + Secrets (rendered between live & repo) and
+    // Linked Accounts (appended at the very end).
+    // ─────────────────────────────────────────────────────────────
+    if (!liveHtml && !repoHtml) {
+      liveHtml = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
+    }
     rxjs.forkJoin([
       action$('list_params_secrets', { conversation_id: conversationId }).pipe(rxjs.catchError(() => rxjs.of({}))),
       action$('list_linked_accounts', { conversation_id: conversationId }).pipe(rxjs.catchError(() => rxjs.of({}))),
     ]).subscribe(([ps, linksData]) => {
-      let extra = '';
+      let varSecHtml = '';
       if (ps.parameters && ps.parameters.length) {
-        extra += _sectionHeader('Variables', '_param');
+        varSecHtml += _sectionHeader('Variables', '_param');
         ps.parameters.forEach(p => {
           const truncVal = p.value.length > 30 ? p.value.substring(0, 30) + '...' : p.value;
-          extra += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
+          varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
             ${_scopeBadge(p.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(p.key)}</b> = ${escapeHtml(truncVal)}</span>
           </div>`;
         });
-        extra += _sectionFooter();
+        varSecHtml += _sectionFooter();
       }
       if (ps.secrets && ps.secrets.length) {
-        extra += _sectionHeader('Secrets', '_secret');
+        varSecHtml += _sectionHeader('Secrets', '_secret');
         ps.secrets.forEach(s => {
-          extra += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
+          varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
             ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(s.key)}</b> = ********</span>
           </div>`;
         });
-        extra += _sectionFooter();
+        varSecHtml += _sectionFooter();
       }
       const links = (linksData && linksData.links) || {};
       const linkKeys = Object.keys(links);
@@ -774,7 +772,8 @@ async function _renderResourcesData(data) {
         linksHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No linked accounts</div>';
       }
       linksHtml += '</div>';
-      const fullHtml = html + extra + linksHtml;
+      // Final assembly: live → variables/secrets → repos → linked accounts
+      const fullHtml = liveHtml + varSecHtml + repoHtml + linksHtml;
       // Only update DOM if content actually changed (prevents flash/blink)
       if (el.innerHTML !== fullHtml) el.innerHTML = fullHtml;
     });
@@ -783,7 +782,7 @@ async function _renderResourcesData(data) {
   }
 }
 
-// ── Resource context menu ─────────────────────────────────────────
+// ── Resource context menu ────────────────────────────────────────────────────────────
 function _positionMenu(menu, e) {
   // Position context menu, flip up if it would overflow the viewport
   document.body.appendChild(menu);

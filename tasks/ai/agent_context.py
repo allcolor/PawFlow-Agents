@@ -662,8 +662,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     from core.skill_resolver import inject_skills_into_prompt
                     system_prompt = inject_skills_into_prompt(
                         system_prompt, _agent_skills, _uid)
-                # Auto-load tools from active MCP servers
-                active_mcps = active_res.get("mcps", [])
+                # Auto-load tools from all MCP servers accessible in scope
+                # (global + user + conversation). No linking needed: any MCP
+                # visible via rs.list_all is automatically active in this conv.
+                _all_mcps = rs.list_all("mcp", _uid, conversation_id=conversation_id) or []
+                active_mcps = [m.get("name", "") for m in _all_mcps if m.get("name")]
                 if active_mcps:
                     for mcp_name in active_mcps:
                         try:

@@ -515,13 +515,13 @@ class ToolRelayService(BaseService):
     def _load_mcp_tools(self, registry, user_id: str, conversation_id: str):
         """Load MCP server tools for the active agent into registry."""
         try:
-            from core.conversation_store import ConversationStore
             from core.resource_store import ResourceStore
-            cstore = ConversationStore.instance()
             rs = ResourceStore.instance()
 
-            active_res = cstore.get_extra(conversation_id, "active_resources") or {}
-            active_mcps = active_res.get("mcps", [])
+            # All MCP servers accessible in scope (global + user + conversation)
+            # are auto-active — no per-conversation linking required.
+            _all_mcps = rs.list_all("mcp", user_id, conversation_id=conversation_id) or []
+            active_mcps = [m.get("name", "") for m in _all_mcps if m.get("name")]
             if not active_mcps:
                 return
 

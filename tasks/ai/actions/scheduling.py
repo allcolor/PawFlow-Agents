@@ -254,57 +254,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 {"error": str(e)}).encode())
         return [flowfile]
 
-    if action == "link_mcp":
-        rtype = "mcps"
-        name = body.get("name", "").strip()
-        if not name or not conv_id:
-            flowfile.set_content(json.dumps(
-                {"error": "Missing name or conversation_id"}).encode())
-            return [flowfile]
-        # Verify resource exists
-        from core.resource_store import ResourceStore
-        if not ResourceStore.instance().get_any("mcp", name, user_id):
-            flowfile.set_content(json.dumps(
-                {"error": f"MCP server '{name}' not found"}).encode())
-            return [flowfile]
-        from core.conv_links import link as _link
-        linked = _link(conv_id, rtype, name)
-        flowfile.set_content(json.dumps(
-            {"ok": True, "name": name, f"linked_{rtype}": linked}).encode())
-        return [flowfile]
-
-    if action == "unlink_mcp":
-        rtype = "mcps"
-        name = body.get("name", "").strip()
-        if not name or not conv_id:
-            flowfile.set_content(json.dumps(
-                {"error": "Missing name or conversation_id"}).encode())
-            return [flowfile]
-        from core.conv_links import unlink as _unlink
-        linked = _unlink(conv_id, rtype, name)
-        flowfile.set_content(json.dumps(
-            {"ok": True, "name": name, f"linked_{rtype}": linked}).encode())
-        return [flowfile]
-
-    if action == "list_linked_mcps":
-        rtype = "mcps"
-        if not conv_id:
-            flowfile.set_content(json.dumps({f"linked_{rtype}": []}).encode())
-            return [flowfile]
-        from core.conv_links import get_linked
-        linked = get_linked(conv_id, rtype)
-        from core.resource_store import ResourceStore
-        rs = ResourceStore.instance()
-        items = []
-        for name in linked:
-            rd = rs.get_any("mcp", name, user_id)
-            items.append({
-                "name": name,
-                "description": (rd or {}).get("description", ""),
-            })
-        flowfile.set_content(json.dumps(
-            {f"linked_{rtype}": items}).encode())
-        return [flowfile]
 
     if action == "assign_task":
         agent = body.get("agent_name", "")

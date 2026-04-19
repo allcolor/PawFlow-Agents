@@ -243,7 +243,12 @@ COPY fs_mcp.py /opt/pawflow/fs_mcp.py
 COPY fs_http.py /opt/pawflow/fs_http.py
 COPY pawflow.py /opt/pawflow/pawflow.py
 COPY audio_capture.py /opt/pawflow/audio_capture.py
-ENV PYTHONPATH="/opt/pawflow"
+# /workspace/.pylib is the host-mounted vendored deps dir — putting it on
+# PYTHONPATH means any python invocation inside the container (including
+# the relay itself and user scripts) sees the pinned/vendored packages
+# (fastavro, pyarrow, tiktoken, regex, requests, certifi...) without
+# re-running pip after each container restart.
+ENV PYTHONPATH="/opt/pawflow:/workspace/.pylib"
 
 # ── Init script: start chronyd then exec CMD ──────────────────────
 RUN printf '#!/bin/bash\nsudo chronyd 2>/dev/null || true\nexec "$@"\n' > /usr/local/bin/init.sh \

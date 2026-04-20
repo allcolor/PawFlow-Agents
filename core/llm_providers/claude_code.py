@@ -981,8 +981,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         if isinstance(_raw_args, str):
                             try:
                                 _raw_args = json.loads(_raw_args)
-                            except Exception:
-                                pass
+                            except Exception as _parse_err:
+                                logger.debug(
+                                    "[claude-code] _pub outer args not JSON, "
+                                    "keeping as string: %s", _parse_err)
                         _u_name, _u_args = unwrap_mcp_tool(_t, _raw_args)
                         # If unwrap didn't resolve (still the wrapper name),
                         # fall back to reading tool_name from the raw args
@@ -993,20 +995,35 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             if isinstance(_inner, str):
                                 try:
                                     _inner = json.loads(_inner)
-                                except Exception:
-                                    pass
+                                except Exception as _inner_err:
+                                    logger.debug(
+                                        "[claude-code] _pub inner args not "
+                                        "JSON, keeping as string: %s",
+                                        _inner_err)
                             _u_args = _inner if isinstance(_inner, dict) else _raw_args
                         data["tool"] = _u_name
                         if event_type == "tool_call":
                             data["arguments"] = _u_args
                         logger.warning("[claude-code] _pub safety-net unwrapped %s → %s", _t, _u_name)
-                    except Exception:
-                        pass
+                    except Exception as _unwrap_err:
+                        logger.warning(
+                            "[claude-code] _pub safety-net unwrap failed "
+                            "for tool=%s event=%s: %s",
+                            _t, event_type, _unwrap_err, exc_info=True)
             if _subagent_event_cb:
                 try:
                     _subagent_event_cb(event_type, data)
-                except Exception:
-                    pass
+                except Exception as _sub_err:
+                    # Never-swallow: log loudly. Do NOT raise — raising
+                    # here would kill the CC stream parse loop for the
+                    # rest of the turn. Log is the pragmatic floor
+                    # (user rule: at minimum log).
+                    logger.error(
+                        "[claude-code] subagent_event_cb failed for "
+                        "event=%s: %s", event_type, _sub_err, exc_info=True)
+                # Subagent events relay to parent via the callback ONLY;
+                # they must NOT also hit the parent conv's event bus,
+                # otherwise the UI gets duplicates.
                 return
             if not _event_cid:
                 return
@@ -1025,49 +1042,49 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     "from": agent_name or "",
                     "to": _tm["source_agent"],
                 }
-            # Publish FIRST so any downstream persistence work can never
-            # starve the webchat. Earlier 056b99e added a context_usage
-            # persist (set_extra) right here BEFORE publish_event — on the
-            # CC stream parse thread — which stalled tool_call /
-            # tool_result delivery to the UI whenever the conv extras
-            # lock was contended. The persistence now lives in a single
-            # per-turn write via turn_callback (see _flush_turn in
-            # agent_core / emitter), not per-event.
-            try:
-                from core.conversation_event_bus import ConversationEventBus
-                ConversationEventBus.instance().publish_event(
-                    _event_cid, event_type, data)
-            except Exception:
-                pass
-            # Persist context-fill (best-effort, AFTER publish so slow
-            # disk/lock cannot block event delivery). Fire-and-forget on a
-            # daemon thread — we only care the file eventually reflects
-            # the latest gauge value; losing one write on a restart is
-            # fine, the next turn rewrites it.
+            # Invariant: user-visible state MUST be on disk before we
+            # publish the SSE that makes it visible. For message_meta with
+            # context_usage, persist the extras synchronously first.
+            # (Earlier commit 056b99e moved this AFTER publish on a daemon
+            # thread to dodge a lock contention issue; that violated the
+            # "visible = persisted" invariant — if the extras lock blocks,
+            # we log loudly and still publish so the gauge doesn't freeze,
+            # but we never skip logging the failure.)
             if (event_type == "message_meta"
                     and isinstance(data, dict)
                     and (data.get("context_used") or 0) > 0
                     and (data.get("context_max") or 0) > 0
                     and agent_name):
-                def _persist_ctx_fill(cid=_event_cid, an=agent_name,
-                                       used=int(data["context_used"]),
-                                       mx=int(data["context_max"]),
-                                       pct=float(data.get("context_pct") or 0)):
-                    try:
-                        from core.conversation_store import ConversationStore as _CS_pub
-                        _store_pub = _CS_pub.instance()
-                        _cu_map = _store_pub.get_extra(
-                            cid, "context_usage") or {}
-                        _cu_map[an] = {
-                            "used": used, "max": mx, "pct": pct,
-                            "updated_at": int(time.time()),
-                        }
-                        _store_pub.set_extra(cid, "context_usage", _cu_map)
-                    except Exception:
-                        pass
-                threading.Thread(
-                    target=_persist_ctx_fill, daemon=True,
-                    name=f"ctx-usage-persist-{agent_name[:8]}").start()
+                try:
+                    from core.conversation_store import ConversationStore as _CS_pub
+                    _store_pub = _CS_pub.instance()
+                    _cu_map = _store_pub.get_extra(
+                        _event_cid, "context_usage") or {}
+                    _cu_map[agent_name] = {
+                        "used": int(data["context_used"]),
+                        "max": int(data["context_max"]),
+                        "pct": float(data.get("context_pct") or 0),
+                        "updated_at": int(time.time()),
+                    }
+                    _store_pub.set_extra(
+                        _event_cid, "context_usage", _cu_map)
+                except Exception as _ctx_err:
+                    logger.error(
+                        "[claude-code] context_usage persist failed for "
+                        "cid=%s agent=%s: %s — publishing SSE anyway",
+                        _event_cid, agent_name, _ctx_err, exc_info=True)
+            # Publish to EventBus AFTER persistence. Any failure here must
+            # be logged loudly (no silent swallow — a published event that
+            # vanishes mid-flight is a symptom we need to catch).
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    _event_cid, event_type, data)
+            except Exception as _pub_err:
+                logger.error(
+                    "[claude-code] publish_event failed for event=%s "
+                    "cid=%s: %s", event_type, _event_cid, _pub_err,
+                    exc_info=True)
 
         # Read streaming output — accumulate per turn
         content_parts: List[str] = []  # final result text

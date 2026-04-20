@@ -1196,17 +1196,55 @@ class ConversationStore:
         self._invalidate_ctx_cache(cid)
         self._reload_cache(cid)
 
-    def _get_transcript_msg_ids(self, cid: str) -> set:
-        """Get all msg_ids from transcript lines (cached via _read)."""
-        def _scan(lines):
-            ids = set()
-            for line in lines:
-                if line.get("t") == "msg":
-                    mid = line.get("msg_id")
-                    if mid:
-                        ids.add(mid)
-            return ids
-        return self._read(cid, _scan) or set()
+    def _get_transcript_msg_ids(self, cid: str, tail_msgs: int = 50) -> set:
+        """Return msg_ids of the last `tail_msgs` message lines in transcript.
+
+        Tail-only scan. msg_ids are minted at creation (uuid4, see
+        LLMMessage.__post_init__) so a freshly enqueued message cannot
+        collide with an older one — we only dedup against recent tail
+        to guard against at-most-once retry / short-lived double-enqueue
+        races. Full-file scan was O(n) disk I/O on every append
+        (~12MB/34k lines after a long session), which amplified any
+        downstream persistence bug by multiplying the time window.
+        """
+        lock = self._get_conv_lock(cid)
+        path = self._conv_path(cid)
+        with lock:
+            if not path.exists():
+                return set()
+            try:
+                size = path.stat().st_size
+                # Read trailing chunk — big enough to contain >> tail_msgs
+                # lines even when interleaved with extras/status lines.
+                BLOCK = 256 * 1024
+                if size <= BLOCK:
+                    with open(path, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                else:
+                    with open(path, "rb") as f:
+                        f.seek(size - BLOCK)
+                        tail = f.read()
+                    # Drop leading partial line (we seeked mid-line).
+                    lines = tail.decode("utf-8", errors="replace").split("\n")[1:]
+                from collections import deque
+                recent = deque(maxlen=tail_msgs)
+                for raw in lines:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("t") == "msg":
+                        mid = obj.get("msg_id")
+                        if mid:
+                            recent.append(mid)
+                return set(recent)
+            except OSError as e:
+                logger.error(
+                    "[convstore] tail read failed %s: %s", cid, e)
+                return set()
 
     # ── Context ops ───────────────────────────────────────────────────
 

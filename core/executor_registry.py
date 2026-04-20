@@ -8,16 +8,11 @@ It also persists the list of running flows to disk so they can be
 automatically restarted after a server restart.
 
 Hooks into DeploymentRegistry to track instance status (running/stopped).
-
-Hot-reload: watches source files for changes and auto-restarts running
-flows so handler configuration is always fresh.
 """
 
 import json
 import logging
-import os
 import threading
-import time as _time
 from pathlib import Path
 from typing import Dict, Optional, Any
 
@@ -26,12 +21,6 @@ from engine.continuous_executor import ContinuousFlowExecutor
 logger = logging.getLogger(__name__)
 
 STATE_FILE = "continuous_state.json"  # kept for cleanup only
-
-# Directories to watch for hot-reload
-_HOT_RELOAD_DIRS = ["tasks", "core", "services"]
-_HOT_RELOAD_INTERVAL = 5  # seconds between mtime scans
-_HOT_RELOAD_DEBOUNCE = 2  # seconds to wait after last change before restart
-
 
 def _get_deployment_registry():
     """Lazy import to avoid circular imports."""
@@ -55,9 +44,6 @@ class ExecutorRegistry:
         self._executors: Dict[str, ContinuousFlowExecutor] = {}
         self._executor_lock = threading.Lock()
         self._restored = False
-        self._hot_reload_started = False
-        self._shutting_down = False
-        self._py_mtimes: Dict[str, float] = {}  # path -> mtime
 
     @classmethod
     def get_instance(cls) -> "ExecutorRegistry":
@@ -176,10 +162,6 @@ class ExecutorRegistry:
         if legacy.exists():
             legacy.unlink(missing_ok=True)
 
-        # Hot-reload disabled — causes broken sockets and zombie processes on Windows.
-        # Restart the server manually after code changes.
-        # self.start_hot_reload()
-
 
     def _restore_instance(self, instance_id: str, flow_path: str,
                           max_workers: int = 4, max_retries: int = 3,
@@ -254,111 +236,3 @@ class ExecutorRegistry:
             if _get_deployment_registry():
                 _get_deployment_registry().update_status(instance_id, "error", str(e))
             return False
-
-    # -- Hot-reload: watch source files, restart flows on change --
-
-    def start_hot_reload(self):
-        """Start background thread that watches .py files for changes."""
-        if self._hot_reload_started:
-            return
-        self._hot_reload_started = True
-        self._snapshot_mtimes()
-        t = threading.Thread(target=self._hot_reload_loop, daemon=True,
-                             name="hot-reload-watcher")
-        t.start()
-        logger.info("Hot-reload watcher started (dirs: %s, interval: %ds)",
-                     _HOT_RELOAD_DIRS, _HOT_RELOAD_INTERVAL)
-
-    def _snapshot_mtimes(self):
-        """Record mtime of all .py files in watched directories."""
-        self._py_mtimes.clear()
-        for d in _HOT_RELOAD_DIRS:
-            p = Path(d)
-            if not p.is_dir():
-                continue
-            for py in p.rglob("*.py"):
-                try:
-                    self._py_mtimes[str(py)] = py.stat().st_mtime
-                except OSError:
-                    pass
-
-    def _check_changes(self) -> list:
-        """Check for .py file changes. Returns list of changed paths."""
-        changed = []
-        for path, old_mt in list(self._py_mtimes.items()):
-            try:
-                new_mt = Path(path).stat().st_mtime
-                if new_mt > old_mt:
-                    changed.append(path)
-            except OSError:
-                pass
-        # Also check for new files
-        for d in _HOT_RELOAD_DIRS:
-            p = Path(d)
-            if not p.is_dir():
-                continue
-            for py in p.rglob("*.py"):
-                s = str(py)
-                if s not in self._py_mtimes:
-                    changed.append(s)
-        return changed
-
-    def request_shutdown(self):
-        """Signal that the process is shutting down. Prevents hot-reload restart."""
-        self._shutting_down = True
-
-    def _hot_reload_loop(self):
-        """Background loop: scan for changes, debounce, restart process."""
-        while not self._shutting_down:
-            _time.sleep(_HOT_RELOAD_INTERVAL)
-            if self._shutting_down:
-                return
-            try:
-                changed = self._check_changes()
-                if not changed:
-                    continue
-                # Debounce: wait, then re-check to catch multi-file saves
-                _time.sleep(_HOT_RELOAD_DEBOUNCE)
-                if self._shutting_down:
-                    return
-                changed = self._check_changes()
-                if not changed:
-                    continue
-                short = [os.path.basename(p) for p in changed[:5]]
-                if len(changed) > 5:
-                    short.append(f"... +{len(changed) - 5} more")
-                logger.info("Hot-reload: %d file(s) changed (%s), restarting server...",
-                             len(changed), ", ".join(short))
-                print(f"\n[HOT-RELOAD] {len(changed)} file(s) changed: "
-                      f"{', '.join(short)} — restarting server...")
-                self._restart_server()
-            except Exception as e:
-                logger.error("Hot-reload error: %s", e)
-
-    def _restart_server(self):
-        """Restart the entire server process.
-
-        Gracefully stops all executors, then re-exec's the process with
-        the same arguments. Flows auto-restore via restore_from_disk().
-
-        On Windows, os.execv spawns a child (doesn't replace), so we use
-        subprocess + os._exit to get clean process replacement.
-        """
-        if self._shutting_down:
-            return
-        import subprocess
-        import sys
-        # Stop all running executors gracefully
-        try:
-            reg = ExecutorRegistry.get_instance()
-            for iid, ex in list(reg.get_all().items()):
-                try:
-                    ex.stop()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        # Spawn new process, then kill this one
-        subprocess.Popen([sys.executable] + sys.argv)
-        os._exit(0)
-

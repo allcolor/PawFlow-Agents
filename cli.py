@@ -294,11 +294,7 @@ def cmd_start(args):
             os._exit(1)
         _shutting_down = True
         logger.info("Shutting down...")
-        # Prevent hot-reload from restarting the process
-        try:
-            ExecutorRegistry.get_instance().request_shutdown()
-        except Exception:
-            pass
+
         # Stop executors in a thread with timeout
         import threading
         def _stop_all():

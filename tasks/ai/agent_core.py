@@ -400,9 +400,10 @@ class AgentCoreMixin:
                             _payload["context_used"] = _src["context_used"]
                             _payload["context_max"] = _src["context_max"]
                             _payload["context_pct"] = _src["context_pct"]
-                            # Persist per-agent so the UI can show the gauge
-                            # permanently across turns (not just transiently
-                            # while the agent is in the active-panel).
+                            # Persist-then-pub: the gauge value must land
+                            # on disk BEFORE the SSE fires so a reload
+                            # after crash shows the same gauge value the
+                            # user just saw (visible = persisted).
                             try:
                                 from core.conversation_store import ConversationStore as _CS
                                 _store = _CS.instance()
@@ -417,12 +418,28 @@ class AgentCoreMixin:
                                         "updated_at": int(time.time()),
                                     }
                                     _store.set_extra(_pcid, "context_usage", _cu_map)
-                            except Exception:
-                                pass
+                            except Exception as _cu_err:
+                                # Never-swallow: log loudly, still publish
+                                # the gauge SSE so the UI doesn't freeze.
+                                # Extras-lock contention is recoverable
+                                # (next turn rewrites the value).
+                                logger.error(
+                                    "[_append] message_meta context_usage "
+                                    "persist failed cid=%s agent=%s: %s",
+                                    ctx.get("_event_cid", conversation_id),
+                                    _agent_for_persist, _cu_err,
+                                    exc_info=True)
                         ConversationEventBus.instance().publish_event(
                             ctx.get("_event_cid", conversation_id), "message_meta", _payload)
-                    except Exception:
-                        pass
+                    except Exception as _meta_err:
+                        # Never-swallow: message_meta is the source of the
+                        # per-message model/tokens badge. Failure here
+                        # silently drops the badge in the UI — surface it.
+                        logger.error(
+                            "[_append] message_meta publish failed "
+                            "msg_id=%s: %s",
+                            getattr(msg, "msg_id", "?"), _meta_err,
+                            exc_info=True)
 
         def _flush():
             nonlocal new_messages

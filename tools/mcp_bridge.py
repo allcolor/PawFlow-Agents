@@ -254,6 +254,51 @@ def _respond(req_id, result=None, error=None):
 
 _log_file = None
 
+def _autoclose_truncated_json(s: str, max_appends: int = 4) -> str:
+    """Append closing } / ] (and a closing " if needed) when a JSON
+    string is EOF-truncated by a few chars.
+
+    Narrow on purpose: only runs when json.loads raised at a position
+    within a couple chars of len(s), i.e. the LLM forgot the final
+    one-or-two closers. Counts balanced braces/brackets while tracking
+    string literals + escapes; never rewrites content, only appends.
+    Returns the original string if nothing looks fixable.
+
+    Why targeted and not a json_repair wildcard: json_repair re-writes
+    the whole stream and silently mangles valid patterns (the JS
+    ternary incident). This helper ONLY adds trailing closers, so it
+    can't corrupt valid content — the worst case is "already balanced,
+    nothing appended" = caller retries, parser raises the same error.
+    """
+    stack = []
+    in_string = False
+    escape_next = False
+    for c in s:
+        if in_string:
+            if escape_next:
+                escape_next = False
+            elif c == "\\":
+                escape_next = True
+            elif c == '"':
+                in_string = False
+        else:
+            if c == '"':
+                in_string = True
+            elif c == "{":
+                stack.append("}")
+            elif c == "[":
+                stack.append("]")
+            elif c == "}" or c == "]":
+                if stack and stack[-1] == c:
+                    stack.pop()
+    suffix = ""
+    if in_string:
+        suffix += '"'
+    while stack and len(suffix) < max_appends:
+        suffix += stack.pop()
+    return s + suffix if suffix else s
+
+
 def _log(msg):
     global _log_file
     sys.stderr.write(f"[mcp-bridge] {msg}\n")
@@ -313,15 +358,40 @@ def main():
             "name": "use_tool",
             "description": (
                 "Execute a tool by name with the given arguments. "
-                "Call get_tool_schema first to know the parameters."
+                "Call get_tool_schema first to know the parameters.\n"
+                "\n"
+                "STRICT rules for the 'arguments' field:\n"
+                "  * Pass it as a JSON OBJECT (dict). NEVER as a string, "
+                "even when the value is long or contains code, quotes, or "
+                "newlines. Example correct: arguments={\"path\":\"a.py\","
+                "\"content\":\"x = 1\\n\"}. "
+                "Example WRONG: arguments=\"{\\\"path\\\":\\\"a.py\\\"}\".\n"
+                "  * The payload itself is the dict — do NOT wrap it "
+                "again. Example WRONG: tool_name=\"use_tool\", "
+                "arguments={tool_name:\"edit\", arguments:{...}} — that "
+                "nests use_tool inside itself.\n"
+                "  * Embedded newlines/quotes go ONCE-ESCAPED (\\n, \\\"), "
+                "not doubly."
             ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "tool_name": {"type": "string",
-                                  "description": "Name of the tool to execute"},
-                    "arguments": {"type": "object",
-                                  "description": "Arguments to pass to the tool"},
+                    "tool_name": {
+                        "type": "string",
+                        "description": (
+                            "Name of the tool to execute (e.g. 'edit', "
+                            "'read', 'bash'). NEVER set this to 'use_tool' "
+                            "— use_tool is the wrapper itself and nesting "
+                            "it inside itself is rejected."
+                        ),
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "description": (
+                            "Arguments to pass to the target tool, as a "
+                            "JSON object (dict). NOT a JSON-encoded string."
+                        ),
+                    },
                 },
                 "required": ["tool_name", "arguments"],
             },
@@ -529,22 +599,47 @@ def main():
                                     _decode_failed = True
                                     break
                             else:
-                                # Used to fall back to `json_repair.repair_json`
-                                # here for structurally broken JSON (unescaped
-                                # inner quotes in bash/edit payloads). Removed:
-                                # json_repair silently MANGLES JS ternary
-                                # patterns. Reproducer:
-                                #   repair_json('{"new_string":"<div style="a:${x ? \\'none\\' : \\'block\\'}">"}')
-                                #   → {"new_string":"<div style=", "display":{"none":"block"}}
-                                # The `? 'none' : 'block'` is re-read as
-                                # {"none":"block"} and the `?` is dropped, so
-                                # every Edit on a JS template literal with a
-                                # ternary got written back to disk with the
-                                # `: 'block'` branch stripped. Observed
-                                # repeatedly on resources.js (3+ incidents).
-                                # Fail fast now — the error message below
-                                # tells the caller to re-send with proper
-                                # JSON escaping, and that always fixes it.
+                                # Targeted truncation repair: the LLM
+                                # sometimes emits `arguments` as a
+                                # stringified JSON and forgets 1-2
+                                # closing } / ]. Only kicks in when the
+                                # error position is within a few chars
+                                # of EOF AND the error is the classic
+                                # "Expecting ',' / property / value"
+                                # family — i.e. parser ran out of input
+                                # mid-object. Never rewrites content.
+                                # (The old json_repair fallback was
+                                # removed because it mangled JS ternary
+                                # patterns. See `_autoclose_truncated_json`
+                                # for the narrow replacement.)
+                                _msg = str(_je)
+                                _trunc_like = (
+                                    "Expecting ',' delimiter" in _msg
+                                    or "Expecting property name" in _msg
+                                    or "Expecting value" in _msg
+                                    or "Unterminated string" in _msg
+                                )
+                                _at_end = (
+                                    getattr(_je, "pos", -1) >= len(tool_args) - 4)
+                                if _trunc_like and _at_end:
+                                    _patched = _autoclose_truncated_json(tool_args)
+                                    if _patched != tool_args:
+                                        try:
+                                            tool_args = json.loads(_patched)
+                                            _unwrap_passes += 1
+                                            _decode_err = None
+                                            _log(
+                                                f"USE_TOOL {tool_name} "
+                                                f"truncation-repair OK "
+                                                f"(appended {len(_patched) - len(tool_args if isinstance(tool_args, str) else _patched)} "
+                                                f"closer char(s))")
+                                            continue
+                                        except (json.JSONDecodeError, TypeError) as _je3:
+                                            _decode_err = _je3
+                                            _log(
+                                                f"USE_TOOL {tool_name} "
+                                                f"truncation-repair FAILED: "
+                                                f"{_je3}")
                                 _log(f"USE_TOOL {tool_name} JSON decode FAILED: "
                                      f"{_je} value={str(tool_args)[:200]}")
                                 _decode_failed = True

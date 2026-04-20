@@ -748,30 +748,18 @@ class ConversationStore:
     def _write_extras(self, cid: str, data: dict):
         """Atomically write extras JSON (tmp + rename).
 
-        Retries on PermissionError: on Windows (esp. when the conv dir
-        sits on a UNC path to WSL), `os.replace` can fail with
-        WinError 5 while an AV scanner / Windows Search indexer still
-        holds a brief read handle on the destination after the previous
-        close. The rename is fast, a short backoff almost always clears
-        the handle. A hard raise here crashes the caller (_pub) —
-        retry quietly instead.
+        Callers MUST hold `_get_conv_lock(cid)`. With every reader also
+        holding the same lock, no concurrent file handle exists on the
+        destination, so `os.replace` cannot be blocked by our own reads.
+        A PermissionError here now means a legitimate OS-level issue
+        (disk permission, volume full, etc.) and is propagated to the
+        caller rather than masked by retries.
         """
         path = self._extras_path(cid)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        _last_err = None
-        for _attempt in range(5):
-            try:
-                tmp.replace(path)
-                return
-            except PermissionError as e:
-                _last_err = e
-                time.sleep(0.05 * (2 ** _attempt))  # 50, 100, 200, 400, 800 ms
-        # After 1.5s of retries the target is still locked — surface the
-        # error (caller decides how to handle). Orphaned tmp stays on
-        # disk; next successful write replaces it.
-        raise _last_err
+        tmp.replace(path)
 
     # ══════════════════════════════════════════════════════════════════
     #  SINGLE READ POINT
@@ -1637,18 +1625,24 @@ class ConversationStore:
 
     def get_extra_cached(self, cid: str, key: str, default: Any = None) -> Any:
         """Get extra from extras.json file."""
-        return self._read_extras(cid).get(self._canon_extra_key(key), default)
+        lock = self._get_conv_lock(cid)
+        with lock:
+            return self._read_extras(cid).get(self._canon_extra_key(key), default)
 
     def get_extra(self, cid: str, key: str, default: Any = None,
                   user_id: str = "") -> Any:
         if not self.exists(cid):
             return default
-        return self._read_extras(cid).get(self._canon_extra_key(key), default)
+        lock = self._get_conv_lock(cid)
+        with lock:
+            return self._read_extras(cid).get(self._canon_extra_key(key), default)
 
     def get_extras(self, cid: str, user_id: str = "") -> Optional[dict]:
         if not self.exists(cid):
             return None
-        return dict(self._read_extras(cid))
+        lock = self._get_conv_lock(cid)
+        with lock:
+            return dict(self._read_extras(cid))
 
     def set_extra(self, cid: str, key: str, value: Any,
                   user_id: str = "") -> bool:

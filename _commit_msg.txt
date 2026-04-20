@@ -1,0 +1,30 @@
+feat(sse): route new_message/done/tool_call/tool_result/agent_response via writer
+
+Enforces visible ⇒ persisted invariant at block-to-event granularity:
+every SSE event that represents a persisted message now fires AFTER
+the corresponding enqueue_message hits disk, via the writer's existing
+`sse_events=` kwarg (published post-write by the writer thread).
+
+Extended writer: sse_events may carry an optional per-event `cid` to
+retarget the SSE to a different conversation than the writer's cid
+(used by bg-delegate nudges whose writes live in a task sub-conv but
+whose SSE must reach the parent conv's EventSource).
+
+Sites migrated off direct publish_event:
+  - tasks/io/publish_message.py       (flow publish: done)
+  - core/handlers/resource_agent.py   (bg-delegate nudge: new_message,
+                                       now persisted + routed to parent)
+  - tasks/ai/actions/tools_exec.py    (/call tool_call + tool_result)
+  - tasks/ai/agent_side_channels.py   (btw_done, agent_response)
+  - tasks/ai/agent_streaming.py       (narrator narration)
+  - tasks/ai/agent_loop.py            (interrupt-synthesis done)
+  - tasks/io/spawn_agent.py           (/invoke done)
+
+broadcast_done now waits on writer.flush() so cstore.message_count
+reflects every per-agent write before the terminal SSE fires.
+
+Pure status/error SSE (error_event, compact_progress, finish_reason=error
+done with no response, thinking, heartbeat) remain direct — they
+correspond to no persisted message.
+
+Tests: 2693/2693 green.

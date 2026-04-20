@@ -54,42 +54,10 @@ class BucketStore:
             return self._empty_meta()
         try:
             with open(self._meta_path, "r", encoding="utf-8") as f:
-                m = json.load(f)
+                return json.load(f)
         except Exception as e:
             logger.warning("[bucket-store] meta.json corrupt (%s) - reinitializing", e)
             return self._empty_meta()
-        if m.get("version") == 2:
-            return m
-        old_buckets = m.get("buckets", []) or []
-        old_sbs = m.get("super_buckets", []) or []
-        objects = list(old_sbs) + list(old_buckets)
-
-        def _num(bid, prefix):
-            if isinstance(bid, str) and bid.startswith(prefix):
-                try:
-                    return int(bid[len(prefix):])
-                except ValueError:
-                    return 0
-            return 0
-
-        next_b = max((_num(b, "B_") for b in old_buckets), default=0) + 1
-        next_sb = max((_num(b, "SB_") for b in old_sbs), default=0) + 1
-        migrated = {
-            "version": 2,
-            "last_seq": int(m.get("last_seq", 0) or 0),
-            "last_ts": float(m.get("last_ts", 0.0) or 0.0),
-            "objects": objects,
-            "_next_b_num": next_b,
-            "_next_sb_num": next_sb,
-        }
-        logger.info("[bucket-store] migrated v1->v2: %d SB + %d B -> %d objects",
-                    len(old_sbs), len(old_buckets), len(objects))
-        self._meta = migrated
-        try:
-            self._save_meta()
-        except Exception as e:
-            logger.warning("[bucket-store] migration save failed: %s", e)
-        return migrated
 
     def _save_meta(self):
         tmp = self._meta_path.with_suffix(".json.tmp")

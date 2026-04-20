@@ -97,9 +97,7 @@ def _load_credentials_pool(service_id: str = "") -> list:
     """Load the credentials pool for a CC service.
 
     Returns list of {"access_token", "refresh_token", "expires_at", "account", "added_at"}.
-    Handles migration from single-credential format.
     """
-    from pathlib import Path
     from core.secrets import get_secrets_manager
 
     sid = _find_cc_service_id(service_id)
@@ -113,39 +111,13 @@ def _load_credentials_pool(service_id: str = "") -> list:
     if not secrets_path.exists():
         return []
     existing = json.loads(secrets_path.read_text(encoding="utf-8"))
-
-    # New format: pool
     pool_key = f"{prefix}_credentials_pool"
-    if pool_key in existing:
-        try:
-            pool_json = sm.decrypt(existing[pool_key])
-            return json.loads(pool_json)
-        except Exception:
-            return []
-
-    # Migration: old single-credential format → pool of 1
-    at = existing.get(f"{prefix}_access_token", "")
-    if at:
-        try:
-            cred = {
-                "access_token": sm.decrypt(at),
-                "refresh_token": sm.decrypt(existing.get(f"{prefix}_refresh_token", "")),
-                "expires_at": int(existing.get(f"{prefix}_expires_at", 0)),
-                "account": "",
-                "added_at": 0,
-            }
-            # Migrate: save as pool, delete old keys
-            pool = [cred]
-            _save_credentials_pool(pool, service_id=sid)
-            for old_key in [f"{prefix}_access_token", f"{prefix}_refresh_token", f"{prefix}_expires_at"]:
-                existing.pop(old_key, None)
-            secrets_path.write_text(
-                json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-            logger.info("[claude-code] migrated single credential to pool for '%s'", sid)
-            return pool
-        except Exception:
-            pass
-    return []
+    if pool_key not in existing:
+        return []
+    try:
+        return json.loads(sm.decrypt(existing[pool_key]))
+    except Exception:
+        return []
 
 
 def _save_credentials_pool(pool: list, service_id: str = ""):

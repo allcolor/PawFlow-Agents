@@ -202,49 +202,6 @@ def test_disk_is_source_of_truth(tmp_path):
     assert a2.object_count == 0
 
 
-def test_v1_meta_migrates_to_v2(tmp_path):
-    """Legacy meta.json (v1 shape) must migrate in place on first load."""
-    agent_dir = tmp_path / "conv1" / "summaries" / "claude"
-    agent_dir.mkdir(parents=True)
-    # Fabricate v1 meta + matching files
-    v1_meta = {
-        "version": 1,
-        "last_seq": 42,
-        "last_ts": 123.0,
-        "buckets": ["B_00001", "B_00002"],
-        "super_buckets": ["SB_00001"],
-    }
-    (agent_dir / "meta.json").write_text(json.dumps(v1_meta))
-    for bid, lv, fs in [("SB_00001", 2, 1), ("B_00001", 1, 20),
-                         ("B_00002", 1, 30)]:
-        (agent_dir / f"{bid}.json").write_text(json.dumps({
-            "bucket_id": bid, "level": lv,
-            "first_seq": fs, "last_seq": fs + 5,
-            "first_ts": 0.0, "last_ts": 1.0,
-            "summary": f"old {bid}",
-        }))
-    # Load -> migration kicks in
-    s = BucketStore.get(tmp_path / "conv1", "claude")
-    assert s._meta["version"] == 2
-    # SB first then Bs, chronologically
-    assert s._meta["objects"] == ["SB_00001", "B_00001", "B_00002"]
-    # Counters initialized past existing IDs
-    assert s._meta["_next_b_num"] == 3
-    assert s._meta["_next_sb_num"] == 2
-    # last_seq/last_ts preserved
-    assert s.last_seq == 42
-    # Persisted shape is v2 - next load is a no-op migration
-    raw = json.loads((agent_dir / "meta.json").read_text())
-    assert raw["version"] == 2
-    assert "buckets" not in raw
-    assert "super_buckets" not in raw
-    # assemble header works across both levels
-    header = s.assemble_summary_header()
-    assert "SB_00001" in header
-    assert "B_00001" in header
-    assert "B_00002" in header
-
-
 def test_get_consolidation_input_excludes_last(tmp_path):
     s = _fresh_store(tmp_path)
     for i in range(4):

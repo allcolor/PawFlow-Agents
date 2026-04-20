@@ -362,8 +362,23 @@ class AgentCoreMixin:
                                 }})
                     ConversationWriter.for_conversation(conversation_id).enqueue(
                         [_store_msg], user_id=user_id, sse_events=_sse if _sse else None)
-                except Exception:
-                    pass
+                except Exception as _persist_err:
+                    # HARD INVARIANT: visible ⇒ persisted. A failure to enqueue
+                    # means the message was (or will be) shown to the user but
+                    # is not on disk — data loss. Never swallow. Log loudly and
+                    # re-raise so the caller (turn_callback, etc.) fails fast
+                    # instead of continuing on corrupted state.
+                    logger.error(
+                        "[_append] ENQUEUE FAILED — visible/persisted invariant "
+                        "broken. conv=%s agent=%s role=%s msg_id=%s err=%s",
+                        conversation_id[:8] if conversation_id else "?",
+                        ctx.get("active_agent_name", "?"),
+                        msg.role,
+                        getattr(msg, "msg_id", "?"),
+                        _persist_err,
+                        exc_info=True,
+                    )
+                    raise
             # Publish per-message metadata (model, tokens, service) so client
             # can attach badge + info to the correct element by msg_id
             if msg.role == "assistant" and msg.source and emitter.is_streaming:

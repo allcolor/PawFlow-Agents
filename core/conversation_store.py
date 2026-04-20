@@ -1147,7 +1147,12 @@ class ConversationStore:
             path = self._agent_ctx_path(cid, agent_name)
         else:
             path = self._shared_ctx_path(cid)
-        result = self._read_ctx_file(path) or None
+        # Hold the per-conv lock so reads serialize with any writer
+        # atomically replacing this file (save_agent_context etc.) —
+        # otherwise an open read handle can block MoveFileEx on Windows.
+        lock = self._get_conv_lock(cid)
+        with lock:
+            result = self._read_ctx_file(path) or None
         with self._ctx_cache_lock:
             self._ctx_cache.setdefault(cid, {})[agent_name] = result
         return result
@@ -1284,7 +1289,9 @@ class ConversationStore:
         This reverses prefixes for the agent's own messages.
         """
         agent_name = self._canon_agent(agent_name) if agent_name else ""
-        raw = self._read_ctx_file(self._shared_ctx_path(cid))
+        lock = self._get_conv_lock(cid)
+        with lock:
+            raw = self._read_ctx_file(self._shared_ctx_path(cid))
         if not raw:
             return None
         return [self._personalize_from_shared(m, agent_name) for m in raw]
@@ -1310,10 +1317,12 @@ class ConversationStore:
         # and flows through every write path via dict(msg) transforms).
         for _m in clean:
             self._validate_message(_m)
-        if agent_name:
-            self._write_ctx_file(self._agent_ctx_path(cid, agent_name), clean)
-        else:
-            self._write_ctx_file(self._shared_ctx_path(cid), clean)
+        lock = self._get_conv_lock(cid)
+        with lock:
+            if agent_name:
+                self._write_ctx_file(self._agent_ctx_path(cid, agent_name), clean)
+            else:
+                self._write_ctx_file(self._shared_ctx_path(cid), clean)
         self._invalidate_ctx_cache(cid, agent_name)
         return True
 
@@ -1326,10 +1335,12 @@ class ConversationStore:
         clean = [m for m in new_messages if not m.get("display_only")]
         if not clean:
             return True
-        if agent_name:
-            self._append_ctx_file(cid, agent_name, clean)
-        else:
-            self._append_shared_ctx(cid, clean)
+        lock = self._get_conv_lock(cid)
+        with lock:
+            if agent_name:
+                self._append_ctx_file(cid, agent_name, clean)
+            else:
+                self._append_shared_ctx(cid, clean)
         self._invalidate_ctx_cache(cid, agent_name)
         return True
 
@@ -1342,8 +1353,10 @@ class ConversationStore:
             path = self._agent_ctx_path(cid, agent_name)
         else:
             path = self._shared_ctx_path(cid)
-        if path.exists():
-            path.unlink()
+        lock = self._get_conv_lock(cid)
+        with lock:
+            if path.exists():
+                path.unlink()
         # Remove empty agent directory
         if agent_name and path.parent.is_dir():
             try:
@@ -1767,23 +1780,34 @@ class ConversationStore:
         """Read all bindings for a conversation.
 
         Returns dict like {"agents": [{"name": "x", "scope": "global"}, ...], ...}
+        Takes the per-conv lock to serialize with set_bindings's atomic
+        replace — otherwise an open read handle can block MoveFileEx on
+        Windows.
         """
         path = self._bindings_path(cid)
-        if not path.exists():
-            return {}
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
+        lock = self._get_conv_lock(cid)
+        with lock:
+            if not path.exists():
+                return {}
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                return {}
 
     def set_bindings(self, cid: str, bindings: Dict[str, list]) -> None:
-        """Replace all bindings for a conversation."""
+        """Replace all bindings for a conversation.
+
+        Locks the per-conv lock so no reader holds an open handle on the
+        destination during the atomic rename.
+        """
         path = self._bindings_path(cid)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(bindings, ensure_ascii=False, indent=2),
                        encoding="utf-8")
-        tmp.replace(path)
+        lock = self._get_conv_lock(cid)
+        with lock:
+            tmp.replace(path)
 
     def add_binding(self, cid: str, rtype: str, name: str,
                     scope: str = "global") -> None:

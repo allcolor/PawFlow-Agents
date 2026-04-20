@@ -119,15 +119,16 @@ class LLMOpenaiMixin:
                             reasoning = delta.get("reasoning_content", "")
                             if reasoning:
                                 reasoning_parts.append(reasoning)
-                                if thinking_callback:
-                                    thinking_callback(reasoning)
+                                # Buffered — one callback per block at end of
+                                # stream for CC parity (CC's SDK fires
+                                # thinking_content per whole block).
 
                             # Text content
                             text = delta.get("content", "")
                             if text:
                                 content_parts.append(text)
-                                if callback:
-                                    callback(text)
+                                # Buffered — one callback per block at end of
+                                # stream for CC parity.
 
                             # Tool calls (streamed incrementally)
                             for tc_delta in delta.get("tool_calls", []):
@@ -160,6 +161,17 @@ class LLMOpenaiMixin:
 
             content = "".join(content_parts)
             thinking = "".join(reasoning_parts)
+
+            # Block-level callbacks (CC parity): fire ONCE for the whole text
+            # block and ONCE for the whole reasoning block. OpenAI's SSE
+            # stream has no content_block_stop marker, so the boundary is
+            # end-of-stream. If text and tool_calls both appear, the text
+            # callback fires here and tool_calls surface via the returned
+            # LLMResponse — same ordering the UI sees from CC.
+            if thinking and thinking_callback:
+                thinking_callback(thinking)
+            if content and callback:
+                callback(content)
 
             # Use real usage from API if available, else estimate
             tokens_in = usage_data.get("prompt_tokens", 0)

@@ -108,6 +108,13 @@ class LLMAnthropicMixin:
             cache_read_tokens = 0
             thinking_text = ""
             current_block_type = None
+            # Per-block buffers: callbacks fire ONCE per block (CC parity).
+            # CC's SDK delivers whole blocks, so its `token`/`thinking_content`
+            # SSE events arrive block-granular. Anthropic streams per-delta —
+            # we accumulate here and invoke the callbacks on content_block_stop
+            # so the UI sees the same cadence on every provider.
+            _text_block_buf = ""
+            _thinking_block_buf = ""
 
             buffer = ""
             while True:
@@ -154,14 +161,14 @@ class LLMAnthropicMixin:
                                     t_text = delta.get("thinking", "")
                                     if t_text:
                                         thinking_text += t_text
-                                        if thinking_callback:
-                                            thinking_callback(t_text)
+                                        # Buffer — fire on content_block_stop.
+                                        _thinking_block_buf += t_text
                                 elif delta.get("type") == "text_delta":
                                     text = delta.get("text", "")
                                     if text:
                                         content_parts.append(text)
-                                        if callback:
-                                            callback(text)
+                                        # Buffer — fire on content_block_stop.
+                                        _text_block_buf += text
                                 elif delta.get("type") == "input_json_delta":
                                     tool_input_str += delta.get("partial_json", "")
 
@@ -178,6 +185,13 @@ class LLMAnthropicMixin:
                                     ))
                                     current_tool = None
                                     tool_input_str = ""
+                                # Fire block-level callbacks ONCE per closed block.
+                                if _text_block_buf and callback:
+                                    callback(_text_block_buf)
+                                    _text_block_buf = ""
+                                if _thinking_block_buf and thinking_callback:
+                                    thinking_callback(_thinking_block_buf)
+                                    _thinking_block_buf = ""
                                 current_block_type = None
 
                             elif evt_type == "message_delta":

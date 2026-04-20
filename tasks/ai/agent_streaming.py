@@ -258,6 +258,38 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     except Exception as _ze:
                         logger.debug("[agent:%s] zombie cleanup failed: %s", conversation_id[:8], _ze)
                     _already_active = False
+
+        # Source of truth: persist the user message to the transcript
+        # IMMEDIATELY, before any routing decision (fresh turn, preempt
+        # via stdin, or PendingQueue). This MUST run on every path —
+        # otherwise a fresh-turn user message exists only in CC's
+        # in-memory session and is lost from PawFlow's on-disk state
+        # (transcript/shared/agent ctx) the moment CC compacts or dies.
+        from core.conversation_writer import ConversationWriter
+        from core.llm_client import stamp_message
+        _uid = flowfile.get_attribute("http.auth.principal") or ""
+        _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
+        _stamped_user = None
+        if _user_text.strip() or _attachments_body:
+            _stamped_user = stamp_message({
+                "role": "user",
+                "content": _user_text,
+                "source": {"type": "user", "name": _uid,
+                           "target_agent": _target or None},
+                "msg_id": _user_msg_id or None,
+                "channel": "web",
+            })
+            if _attachments_body:
+                _stamped_user["attachments"] = _attachments_body
+            try:
+                ConversationWriter.for_conversation(conversation_id).enqueue_message(
+                    dict(_stamped_user), agent_name=_target or "",
+                    user_id=_uid)
+            except Exception as _pe:
+                logger.warning(
+                    "[agent:%s] pre-persist user message failed: %s",
+                    conversation_id[:8], _pe)
+
         if _already_active:
             # Sticky-mode rule: only preempt the running turn if the
             # incoming trigger matches its mode + source. Mismatches go
@@ -294,36 +326,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _incoming_mode.get("source_agent") or "-",
                     _running_mode.get("type"),
                     _running_mode.get("source_agent") or "-")
-            # Source of truth: persist the user message to the transcript
-            # IMMEDIATELY, before any routing (preempt stdin or PendingQueue).
-            # Without this, a preempt that succeeds via stdin but is then
-            # killed by CC auto-compact leaves the user message ONLY in CC's
-            # in-memory session — it's lost from PawFlow's on-disk state,
-            # so the post-compact summarizer never sees it.
-            from core.conversation_writer import ConversationWriter
-            from core.llm_client import stamp_message
-            _uid = flowfile.get_attribute("http.auth.principal") or ""
-            _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
-            _stamped_user = None
-            if _user_text.strip() or _attachments_body:
-                _stamped_user = stamp_message({
-                    "role": "user",
-                    "content": _user_text,
-                    "source": {"type": "user", "name": _uid,
-                               "target_agent": _target or None},
-                    "msg_id": _user_msg_id or None,
-                    "channel": "web",
-                })
-                if _attachments_body:
-                    _stamped_user["attachments"] = _attachments_body
-                try:
-                    ConversationWriter.for_conversation(conversation_id).enqueue_message(
-                        dict(_stamped_user), agent_name=_target or "",
-                        user_id=_uid)
-                except Exception as _pe:
-                    logger.warning(
-                        "[agent:%s] pre-persist user message failed: %s",
-                        conversation_id[:8], _pe)
 
             if (_active_client and hasattr(_active_client, 'send_user_message')
                     and _user_text and _modes_match):

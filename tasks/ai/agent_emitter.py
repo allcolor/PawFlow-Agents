@@ -513,27 +513,9 @@ class StreamEmitter(AgentEmitter):
 
         all_serialized = self.agent._serialize_messages(_persist, channel=self._channel)
 
-        # Split: public (user + assistant text) vs private (tools)
-        # Exclude system messages disguised as user (e.g. "[System: ...]")
-        # and the system prompt itself — these are internal, not conversation
-        def _is_public(m):
-            role = m.get("role", "")
-            if role == "system":
-                return False
-            if role not in ("user", "assistant"):
-                return False
-            if m.get("tool_calls"):
-                return False
-            content = m.get("content", "")
-            if isinstance(content, str) and content.startswith("[System:"):
-                return False
-            # Synthetic context messages (compaction acks, resume acks)
-            src = m.get("source") or {}
-            if src.get("type") == "context":
-                return False
-            return True
-        public = [m for m in all_serialized if _is_public(m)]
-        # Private = tools + tool results. Exclude system and context-only messages.
+        # Keep only messages that belong on disk. Skip system prompts,
+        # [System:...]-disguised user messages, and synthetic context
+        # injections (compaction / resume acks — regenerated per turn).
         def _is_persistable(m):
             if m.get("role") == "system":
                 return False
@@ -544,15 +526,21 @@ class StreamEmitter(AgentEmitter):
             if isinstance(content, str) and content.startswith("[System:"):
                 return False
             return True
-        private = [m for m in all_serialized if m not in public and _is_persistable(m)]
 
         _agent_n = self.ctx.get("active_agent_name") or ""
         from core.conversation_writer import ConversationWriter
         writer = ConversationWriter.for_conversation(self.conversation_id)
 
-        writer.enqueue_agent_flush(
-            _agent_n, public_messages=public, private_messages=private,
-            user_id=self._user_id, ttl=self._conv_ttl)
+        # Route each message through append_message. The store decides
+        # transcript / shared / own ctx / other agents' ctx placement
+        # based on role+source+tool_calls. No more public/private split
+        # at the caller.
+        for _m in all_serialized:
+            if not _is_persistable(_m):
+                continue
+            writer.enqueue_message(
+                _m, agent_name=_agent_n,
+                user_id=self._user_id, ttl=self._conv_ttl)
         self.ctx["_context_diverged"] = True
 
         if "::task::" in self.conversation_id:

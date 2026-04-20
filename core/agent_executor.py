@@ -491,7 +491,7 @@ class SubAgentExecutor:
                             "thinking": (data.get("text") or "")[:2000],
                         })
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at core/agent_executor.py:~493", exc_info=True)
             client._subagent_event_cb = _subagent_cb
             logger.info("[sub-agent:%s] client wired conv=%s agent=%s user=%s",
                         task.agent_name,
@@ -572,7 +572,7 @@ class SubAgentExecutor:
                     try:
                         _active_ctx["_iteration"] = iteration
                     except Exception:
-                        pass
+                        logger.debug("swallowed exception at core/agent_executor.py:~574", exc_info=True)
                 # Tools (delegate) have NO timeout — no deadline check.
 
                 if _is_cancelled(task.id):
@@ -602,7 +602,7 @@ class SubAgentExecutor:
                              "total_tools": len(result.tools_called)},
                         )
                     except Exception:
-                        pass
+                        logger.debug("swallowed exception at core/agent_executor.py:~604", exc_info=True)
 
                 # Stream text chunks back to the parent SSE bus so the
                 # delegate sub-block fills progressively (mirrors the
@@ -619,7 +619,7 @@ class SubAgentExecutor:
                             "source_task_id": task.source_task_id,
                         })
                     except Exception:
-                        pass
+                        logger.debug("swallowed exception at core/agent_executor.py:~621", exc_info=True)
 
                 # CC-internal multi-turn: bump _iteration per turn so the
                 # active-agents panel counter moves just like the main
@@ -632,7 +632,7 @@ class SubAgentExecutor:
                         try:
                             _active_ctx["_iteration"] = _cc_turn_count[0]
                         except Exception:
-                            pass
+                            logger.debug("swallowed exception at core/agent_executor.py:~634", exc_info=True)
 
                 _compact_attempts = 0
                 while True:
@@ -690,7 +690,7 @@ class SubAgentExecutor:
                                 _delegate_conv_id,
                                 f"claude_session:{task.agent_name}", "")
                         except Exception:
-                            pass
+                            logger.debug("swallowed exception at core/agent_executor.py:~692", exc_info=True)
                         # Recover OAuth tokens (CC may have refreshed during
                         # the killed session) before the retry.
                         if hasattr(client, '_recover_tokens') and hasattr(client, '_get_session_workdir'):
@@ -700,7 +700,7 @@ class SubAgentExecutor:
                                     task.agent_name, task.user_id)
                                 client._recover_tokens(_wd)
                             except Exception:
-                                pass
+                                logger.debug("swallowed exception at core/agent_executor.py:~702", exc_info=True)
 
                 result.tokens_in += response.tokens_in
                 result.tokens_out += response.tokens_out
@@ -784,7 +784,7 @@ class SubAgentExecutor:
                                  "arguments": _tc_args_preview},
                             )
                         except Exception:
-                            pass
+                            logger.debug("swallowed exception at core/agent_executor.py:~786", exc_info=True)
                     tool_result = self._execute_tool(
                         tc, tool_handlers, task.agent_name,
                         conversation_id=task.parent_conversation_id,
@@ -827,7 +827,7 @@ class SubAgentExecutor:
                                     [_serialize_msg(m) for m in messages],
                                     user_id=task.user_id)
                     except Exception:
-                        pass
+                        logger.debug("swallowed exception at core/agent_executor.py:~829", exc_info=True)
 
                 if result.status in ("timeout", "cancelled", "needs_input"):
                     break
@@ -856,7 +856,7 @@ class SubAgentExecutor:
                 for _k, _v in _saved_client_state.items():
                     setattr(client, _k, _v)
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/agent_executor.py:~858", exc_info=True)
             # Unregister from active-agents panel + claude-client registry
             if _active_inst and _active_ctx_key:
                 try:
@@ -864,7 +864,7 @@ class SubAgentExecutor:
                         _active_inst._active_contexts.pop(_active_ctx_key, None)
                         _active_inst._active_claude_client.pop(_active_ctx_key, None)
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at core/agent_executor.py:~866", exc_info=True)
             # Clear live-delegate slot so the next delegate call spawns fresh.
             if task.parent_conversation_id and task.source_agent and task.agent_name:
                 try:
@@ -873,7 +873,7 @@ class SubAgentExecutor:
                         task.source_agent, task.agent_name,
                         task.id)
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at core/agent_executor.py:~875", exc_info=True)
 
         result.duration_ms = (time.time() - start) * 1000
         _done_data = {
@@ -926,7 +926,7 @@ class SubAgentExecutor:
                 ConversationStore.instance().delete(
                     sub_conv_id, user_id=task.user_id or "")
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/agent_executor.py:~928", exc_info=True)
         elif sub_conv_id and task.persist:
             logger.info("[sub-agent:%s] Persisting sub-conversation %s",
                         task.agent_name, sub_conv_id)
@@ -1226,7 +1226,7 @@ def resolve_agent_task(
                         _resolved_name = real_name
                         break
         except Exception:
-            pass
+            logger.debug("swallowed exception at core/agent_executor.py:~1228", exc_info=True)
     if _resolved_name is None:
         raise KeyError(
             f"Agent '{agent_name}' is not in conversation "
@@ -1281,7 +1281,7 @@ def resolve_agent_task(
         _nk = agent_name.lower()
         _nick = next((v for k, v in _nicks.items() if k.lower() == _nk), None)
     except Exception:
-        pass
+        logger.debug("swallowed exception at core/agent_executor.py:~1283", exc_info=True)
     if _nick:
         _sys_prompt = (
             f"[IDENTITY] Your real agent id is \"{agent_name}\". "

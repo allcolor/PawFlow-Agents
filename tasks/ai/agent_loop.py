@@ -206,7 +206,7 @@ class AgentLoopTask(
             from services.tool_relay_service import ToolRelayService
             ToolRelayService.cancel_agent(conversation_id, agent_name)
         except Exception:
-            pass
+            logger.debug("swallowed exception at tasks/ai/agent_loop.py:~208", exc_info=True)
 
     def get_tool_registry(self) -> ToolRegistry:
         """Get or create the tool registry for this agent.
@@ -377,7 +377,7 @@ class AgentLoopTask(
                 body = json.loads(raw)
                 return isinstance(body, dict) and "action" in body
         except Exception:
-            pass
+            logger.debug("swallowed exception at tasks/ai/agent_loop.py:~379", exc_info=True)
         return False
 
     # Priority levels for FlowFile queue ordering
@@ -412,7 +412,7 @@ class AgentLoopTask(
                     action = body["action"]
                     return self._ACTION_PRIORITIES.get(action, 10)
         except Exception:
-            pass
+            logger.debug("swallowed exception at tasks/ai/agent_loop.py:~414", exc_info=True)
         return 0
 
 
@@ -477,7 +477,7 @@ class AgentLoopTask(
                         service_id = resolve_value(
                             adef.get("llm_service", ""), owner=user_id) or ""
             except Exception:
-                pass
+                logger.debug("swallowed exception at tasks/ai/agent_loop.py:~479", exc_info=True)
 
         if not service_id:
             return None
@@ -496,7 +496,7 @@ class AgentLoopTask(
                 _b = _j_log.loads(flowfile.get_content().decode("utf-8", errors="replace"))
                 _act_log = _b.get("action", "msg") if isinstance(_b, dict) else "?"
         except Exception:
-            pass
+            logger.debug("swallowed exception at tasks/ai/agent_loop.py:~498", exc_info=True)
         import time as _t_al
         _t_al_start = _t_al.monotonic()
         try:
@@ -621,7 +621,7 @@ class AgentLoopTask(
             _cancel_agent = agent_name if _is_named else ""
             ToolRelayService.cancel_agent(conversation_id, _cancel_agent)
         except Exception:
-            pass
+            logger.debug("swallowed exception at tasks/ai/agent_loop.py:~623", exc_info=True)
         # Kill any running Claude Code subprocess for this conversation
         _force = False  # force stop handled separately by FORCE_STOP action
         # Kill Claude Code subprocess (check both conv:agent and conv-only keys)
@@ -669,7 +669,7 @@ class AgentLoopTask(
                 f"{__import__('os').path.basename(f.filename)}:{f.lineno}"
                 for f in reversed(_stack[-4:]))
         except Exception:
-            pass
+            logger.debug("swallowed exception at tasks/ai/agent_loop.py:~671", exc_info=True)
         logger.info(f"[agent:{conversation_id[:8]}] cancelled ({reason})"
                     f"{f' (agent: {agent_name})' if _is_named else ' (all)'}"
                     f"{_caller}")
@@ -746,7 +746,7 @@ class AgentLoopTask(
                     from services.tool_relay_service import ToolRelayService
                     ToolRelayService.cancel_agent(conversation_id, agent_name)
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at tasks/ai/agent_loop.py:~748", exc_info=True)
                 # Send graceful interrupt on stdin
                 _cc_client.cancel_claude_code(force=False)
                 # Bump generation so the agent loop won't retry after CC concludes
@@ -794,7 +794,7 @@ class AgentLoopTask(
                         })
                     return
         except Exception:
-            pass
+            logger.debug("swallowed exception at tasks/ai/agent_loop.py:~796", exc_info=True)
 
         # Non-claude-code: cancel the current run
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)

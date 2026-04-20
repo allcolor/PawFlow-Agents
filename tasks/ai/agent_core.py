@@ -194,7 +194,7 @@ class AgentCoreMixin:
                 ToolRelayService.uncancel_agent(
                     conversation_id, ctx.get("active_agent_name", ""))
             except Exception:
-                pass
+                logger.debug("swallowed exception at tasks/ai/agent_core.py:~196", exc_info=True)
         max_rounds = int(ctx.get("max_rounds", 1)) if emitter.is_streaming else 1
         _consecutive_tool: Dict[str, int] = {}
         _max_consec = ctx.get("max_consecutive_tool_calls", 100)
@@ -216,7 +216,7 @@ class AgentCoreMixin:
                 if _mo:
                     model = _mo
             except Exception:
-                pass
+                logger.debug("swallowed exception at tasks/ai/agent_core.py:~218", exc_info=True)
         # Client metadata
         _client_provider = getattr(client, "provider", "") or ""
         if not isinstance(_client_provider, str):
@@ -852,7 +852,7 @@ class AgentCoreMixin:
                                  "detail": "auto-compact",
                                  "agent": _agent_name})
                         except Exception:
-                            pass
+                            logger.debug("swallowed exception at tasks/ai/agent_core.py:~854", exc_info=True)
                         # User messages are persisted to the transcript at
                         # ingress (see agent_streaming.py) BEFORE
                         # send_user_message is called, so the compacted
@@ -980,7 +980,7 @@ class AgentCoreMixin:
                                      "context_pct": _post_pct,
                                      "estimated": True})
                             except Exception:
-                                pass
+                                logger.debug("swallowed exception at tasks/ai/agent_core.py:~982", exc_info=True)
                         except Exception as compact_err:
                             logger.error("[agent:%s] PawFlow compact failed: %s",
                                          conversation_id[:8], compact_err)
@@ -992,7 +992,7 @@ class AgentCoreMixin:
                                      "agent": _agent_name,
                                      "error": str(compact_err)})
                             except Exception:
-                                pass
+                                logger.debug("swallowed exception at tasks/ai/agent_core.py:~994", exc_info=True)
                             emitter.on_fatal_error(f"Compact failed: {compact_err}")
                             _fatal_error = True
                             _fatal_error_msg = f"Compact failed: {compact_err}"
@@ -1042,7 +1042,7 @@ class AgentCoreMixin:
                                 ConversationStore.instance().set_extra(
                                     conversation_id, f"claude_session:{_an}", "")
                             except Exception:
-                                pass
+                                logger.debug("swallowed exception at tasks/ai/agent_core.py:~1044", exc_info=True)
                             ctx["_claude_has_session"] = False
                             try:
                                 _check_budget(ctx, total_tokens_in, total_tokens_out)
@@ -1124,7 +1124,7 @@ class AgentCoreMixin:
                                         ConversationStore.instance().set_extra(
                                             conversation_id, f"claude_session:{_an}", "")
                                     except Exception:
-                                        pass
+                                        logger.debug("swallowed exception at tasks/ai/agent_core.py:~1126", exc_info=True)
                                     ctx["_claude_has_session"] = False
                                     llm_context = list(messages)
                                 time.sleep(5)
@@ -1158,7 +1158,7 @@ class AgentCoreMixin:
                                     conversation_id, f"claude_session:{_an}"):
                                 ctx["_claude_has_session"] = True
                         except Exception:
-                            pass
+                            logger.debug("swallowed exception at tasks/ai/agent_core.py:~1160", exc_info=True)
                     total_tokens_in += response.tokens_in
                     total_tokens_out += response.tokens_out
                     total_cache_read += getattr(response, 'cache_read_tokens', 0)
@@ -1235,7 +1235,7 @@ class AgentCoreMixin:
                                         ConversationStore.instance().patch_message(
                                             conversation_id, _cc_last_mid, source=_cc_src)
                                     except Exception:
-                                        pass
+                                        logger.debug("swallowed exception at tasks/ai/agent_core.py:~1237", exc_info=True)
                             emitter.stop_heartbeat(_iter_hb)
                             break
                         _has_thinking = bool(getattr(response, 'thinking', ''))
@@ -1432,7 +1432,7 @@ class AgentCoreMixin:
                             ConversationStore.instance().patch_message(
                                 conversation_id, _err_mid, is_error=True)
                         except Exception:
-                            pass
+                            logger.debug("swallowed exception at tasks/ai/agent_core.py:~1434", exc_info=True)
                     break
 
                 # Continuation
@@ -1566,7 +1566,7 @@ class AgentCoreMixin:
                     if _uid_done and _agent_done:
                         clear_agent(_uid_done, conversation_id, _agent_done)
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at tasks/ai/agent_core.py:~1568", exc_info=True)
             except Exception as _post_err:
                 logger.error("[agent:%s] post-loop error: %s", conversation_id[:8],
                              _post_err, exc_info=True)
@@ -1651,7 +1651,7 @@ class AgentCoreMixin:
                                 "agent_name": ctx.get("active_agent_name", ""),
                             })
                     except Exception:
-                        pass
+                        logger.debug("swallowed exception at tasks/ai/agent_core.py:~1653", exc_info=True)
                 # Per-turn git commit: one snapshot per agent loop.
                 # Drains writer queue first so the commit sees every
                 # message produced during the turn.

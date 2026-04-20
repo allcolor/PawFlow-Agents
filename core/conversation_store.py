@@ -742,7 +742,7 @@ class ConversationStore:
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/conversation_store.py:~744", exc_info=True)
         return {}
 
     def _write_extras(self, cid: str, data: dict):
@@ -1830,7 +1830,7 @@ class ConversationStore:
             from core.file_store import FileStore
             FileStore.instance().delete_by(conversation_id=cid)
         except Exception:
-            pass
+            logger.debug("swallowed exception at core/conversation_store.py:~1832", exc_info=True)
         # Drop edit-guard state for every agent in this conv — otherwise
         # the read-hashes / failed-edit counters leak until size eviction.
         try:
@@ -1838,7 +1838,7 @@ class ConversationStore:
                 from core.handlers._edit_guard import clear_conversation as _eg_clear
                 _eg_clear(_owner, cid)
         except Exception:
-            pass
+            logger.debug("swallowed exception at core/conversation_store.py:~1840", exc_info=True)
         # Clean up Claude Code session workdir (sessions/claude/<user>/<cid>/).
         # Without this, per-task session dirs accumulate forever since
         # task sub-convs are deleted on completion but their CC session
@@ -1927,7 +1927,7 @@ class ConversationStore:
                         if line.get("msg_id") in ids or _tid in ids:
                             trace_ids_to_drop.add(_tid)
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/conversation_store.py:~1929", exc_info=True)
 
             tmp = path.with_suffix(".tmp")
             with open(path, "r", encoding="utf-8") as src, \
@@ -2140,7 +2140,7 @@ class ConversationStore:
                             removed += self._prune_stale_cc_sessions(
                                 sess_dir, _recovered_cid)
                         except Exception:
-                            pass
+                            logger.debug("swallowed exception at core/conversation_store.py:~2142", exc_info=True)
                         continue
                 try:
                     shutil.rmtree(sess_dir, ignore_errors=True)
@@ -2204,7 +2204,7 @@ class ConversationStore:
                 if companion.is_dir():
                     shutil.rmtree(companion, ignore_errors=True)
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/conversation_store.py:~2206", exc_info=True)
         if removed:
             logger.info("Pruned %d stale CC session jsonl(s) in %s",
                         removed, sess_dir.name)

@@ -482,7 +482,7 @@ class AgentPollerMixin:
                 _ar = _CS2.instance().get_extra(conversation_id, "active_resources") or {}
                 _active_agent = _ar.get("agent", "")
             except Exception:
-                pass
+                logger.debug("swallowed exception at tasks/ai/agent_poller.py:~484", exc_info=True)
 
         # Build synthetic FlowFile for _prepare_agent_context
         body = json.dumps({

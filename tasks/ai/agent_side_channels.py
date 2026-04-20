@@ -153,7 +153,7 @@ class AgentSideChannelsMixin:
                     store.invalidate_claude_sessions(_btw_conv_id)
                     store.delete(_btw_conv_id)
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at tasks/ai/agent_side_channels.py:~155", exc_info=True)
                 client._conversation_id = _saved_conv_id or conversation_id
                 if _cc_lock:
                     _cc_lock.release()
@@ -195,7 +195,7 @@ class AgentSideChannelsMixin:
                     store.invalidate_claude_sessions(_btw_conv_id)
                     store.delete(_btw_conv_id)
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at tasks/ai/agent_side_channels.py:~197", exc_info=True)
                 client._conversation_id = _saved_conv_id or conversation_id
                 if _cc_lock:
                     try:
@@ -259,7 +259,7 @@ class AgentSideChannelsMixin:
                 try:
                     bus.publish_event(conversation_id, event_type, data)
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at tasks/ai/agent_side_channels.py:~261", exc_info=True)
 
             sub_executor = SubAgentExecutor(
                 client, registry, max_workers=len(agent_names) + 1,

@@ -226,7 +226,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         try:
             proc.kill()
         except Exception:
-            pass
+            logger.debug("swallowed exception at core/llm_providers/claude_code.py:~228", exc_info=True)
         _container = getattr(self, '_pool_container_name', '') or ''
         _pid = int(getattr(self, '_cc_container_pid', 0) or 0)
         if not _container or not _pid:
@@ -360,20 +360,20 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         try:
             proc.wait(timeout=3)
         except Exception:
-            pass
+            logger.debug("swallowed exception at core/llm_providers/claude_code.py:~362", exc_info=True)
         # NOW read stderr from the drain buffer (live thread owns the fd)
         stderr = ""
         try:
             stderr = "".join(getattr(self, "_stderr_buffer", []) or [])
         except Exception:
-            pass
+            logger.debug("swallowed exception at core/llm_providers/claude_code.py:~368", exc_info=True)
         # Close all streams
         for stream in (proc.stdout, proc.stdin, proc.stderr):
             try:
                 if stream and not stream.closed:
                     stream.close()
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/llm_providers/claude_code.py:~375", exc_info=True)
         return stderr
 
     # ── Legacy session scrub ────────────────────────────────────────
@@ -481,7 +481,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 from core.claude_code_pool import ClaudeCodePool
                 ClaudeCodePool.instance().release(container_name)
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/llm_providers/claude_code.py:~483", exc_info=True)
 
     # ── Streaming ───────────────────────────────────────────────────
 
@@ -756,7 +756,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 if session_id:
                     logger.info("Restored claude session: %s", session_id)
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/llm_providers/claude_code.py:~758", exc_info=True)
 
         # Session-aware serialization:
         # - New session (no session_id): feed the full PawFlow ctx ONCE.
@@ -794,7 +794,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 _resume_pool_idx = int(ConversationStore.instance().get_extra(
                     conv_id, f"claude_pool_idx:{agent_name or 'default'}") or -1)
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/llm_providers/claude_code.py:~796", exc_info=True)
         self._setup_credentials(workdir, pool_index=_resume_pool_idx)
         # Store pool index for this session
         if conv_id and hasattr(self, '_current_pool_index'):
@@ -803,7 +803,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     conv_id, f"claude_pool_idx:{agent_name or 'default'}",
                     self._current_pool_index)
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/llm_providers/claude_code.py:~805", exc_info=True)
         mcp_path = self._setup_mcp_config(workdir, user_id, conv_id, agent_name)
         _containerize = getattr(self, 'containerize', False)
 
@@ -887,9 +887,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                     self._cc_container_pid,
                                     self._pool_container_name)
                             except Exception:
-                                pass
+                                logger.debug("swallowed exception at core/llm_providers/claude_code.py:~889", exc_info=True)
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at core/llm_providers/claude_code.py:~891", exc_info=True)
             import threading as _th
             _th.Thread(target=_drain_stderr, daemon=True,
                        name="cc-stderr-drain").start()
@@ -937,7 +937,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     getattr(self, "_stderr_buffer", []) or []
                 ).strip()
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/llm_providers/claude_code.py:~939", exc_info=True)
             proc.wait()
             raise LLMClientError(
                 f"Claude CLI pipe broken (exit {proc.returncode}): {stderr[:500]}")
@@ -1404,7 +1404,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 f"claude_session:{agent_name or 'default'}",
                                 sid)
                         except Exception:
-                            pass
+                            logger.debug("swallowed exception at core/llm_providers/claude_code.py:~1406", exc_info=True)
                     # compact_boundary → drain CC stream + PawFlow compact; init → arm stall watchdog
                     subtype = event.get("subtype", "")
                     if subtype == "compact_boundary" or (
@@ -1732,7 +1732,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                             f"claude_session:{agent_name or 'default'}",
                                             "")
                                     except Exception:
-                                        pass
+                                        logger.debug("swallowed exception at core/llm_providers/claude_code.py:~1734", exc_info=True)
                                 try:
                                     if _refreshed:
                                         logger.warning(
@@ -1807,7 +1807,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         try:
                             _last_msg_id = getattr(self, '_last_turn_msg_id', "") or ""
                         except Exception:
-                            pass
+                            logger.debug("swallowed exception at core/llm_providers/claude_code.py:~1809", exc_info=True)
                         # Context-fill: exact value from CC stream's last
                         # assistant.message.usage (prompt size at that point),
                         # compared against PawFlow's configured max_context_size.
@@ -1951,12 +1951,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 if _t is not None:
                     _t.cancel()
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/llm_providers/claude_code.py:~1953", exc_info=True)
             # Flush any pending turn (ensures last text is persisted even if interrupted)
             try:
                 _flush_turn()
             except Exception:
-                pass
+                logger.debug("swallowed exception at core/llm_providers/claude_code.py:~1958", exc_info=True)
             # Cleanup process — _cleanup_proc captures stderr internally
             _stderr = self._cleanup_proc(proc)
             # Recover refreshed tokens from workdir (Claude Code may have refreshed them)
@@ -2001,7 +2001,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         conv_id, f"claude_session:{agent_name or 'default'}",
                         new_session)
                 except Exception:
-                    pass
+                    logger.debug("swallowed exception at core/llm_providers/claude_code.py:~2003", exc_info=True)
 
         # Context-fill semantics: report the LAST assistant event's per-call
         # usage (real prompt size at end of turn, ≤ context_max), NOT the

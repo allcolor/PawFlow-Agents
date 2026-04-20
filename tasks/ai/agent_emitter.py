@@ -531,7 +531,7 @@ class StreamEmitter(AgentEmitter):
                     user_id=self._user_id,
                 )
             except Exception:
-                pass
+                logger.debug("swallowed exception at tasks/ai/agent_emitter.py:~533", exc_info=True)
 
         # If the entire response is just tags, discard
         _clean = _stripped.replace("[NO_PENDING_WORK]", "").strip()
@@ -562,4 +562,4 @@ class StreamEmitter(AgentEmitter):
                     _svc.complete_response(_req_id, _status, {"Content-Type": _ct}, body)
                     break
         except Exception:
-            pass
+            logger.debug("swallowed exception at tasks/ai/agent_emitter.py:~564", exc_info=True)

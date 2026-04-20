@@ -360,8 +360,10 @@ class AgentCoreMixin:
                                     "tc_id": getattr(msg, 'tool_call_id', ''),
                                     "agent_name": _agent, "llm_service": _svc,
                                 }})
-                    ConversationWriter.for_conversation(conversation_id).enqueue(
-                        [_store_msg], user_id=user_id, sse_events=_sse if _sse else None)
+                    _agent_for_route = ctx.get("active_agent_name", "") or ""
+                    ConversationWriter.for_conversation(conversation_id).enqueue_message(
+                        _store_msg, agent_name=_agent_for_route,
+                        user_id=user_id, sse_events=_sse if _sse else None)
                 except Exception as _persist_err:
                     # HARD INVARIANT: visible ⇒ persisted. A failure to enqueue
                     # means the message was (or will be) shown to the user but

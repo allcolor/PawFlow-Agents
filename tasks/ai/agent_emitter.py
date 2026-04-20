@@ -573,8 +573,10 @@ class StreamEmitter(AgentEmitter):
                         _src["task_id"] = _tid
                         _src["task_iteration"] = _iter
                         _tm["source"] = _src
-                ConversationWriter.for_conversation(_parent).enqueue(
-                    _task_msgs, user_id=self._user_id)
+                _parent_writer = ConversationWriter.for_conversation(_parent)
+                for _tm in _task_msgs:
+                    _parent_writer.enqueue_message(
+                        _tm, agent_name=_agent_n, user_id=self._user_id)
 
         # _last_known_msg_count removed — no more transcript-scan drain,
         # no need to track what we've seen on disk.

@@ -306,8 +306,10 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
                 ]
                 try:
                     from core.conversation_writer import ConversationWriter
-                    ConversationWriter.for_conversation(_call_conv_id).enqueue(
-                        msgs, user_id=_call_user_id)
+                    _call_writer = ConversationWriter.for_conversation(_call_conv_id)
+                    for _cm in msgs:
+                        _call_writer.enqueue_message(
+                            _cm, user_id=_call_user_id)
                 except Exception as _pe:
                     logger.warning("Failed to persist /call messages: %s", _pe)
 

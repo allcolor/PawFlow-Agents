@@ -86,15 +86,15 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
         try:
             from core.conversation_writer import ConversationWriter
             from core.llm_client import stamp_message
-            ConversationWriter.for_conversation(conversation_id).enqueue([
-                stamp_message({
-                    "role": "assistant",
-                    "content": narration,
-                    "source": {**(source or {}), "narrator": True},
-                    "msg_id": msg_id,
-                    "display_only": True,
-                })
-            ])
+            _narr_msg = stamp_message({
+                "role": "assistant",
+                "content": narration,
+                "source": {**(source or {}), "narrator": True},
+                "msg_id": msg_id,
+                "display_only": True,
+            })
+            ConversationWriter.for_conversation(conversation_id).enqueue_message(
+                _narr_msg, agent_name=agent_name)
         except Exception as _pe:
             logging.getLogger(__name__).debug(f"[narrator] persist failed: {_pe}")
     return narration
@@ -318,8 +318,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 if _attachments_body:
                     _stamped_user["attachments"] = _attachments_body
                 try:
-                    ConversationWriter.for_conversation(conversation_id).enqueue(
-                        [dict(_stamped_user)], user_id=_uid)
+                    ConversationWriter.for_conversation(conversation_id).enqueue_message(
+                        dict(_stamped_user), agent_name=_target or "",
+                        user_id=_uid)
                 except Exception as _pe:
                     logger.warning(
                         "[agent:%s] pre-persist user message failed: %s",

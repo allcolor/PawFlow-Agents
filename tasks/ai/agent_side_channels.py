@@ -166,12 +166,15 @@ class AgentSideChannelsMixin:
             _btw_agent_source = {"type": "agent", "name": agent_name, "btw": True}
             from core.conversation_writer import ConversationWriter
             from core.llm_client import stamp_message
-            ConversationWriter.for_conversation(conversation_id).enqueue([
+            _btw_writer = ConversationWriter.for_conversation(conversation_id)
+            _btw_writer.enqueue_message(
                 stamp_message({"role": "user", "content": f"[btw] {question}",
                                "source": _btw_user_source}),
+                agent_name=agent_name, user_id=user_id)
+            _btw_writer.enqueue_message(
                 stamp_message({"role": "assistant", "content": response.content,
                                "source": _btw_agent_source}),
-            ])
+                agent_name=agent_name, user_id=user_id)
 
             # 5. Publish done event
             bus.publish_event(conversation_id, "btw_done", {
@@ -298,8 +301,10 @@ class AgentSideChannelsMixin:
                     source=source,
                 )
                 from core.conversation_writer import ConversationWriter
-                ConversationWriter.for_conversation(conversation_id).enqueue(
-                    self._serialize_messages([msg]), user_id=user_id)
+                _sub_writer = ConversationWriter.for_conversation(conversation_id)
+                for _sub_m in self._serialize_messages([msg]):
+                    _sub_writer.enqueue_message(
+                        _sub_m, agent_name=result.agent_name, user_id=user_id)
                 # Publish SSE event
                 bus.publish_event(conversation_id, "agent_response", {
                     "agent_name": result.agent_name,

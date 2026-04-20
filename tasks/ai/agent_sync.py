@@ -39,21 +39,13 @@ class AgentSyncMixin:
         conv_attr = ctx.get("conv_attr", "")
         base_count = ctx.get("_base_message_count", 0)
 
-        # Persist new messages to ConversationStore (one at a time via
-        # the unified append_message router). FIFO writer queue means
-        # wait=True on the last message blocks until all prior writes
-        # completed.
-        if use_conv_store and conversation_id and result.new_messages:
+        # Persistence: each message was already routed through
+        # ConversationWriter.enqueue_message during the loop (agent_core._append).
+        # Block here on the final writer flush to guarantee disk sync before
+        # the sync entrypoint returns.
+        if use_conv_store and conversation_id:
             from core.conversation_writer import ConversationWriter
-            serialized = self._serialize_messages(
-                result.new_messages, channel=ctx.get("channel", ""))
-            writer = ConversationWriter.for_conversation(conversation_id)
-            _agent_n = ctx.get("active_agent_name", "") or ""
-            for i, m in enumerate(serialized):
-                writer.enqueue_message(
-                    m, agent_name=_agent_n,
-                    user_id=ctx.get("user_id", ""),
-                    wait=(i == len(serialized) - 1))
+            ConversationWriter.for_conversation(conversation_id).flush(timeout=30.0)
 
         # Serialize full conversation to FlowFile attribute (pipeline mode)
         if conv_attr:

@@ -786,7 +786,7 @@ class SpawnAgentsHandler(ToolHandler):
                                  conv_id: str = "") -> Dict[str, str]:
         """Persist a private delegate message and trigger the target.
 
-        Routing (via ConversationStore.agent_flush):
+        Routing (via ConversationStore.append_message):
           - transcript
           - from_agent's context (prefixed [delegate from→to])
           - to_agent's context (raw, role=user)
@@ -813,24 +813,21 @@ class SpawnAgentsHandler(ToolHandler):
             "from": from_agent,
             "to": to_agent,
         }
-        _delegate_msg = {
+        # Persist via ConversationWriter.append_message — the unified
+        # router reads source.type == "agent_delegate" and routes the
+        # message privately to (transcript + from ctx + to ctx) with
+        # proper prefixes, skipping shared broadcast and other agents.
+        from core.conversation_writer import ConversationWriter
+        from core.llm_client import stamp_message
+        _delegate_msg = stamp_message({
             "role": "user",
             "content": message,
             "msg_id": _msg_id,
             "source": _src,
-            "timestamp": time.time(),
-        }
-        # Persist via ConversationWriter. agent_flush's new routing
-        # (see ConversationStore) extracts agent_delegate messages out
-        # of the shared-broadcast path and writes them only to from/to.
-        from core.conversation_writer import ConversationWriter
+        })
         try:
-            ConversationWriter.for_conversation(conv_id).enqueue_agent_flush(
-                agent_name=from_agent,
-                public_messages=[_delegate_msg],
-                private_messages=[],
-                user_id=user_id,
-            )
+            ConversationWriter.for_conversation(conv_id).enqueue_message(
+                _delegate_msg, agent_name=from_agent, user_id=user_id)
         except Exception as e:
             logger.warning("[delegate-shared] persist failed: %s", e)
 

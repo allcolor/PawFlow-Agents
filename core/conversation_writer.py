@@ -1,11 +1,12 @@
 """Conversation Writer — FIFO write queue for guaranteed message ordering.
 
 All conversation message writes go through this queue. A single writer
-thread per conversation dequeues and writes to ConversationStore in order.
+thread per conversation dequeues and routes each message through
+ConversationStore.append_message in order.
 
 Usage:
     writer = ConversationWriter.for_conversation(conversation_id)
-    writer.enqueue(messages, user_id=..., context_agent=..., status=...)
+    writer.enqueue_message(msg, agent_name=..., user_id=..., ttl=...)
 """
 
 import logging
@@ -118,31 +119,6 @@ class ConversationWriter:
             name=f"conv-writer-{cid[:8]}")
         self._thread.start()
 
-    def enqueue(self, messages: List[Dict], user_id: str = "",
-                context_agent: str = "", status: str = "",
-                sse_events: List[Dict] = None,
-                wait: bool = False) -> Optional[threading.Event]:
-        """Add messages to the write queue. Non-blocking unless wait=True.
-
-        Stamps each message with ts=now if not already present.
-        sse_events: list of {"type": str, "data": dict} to publish AFTER write.
-        """
-        for m in messages:
-            _require_ts_seq(m)
-        evt = threading.Event() if wait else None
-        self._queue.put({
-            "op": "append",
-            "messages": messages,
-            "user_id": user_id,
-            "context_agent": context_agent,
-            "status": status,
-            "sse_events": sse_events,
-            "_done_event": evt,
-        })
-        if wait and evt:
-            evt.wait(timeout=30)
-        return evt
-
     def enqueue_message(self, msg: Dict, agent_name: str = "",
                         user_id: str = "", ttl: int = 0,
                         sse_events: List[Dict] = None,
@@ -163,30 +139,6 @@ class ConversationWriter:
             "op": "append_message",
             "msg": msg,
             "agent_name": agent_name,
-            "user_id": user_id,
-            "ttl": ttl,
-            "sse_events": sse_events,
-            "_done_event": evt,
-        })
-        if wait and evt:
-            evt.wait(timeout=30)
-        return evt
-
-    def enqueue_agent_flush(self, agent_name: str,
-                            public_messages: List[Dict],
-                            private_messages: List[Dict],
-                            user_id: str = "", ttl: int = 0,
-                            sse_events: List[Dict] = None,
-                            wait: bool = False) -> Optional[threading.Event]:
-        """Enqueue an agent_flush operation (transcript + all contexts atomically)."""
-        for m in public_messages + private_messages:
-            _require_ts_seq(m)
-        evt = threading.Event() if wait else None
-        self._queue.put({
-            "op": "agent_flush",
-            "agent_name": agent_name,
-            "public": public_messages,
-            "private": private_messages,
             "user_id": user_id,
             "ttl": ttl,
             "sse_events": sse_events,
@@ -225,27 +177,15 @@ class ConversationWriter:
                 continue
 
             try:
-                op = item.get("op", "append")
-                if op == "append_message":
-                    store.append_message(
-                        self._cid, item["msg"],
-                        agent_name=item.get("agent_name", ""),
-                        user_id=item.get("user_id", ""),
-                        ttl=item.get("ttl", 0))
-                elif op == "agent_flush":
-                    store.agent_flush(
-                        self._cid, item["agent_name"],
-                        public_messages=item.get("public", []),
-                        private_messages=item.get("private", []),
-                        user_id=item.get("user_id", ""),
-                        ttl=item.get("ttl", 0))
-                else:
-                    msgs = item.get("messages", [])
-                    if msgs:
-                        store.append_messages(
-                            self._cid, msgs,
-                            user_id=item.get("user_id", ""),
-                            status=item.get("status", ""))
+                op = item.get("op", "append_message")
+                if op != "append_message":
+                    raise ValueError(
+                        f"[conv-writer] unknown op: {op!r} (only 'append_message' supported)")
+                store.append_message(
+                    self._cid, item["msg"],
+                    agent_name=item.get("agent_name", ""),
+                    user_id=item.get("user_id", ""),
+                    ttl=item.get("ttl", 0))
                 # Publish SSE events AFTER successful write
                 sse_events = item.get("sse_events")
                 if sse_events:

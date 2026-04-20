@@ -92,7 +92,7 @@ def test_branch_switch(conv):
     store, cid = conv
     store.git_branch(cid, "alt")
     # Add a message on 'alt'
-    store.append_messages(cid, [_msg(content="on alt")])
+    store.append_message(cid, _msg(content="on alt"))
     store.git_snapshot(cid, "alt msg")
     # Switch back to main
     default_branch = store.git_list_branches(cid)
@@ -139,7 +139,7 @@ def test_rollback(conv):
     store.git_snapshot(cid, "snap1")
     log_before = store.git_log(cid)
     first_hash = log_before[-1]["hash"]
-    store.append_messages(cid, [_msg(content="extra")])
+    store.append_message(cid, _msg(content="extra"))
     store.git_snapshot(cid, "snap2")
     ok = store.git_rollback(cid, first_hash)
     assert ok
@@ -184,7 +184,8 @@ def test_fork_creates_new_conv(conv):
 
 def test_fork_preserves_history(conv):
     store, cid = conv
-    store.append_messages(cid, [_msg(content="msg1"), _msg(content="msg2")])
+    store.append_message(cid, _msg(content="msg1"))
+    store.append_message(cid, _msg(content="msg2"))
     store.git_snapshot(cid, "2 messages")
     new_cid = store.fork(cid, "testuser")
     new_log = store.git_log(new_cid)
@@ -232,7 +233,7 @@ def test_compare_branches(conv):
     store, cid = conv
     store.git_snapshot(cid, "snap")
     store.git_branch(cid, "branch-b")
-    store.append_messages(cid, [_msg(content="b msg")])
+    store.append_message(cid, _msg(content="b msg"))
     store.git_snapshot(cid, "b snap")
     default = [b["name"] for b in store.git_list_branches(cid) if not b["current"]][0]
     result = store.git_compare_branches(cid, default, "branch-b")

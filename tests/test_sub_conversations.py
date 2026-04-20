@@ -52,14 +52,14 @@ class TestSubConversations:
         assert len(loaded) == 3
         assert loaded[0]["content"] == "Task prompt"
 
-    def test_sub_conv_append_messages(self):
-        """append_messages should work on sub-conversations."""
+    def test_sub_conv_append_message(self):
+        """append_message should work on sub-conversations."""
         self.store.save(self.sub_id, [
             {"role": "user", "content": "Start"},
         ], user_id="test_user")
-        self.store.append_messages(self.sub_id, [
+        self.store.append_message(self.sub_id,
             {"role": "assistant", "content": "Done", "msg_id": "m1", "ts": 1000},
-        ], user_id="test_user")
+            user_id="test_user")
         loaded = self.store.load(self.sub_id, user_id="test_user")
         assert len(loaded) == 2
 

@@ -257,9 +257,12 @@ class AgentPollerMixin:
                 if messages_data:
                     # Subsequent iteration — append "continue" as user message
                     import uuid as _poll_uuid
-                    store.append_messages(entry_key, [{"role": "user", "content": "continue",
-                                                       "msg_id": _poll_uuid.uuid4().hex[:12],
-                                                       "ts": time.time()}])
+                    from core.conversation_writer import ConversationWriter
+                    from core.llm_client import stamp_message
+                    ConversationWriter.for_conversation(entry_key).enqueue_message(
+                        stamp_message({"role": "user", "content": "continue",
+                                       "msg_id": _poll_uuid.uuid4().hex[:12]}),
+                        wait=True)
                     messages_data = store.load(entry_key)
                 if not messages_data:
                     # First iteration — sub-conv doesn't exist yet.

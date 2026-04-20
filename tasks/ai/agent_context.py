@@ -819,7 +819,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 logger.warning(f"[context] cancel checkpoint check failed: {_cp_err}")
 
         # Detect agent_delegate wake — used below for source tagging and
-        # to avoid double-persistence (agent_flush already wrote the
+        # to avoid double-persistence (append_message already routed the
         # delegate message to this agent's ctx privately).
         _ms_src = None
         try:
@@ -834,14 +834,14 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         except Exception:
             pass
 
-        # agent_delegate wakes: the delegator's agent_flush already wrote
-        # this message into our ctx (prefixed). Don't re-inject via the
-        # FlowFile body — that would:
+        # agent_delegate wakes: the delegator's append_message call already
+        # routed this message into our ctx (prefixed). Don't re-inject via
+        # the FlowFile body — that would:
         #   1. duplicate the content in our own ctx,
         #   2. trigger a second persistence with a fresh msg_id, and
         #   3. worst of all, leak the private prefix into shared/transcript
-        #      because agent_flush only routes privately when the SOURCE is
-        #      agent_delegate (and we'd need to coordinate that precisely).
+        #      because append_message only routes privately when the SOURCE
+        #      is agent_delegate (and we'd need to coordinate that precisely).
         # Simplest contract: our ctx is authoritative on load. Skip.
         _skip_user_inject = bool(_ms_src)
 

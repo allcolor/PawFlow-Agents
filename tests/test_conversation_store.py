@@ -2,14 +2,13 @@
 
 Tests cover:
 - save / create conversation
-- append_messages — add messages to transcript
+- append_message — unified single-message router (transcript / shared / context)
 - load_page — pagination
 - message_count — returns int
 - get_extra / set_extra — key-value metadata
 - list_conversations — filtered by user
 - delete — removes conversation
 - save_agent_context / load_agent_context — per-agent context
-- agent_flush — flush agent messages to shared
 """
 
 import time
@@ -84,36 +83,6 @@ class TestCreateConversation:
         assert store.message_count(cid) == 2
 
 
-# ── append_messages ──────────────────────────────────────────────────
-
-class TestAppendMessages:
-
-    def test_append_increases_count(self, conv):
-        store, cid, uid = conv
-        assert store.message_count(cid) == 0
-        store.append_messages(cid, [_msg(content="hi")], user_id=uid)
-        assert store.message_count(cid) == 1
-
-    def test_append_multiple(self, conv):
-        store, cid, uid = conv
-        msgs = [_msg(content=f"msg{i}") for i in range(5)]
-        store.append_messages(cid, msgs, user_id=uid)
-        assert store.message_count(cid) == 5
-
-    def test_append_deduplicates(self, conv):
-        store, cid, uid = conv
-        m = _msg(content="dup")
-        store.append_messages(cid, [m], user_id=uid)
-        store.append_messages(cid, [m], user_id=uid)  # same msg_id
-        assert store.message_count(cid) == 1
-
-    def test_append_to_nonexistent_creates(self, store):
-        cid = store.generate_id()
-        store.append_messages(cid, [_msg(content="x")], user_id="bob")
-        assert store.exists(cid)
-        assert store.message_count(cid) == 1
-
-
 # ── load_page (pagination) ──────────────────────────────────────────
 
 class TestLoadPage:
@@ -127,8 +96,8 @@ class TestLoadPage:
 
     def test_load_page_returns_messages(self, conv):
         store, cid, uid = conv
-        msgs = [_msg(content=f"m{i}") for i in range(10)]
-        store.append_messages(cid, msgs, user_id=uid)
+        for i in range(10):
+            store.append_message(cid, _msg(content=f"m{i}"), user_id=uid)
         result = store.load_page(cid, limit=5, offset=0)
         assert result is not None
         assert len(result["messages"]) == 5
@@ -137,8 +106,8 @@ class TestLoadPage:
 
     def test_load_page_offset(self, conv):
         store, cid, uid = conv
-        msgs = [_msg(content=f"m{i}") for i in range(10)]
-        store.append_messages(cid, msgs, user_id=uid)
+        for i in range(10):
+            store.append_message(cid, _msg(content=f"m{i}"), user_id=uid)
         result = store.load_page(cid, limit=5, offset=5)
         assert result is not None
         assert len(result["messages"]) == 5
@@ -159,7 +128,8 @@ class TestMessageCount:
 
     def test_count_after_append(self, conv):
         store, cid, uid = conv
-        store.append_messages(cid, [_msg(), _msg(), _msg()], user_id=uid)
+        for _ in range(3):
+            store.append_message(cid, _msg(), user_id=uid)
         assert store.message_count(cid) == 3
 
 
@@ -275,62 +245,12 @@ class TestAgentContext:
         assert store.save_agent_context("fake", "a", [_msg()]) is False
 
 
-# ── agent_flush ──────────────────────────────────────────────────────
-
-class TestAgentFlush:
-
-    @patch.object(ConversationStore, "_git_init")
-    @patch.object(ConversationStore, "git_snapshot")
-    def test_flush_adds_to_transcript(self, _snap, _git, conv):
-        store, cid, uid = conv
-        pub = [_msg(role="assistant", content="answer",
-                     source={"type": "agent", "name": "bot"})]
-        store.agent_flush(cid, "bot", public_messages=pub,
-                          private_messages=[], user_id=uid)
-        assert store.message_count(cid) == 1
-
-    @patch.object(ConversationStore, "_git_init")
-    @patch.object(ConversationStore, "git_snapshot")
-    def test_flush_writes_agent_context(self, _snap, _git, conv):
-        store, cid, uid = conv
-        pub = [_msg(role="assistant", content="ctx msg",
-                     source={"type": "agent", "name": "bot"})]
-        store.agent_flush(cid, "bot", public_messages=pub,
-                          private_messages=[], user_id=uid)
-        ctx = store.load_agent_context(cid, "bot")
-        assert ctx is not None
-        assert any("ctx msg" in m.get("content", "") for m in ctx)
-
-    @patch.object(ConversationStore, "_git_init")
-    @patch.object(ConversationStore, "git_snapshot")
-    def test_flush_private_not_in_shared(self, _snap, _git, conv):
-        store, cid, uid = conv
-        priv = [_msg(role="assistant", content="secret",
-                      source={"type": "agent", "name": "bot"})]
-        store.agent_flush(cid, "bot", public_messages=[],
-                          private_messages=priv, user_id=uid)
-        shared = store.load_agent_context(cid, "")  # shared context
-        # Private messages should not appear in shared
-        if shared:
-            assert not any("secret" in m.get("content", "") for m in shared)
-
-    @patch.object(ConversationStore, "_git_init")
-    @patch.object(ConversationStore, "git_snapshot")
-    def test_flush_creates_conv_if_needed(self, _snap, _git, store):
-        cid = store.generate_id()
-        pub = [_msg(role="assistant", content="hi",
-                     source={"type": "agent", "name": "bot"})]
-        store.agent_flush(cid, "bot", public_messages=pub,
-                          private_messages=[], user_id="newuser")
-        assert store.exists(cid)
-
-
 # ── append_message (unified router) ────────────────────────────────
 
 class TestAppendMessage:
-    """append_message is the single write path. Same semantics as
-    agent_flush (same transform helpers) but per-message instead of
-    grouped, and without dedup / git_snapshot.
+    """append_message is the single write path: per-message routing to
+    transcript / shared / own ctx / other agents' ctx / delegate A<->B
+    based on role + source + tool_calls + display_only.
     """
 
     def test_user_message_goes_to_transcript_shared_and_target_ctx(

@@ -300,7 +300,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             # killed by CC auto-compact leaves the user message ONLY in CC's
             # in-memory session — it's lost from PawFlow's on-disk state,
             # so the post-compact summarizer never sees it.
-            # Dedup via msg_id at agent_flush time prevents duplicates.
             from core.conversation_writer import ConversationWriter
             from core.llm_client import stamp_message
             _uid = flowfile.get_attribute("http.auth.principal") or ""

@@ -42,21 +42,8 @@ def _clear_instances():
 
 class _FakeStore:
     def __init__(self):
-        self.appended = []
-        self.flushed = []
         self.routed = []
         self.lock = threading.Lock()
-
-    def append_messages(self, cid, msgs, user_id="", status=""):
-        with self.lock:
-            self.appended.append((cid, list(msgs)))
-
-    def agent_flush(self, cid, agent, public_messages, private_messages,
-                    user_id="", ttl=0):
-        with self.lock:
-            self.flushed.append((cid, agent,
-                                 list(public_messages),
-                                 list(private_messages)))
 
     def append_message(self, cid, msg, agent_name="", user_id="", ttl=0):
         with self.lock:
@@ -77,32 +64,20 @@ def fake_store(monkeypatch):
 
 def test_shutdown_all_drains_pending_writes(fake_store):
     """Messages enqueued before shutdown_all must reach the store.
-    This is the regression test for the shutdown data-loss bug:
-    previously shutdown_all set _stop=True and cleared instances, which
-    aborted the writer loop with items still in its queue."""
+    Regression test for the shutdown data-loss bug: previously
+    shutdown_all set _stop=True and cleared instances, which aborted
+    the writer loop with items still in its queue."""
     cid = "conv-drain-1"
     w = ConversationWriter.for_conversation(cid)
     for i in range(20):
-        w.enqueue([_msg(content=f"m{i}")])
+        w.enqueue_message(_msg(content=f"m{i}"))
     # Immediately request shutdown - there is no reason for the test to
     # wait for the writer to catch up naturally.
     ok = ConversationWriter.shutdown_all(wait_timeout=10.0)
     assert ok, "shutdown_all must return True when drain completes"
-    assert len(fake_store.appended) == 20, (
+    assert len(fake_store.routed) == 20, (
         f"expected all 20 enqueues persisted, got "
-        f"{len(fake_store.appended)}")
-
-
-def test_shutdown_all_drains_agent_flush(fake_store):
-    """agent_flush ops must drain too - same FIFO queue."""
-    cid = "conv-drain-2"
-    w = ConversationWriter.for_conversation(cid)
-    w.enqueue_agent_flush("bot",
-                          public_messages=[_msg(content="hi")],
-                          private_messages=[])
-    ok = ConversationWriter.shutdown_all(wait_timeout=5.0)
-    assert ok
-    assert len(fake_store.flushed) == 1
+        f"{len(fake_store.routed)}")
 
 
 def test_shutdown_all_returns_false_on_timeout(fake_store, monkeypatch):
@@ -111,13 +86,13 @@ def test_shutdown_all_returns_false_on_timeout(fake_store, monkeypatch):
     proceeding to os._exit."""
     slow = threading.Event()
 
-    def _slow_append(cid, msgs, user_id="", status=""):
+    def _slow_append(cid, msg, agent_name="", user_id="", ttl=0):
         slow.wait(timeout=5.0)
 
-    monkeypatch.setattr(fake_store, "append_messages", _slow_append)
+    monkeypatch.setattr(fake_store, "append_message", _slow_append)
     cid = "conv-drain-3"
     w = ConversationWriter.for_conversation(cid)
-    w.enqueue([_msg()])
+    w.enqueue_message(_msg())
     ok = ConversationWriter.shutdown_all(wait_timeout=0.2)
     slow.set()
     assert ok is False, "must report drain failure when over budget"
@@ -128,10 +103,10 @@ def test_shutdown_all_handles_multiple_conversations(fake_store):
     every one of them."""
     for i in range(5):
         w = ConversationWriter.for_conversation(f"conv-multi-{i}")
-        w.enqueue([_msg(content=f"c{i}")])
+        w.enqueue_message(_msg(content=f"c{i}"))
     ok = ConversationWriter.shutdown_all(wait_timeout=5.0)
     assert ok
-    assert len(fake_store.appended) == 5
+    assert len(fake_store.routed) == 5
 
 
 def test_enqueue_message_routes_through_append_message(fake_store):

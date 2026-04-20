@@ -524,9 +524,11 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             return [flowfile]
         sub_cid = f"{conv_id}::task::{task_id}"
         import uuid as _sched_uuid
-        store.append_messages(sub_cid, [{"role": "user", "content": message,
-                                          "msg_id": _sched_uuid.uuid4().hex[:12],
-                                          "ts": time.time()}])
+        from core.conversation_writer import ConversationWriter
+        from core.llm_client import stamp_message
+        ConversationWriter.for_conversation(sub_cid).enqueue_message(
+            stamp_message({"role": "user", "content": message,
+                           "msg_id": _sched_uuid.uuid4().hex[:12]}))
         if task.get("status") == "paused":
             task["status"] = "active"
             all_tasks[task_id] = task

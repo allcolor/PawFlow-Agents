@@ -278,7 +278,7 @@ class AgentCoreMixin:
             # Auto-tag: if this turn was triggered by an agent_delegate
             # message, the assistant's reply routes privately back to
             # the delegator only. Re-stamp the source as agent_delegate
-            # so ConversationStore.agent_flush routes it correctly
+            # so ConversationStore.append_message routes it correctly
             # (transcript + from+to ctx only, NOT shared, NOT peers).
             _tm = ctx.get("_turn_mode") or {}
             if (_tm.get("type") == "delegate_reply"
@@ -364,6 +364,20 @@ class AgentCoreMixin:
                     ConversationWriter.for_conversation(conversation_id).enqueue_message(
                         _store_msg, agent_name=_agent_for_route,
                         user_id=user_id, sse_events=_sse if _sse else None)
+                    # Task sub-conversation: mirror to parent conv so the
+                    # user sees task progress in their main feed. Tag with
+                    # task_id + task_iteration for UI grouping.
+                    if "::task::" in conversation_id:
+                        _parent_cid = conversation_id.split("::task::")[0]
+                        _tid = conversation_id.split("::task::")[1]
+                        _mirror = dict(_store_msg)
+                        _msrc = dict(_mirror.get("source") or {})
+                        _msrc["task_id"] = _tid
+                        _msrc["task_iteration"] = ctx.get("_task_iteration", 1)
+                        _mirror["source"] = _msrc
+                        ConversationWriter.for_conversation(_parent_cid).enqueue_message(
+                            _mirror, agent_name=_agent_for_route,
+                            user_id=user_id)
                 except Exception as _persist_err:
                     # HARD INVARIANT: visible ⇒ persisted. A failure to enqueue
                     # means the message was (or will be) shown to the user but
@@ -443,10 +457,6 @@ class AgentCoreMixin:
                             getattr(msg, "msg_id", "?"), _meta_err,
                             exc_info=True)
 
-        def _flush():
-            nonlocal new_messages
-            emitter.flush(new_messages)
-            new_messages = []
         # Repair orphan tool_calls — assistant messages with tool_calls
         # whose tool results are missing (broken by compact/clear)
         _repaired = False
@@ -484,7 +494,6 @@ class AgentCoreMixin:
                 logger.debug(f"[checkpoint] init failed: {_cp_err}")
 
         emitter.on_loop_start(ctx)
-        _flush()
         _summ = ctx.get("summarizer", (None, 0, ""))
         compact_client = _summ[0]  # NO FALLBACK — if None, compact will error (by design)
         _compact_svc_id = _summ[2] if len(_summ) > 2 else ""
@@ -543,8 +552,6 @@ class AgentCoreMixin:
                             chars_per_token=_cpt,
                             user_id=user_id,
                         )
-                        if len(llm_context) < len(messages):
-                            ctx["_context_diverged"] = True
 
                     # Pre-injection char count for CPT calibration
                     _pre_inject_chars = self._estimate_tokens(
@@ -637,7 +644,6 @@ class AgentCoreMixin:
                         total_cache_read += getattr(_irpt_resp, 'cache_read_tokens', 0)
                         total_cache_write += getattr(_irpt_resp, 'cache_creation_tokens', 0)
                         final_model = _irpt_resp.model
-                        _flush()
                         raise _InterruptComplete()
 
                     # Force-fit guard (skip for claude-code — it manages its own context)
@@ -865,7 +871,7 @@ class AgentCoreMixin:
                             # Flush the async ConversationWriter queue BEFORE
                             # reading shared.jsonl. turn_callback enqueues each
                             # CC turn (tool_use/tool_result/text) via
-                            # ConversationWriter.enqueue() which is
+                            # ConversationWriter.enqueue_message() which is
                             # non-blocking — messages live in a background
                             # queue until the writer thread drains them to
                             # disk. Without this flush, compact reads a stale
@@ -1231,7 +1237,6 @@ class AgentCoreMixin:
                                     except Exception:
                                         pass
                             emitter.stop_heartbeat(_iter_hb)
-                            _flush()
                             break
                         _has_thinking = bool(getattr(response, 'thinking', ''))
                         # Empty response with thinking = LLM is stuck in reasoning
@@ -1264,7 +1269,6 @@ class AgentCoreMixin:
                         if action == "break":
                             response_content = final
                             emitter.stop_heartbeat(_iter_hb)
-                            _flush()
                             break
                         continue
 
@@ -1368,7 +1372,6 @@ class AgentCoreMixin:
                                 messages, _mid_target, _mid_est,
                                 keep_recent=4, chars_per_token=_cpt)
 
-                    _flush()
                 else:
                     # Max iterations reached
                     logger.warning("Agent reached max iterations (%d), forcing synthesis",
@@ -1419,7 +1422,6 @@ class AgentCoreMixin:
                         messages.append(_err_msg)
                         _err_mid = _err_msg.msg_id
 
-                _flush()
 
                 if _fatal_error:
                     finish_reason = "error"
@@ -1469,7 +1471,6 @@ class AgentCoreMixin:
                 total_tokens_out += to
                 if fm:
                     final_model = fm
-                _flush()
 
             # Mutable holder so the _make_result closure can observe the
             # turn cost written after track() below, without redeclaring the
@@ -1501,19 +1502,16 @@ class AgentCoreMixin:
             if _new_user_msgs and not _had_preempts:
                 logger.info("[agent:%s] %d truly new message(s) arrived during last turn — re-triggering",
                             conversation_id[:8], len(_new_user_msgs))
-                _flush()
                 ctx["_retrigger_after_done"] = True
             elif _new_user_msgs and _had_preempts:
                 logger.info("[agent:%s] %d message(s) arrived but preempts were processed — NOT re-triggering",
                             conversation_id[:8], len(_new_user_msgs))
-                _flush()
             elif messages[_pre_drain:]:
                 # Drained messages but all were duplicates of existing — just persist
                 _dupes = len(messages[_pre_drain:]) - len(_new_user_msgs)
                 if _dupes > 0:
                     logger.info("[agent:%s] drained %d message(s), %d were duplicates — NOT re-triggering",
                                 conversation_id[:8], len(messages[_pre_drain:]), _dupes)
-                    _flush()
 
             # Unregister claude-code client BEFORE done (prevents stale preempt)
             _unreg_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id
@@ -1673,7 +1671,6 @@ class AgentCoreMixin:
             logger.info(f"[agent:{conversation_id[:8]}] cancelled — flushing accumulated messages")
             # Flush: the agent's work is valid (e.g. plan step done).
             # The cancellation stops the agent, not the work.
-            _flush()
             def _make_result(reason=""):
                 return AgentResult(
                     response_content=response_content, conversation_id=conversation_id,
@@ -1687,6 +1684,5 @@ class AgentCoreMixin:
 
         except Exception as e:
             logger.error(f"Agent loop error: {e}", exc_info=True)
-            _flush()
             emitter.on_error(e)
             raise

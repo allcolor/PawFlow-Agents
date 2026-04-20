@@ -500,31 +500,19 @@ class ConversationStore:
     # ── Context file helpers ──────────────────────────────────────────
 
     def _append_ctx_file(self, cid: str, agent: str, messages: List[Dict]):
-        """Append messages to an agent's context file (dedup by msg_id)."""
+        """Append messages to an agent's context file.
+
+        No dedup: msg_id is minted at message creation (uuid4) and the
+        unified append_message router is the sole write path, so a
+        duplicate msg_id on disk is a caller bug -- fix it at the root
+        rather than silently dropping the second write here.
+        """
         path = self._agent_ctx_path(cid, agent)
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Collect existing msg_ids to avoid duplicates
-        existing_ids = set()
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        mid = json.loads(line).get("msg_id", "")
-                        if mid:
-                            existing_ids.add(mid)
-                    except json.JSONDecodeError:
-                        pass
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
-                mid = m.get("msg_id", "")
-                if mid in existing_ids:
-                    continue  # skip duplicate
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
-                existing_ids.add(mid)
 
     @staticmethod
     def _prefix_content(content, prefix: str):
@@ -573,7 +561,7 @@ class ConversationStore:
         - Agent messages: role→user, content prefixed [Agent X]: or [Agent X in Task Y]:
         - User messages: content prefixed [User to agent X]:
         - Agent_delegate messages: SHOULD NEVER REACH HERE (filtered upstream
-          in agent_flush). If we're called on one, return as-is rather
+          in append_message). If we're called on one, return as-is rather
           than mislabel it.
         """
         m = dict(msg)
@@ -678,7 +666,7 @@ class ConversationStore:
         injections. Assistant messages with tool_calls keep their text
         (if any) but drop the tool_calls/tool_call_id fields. This is
         the single source of truth for what goes into shared — used
-        both by agent_flush and by the CC import path so imported convs
+        both by append_message and by the CC import path so imported convs
         render the same "Shared" view as native ones.
         """
         out = []
@@ -699,31 +687,16 @@ class ConversationStore:
         return out
 
     def _append_shared_ctx(self, cid: str, messages: List[Dict]):
-        """Append transformed messages to the shared context file (dedup by msg_id)."""
+        """Append transformed messages to the shared context file.
+
+        No dedup: see _append_ctx_file for rationale.
+        """
         path = self._shared_ctx_path(cid)
-        # Collect existing msg_ids to avoid duplicates
-        existing_ids = set()
-        if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        mid = json.loads(line).get("msg_id", "")
-                        if mid:
-                            existing_ids.add(mid)
-                    except json.JSONDecodeError:
-                        pass
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
-                mid = m.get("msg_id", "")
-                if mid in existing_ids:
-                    continue  # skip duplicate
                 xf = self._transform_for_shared(m)
                 f.write(json.dumps(xf, ensure_ascii=False) + "\n")
-                existing_ids.add(mid)
 
     def _read_ctx_file(self, path: Path) -> List[Dict]:
         """Read all messages from a context JSONL file, sorted by (ts, seq).
@@ -981,157 +954,6 @@ class ConversationStore:
         # Update cache
         self._reload_cache(cid)
 
-    # ── Agent flush (main write op) ──────────────────────────────────
-
-    def agent_flush(self, cid: str, agent_name: str,
-                    public_messages: List[Dict],
-                    private_messages: List[Dict],
-                    user_id: str = "", ttl: int = 0):
-        agent_name = self._canon_agent(agent_name) if agent_name else ""
-        now = time.time()
-        lock = self._get_conv_lock(cid)
-
-        if not self.exists(cid):
-            if not user_id:
-                raise ValueError("user_id required for new conversation")
-            self.save(cid, [], user_id=user_id, ttl=ttl)
-
-        # Dedup: skip messages already in transcript
-        existing_ids = self._get_transcript_msg_ids(cid)
-
-        # Build transcript lines (public + private)
-        transcript_lines = []
-        for m in public_messages:
-            self._validate_message(m)
-            mid = m.get("msg_id")
-            if mid and mid in existing_ids:
-                continue
-            line = {"t": "msg", **m}
-            if "ts" not in line:
-                line["ts"] = now
-            transcript_lines.append(line)
-
-        for m in private_messages:
-            self._validate_message(m)
-            mid = m.get("msg_id")
-            if mid and mid in existing_ids:
-                continue
-            line = {"t": "msg", "private": True, **m}
-            if "ts" not in line:
-                line["ts"] = now
-            transcript_lines.append(line)
-
-        with lock:
-            # 1. Append to transcript
-            if transcript_lines:
-                with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
-                    for line in transcript_lines:
-                        f.write(json.dumps(line, ensure_ascii=False) + "\n")
-
-            # Filter display_only — NEVER goes into any context
-            ctx_public = [m for m in public_messages if not m.get("display_only")]
-            ctx_private = [m for m in private_messages if not m.get("display_only")]
-
-            # Split out agent_delegate messages — private A↔B channel,
-            # bypasses shared + other agents entirely. They still go to
-            # the from/to contexts with appropriate tagging.
-            _delegate_msgs = [m for m in ctx_public
-                              if (m.get("source") or {}).get("type") == "agent_delegate"]
-            ctx_public = [m for m in ctx_public
-                          if (m.get("source") or {}).get("type") != "agent_delegate"]
-
-            # 2. Append to agent context file (the flushing agent's own ctx)
-            all_agent = ctx_public + ctx_private
-            if all_agent:
-                self._append_ctx_file(cid, agent_name, all_agent)
-
-            # 2b. Route agent_delegate messages. They ARE visible to the
-            #     shared transcript and to other agents' contexts (so
-            #     everyone sees who delegated what), but each recipient
-            #     gets a prefix adapted to its perspective:
-            #       - FROM's ctx:     [delegate <from> → <to>]: ...
-            #       - TO's ctx:       Voici un message de l'agent '<from>': ...
-            #       - shared + others: [<from> to agent <to>]: ...
-            _shared_delegate_extra = []
-            for _dm in _delegate_msgs:
-                _src = _dm.get("source") or {}
-                _from = _src.get("from", "") or agent_name
-                _to = _src.get("to", "")
-                if not _to:
-                    continue
-                # FROM's own ctx
-                _for_from = dict(_dm)
-                _for_from["content"] = self._prefix_content(
-                    _for_from.get("content", ""),
-                    f"[delegate {_from} → {_to}]:")
-                self._append_ctx_file(cid, _from, [_for_from])
-                # TO's ctx — role coerced to user so the target reads it
-                # as an inbound instruction, with an explicit attribution.
-                _for_to = dict(_dm)
-                if _for_to.get("role") == "assistant":
-                    _for_to["role"] = "user"
-                _kind = _src.get("kind")
-                if _kind == "reply":
-                    _attr = (f"Here is agent '{_from}''s reply to your "
-                             f"delegate:")
-                else:
-                    _attr = f"Here is a message from agent '{_from}':"
-                _for_to["content"] = self._prefix_content(
-                    _for_to.get("content", ""), _attr)
-                self._append_ctx_file(cid, _to, [_for_to])
-                # Shared view: only the OUTBOUND delegate (the request)
-                # is visible to everyone else in the conv. The REPLY
-                # (kind="reply") is a private answer back to the caller —
-                # it must NOT leak into the shared transcript / main
-                # chat. Otherwise the user sees Claude addressing qwen
-                # in their own feed, which is confusing and wrong: the
-                # reply is the caller's business.
-                if _kind != "reply":
-                    _for_shared = dict(_dm)
-                    if _for_shared.get("role") == "assistant":
-                        _for_shared["role"] = "user"
-                    _for_shared["content"] = self._prefix_content(
-                        _for_shared.get("content", ""),
-                        f"[{_from} to agent {_to}]:")
-                    _shared_delegate_extra.append(_for_shared)
-
-            # 3. Append to shared context + transformed to other agents' contexts
-            shared_msgs = self.filter_for_shared(ctx_public)
-            # Attach the prefixed delegate copies to the shared stream so
-            # every other agent sees the routing too.
-            if _shared_delegate_extra:
-                shared_msgs.extend(_shared_delegate_extra)
-            if shared_msgs:
-                self._append_shared_ctx(cid, shared_msgs)
-                cache = self._load_cache(cid)
-                # Skip the delegate from/to from the "other agents"
-                # broadcast — they already received their tailored copy
-                # in step 2b.
-                _delegate_parties = {
-                    (m.get("source") or {}).get("from", "")
-                    for m in _delegate_msgs
-                } | {
-                    (m.get("source") or {}).get("to", "")
-                    for m in _delegate_msgs
-                }
-                for other in cache.get("agents", set()):
-                    if not other or other == agent_name:
-                        continue
-                    if other in _delegate_parties:
-                        # Already handled in step 2b with a private copy.
-                        transformed = [self._transform_for_other_agent(m, other)
-                                       for m in shared_msgs
-                                       if m not in _shared_delegate_extra]
-                    else:
-                        transformed = [self._transform_for_other_agent(m, other)
-                                       for m in shared_msgs]
-                    self._append_ctx_file(cid, other, transformed)
-
-        self._invalidate_ctx_cache(cid)
-        self._reload_cache(cid)
-        # Git snapshot after agent turn
-        self.git_snapshot(cid, f"agent:{agent_name}")
-
     # ════════════════════════════════════════════════════════════════════
     # UNIFIED PERSISTENCE ROUTER — append_message()
     # ════════════════════════════════════════════════════════════════════
@@ -1150,16 +972,14 @@ class ConversationStore:
     #
     # NO DEDUP LOGIC — each call must carry a unique msg_id. A duplicate
     # indicates an upstream bug and is the caller's responsibility.
-    # (Legacy dedup in _append_ctx_file / _append_shared_ctx still applies
-    # during the Commit 1 transition and will be removed in Commit 3.)
     # ════════════════════════════════════════════════════════════════════
 
     def append_message(self, cid: str, msg: Dict, agent_name: str = "",
                        user_id: str = "", ttl: int = 0) -> None:
         """Persist one message to every target file it belongs in.
 
-        Replaces append_messages + agent_flush. Callers feed one message
-        at a time; writes are atomic under the conv lock.
+        Sole write path. Callers feed one message at a time; writes are
+        atomic under the conv lock.
 
         Routing rules:
           - transcript.jsonl: everything except source.type=='context'.
@@ -1248,8 +1068,7 @@ class ConversationStore:
         """Route an agent_delegate message to from's ctx, to's ctx, and
         (for requests only) to shared + other agents.
 
-        Mirrors the section 2b logic from agent_flush(), but for a
-        single message. Called under the conv lock by append_message.
+        Called under the conv lock by append_message.
         """
         src = msg.get("source") or {}
         _from = src.get("from", "") or agent_name
@@ -1300,120 +1119,6 @@ class ConversationStore:
             transformed = self._transform_for_other_agent(
                 _for_shared, other)
             self._append_ctx_file(cid, other, [transformed])
-
-    # ── Append messages (simple) ──────────────────────────────────────
-
-    def append_messages(self, cid: str, new_messages: List[Dict],
-                        ttl: int = 0, user_id: str = "", status: str = ""):
-        if not new_messages:
-            return
-        # Dedup: skip messages whose msg_id already exists in transcript
-        if self.exists(cid):
-            existing_ids = self._get_transcript_msg_ids(cid)
-            deduped = []
-            for m in new_messages:
-                mid = m.get("msg_id")
-                if mid and mid in existing_ids:
-                    continue  # already in transcript
-                deduped.append(m)
-            if not deduped:
-                return
-            new_messages = deduped
-
-        now = time.time()
-        lock = self._get_conv_lock(cid)
-
-        # Create conv if needed
-        if not self.exists(cid):
-            if not user_id:
-                raise ValueError("user_id required for new conversation")
-            self.save(cid, [], user_id=user_id, ttl=ttl, status=status or "idle")
-
-        # Build transcript lines
-        transcript_lines = []
-        for m in new_messages:
-            self._validate_message(m)
-            line = {"t": "msg", **m}
-            if "ts" not in line:
-                line["ts"] = now
-            transcript_lines.append(line)
-        if status:
-            transcript_lines.append({"t": "status", "status": status, "ts": now})
-
-        # Filter context-eligible messages
-        ctx_msgs = [m for m in new_messages
-                    if not m.get("private") and not m.get("display_only")
-                    and m.get("role") != "tool" and not m.get("tool_calls")]
-
-        with lock:
-            # 1. Append to transcript
-            if transcript_lines:
-                with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
-                    for line in transcript_lines:
-                        f.write(json.dumps(line, ensure_ascii=False) + "\n")
-
-            # 2. Propagate to shared + all agent contexts (with transformation)
-            if ctx_msgs:
-                self._append_shared_ctx(cid, ctx_msgs)
-                cache = self._load_cache(cid)
-                for agent in cache.get("agents", set()):
-                    if agent:
-                        transformed = [self._transform_for_other_agent(m, agent)
-                                       for m in ctx_msgs]
-                        self._append_ctx_file(cid, agent, transformed)
-
-        self._invalidate_ctx_cache(cid)
-        self._reload_cache(cid)
-
-    def _get_transcript_msg_ids(self, cid: str, tail_msgs: int = 50) -> set:
-        """Return msg_ids of the last `tail_msgs` message lines in transcript.
-
-        Tail-only scan. msg_ids are minted at creation (uuid4, see
-        LLMMessage.__post_init__) so a freshly enqueued message cannot
-        collide with an older one — we only dedup against recent tail
-        to guard against at-most-once retry / short-lived double-enqueue
-        races. Full-file scan was O(n) disk I/O on every append
-        (~12MB/34k lines after a long session), which amplified any
-        downstream persistence bug by multiplying the time window.
-        """
-        lock = self._get_conv_lock(cid)
-        path = self._conv_path(cid)
-        with lock:
-            if not path.exists():
-                return set()
-            try:
-                size = path.stat().st_size
-                # Read trailing chunk — big enough to contain >> tail_msgs
-                # lines even when interleaved with extras/status lines.
-                BLOCK = 256 * 1024
-                if size <= BLOCK:
-                    with open(path, "r", encoding="utf-8") as f:
-                        lines = f.readlines()
-                else:
-                    with open(path, "rb") as f:
-                        f.seek(size - BLOCK)
-                        tail = f.read()
-                    # Drop leading partial line (we seeked mid-line).
-                    lines = tail.decode("utf-8", errors="replace").split("\n")[1:]
-                from collections import deque
-                recent = deque(maxlen=tail_msgs)
-                for raw in lines:
-                    raw = raw.strip()
-                    if not raw:
-                        continue
-                    try:
-                        obj = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if obj.get("t") == "msg":
-                        mid = obj.get("msg_id")
-                        if mid:
-                            recent.append(mid)
-                return set(recent)
-            except OSError as e:
-                logger.error(
-                    "[convstore] tail read failed %s: %s", cid, e)
-                return set()
 
     # ── Context ops ───────────────────────────────────────────────────
 

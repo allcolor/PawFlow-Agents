@@ -57,7 +57,6 @@ class AgentEmitter:
     def check_cancelled(self): pass
     def check_interrupt(self) -> bool: return False
     def drain_pending(self, messages, append_fn, iteration): pass
-    def flush(self, new_messages): pass
     def on_no_pending_work(self, content, ctx): return content
     def on_fatal_error(self, error_msg): pass
     def on_overflow_retry(self, iteration): pass
@@ -496,78 +495,10 @@ class StreamEmitter(AgentEmitter):
         # core/pending_queue.py. The old scan-the-tail approach drifted
         # against `_last_known_msg_count` and produced phantom retriggers
         # every time a compaction wrote messages outside the enqueue path.
+    # ── Persistence ─────────────────────────────────────────────────
+    # flush() removed — agent_core._append persists each message immediately
+    # via ConversationWriter.enqueue_message → ConversationStore.append_message.
 
-    # ── Persistence ───────────────────────────────────────────────────
-
-    def flush(self, new_messages: List[LLMMessage]) -> None:
-        if not (self._use_conv_store and self.conversation_id and new_messages):
-            return
-        from core.conversation_store import ConversationStore
-
-        # Deflate on copy — don't affect live context
-        _persist = copy.deepcopy(new_messages)
-        self.agent._deflate_image_messages(
-            _persist,
-            user_id=getattr(self, "_user_id", "") or "",
-            conversation_id=getattr(self, "_conversation_id", "") or "")
-
-        all_serialized = self.agent._serialize_messages(_persist, channel=self._channel)
-
-        # Keep only messages that belong on disk. Skip system prompts,
-        # [System:...]-disguised user messages, and synthetic context
-        # injections (compaction / resume acks — regenerated per turn).
-        def _is_persistable(m):
-            if m.get("role") == "system":
-                return False
-            src = m.get("source") or {}
-            if src.get("type") == "context":
-                return False
-            content = m.get("content", "")
-            if isinstance(content, str) and content.startswith("[System:"):
-                return False
-            return True
-
-        _agent_n = self.ctx.get("active_agent_name") or ""
-        from core.conversation_writer import ConversationWriter
-        writer = ConversationWriter.for_conversation(self.conversation_id)
-
-        # Route each message through append_message. The store decides
-        # transcript / shared / own ctx / other agents' ctx placement
-        # based on role+source+tool_calls. No more public/private split
-        # at the caller.
-        for _m in all_serialized:
-            if not _is_persistable(_m):
-                continue
-            writer.enqueue_message(
-                _m, agent_name=_agent_n,
-                user_id=self._user_id, ttl=self._conv_ttl)
-        self.ctx["_context_diverged"] = True
-
-        if "::task::" in self.conversation_id:
-            _parent = self.conversation_id.split("::task::")[0]
-            # Write all task messages to parent conv in ORIGINAL order
-            # (not public+private which breaks chronological order)
-            _task_msgs = [m for m in all_serialized if m.get("role") != "system"]
-            if _task_msgs:
-                # Deep copy to avoid mutating originals (shared with sub-conv write)
-                import copy as _copy
-                _task_msgs = _copy.deepcopy(_task_msgs)
-                # Tag each with task_id + iteration in source for frontend grouping
-                _tid = self._task_id
-                _iter = self.ctx.get("_task_iteration", 1)
-                if _tid:
-                    for _tm in _task_msgs:
-                        _src = _tm.get("source") or {}
-                        _src["task_id"] = _tid
-                        _src["task_iteration"] = _iter
-                        _tm["source"] = _src
-                _parent_writer = ConversationWriter.for_conversation(_parent)
-                for _tm in _task_msgs:
-                    _parent_writer.enqueue_message(
-                        _tm, agent_name=_agent_n, user_id=self._user_id)
-
-        # _last_known_msg_count removed — no more transcript-scan drain,
-        # no need to track what we've seen on disk.
 
     def on_no_pending_work(self, content: str, ctx: dict) -> Optional[str]:
         """Handle [NO_PENDING_WORK] / [RECHECK_IN:N] tags from poller responses."""

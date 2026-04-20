@@ -143,6 +143,35 @@ class ConversationWriter:
             evt.wait(timeout=30)
         return evt
 
+    def enqueue_message(self, msg: Dict, agent_name: str = "",
+                        user_id: str = "", ttl: int = 0,
+                        sse_events: List[Dict] = None,
+                        wait: bool = False) -> Optional[threading.Event]:
+        """Enqueue ONE message through the unified append_message router.
+
+        Preferred API. Routes a single message to every file it belongs
+        in (transcript, shared, own ctx, other agents' ctx, delegate
+        from/to) based on role+source -- see ConversationStore.
+        append_message for routing rules.
+
+        Guarantees: message is fully persisted to disk BEFORE any
+        sse_events fire (visible => persisted invariant).
+        """
+        _require_ts_seq(msg)
+        evt = threading.Event() if wait else None
+        self._queue.put({
+            "op": "append_message",
+            "msg": msg,
+            "agent_name": agent_name,
+            "user_id": user_id,
+            "ttl": ttl,
+            "sse_events": sse_events,
+            "_done_event": evt,
+        })
+        if wait and evt:
+            evt.wait(timeout=30)
+        return evt
+
     def enqueue_agent_flush(self, agent_name: str,
                             public_messages: List[Dict],
                             private_messages: List[Dict],
@@ -197,7 +226,13 @@ class ConversationWriter:
 
             try:
                 op = item.get("op", "append")
-                if op == "agent_flush":
+                if op == "append_message":
+                    store.append_message(
+                        self._cid, item["msg"],
+                        agent_name=item.get("agent_name", ""),
+                        user_id=item.get("user_id", ""),
+                        ttl=item.get("ttl", 0))
+                elif op == "agent_flush":
                     store.agent_flush(
                         self._cid, item["agent_name"],
                         public_messages=item.get("public", []),

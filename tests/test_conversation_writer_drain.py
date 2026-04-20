@@ -44,6 +44,7 @@ class _FakeStore:
     def __init__(self):
         self.appended = []
         self.flushed = []
+        self.routed = []
         self.lock = threading.Lock()
 
     def append_messages(self, cid, msgs, user_id="", status=""):
@@ -56,6 +57,10 @@ class _FakeStore:
             self.flushed.append((cid, agent,
                                  list(public_messages),
                                  list(private_messages)))
+
+    def append_message(self, cid, msg, agent_name="", user_id="", ttl=0):
+        with self.lock:
+            self.routed.append((cid, agent_name, dict(msg)))
 
     def instance(self):
         return self
@@ -127,3 +132,65 @@ def test_shutdown_all_handles_multiple_conversations(fake_store):
     ok = ConversationWriter.shutdown_all(wait_timeout=5.0)
     assert ok
     assert len(fake_store.appended) == 5
+
+
+def test_enqueue_message_routes_through_append_message(fake_store):
+    """enqueue_message dispatches to store.append_message with agent_name,
+    user_id, ttl forwarded verbatim. One call = one routed message."""
+    cid = "conv-route-1"
+    w = ConversationWriter.for_conversation(cid)
+    m = _msg(role="user", content="hi")
+    w.enqueue_message(m, agent_name="bot", user_id="u1", ttl=42)
+    ok = ConversationWriter.shutdown_all(wait_timeout=5.0)
+    assert ok
+    assert len(fake_store.routed) == 1
+    rcid, ragent, rmsg = fake_store.routed[0]
+    assert rcid == cid
+    assert ragent == "bot"
+    assert rmsg["content"] == "hi"
+
+
+def test_enqueue_message_requires_ts_and_seq(fake_store):
+    """Missing ts/seq on a routed message is a producer bug -- must raise
+    at enqueue time, not silently enqueue a corrupt record."""
+    cid = "conv-route-2"
+    w = ConversationWriter.for_conversation(cid)
+    bad = {"role": "user", "content": "x", "msg_id": "m1"}
+    with pytest.raises(ValueError):
+        w.enqueue_message(bad)
+
+
+def test_enqueue_message_sse_fires_after_persist(fake_store):
+    """SSE events must fire only AFTER append_message returns (visible
+    implies persisted). Verify by ordering: routed entry exists before
+    the SSE publish could observe it."""
+    import core.conversation_event_bus as _ceb
+    published = []
+
+    class _FakeBus:
+        def publish_event(self, cid, typ, data=None):
+            # When SSE fires, the store must already have the message.
+            published.append((cid, typ, len(fake_store.routed)))
+
+        @classmethod
+        def instance(cls):
+            return cls()
+
+    # Patch the singleton accessor.
+    orig = _ceb.ConversationEventBus.instance
+    _ceb.ConversationEventBus.instance = classmethod(
+        lambda cls: _FakeBus())
+    try:
+        cid = "conv-route-3"
+        w = ConversationWriter.for_conversation(cid)
+        m = _msg(content="hey")
+        w.enqueue_message(m, sse_events=[{"type": "new_message",
+                                         "data": {"id": "x"}}])
+        ok = ConversationWriter.shutdown_all(wait_timeout=5.0)
+        assert ok
+        assert len(published) == 1
+        # At the moment of publish, the routed list already contained
+        # the message (length >= 1).
+        assert published[0][2] >= 1
+    finally:
+        _ceb.ConversationEventBus.instance = orig

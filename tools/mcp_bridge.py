@@ -368,7 +368,12 @@ def main():
             continue
         try:
             request = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as _line_err:
+            # Full raw line dump (no [:200] cap) — forensic trail for
+            # the "use_tool decoded as string" bug. Next time we hit it
+            # we can inspect the actual bytes CC handed us.
+            _log(f"STDIN JSON decode FAILED at char {getattr(_line_err, 'pos', '?')}: "
+                 f"{_line_err}; raw_len={len(line)} raw={line!r}")
             continue
 
         method = request.get("method", "")
@@ -499,6 +504,7 @@ def main():
                     # Unwrap JSON string arguments (CC sometimes double/triple-encodes)
                     tool_args = tool_args_raw
                     _decode_failed = False
+                    _decode_err = None  # last json exception — surfaced in the reply
                     _unwrap_passes = 0
                     for _ in range(3):
                         if not isinstance(tool_args, str):
@@ -508,14 +514,17 @@ def main():
                             tool_args = json.loads(tool_args)
                             _unwrap_passes += 1
                         except json.JSONDecodeError as _je:
+                            _decode_err = _je
                             # "Extra data" = valid JSON followed by junk (e.g. CC appends </invoke>)
                             # Use raw_decode to parse only the first JSON object
                             if "Extra data" in str(_je):
                                 try:
                                     tool_args, _ = json.JSONDecoder().raw_decode(tool_args)
                                     _unwrap_passes += 1
+                                    _decode_err = None
                                     _log(f"USE_TOOL {tool_name} raw_decode OK (stripped trailing junk)")
                                 except (json.JSONDecodeError, TypeError) as _je2:
+                                    _decode_err = _je2
                                     _log(f"USE_TOOL {tool_name} raw_decode also FAILED: {_je2}")
                                     _decode_failed = True
                                     break
@@ -541,6 +550,7 @@ def main():
                                 _decode_failed = True
                                 break
                         except TypeError as _je:
+                            _decode_err = _je
                             _log(f"USE_TOOL {tool_name} JSON decode TypeError: {_je}")
                             _decode_failed = True
                             break
@@ -548,8 +558,38 @@ def main():
                         _log(f"USE_TOOL {tool_name} unwrapped {_unwrap_passes} pass(es): {type(tool_args_raw).__name__} \u2192 {type(tool_args).__name__}")
                     # Decode failed on non-empty input \u2192 error (don't silently send {})
                     if _decode_failed and tool_args_raw and tool_args_raw != {} and tool_args_raw != "{}":
-                        result = (f"Error: failed to decode arguments for {tool_name}. "
-                                  f"Arguments must be a JSON object, got: {str(tool_args_raw)[:200]}")
+                        # Forensic: full raw dump (no truncation) to the
+                        # bridge log — helps diagnose whether the issue
+                        # is an LLM-produced malformed escape, a CC
+                        # mid-stream cut, or something we could fix.
+                        _raw_str = tool_args_raw if isinstance(tool_args_raw, str) else str(tool_args_raw)
+                        _log(f"USE_TOOL {tool_name} DECODE FAIL (forensic): "
+                             f"raw_len={len(_raw_str)} raw={_raw_str!r}")
+                        # Surface exact failure position + ±120-char window
+                        # so the LLM can see WHICH char broke the escaping
+                        # and doesn't just retry blind. json.JSONDecodeError
+                        # carries .pos; we render a small neighborhood.
+                        _detail = str(_decode_err) if _decode_err else "unknown JSON error"
+                        _window = ""
+                        _pos = getattr(_decode_err, "pos", None)
+                        if isinstance(_pos, int) and 0 <= _pos <= len(_raw_str):
+                            _lo = max(0, _pos - 120)
+                            _hi = min(len(_raw_str), _pos + 120)
+                            _prefix = "…" if _lo > 0 else ""
+                            _suffix = "…" if _hi < len(_raw_str) else ""
+                            _window = (f" Window around char {_pos}: "
+                                       f"{_prefix}{_raw_str[_lo:_hi]!r}{_suffix}")
+                        result = (
+                            f"Error: failed to decode arguments for {tool_name}. "
+                            f"Arguments must be a JSON object (dict), not a "
+                            f"JSON-encoded string. Parse error: {_detail}.{_window} "
+                            f"Fix: resend with `arguments` as a literal dict, "
+                            f"e.g. {{\"tool_name\": \"edit\", \"arguments\": "
+                            f"{{\"path\": ..., \"old_string\": ...}}}} — NOT "
+                            f"a quoted string of JSON. If the payload contains "
+                            f"code with newlines/quotes, escape them once "
+                            f"(\\\\n, \\\\\\\"); do NOT wrap the whole value in a string."
+                        )
                     # Still a string after unwrap \u2192 same problem
                     elif isinstance(tool_args, str):
                         _log(f"USE_TOOL {tool_name} args still string after unwrap: {tool_args[:200]}")

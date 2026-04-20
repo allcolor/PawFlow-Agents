@@ -150,14 +150,14 @@ class SpawnAgentTask(BaseTask):
                 _sa_msg_id = _uuid_sa.uuid4().hex[:12]
                 from core.conversation_writer import ConversationWriter
                 from core.llm_client import stamp_message
-                ConversationWriter.for_conversation(conv_id).enqueue([
+                ConversationWriter.for_conversation(conv_id).enqueue_message(
                     stamp_message({
                         "role": "assistant",
                         "content": result.response,
                         "source": source,
                         "msg_id": _sa_msg_id,
-                    })
-                ])
+                    }),
+                    agent_name=agent_name)
                 ConversationEventBus.instance().publish_event(conv_id, "done", {
                     "response": result.response,
                     "msg_id": _sa_msg_id,
@@ -204,7 +204,7 @@ class SpawnAgentTask(BaseTask):
 
         from core.conversation_writer import ConversationWriter
         from core.llm_client import stamp_message
-        ConversationWriter.for_conversation(conv_id).enqueue([
+        ConversationWriter.for_conversation(conv_id).enqueue_message(
             stamp_message({
                 "role": "user",
                 "content": message,
@@ -213,8 +213,8 @@ class SpawnAgentTask(BaseTask):
                     "name": self.config.get("_service_id", "flow"),
                     "target_agent": agent_name,
                 },
-            })
-        ])
+            }),
+            agent_name=agent_name)
 
         # Notify so the agentLoop picks it up at next checkpoint
         bus.publish_event(conv_id, "message_queued", {

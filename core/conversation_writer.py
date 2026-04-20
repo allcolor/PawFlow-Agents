@@ -193,8 +193,11 @@ class ConversationWriter:
                         from core.conversation_event_bus import ConversationEventBus
                         bus = ConversationEventBus.instance()
                         for sse_evt in sse_events:
+                            # SSE target cid may differ from writer cid
+                            # (e.g. task sub-conv writes routed to parent).
+                            _evt_cid = sse_evt.get("cid") or self._cid
                             bus.publish_event(
-                                self._cid, sse_evt["type"], sse_evt.get("data"))
+                                _evt_cid, sse_evt["type"], sse_evt.get("data"))
                     except Exception as sse_err:
                         logger.warning("[conv-writer:%s] SSE publish failed: %s",
                                        self._cid[:8], sse_err)

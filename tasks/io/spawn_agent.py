@@ -150,6 +150,26 @@ class SpawnAgentTask(BaseTask):
                 _sa_msg_id = _uuid_sa.uuid4().hex[:12]
                 from core.conversation_writer import ConversationWriter
                 from core.llm_client import stamp_message
+                # `done` SSE fires AFTER the message hits disk
+                # (visible ⇒ persisted invariant).
+                _done_sse = {
+                    "type": "done",
+                    "data": {
+                        "response": result.response,
+                        "msg_id": _sa_msg_id,
+                        "all_msg_ids": [_sa_msg_id],
+                        "conversation_id": conv_id,
+                        "agent_name": agent_name,
+                        "source": source,
+                        "model": result.model,
+                        "provider": result.provider,
+                        "tokens_in": result.tokens_in,
+                        "tokens_out": result.tokens_out,
+                        "tools_called": result.tools_called,
+                        "iterations": result.iterations,
+                        "duration_ms": result.duration_ms,
+                    },
+                }
                 ConversationWriter.for_conversation(conv_id).enqueue_message(
                     stamp_message({
                         "role": "assistant",
@@ -157,22 +177,8 @@ class SpawnAgentTask(BaseTask):
                         "source": source,
                         "msg_id": _sa_msg_id,
                     }),
-                    agent_name=agent_name)
-                ConversationEventBus.instance().publish_event(conv_id, "done", {
-                    "response": result.response,
-                    "msg_id": _sa_msg_id,
-                    "all_msg_ids": [_sa_msg_id],
-                    "conversation_id": conv_id,
-                    "agent_name": agent_name,
-                    "source": source,
-                    "model": result.model,
-                    "provider": result.provider,
-                    "tokens_in": result.tokens_in,
-                    "tokens_out": result.tokens_out,
-                    "tools_called": result.tools_called,
-                    "iterations": result.iterations,
-                    "duration_ms": result.duration_ms,
-                })
+                    agent_name=agent_name,
+                    sse_events=[_done_sse])
 
             flowfile.set_content(json.dumps({
                 "status": result.status,

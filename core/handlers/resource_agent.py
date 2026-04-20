@@ -825,26 +825,25 @@ class SpawnAgentsHandler(ToolHandler):
             "msg_id": _msg_id,
             "source": _src,
         })
+        # Publish a live SSE event AFTER the message lands on disk so
+        # the webchat renders the delegate block in real time without
+        # ever racing ahead of persisted state (visible => persisted).
+        _sse_new_msg = {
+            "type": "new_message",
+            "data": {
+                "role": _delegate_msg["role"],
+                "content": message,
+                "msg_id": _msg_id,
+                "source": _src,
+                "ts": _delegate_msg.get("ts"),
+            },
+        }
         try:
             ConversationWriter.for_conversation(conv_id).enqueue_message(
-                _delegate_msg, agent_name=from_agent, user_id=user_id)
+                _delegate_msg, agent_name=from_agent, user_id=user_id,
+                sse_events=[_sse_new_msg])
         except Exception as e:
             logger.warning("[delegate-shared] persist failed: %s", e)
-
-        # Publish a live SSE event so the webchat renders the delegate
-        # block in real time (without waiting for a full history reload).
-        try:
-            from core.conversation_event_bus import ConversationEventBus
-            ConversationEventBus.instance().publish_event(
-                conv_id, "new_message", {
-                    "role": _delegate_msg["role"],
-                    "content": message,
-                    "msg_id": _msg_id,
-                    "source": _src,
-                    "ts": _delegate_msg["timestamp"],
-                })
-        except Exception:
-            pass
 
         # Trigger the target. Same preempt/wake helpers used by the
         # sub-agent result delivery path — they already know how to
@@ -1002,9 +1001,6 @@ class SpawnAgentsHandler(ToolHandler):
         caller_agent's context (not shared, not other agents). The user
         sees it via the transcript (display_only publish).
         """
-        import time as _time
-        from core.conversation_event_bus import ConversationEventBus
-
         _source = {
             "type": "user",
             "name": "system",
@@ -1016,20 +1012,38 @@ class SpawnAgentsHandler(ToolHandler):
             },
         }
 
-        # Publish a display_only event so the user sees it in the chat.
-        # When the caller is a task agent, conv_id is the sub-conv
-        # (parent::task::tid) but SSE must go to the parent conv.
+        # Persist + publish display_only nudge so the user sees it in
+        # chat AFTER it's on disk (visible ⇒ persisted). Router handles
+        # display_only=True → transcript-only. When the caller is a task
+        # agent, conv_id is the sub-conv (parent::task::tid) but SSE must
+        # go to the parent conv.
         _sse_cid = conv_id.split("::task::")[0] if "::task::" in conv_id else conv_id
-        try:
-            ConversationEventBus.instance().publish_event(_sse_cid, "new_message", {
+        from core.conversation_writer import ConversationWriter
+        from core.llm_client import stamp_message
+        _nudge_msg = stamp_message({
+            "role": "user",
+            "content": text,
+            "msg_id": msg_id,
+            "display_only": True,
+            "source": _source,
+        })
+        _sse_evt = {
+            "type": "new_message",
+            "cid": _sse_cid,
+            "data": {
                 "role": "user",
                 "content": text,
                 "msg_id": msg_id,
                 "display_only": True,
                 "source": _source,
-            })
-        except Exception:
-            pass
+            },
+        }
+        try:
+            ConversationWriter.for_conversation(conv_id).enqueue_message(
+                _nudge_msg, agent_name=caller_agent, user_id=user_id,
+                sse_events=[_sse_evt])
+        except Exception as e:
+            logger.error("[bg-delegate] persist nudge failed: %s", e, exc_info=True)
 
         # Check caller state via AgentLoopTask._active_contexts.
         from tasks.ai.agent_loop import AgentLoopTask
@@ -1095,6 +1109,11 @@ class SpawnAgentsHandler(ToolHandler):
             ff = FlowFile(body.encode("utf-8"))
             ff.set_attribute("http.auth.principal", user_id)
             ff.set_attribute("target_agent", caller_agent)
+            # The caller already pre-persisted the nudge via writer
+            # (see _deliver_to_caller / _deliver_shared_delegate) — tell
+            # agent_streaming.py to skip its own pre-persist so we don't
+            # write the same msg_id twice.
+            ff.set_attribute("skip_pre_persist", "1")
             if source:
                 ff.set_attribute("message_source", json.dumps(source))
             # Run in a thread so we don't block the completion callback

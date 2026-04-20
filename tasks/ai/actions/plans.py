@@ -599,13 +599,29 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
         """Send via _execute_streaming — identical to user typing the message."""
         import json as _j, uuid as _uuid_step
         from core import FlowFile as _FF
+        from core.conversation_writer import ConversationWriter
+        from core.llm_client import stamp_message
         _msg_id = _uuid_step.uuid4().hex[:12]
-        # Publish SSE FIRST so frontend renders the message before agent starts
-        _publish(conv_id, "new_message", {
+        _src = {"type": "user", "name": user_id,
+                "target_agent": agent, "plan_id": plan_id}
+        # Persist the step instruction to disk BEFORE publishing SSE
+        # (visible => persisted). Writer fires the new_message event
+        # only after the append lands.
+        _stamped = stamp_message({
             "role": "user", "content": _user_msg, "msg_id": _msg_id,
-            "source": {"type": "user", "name": user_id,
-                       "target_agent": agent, "plan_id": plan_id},
+            "source": _src,
         })
+        _sse_evt = {"type": "new_message", "data": {
+            "role": "user", "content": _user_msg, "msg_id": _msg_id,
+            "source": _src, "ts": _stamped.get("ts"),
+        }}
+        try:
+            ConversationWriter.for_conversation(conv_id).enqueue_message(
+                dict(_stamped), agent_name=agent or "",
+                user_id=user_id, sse_events=[_sse_evt])
+        except Exception as e:
+            logger.error("Plan %s step %d: persist failed: %s",
+                         plan_id, step_num, e)
         body = _j.dumps({
             "message": _user_msg,
             "conversation_id": conv_id,
@@ -614,6 +630,9 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
         })
         ff = _FF(body.encode("utf-8"))
         ff.set_attribute("http.auth.principal", user_id)
+        # Tell agent_streaming.py the user message is already on disk so
+        # it doesn't double-persist with the same msg_id.
+        ff.set_attribute("skip_pre_persist", "1")
         try:
             from tasks.ai.agent_loop import AgentLoopTask
             inst = AgentLoopTask._live_instance

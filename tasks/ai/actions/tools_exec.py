@@ -254,18 +254,41 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         _call_user_id = user_id
 
         def _run_user_tool_call():
-            from core.conversation_event_bus import ConversationEventBus
-            from core.conversation_store import ConversationStore
-            bus = ConversationEventBus.instance()
             source = {"type": "user", "name": _call_user_id}
-            # Publish tool_call event (same as agent loop)
-            bus.publish_event(_call_conv_id, "tool_call", {
-                "tool": _call_tool_name,
-                "arguments": _call_tool_args,
-                "agent_name": "user",
-                "llm_service": "",
-                "ts": time.time(),
+            import uuid as _uuid
+            from core.llm_client import stamp_message
+            from core.conversation_writer import ConversationWriter
+            tc_id = _uuid.uuid4().hex[:12]
+            # Build tool_call message now (SSE fires AFTER persist)
+            _tc_msg = stamp_message({
+                "role": "assistant", "content": "",
+                "source": source,
+                "tool_calls": [{
+                    "id": tc_id,
+                    "name": _call_tool_name,
+                    "arguments": _call_tool_args,
+                }],
             })
+            _tc_sse = {
+                "type": "tool_call",
+                "data": {
+                    "tool": _call_tool_name,
+                    "arguments": _call_tool_args,
+                    "agent_name": "user",
+                    "llm_service": "",
+                    "ts": time.time(),
+                },
+            }
+            _call_writer = ConversationWriter.for_conversation(_call_conv_id) if _call_conv_id else None
+            if _call_writer:
+                _call_writer.enqueue_message(
+                    _tc_msg, user_id=_call_user_id,
+                    sse_events=[_tc_sse])
+            else:
+                # No conv: fire SSE directly (nothing to persist)
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    _call_conv_id, "tool_call", _tc_sse["data"])
             # Execute
             try:
                 result_text = _call_registry.execute(
@@ -275,43 +298,29 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
                 result_text = f"Error: {_te}"
                 logger.error("User /call tool '%s' failed: %s",
                              _call_tool_name, _te)
-            # Publish tool_result event
             _result_preview = (result_text or "")[:2000]
-            bus.publish_event(_call_conv_id, "tool_result", {
-                "tool": _call_tool_name,
-                "result": _result_preview,
-                "agent_name": "user",
-                "llm_service": "",
+            _tr_msg = stamp_message({
+                "role": "tool",
+                "content": result_text,
+                "tool_call_id": tc_id,
             })
-            # Persist tool_call + tool_result messages in conversation
-            if _call_conv_id:
-                import uuid as _uuid
-                from core.llm_client import stamp_message
-                tc_id = _uuid.uuid4().hex[:12]
-                msgs = [
-                    stamp_message({
-                        "role": "assistant", "content": "",
-                        "source": source,
-                        "tool_calls": [{
-                            "id": tc_id,
-                            "name": _call_tool_name,
-                            "arguments": _call_tool_args,
-                        }],
-                    }),
-                    stamp_message({
-                        "role": "tool",
-                        "content": result_text,
-                        "tool_call_id": tc_id,
-                    }),
-                ]
-                try:
-                    from core.conversation_writer import ConversationWriter
-                    _call_writer = ConversationWriter.for_conversation(_call_conv_id)
-                    for _cm in msgs:
-                        _call_writer.enqueue_message(
-                            _cm, user_id=_call_user_id)
-                except Exception as _pe:
-                    logger.warning("Failed to persist /call messages: %s", _pe)
+            _tr_sse = {
+                "type": "tool_result",
+                "data": {
+                    "tool": _call_tool_name,
+                    "result": _result_preview,
+                    "agent_name": "user",
+                    "llm_service": "",
+                },
+            }
+            if _call_writer:
+                _call_writer.enqueue_message(
+                    _tr_msg, user_id=_call_user_id,
+                    sse_events=[_tr_sse])
+            else:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    _call_conv_id, "tool_result", _tr_sse["data"])
 
         thread = threading.Thread(
             target=_run_user_tool_call, daemon=True,

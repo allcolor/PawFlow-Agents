@@ -132,35 +132,44 @@ class TestResultDeliverySSE:
     """Step 4: _deliver_to_caller publishes SSE on parent conv."""
 
     def test_sse_on_parent_conv_for_task_caller(self):
-        """display_only SSE event goes to parent conv, not task sub-conv."""
+        """new_message SSE event goes to parent conv, not task sub-conv.
+
+        The nudge is persisted to the sub-conv transcript, but the SSE
+        event carries cid=parent so the UI renders it in the parent feed.
+        """
         h = _make_handler()
         mock_inst = MagicMock()
         mock_inst._active_contexts = {"conv1::task::t_abc:agentA": {}}
         mock_inst._active_contexts_lock = threading.Lock()
 
-        with patch("core.conversation_event_bus.ConversationEventBus.instance") as mock_bus:
-            mock_pub = mock_bus.return_value.publish_event
+        with patch("core.conversation_writer.ConversationWriter.for_conversation") as mock_writer:
+            mock_enqueue = mock_writer.return_value.enqueue_message
             h._deliver_to_caller(
                 conv_id="conv1::task::t_abc",
                 caller_agent="agentA", user_id="user1",
                 text="result", msg_id="m1",
                 task_id="t1", delegate_agent="B", file_id="f1")
-            # SSE should go to parent conv "conv1", not sub-conv
-            sse_call = mock_pub.call_args_list[0]
-            assert sse_call.args[0] == "conv1"
+            # Persist call: writer is created for the sub-conv transcript
+            assert mock_writer.call_args_list[0].args[0] == "conv1::task::t_abc"
+            # SSE event (attached to enqueue) redirects to the parent conv
+            sse_events = mock_enqueue.call_args.kwargs["sse_events"]
+            assert sse_events[0]["cid"] == "conv1"
+            assert sse_events[0]["type"] == "new_message"
 
     def test_sse_on_same_conv_for_normal_caller(self):
-        """display_only SSE event stays on conv_id for normal callers."""
+        """For a normal caller, SSE cid matches the writer conv."""
         h = _make_handler()
-        with patch("core.conversation_event_bus.ConversationEventBus.instance") as mock_bus:
-            mock_pub = mock_bus.return_value.publish_event
+        with patch("core.conversation_writer.ConversationWriter.for_conversation") as mock_writer:
+            mock_enqueue = mock_writer.return_value.enqueue_message
             h._deliver_to_caller(
                 conv_id="conv1",
                 caller_agent="agentA", user_id="user1",
                 text="result", msg_id="m1",
                 task_id="t1", delegate_agent="B", file_id="f1")
-            sse_call = mock_pub.call_args_list[0]
-            assert sse_call.args[0] == "conv1"
+            assert mock_writer.call_args_list[0].args[0] == "conv1"
+            sse_events = mock_enqueue.call_args.kwargs["sse_events"]
+            assert sse_events[0]["cid"] == "conv1"
+            assert sse_events[0]["type"] == "new_message"
 
 
 class TestReverseDelegateScan:

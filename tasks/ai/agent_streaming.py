@@ -77,12 +77,8 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
         return ""  # No narrator configured → tools execute silently
     narration = _call_narrator(narrator_svc_name, tool_calls, ctx)
     if narration:
-        bus.publish_event(conversation_id, "narration", {
-            "text": narration, "agent_name": agent_name,
-            "msg_id": msg_id,
-            "source": source,
-        })
-        # Persist in transcript (display-only — NOT in agent context)
+        # Persist first, then fire SSE (visible ⇒ persisted). Narrator
+        # message is display-only → transcript only per router rules.
         try:
             from core.conversation_writer import ConversationWriter
             from core.llm_client import stamp_message
@@ -93,10 +89,20 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
                 "msg_id": msg_id,
                 "display_only": True,
             })
+            _narr_sse = {
+                "type": "narration",
+                "data": {
+                    "text": narration, "agent_name": agent_name,
+                    "msg_id": msg_id,
+                    "source": source,
+                },
+            }
             ConversationWriter.for_conversation(conversation_id).enqueue_message(
-                _narr_msg, agent_name=agent_name)
+                _narr_msg, agent_name=agent_name,
+                sse_events=[_narr_sse])
         except Exception as _pe:
-            logging.getLogger(__name__).debug(f"[narrator] persist failed: {_pe}")
+            logging.getLogger(__name__).error(
+                "[narrator] persist failed: %s", _pe, exc_info=True)
     return narration
 
 
@@ -270,6 +276,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         _uid = flowfile.get_attribute("http.auth.principal") or ""
         _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
         _stamped_user = None
+        _skip_pre_persist = bool(flowfile.get_attribute("skip_pre_persist"))
         if _user_text.strip() or _attachments_body:
             _stamped_user = stamp_message({
                 "role": "user",
@@ -281,14 +288,15 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             })
             if _attachments_body:
                 _stamped_user["attachments"] = _attachments_body
-            try:
-                ConversationWriter.for_conversation(conversation_id).enqueue_message(
-                    dict(_stamped_user), agent_name=_target or "",
-                    user_id=_uid)
-            except Exception as _pe:
-                logger.warning(
-                    "[agent:%s] pre-persist user message failed: %s",
-                    conversation_id[:8], _pe)
+            if not _skip_pre_persist:
+                try:
+                    ConversationWriter.for_conversation(conversation_id).enqueue_message(
+                        dict(_stamped_user), agent_name=_target or "",
+                        user_id=_uid)
+                except Exception as _pe:
+                    logger.warning(
+                        "[agent:%s] pre-persist user message failed: %s",
+                        conversation_id[:8], _pe)
 
         if _already_active:
             # Sticky-mode rule: only preempt the running turn if the

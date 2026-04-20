@@ -911,7 +911,8 @@ class AgentLoopTask(
                     max_tokens=500,
                     tools=None, callback=_on_token)
 
-                # Save to both transcript and agent context
+                # Save to both transcript and agent context.
+                # `done` SSE fires AFTER the last block hits disk.
                 _interrupt_msg = LLMMessage(
                     role="assistant", content=resp.content,
                     msg_id=_synth_msg_id,
@@ -922,20 +923,24 @@ class AgentLoopTask(
                 _serialized = self._serialize_messages(messages[-2:])
                 from core.conversation_writer import ConversationWriter
                 _writer = ConversationWriter.for_conversation(conversation_id)
-                for _sm in _serialized:
-                    _writer.enqueue_message(_sm, agent_name=_agent, user_id=user_id)
-
-                bus.publish_event(conversation_id, "done", {
-                    "response": resp.content,
-                    "msg_id": _synth_msg_id,
-                    "all_msg_ids": [_synth_msg_id],
-                    "model": resp.model,
-                    "tokens_in": resp.tokens_in,
-                    "tokens_out": resp.tokens_out,
-                    "agent_name": agent_name or "",
-                    "source": {"type": "agent", "name": agent_name or ""},
-                    "interrupted": True,
-                })
+                _done_sse = {
+                    "type": "done",
+                    "data": {
+                        "response": resp.content,
+                        "msg_id": _synth_msg_id,
+                        "all_msg_ids": [_synth_msg_id],
+                        "model": resp.model,
+                        "tokens_in": resp.tokens_in,
+                        "tokens_out": resp.tokens_out,
+                        "agent_name": agent_name or "",
+                        "source": {"type": "agent", "name": agent_name or ""},
+                        "interrupted": True,
+                    },
+                }
+                for _idx, _sm in enumerate(_serialized):
+                    _sse = [_done_sse] if _idx == len(_serialized) - 1 else None
+                    _writer.enqueue_message(_sm, agent_name=_agent,
+                                            user_id=user_id, sse_events=_sse)
                 self._track_tokens(
                     user_id, resp.tokens_in, resp.tokens_out,
                     model=resp.model, agent_name=agent_name or "")

@@ -171,18 +171,22 @@ class AgentSideChannelsMixin:
                 stamp_message({"role": "user", "content": f"[btw] {question}",
                                "source": _btw_user_source}),
                 agent_name=agent_name, user_id=user_id)
+            # btw_done SSE fires AFTER the assistant reply hits disk
+            # (visible ⇒ persisted invariant).
+            _btw_done_sse = {
+                "type": "btw_done",
+                "data": {
+                    "agent_name": agent_name,
+                    "question": question,
+                    "response": response.content,
+                    "source": _btw_agent_source,
+                },
+            }
             _btw_writer.enqueue_message(
                 stamp_message({"role": "assistant", "content": response.content,
                                "source": _btw_agent_source}),
-                agent_name=agent_name, user_id=user_id)
-
-            # 5. Publish done event
-            bus.publish_event(conversation_id, "btw_done", {
-                "agent_name": agent_name,
-                "question": question,
-                "response": response.content,
-                "source": _btw_agent_source,
-            })
+                agent_name=agent_name, user_id=user_id,
+                sse_events=[_btw_done_sse])
             logger.info(f"[btw:{conversation_id[:8]}] {agent_name} answered "
                         f"({len(response.content)} chars)")
 
@@ -294,7 +298,8 @@ class AgentSideChannelsMixin:
                 content = result.response if result.status == "completed" else (
                     f"[Error: {result.error}]"
                 )
-                # Persist in conversation
+                # Persist in conversation; fire agent_response SSE on the
+                # LAST serialized block so the event follows persisted state.
                 msg = LLMMessage(
                     role="assistant",
                     content=content,
@@ -302,21 +307,31 @@ class AgentSideChannelsMixin:
                 )
                 from core.conversation_writer import ConversationWriter
                 _sub_writer = ConversationWriter.for_conversation(conversation_id)
-                for _sub_m in self._serialize_messages([msg]):
+                _agent_resp_sse = {
+                    "type": "agent_response",
+                    "data": {
+                        "agent_name": result.agent_name,
+                        "response": content,
+                        "source": source,
+                        "status": result.status,
+                        "tokens_in": result.tokens_in,
+                        "tokens_out": result.tokens_out,
+                        "duration_ms": round(result.duration_ms, 1),
+                    },
+                }
+                _serialized = self._serialize_messages([msg])
+                for _idx, _sub_m in enumerate(_serialized):
+                    _sse = [_agent_resp_sse] if _idx == len(_serialized) - 1 else None
                     _sub_writer.enqueue_message(
-                        _sub_m, agent_name=result.agent_name, user_id=user_id)
-                # Publish SSE event
-                bus.publish_event(conversation_id, "agent_response", {
-                    "agent_name": result.agent_name,
-                    "response": content,
-                    "source": source,
-                    "status": result.status,
-                    "tokens_in": result.tokens_in,
-                    "tokens_out": result.tokens_out,
-                    "duration_ms": round(result.duration_ms, 1),
-                })
+                        _sub_m, agent_name=result.agent_name, user_id=user_id,
+                        sse_events=_sse)
 
-            # Broadcast complete
+            # Broadcast complete: wait for all per-agent writes to hit disk
+            # before firing the terminal SSE (visible ⇒ persisted).
+            try:
+                ConversationWriter.for_conversation(conversation_id).flush(timeout=10.0)
+            except Exception as _fe:
+                logger.warning("[broadcast] writer flush failed: %s", _fe)
             bus.publish_event(conversation_id, "broadcast_done", {
                 "agent_count": len(results),
                 "message_count": cstore.message_count(conversation_id),

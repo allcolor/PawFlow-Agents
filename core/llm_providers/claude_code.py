@@ -1405,7 +1405,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     sid = event.get("session_id", "")
                     if sid:
                         self._current_session_id = sid
-                    if sid and conv_id:
+                    subtype = event.get("subtype", "")
+                    # Only the init event announces a (re)used session. Other
+                    # system events (compact_boundary, status, etc.) also
+                    # carry session_id — without this guard each one logged
+                    # "NEW session" with the same sid, flooding the logs.
+                    if sid and conv_id and subtype == "init":
                         if session_id and sid != session_id:
                             logger.warning(
                                 "[claude-code] SESSION MISMATCH: sent --resume %s but CC returned %s "
@@ -1424,7 +1429,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         except Exception:
                             logger.debug("swallowed exception at core/llm_providers/claude_code.py:~1406", exc_info=True)
                     # compact_boundary → drain CC stream + PawFlow compact; init → arm stall watchdog
-                    subtype = event.get("subtype", "")
                     if subtype == "compact_boundary" or (
                             subtype == "status" and event.get("status") == "compacting"):
                         # Sentinel sessions (_compact, _memory_extract, …)

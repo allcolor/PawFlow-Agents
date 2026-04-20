@@ -81,8 +81,6 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Migrate from extras on first access
-        PlanStore.migrate_from_extras(conv_id, user_id, store)
         plans = ps.list_plans(user_id, conv_id)
         flowfile.set_content(json.dumps({"plans": plans}, ensure_ascii=False).encode())
         return [flowfile]

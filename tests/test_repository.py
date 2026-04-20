@@ -1,14 +1,12 @@
 """Tests for ScopedRepository."""
 
 import json
-import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
-from core.paths import DATA_DIR, repo_dir, repo_file, parse_flow_fqn
+from core.paths import repo_dir, repo_file, parse_flow_fqn
 from core.repository import ScopedRepository
-
-_TEST_DATA = DATA_DIR.parent / "_test_repo_data"
 
 
 class TestPaths(unittest.TestCase):
@@ -54,12 +52,16 @@ class TestPaths(unittest.TestCase):
 class TestScopedRepository(unittest.TestCase):
 
     def setUp(self):
-        # Patch DATA_DIR to use test directory
+        # Per-test tmpdir — never touch the real data/ tree.
+        # conftest.py redirects paths.* session-wide, but ScopedRepository
+        # wants a fresh per-test root so tests don't see each other's state.
         import core.paths as paths
+        self._tmp = tempfile.TemporaryDirectory(prefix="pawflow_repo_")
         self._orig_data = paths.DATA_DIR
         self._orig_repo = paths.REPOSITORY_DIR
-        paths.DATA_DIR = _TEST_DATA
-        paths.REPOSITORY_DIR = _TEST_DATA / "repository"
+        tmp_root = Path(self._tmp.name)
+        paths.DATA_DIR = tmp_root
+        paths.REPOSITORY_DIR = tmp_root / "repository"
         ScopedRepository.reset()
         self.repo = ScopedRepository.instance()
 
@@ -68,8 +70,7 @@ class TestScopedRepository(unittest.TestCase):
         paths.DATA_DIR = self._orig_data
         paths.REPOSITORY_DIR = self._orig_repo
         ScopedRepository.reset()
-        if _TEST_DATA.exists():
-            shutil.rmtree(_TEST_DATA)
+        self._tmp.cleanup()
 
     # ── CRUD ───────────────────────────────────────────
 

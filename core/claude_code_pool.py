@@ -303,14 +303,13 @@ class ClaudeCodePool:
         import uuid
         name = f"pf-cc-pool-{uuid.uuid4().hex[:8]}"
 
-        # Ensure sessions dir exists on host
-        os.makedirs(
-            os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "data", "claude_sessions",
-            ),
-            exist_ok=True,
-        )
+        # Ensure sessions dir exists on host (Docker -v does NOT create
+        # missing host-side dirs — the bind would fail or create owned-by-
+        # root dirs). Use the authoritative path from core.paths so we
+        # don't accidentally recreate the pre-migration data/claude_sessions
+        # location.
+        import core.paths as _paths
+        _paths.CLAUDE_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
         run_args = [
             "-d",  # detached

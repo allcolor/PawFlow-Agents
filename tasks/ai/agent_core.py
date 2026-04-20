@@ -956,9 +956,20 @@ class AgentCoreMixin:
                             # size via tiktoken gives the UI an accurate
                             # starting point instead of a misleading 0%.
                             try:
-                                from core.token_counter import count_messages_tokens
+                                from core.token_counter import (
+                                    count_messages_tokens,
+                                    resolve_token_multiplier,
+                                )
                                 _serialized = self._serialize_messages(messages)
-                                _post_used = int(count_messages_tokens(_serialized))
+                                # Scale cl100k_base estimate by the agent's
+                                # service multiplier so models with divergent
+                                # tokenizers (e.g. Opus 4.7 ~1.6x) show a
+                                # realistic gauge instead of ~½ of reality.
+                                _tmul = resolve_token_multiplier(
+                                    getattr(ctx.get("resolved_svc"),
+                                            "config", None))
+                                _post_used = int(count_messages_tokens(
+                                    _serialized, multiplier=_tmul))
                                 _post_max = int(ctx.get("max_context_size", 200000) or 200000)
                                 _post_pct = (_post_used / _post_max) if _post_max > 0 else 0.0
                                 _cu_map = _store.get_extra(

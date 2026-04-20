@@ -158,13 +158,12 @@ class LLMMessage:
     seq: int = 0  # process-global monotonic creation order — tiebreaker when ts collides
 
     def __post_init__(self):
-        # Invariant: every non-system message carries msg_id + timestamp + seq,
-        # both fresh and reconstructed. The one-shot migration in
-        # scripts/migrate_msg_seq_ts.py guarantees on-disk entries always
-        # have them. System prompts are ephemeral (rebuilt from the agent
+        # Invariant: every non-system message carries msg_id + timestamp + seq
+        # from creation. System prompts are ephemeral (rebuilt from the agent
         # definition at each load) and exempt — if missing, they get fresh
         # stamps here since they'll never be persisted as the source of
-        # truth anyway.
+        # truth anyway. A non-system message arriving here without seq is a
+        # producer bug — fail loud instead of inventing a fallback order.
         if not self.msg_id:
             import uuid
             self.msg_id = uuid.uuid4().hex[:12]
@@ -178,8 +177,8 @@ class LLMMessage:
             else:
                 raise ValueError(
                     f"LLMMessage reconstructed with timestamp={self.timestamp} "
-                    f"but no seq (role={self.role}) "
-                    f"— run scripts/migrate_msg_seq_ts.py")
+                    f"but no seq (role={self.role}) — producer bug, "
+                    f"seq must be set at creation")
 
     @property
     def text_content(self) -> str:

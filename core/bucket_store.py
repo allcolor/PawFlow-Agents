@@ -115,10 +115,13 @@ class BucketStore:
         return (tail_msg_count >= msg_threshold
                 or tail_token_estimate >= token_threshold)
 
-    def should_rollup(self, ctx_max_tokens: int) -> bool:
-        """True when header tokens >= ctx_max_tokens // 3.
+    def should_rollup(self, ctx_max_tokens: int,
+                      token_multiplier: float = 1.0) -> bool:
+        """True when (scaled) header tokens >= ctx_max_tokens // 3.
 
-        Requires at least ROLLUP_MIN_OBJECTS. Uses tiktoken.
+        Requires at least ROLLUP_MIN_OBJECTS. Uses tiktoken × multiplier
+        so Opus 4.7 (whose tokenizer costs ~1.33-1.47x more than cl100k)
+        triggers rollup at the real threshold instead of 2x later.
         """
         if self.object_count < ROLLUP_MIN_OBJECTS:
             return False
@@ -129,7 +132,7 @@ class BucketStore:
             return False
         try:
             from core.token_counter import count_tokens
-            header_tokens = count_tokens(header)
+            header_tokens = count_tokens(header, multiplier=token_multiplier)
         except Exception as e:
             logger.warning("[bucket-store] token count failed (%s) - skipping rollup", e)
             return False

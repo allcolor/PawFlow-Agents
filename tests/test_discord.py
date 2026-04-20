@@ -272,9 +272,10 @@ class TestDiscordFlow:
 
     @pytest.fixture
     def flow_data(self):
-        flow_path = os.path.join(
-            os.path.dirname(__file__), "..", "data", "repository", "flows", "global", "default", "discord_agent", "versions", "1.0.0.json"
-        )
+        # Resolve through _paths so conftest's tmpdir-redirected REPOSITORY_DIR
+        # is honored (conftest copies global defs into the tmp repo at session
+        # setup). Hard-coded "../data/..." read from the real repo on disk.
+        flow_path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "discord_agent" / "versions" / "1.0.0.json"
         with open(flow_path, "r", encoding="utf-8") as f:
             return json.load(f)
 

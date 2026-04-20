@@ -104,29 +104,3 @@ class PlanStore:
                 except OSError:
                     pass
 
-    @staticmethod
-    def migrate_from_extras(conv_id: str, user_id: str, store):
-        """One-shot migration: move plans from conv extras to plan files.
-
-        Called at startup or on first access. Reads 'plans' extra,
-        writes each plan as a file, then removes the extra.
-        """
-        try:
-            plans = store.get_extra(conv_id, "plans") or {}
-            if not plans or not isinstance(plans, dict):
-                return
-            ps = PlanStore.instance()
-            migrated = 0
-            for plan_id, plan in plans.items():
-                if not isinstance(plan, dict):
-                    continue
-                plan.setdefault("id", plan_id)
-                ps.save(user_id, conv_id, plan)
-                migrated += 1
-            if migrated:
-                # Clear the bloated extras
-                store.set_extra(conv_id, "plans", {}, user_id=user_id)
-                logger.info("Migrated %d plan(s) from extras to files for conv %s",
-                            migrated, conv_id[:8])
-        except Exception as e:
-            logger.warning("Plan migration failed for conv %s: %s", conv_id[:8], e)

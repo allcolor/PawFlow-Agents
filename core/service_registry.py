@@ -23,9 +23,20 @@ from core import ServiceFactory, Service
 logger = logging.getLogger(__name__)
 
 import core.paths as _paths
-_SERVICES_DIR = _paths.RUNTIME_DIR / "services"
-_GLOBAL_SERVICES_DIR = _SERVICES_DIR / "global"
-_USER_SERVICES_DIR = _SERVICES_DIR / "users"
+
+
+# Resolve paths dynamically — capturing at module import time freezes them
+# to the real RUNTIME_DIR and defeats conftest.py's tmpdir redirect (tests
+# would then write to the real data/runtime/services/). Call-site lookup
+# keeps a single source of truth in core.paths.
+def _global_services_dir() -> Path:
+    return _paths.RUNTIME_DIR / "services" / "global"
+
+
+def _user_services_dir() -> Path:
+    return _paths.RUNTIME_DIR / "services" / "users"
+
+
 CONV_EXTRAS_KEY = "conv_services"
 
 # Scopes
@@ -722,9 +733,9 @@ class ServiceRegistry:
         """Load service definitions from the appropriate backend."""
         try:
             if scope == SCOPE_GLOBAL:
-                self._load_dir(scope_id, _GLOBAL_SERVICES_DIR, scope)
+                self._load_dir(scope_id, _global_services_dir(), scope)
             elif scope == SCOPE_USER:
-                svc_dir = _USER_SERVICES_DIR / scope_id
+                svc_dir = _user_services_dir() / scope_id
                 self._load_dir(scope_id, svc_dir, scope)
             elif scope == SCOPE_CONV:
                 self._load_conv(scope_id)
@@ -781,9 +792,9 @@ class ServiceRegistry:
                 scope, scope_id[:8] if len(scope_id) > 8 else scope_id)
             return
         if scope == SCOPE_GLOBAL:
-            self._save_dir(scope_id, _GLOBAL_SERVICES_DIR)
+            self._save_dir(scope_id, _global_services_dir())
         elif scope == SCOPE_USER:
-            svc_dir = _USER_SERVICES_DIR / scope_id
+            svc_dir = _user_services_dir() / scope_id
             self._save_dir(scope_id, svc_dir)
         elif scope == SCOPE_CONV:
             self._save_conv(scope_id)

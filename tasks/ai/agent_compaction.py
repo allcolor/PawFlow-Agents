@@ -782,9 +782,17 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     first_ts=min(_tss), last_ts=max(_tss),
                     summary=summary, model=_model,
                 )
-                # Rollup: if the header exceeds 1/3 of ctx, consolidate all
-                # objects except the most recent into one new higher-level SB.
-                if _bucket_store.should_rollup(max_tokens):
+                # Rollup: if the (multiplier-scaled) header exceeds 1/3 of
+                # ctx, consolidate all objects except the most recent into
+                # one new higher-level SB. Scaling via the service's
+                # token_multiplier makes the trigger fire at the real
+                # threshold for models whose tokenizer diverges from
+                # cl100k_base (Opus 4.7 in particular).
+                from core.token_counter import resolve_token_multiplier
+                _tmul = resolve_token_multiplier(
+                    getattr(client, "_config_ref", None))
+                if _bucket_store.should_rollup(max_tokens,
+                                                token_multiplier=_tmul):
                     try:
                         _sb_inputs = _bucket_store.get_consolidation_input()
                         _sb_text = self._consolidate_buckets(

@@ -341,6 +341,16 @@ class LLMConnectionService(BaseService):
                 "type": "float", "default": 0,
                 "description": "Context compaction threshold 0-1 (0 = default 0.75)",
             },
+            "token_multiplier": {
+                "type": "float", "default": 0,
+                "description": (
+                    "Correction factor between tiktoken cl100k_base counts "
+                    "and this model's real tokenizer (0 = default 1.0). "
+                    "Opus 4.7 ~1.6, Sonnet 4.6 / Haiku 4.5 ~1.1, OpenAI ~1.0. "
+                    "Applied to bucket rollup threshold and post-compact "
+                    "gauge so both reflect real context usage."
+                ),
+            },
             "max_concurrent": {
                 "type": "integer", "default": 0,
                 "description": "Max concurrent requests (0 = unlimited)",

@@ -18,24 +18,31 @@ SVC_TYPE = "cacheService"
 
 
 def _registry_fixture(tmp_path):
-    """Shared setup: fresh ServiceRegistry with temp storage."""
+    """Shared setup: fresh ServiceRegistry with per-test temp storage.
+
+    service_registry resolves its storage root lazily via
+    _global_services_dir() / _user_services_dir(), which derive from
+    core.paths.RUNTIME_DIR. We monkeypatch those lazy getters so each
+    test gets a clean slate without touching module globals (none of
+    those exist any more) or the session-wide conftest tmpdir.
+    """
     from core.service_registry import ServiceRegistry
     import core.service_registry as mod
 
     ServiceRegistry.reset()
-    orig_user_dir = mod._USER_SERVICES_DIR
-    orig_global_dir = mod._GLOBAL_SERVICES_DIR
-    mod._USER_SERVICES_DIR = tmp_path / "user_services"
-    mod._GLOBAL_SERVICES_DIR = tmp_path / "global_services"
+    orig_global = mod._global_services_dir
+    orig_user = mod._user_services_dir
+    mod._global_services_dir = lambda: tmp_path / "global_services"
+    mod._user_services_dir = lambda: tmp_path / "user_services"
     reg = ServiceRegistry.get_instance()
-    return reg, mod, orig_user_dir, orig_global_dir
+    return reg, mod, orig_user, orig_global
 
 
-def _registry_teardown(mod, orig_user_dir, orig_global_dir):
+def _registry_teardown(mod, orig_user, orig_global):
     from core.service_registry import ServiceRegistry
     ServiceRegistry.reset()
-    mod._USER_SERVICES_DIR = orig_user_dir
-    mod._GLOBAL_SERVICES_DIR = orig_global_dir
+    mod._user_services_dir = orig_user
+    mod._global_services_dir = orig_global
 
 
 # ── Registry CRUD (user scope) ────────────────────────────────────
@@ -332,7 +339,7 @@ class TestPersistence:
 
     def test_save_creates_file(self):
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE, config={"host": "localhost"})
-        filepath = self.mod._USER_SERVICES_DIR / "alice" / "mydb.json"
+        filepath = self.mod._user_services_dir() / "alice" / "mydb.json"
         assert filepath.exists()
         data = json.loads(filepath.read_text(encoding="utf-8"))
         assert data["service_type"] == SVC_TYPE
@@ -349,8 +356,8 @@ class TestPersistence:
     def test_per_user_files(self):
         self.reg.install(self.SCOPE, "alice", "db1", SVC_TYPE)
         self.reg.install(self.SCOPE, "bob", "db2", SVC_TYPE)
-        assert (self.mod._USER_SERVICES_DIR / "alice" / "db1.json").exists()
-        assert (self.mod._USER_SERVICES_DIR / "bob" / "db2.json").exists()
+        assert (self.mod._user_services_dir() / "alice" / "db1.json").exists()
+        assert (self.mod._user_services_dir() / "bob" / "db2.json").exists()
 
     def test_expressions_preserved_in_config(self):
         self.reg.install(self.SCOPE, "alice", "mydb", SVC_TYPE,

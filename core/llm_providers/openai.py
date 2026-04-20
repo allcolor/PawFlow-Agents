@@ -220,7 +220,14 @@ class LLMOpenaiMixin:
         }
 
     def _build_openai_messages(self, messages) -> List[Dict[str, Any]]:
-        """Convert LLMMessage list to OpenAI API message format."""
+        """Convert LLMMessage list to OpenAI API message format.
+
+        Messages are regrouped first so the split (assistant text / assistant
+        tool_calls) pair emitted by agent_core.persist is fused into the
+        single assistant message OpenAI expects (content + tool_calls).
+        """
+        from core.llm_message_regroup import regroup_split_assistant_messages
+        messages = regroup_split_assistant_messages(messages)
         # Log multipart content for debugging
         _img_count = 0
         for m in messages:

@@ -1652,6 +1652,17 @@ class AgentCoreMixin:
                             })
                     except Exception:
                         pass
+                # Per-turn git commit: one snapshot per agent loop.
+                # Drains writer queue first so the commit sees every
+                # message produced during the turn.
+                try:
+                    from core.conversation_git import commit_turn
+                    _agent_tag = ctx.get("active_agent_name", "") or "?"
+                    commit_turn(conversation_id,
+                                reason=f"turn [{_agent_tag}]")
+                except Exception as _gt_err:
+                    logger.error("[agent:%s] commit_turn failed: %s",
+                                 conversation_id[:8], _gt_err, exc_info=True)
             return result
 
         except _InterruptComplete:

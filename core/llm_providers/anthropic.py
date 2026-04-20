@@ -229,7 +229,13 @@ class LLMAnthropicMixin:
         """Convert LLMMessage list to Anthropic API format.
 
         Returns (system_text, api_messages).
+
+        Messages are regrouped first so the split (assistant text / assistant
+        tool_calls) pair emitted by agent_core.persist is fused into the
+        single assistant message Anthropic expects.
         """
+        from core.llm_message_regroup import regroup_split_assistant_messages
+        messages = regroup_split_assistant_messages(messages)
         system_text = ""
         api_messages: List[Dict[str, Any]] = []
         for m in messages:

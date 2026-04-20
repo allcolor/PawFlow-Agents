@@ -40,6 +40,55 @@ VERSION = "1.0.0"
 MAX_OUTPUT = 100 * 1024  # 100KB per stream
 
 
+# ── Path allowlist outside --dir ────────────────────────────
+# System temp dirs (/tmp, /var/tmp, tempfile.gettempdir()) are allowed
+# as an exec cwd even though they live outside root_dir: they are
+# sandboxed ephemeral storage and blocking them breaks legitimate
+# scratch-dir workflows.
+
+def _tmp_allowlist():
+    import tempfile
+    dirs = ["/tmp", "/var/tmp"]
+    try:
+        dirs.append(tempfile.gettempdir())
+    except Exception:
+        pass
+    resolved = []
+    seen = set()
+    for d in dirs:
+        try:
+            rd = str(Path(d).resolve())
+        except Exception:
+            continue
+        if rd not in seen:
+            seen.add(rd)
+            resolved.append(rd)
+    return resolved
+
+
+_TMP_ALLOWLIST = _tmp_allowlist()
+
+
+def _is_allowed_tmp_path(path: str) -> bool:
+    """True when `path` is absolute and under a system temp dir."""
+    if not path or not isinstance(path, str):
+        return False
+    p = Path(path)
+    if not p.is_absolute():
+        return False
+    try:
+        resolved = p.resolve()
+    except Exception:
+        return False
+    for allowed in _TMP_ALLOWLIST:
+        try:
+            resolved.relative_to(allowed)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 # ── Shell detection ──────────────────────────────────────────────
 
 def _detect_shell():
@@ -99,7 +148,13 @@ class ExecutorRelayHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _resolve_cwd(self, rel_cwd: str):
-        """Resolve relative cwd to absolute, checking containment."""
+        """Resolve relative cwd to absolute, checking containment.
+
+        System temp dirs (/tmp, /var/tmp, tempfile.gettempdir()) are
+        allowed even when outside root_dir — see _is_allowed_tmp_path.
+        """
+        if _is_allowed_tmp_path(rel_cwd):
+            return str(Path(rel_cwd).resolve())
         root = Path(self.root_dir).resolve()
         target = (root / rel_cwd).resolve()
         try:
@@ -330,6 +385,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
     MockHandler.deny_patterns = deny
 
     def _resolve_cwd(rel_cwd):
+        if _is_allowed_tmp_path(rel_cwd):
+            return str(Path(rel_cwd).resolve())
         root = Path(root_dir).resolve()
         target = (root / rel_cwd).resolve()
         try:

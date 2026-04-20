@@ -106,6 +106,59 @@ _WRITE_ACTIONS = frozenset({
 })
 
 
+# ── Path allowlist (outside root_dir) ─────────────────────────────
+#
+# The relay is a filesystem sandbox bounded by --dir (root_dir). But
+# a few absolute path prefixes are safe to allow through even when
+# they don't live under the root: system temp dirs. They are local to
+# the container/process, opaque to the host, and blocking them just
+# breaks legitimate ephemeral writes (test fixtures, scratch files,
+# commit message files, editor swap files).
+
+def _tmp_allowlist():
+    import tempfile
+    dirs = ["/tmp", "/var/tmp"]
+    try:
+        dirs.append(tempfile.gettempdir())
+    except Exception:
+        pass
+    # Resolve + dedup
+    resolved = []
+    seen = set()
+    for d in dirs:
+        try:
+            rd = str(Path(d).resolve())
+        except Exception:
+            continue
+        if rd not in seen:
+            seen.add(rd)
+            resolved.append(rd)
+    return resolved
+
+
+_TMP_ALLOWLIST = _tmp_allowlist()
+
+
+def _is_allowed_tmp_path(path: str) -> bool:
+    """True when `path` is absolute and falls under a system temp dir."""
+    if not path or not isinstance(path, str):
+        return False
+    p = Path(path)
+    if not p.is_absolute():
+        return False
+    try:
+        resolved = p.resolve()
+    except Exception:
+        return False
+    for allowed in _TMP_ALLOWLIST:
+        try:
+            resolved.relative_to(allowed)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 # ── Request handler ───────────────────────────────────────────────
 
 class FSRelayHandler(BaseHTTPRequestHandler):
@@ -152,8 +205,16 @@ class FSRelayHandler(BaseHTTPRequestHandler):
         """Resolve relative path to absolute, checking traversal.
 
         Returns absolute path string or None if blocked.
+
+        Absolute paths under an allowlisted system temp dir (/tmp,
+        /var/tmp, tempfile.gettempdir()) are passed through unchanged —
+        they are sandboxed to the container/process and never escape to
+        host state, so blocking them just breaks legitimate "write to
+        tmp" use cases (test artifacts, editor swap files, etc.).
         """
         rel_path = self._resolve_fs_url(rel_path)
+        if _is_allowed_tmp_path(rel_path):
+            return str(Path(rel_path).resolve())
         root = Path(self.root_dir).resolve()
         target = (root / rel_path).resolve()
         try:
@@ -538,6 +599,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     }
 
     def _resolve(rel_path):
+        if _is_allowed_tmp_path(rel_path):
+            return str(Path(rel_path).resolve())
         root = Path(root_dir).resolve()
         target = (root / rel_path).resolve()
         try:

@@ -1132,6 +1132,175 @@ class ConversationStore:
         # Git snapshot after agent turn
         self.git_snapshot(cid, f"agent:{agent_name}")
 
+    # ════════════════════════════════════════════════════════════════════
+    # UNIFIED PERSISTENCE ROUTER — append_message()
+    # ════════════════════════════════════════════════════════════════════
+    #
+    # Single write path. Every message (assistant block, tool call,
+    # tool result, user input, delegate request/reply, narration,
+    # context injection, display_only) goes through here exactly ONCE.
+    #
+    # The router decides per-message which files to write based on
+    # (role, source.type, display_only, tool_calls). Atomic under the
+    # per-conv lock. SSE publication is the ConversationWriter's job
+    # AFTER this returns successfully — visible ⇒ persisted.
+    #
+    # Does NOT git_snapshot. Git commits are per-turn and called
+    # explicitly by the agent loop via core.conversation_git.commit_turn().
+    #
+    # NO DEDUP LOGIC — each call must carry a unique msg_id. A duplicate
+    # indicates an upstream bug and is the caller's responsibility.
+    # (Legacy dedup in _append_ctx_file / _append_shared_ctx still applies
+    # during the Commit 1 transition and will be removed in Commit 3.)
+    # ════════════════════════════════════════════════════════════════════
+
+    def append_message(self, cid: str, msg: Dict, agent_name: str = "",
+                       user_id: str = "", ttl: int = 0) -> None:
+        """Persist one message to every target file it belongs in.
+
+        Replaces append_messages + agent_flush. Callers feed one message
+        at a time; writes are atomic under the conv lock.
+
+        Routing rules:
+          - transcript.jsonl: everything except source.type=='context'.
+          - {agent}/context.jsonl (own): everything except source.type!=
+            'context' and agent_name=='' (broadcast-less orphan).
+          - shared.jsonl + other agents' contexts: user/assistant
+            without tool_calls, not display_only, not context, not
+            delegate-reply; assistant+tool_calls contributes a
+            stripped-of-tool_calls copy (filter_for_shared).
+          - agent_delegate: private A↔B routing via
+            _route_delegate_message(); requests also project into shared.
+          - display_only: transcript only.
+
+        Raises on any I/O error (no silent swallow).
+        """
+        self._validate_message(msg)
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
+        role = msg.get("role", "")
+        source = msg.get("source") or {}
+        src_type = source.get("type", "")
+        display_only = bool(msg.get("display_only"))
+        has_tool_calls = bool(msg.get("tool_calls"))
+        now = time.time()
+
+        lock = self._get_conv_lock(cid)
+        with lock:
+            # Create conv if missing
+            if not self.exists(cid):
+                if not user_id:
+                    raise ValueError(
+                        "user_id required for new conversation")
+                self.save(cid, [], user_id=user_id, ttl=ttl)
+
+            # 1. Transcript — everything except synthetic context injections.
+            if src_type != "context":
+                is_private = has_tool_calls or role == "tool"
+                line = {"t": "msg", **msg}
+                if is_private:
+                    line["private"] = True
+                if "ts" not in line:
+                    line["ts"] = now
+                with open(self._transcript_path(cid), "a",
+                          encoding="utf-8") as f:
+                    f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+            if display_only:
+                pass  # transcript only, no context files
+            elif src_type == "agent_delegate":
+                # Private A↔B routing (requests project to shared,
+                # replies stay private between from/to).
+                self._route_delegate_message(cid, msg, agent_name)
+            else:
+                # 2. Author's own context (brut, keeps tool_calls /
+                #    tool results; also target of context injections).
+                if agent_name:
+                    self._append_ctx_file(cid, agent_name, [msg])
+
+                # 3. Shared + broadcast to other agents — only for
+                #    conversation messages (filter_for_shared drops
+                #    tool results and context injections; strips
+                #    tool_calls but keeps text).
+                if src_type != "context" and role != "tool":
+                    shared_candidates = self.filter_for_shared([msg])
+                    if shared_candidates:
+                        shared_msgs = [self._transform_for_shared(m)
+                                       for m in shared_candidates]
+                        self._append_shared_ctx(cid, shared_msgs)
+                        # Fresh disk scan — save_agent_context doesn't
+                        # invalidate the main cache, so a newly-created
+                        # agent would be invisible otherwise.
+                        cache = self._reload_cache(cid)
+                        for other in cache.get("agents", set()):
+                            if not other or other == agent_name:
+                                continue
+                            transformed = [
+                                self._transform_for_other_agent(m, other)
+                                for m in shared_candidates]
+                            self._append_ctx_file(cid, other, transformed)
+
+        # Refresh cache (msg_count, agents set) after any write.
+        self._invalidate_ctx_cache(cid)
+        self._reload_cache(cid)
+
+    def _route_delegate_message(self, cid: str, msg: Dict,
+                                agent_name: str) -> None:
+        """Route an agent_delegate message to from's ctx, to's ctx, and
+        (for requests only) to shared + other agents.
+
+        Mirrors the section 2b logic from agent_flush(), but for a
+        single message. Called under the conv lock by append_message.
+        """
+        src = msg.get("source") or {}
+        _from = src.get("from", "") or agent_name
+        _to = src.get("to", "")
+        if not _to:
+            return
+        _kind = src.get("kind")
+
+        # FROM's own ctx — [delegate <from> → <to>]:
+        _for_from = dict(msg)
+        _for_from["content"] = self._prefix_content(
+            _for_from.get("content", ""),
+            f"[delegate {_from} → {_to}]:")
+        self._append_ctx_file(cid, _from, [_for_from])
+
+        # TO's ctx — role coerced to user with explicit attribution.
+        _for_to = dict(msg)
+        if _for_to.get("role") == "assistant":
+            _for_to["role"] = "user"
+        if _kind == "reply":
+            _attr = (f"Here is agent '{_from}''s reply to your "
+                     f"delegate:")
+        else:
+            _attr = f"Here is a message from agent '{_from}':"
+        _for_to["content"] = self._prefix_content(
+            _for_to.get("content", ""), _attr)
+        self._append_ctx_file(cid, _to, [_for_to])
+
+        # Replies stay private between from/to — don't leak to shared.
+        if _kind == "reply":
+            return
+
+        # Request broadcasts to shared + other agents (not from/to,
+        # they already got their tailored copy above).
+        _for_shared = dict(msg)
+        if _for_shared.get("role") == "assistant":
+            _for_shared["role"] = "user"
+        _for_shared["content"] = self._prefix_content(
+            _for_shared.get("content", ""),
+            f"[{_from} to agent {_to}]:")
+        self._append_shared_ctx(cid, [_for_shared])
+
+        cache = self._reload_cache(cid)
+        _delegate_parties = {_from, _to}
+        for other in cache.get("agents", set()):
+            if not other or other in _delegate_parties:
+                continue
+            transformed = self._transform_for_other_agent(
+                _for_shared, other)
+            self._append_ctx_file(cid, other, [transformed])
+
     # ── Append messages (simple) ──────────────────────────────────────
 
     def append_messages(self, cid: str, new_messages: List[Dict],

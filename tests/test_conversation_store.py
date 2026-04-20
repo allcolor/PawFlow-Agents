@@ -325,6 +325,195 @@ class TestAgentFlush:
         assert store.exists(cid)
 
 
+# ── append_message (unified router) ────────────────────────────────
+
+class TestAppendMessage:
+    """append_message is the single write path. Same semantics as
+    agent_flush (same transform helpers) but per-message instead of
+    grouped, and without dedup / git_snapshot.
+    """
+
+    def test_user_message_goes_to_transcript_shared_and_target_ctx(
+            self, conv):
+        store, cid, uid = conv
+        m = _msg(role="user", content="hi bot",
+                 source={"type": "user", "name": uid,
+                         "target_agent": "bot"})
+        store.append_message(cid, m, agent_name="bot", user_id=uid)
+        # Transcript
+        assert store.message_count(cid) == 1
+        # Shared contains prefixed copy
+        shared = store.load_agent_context(cid, "")
+        assert shared and any(
+            "[User to agent bot]" in str(m.get("content", ""))
+            for m in shared)
+        # Target ctx contains raw copy
+        bot_ctx = store.load_agent_context(cid, "bot")
+        assert bot_ctx and any("hi bot" in str(m.get("content", ""))
+                               for m in bot_ctx)
+
+    def test_assistant_plain_text_goes_to_shared(self, conv):
+        store, cid, uid = conv
+        m = _msg(role="assistant", content="done",
+                 source={"type": "agent", "name": "bot"})
+        store.append_message(cid, m, agent_name="bot", user_id=uid)
+        shared = store.load_agent_context(cid, "")
+        assert shared and any(
+            "[Agent bot]" in str(m.get("content", ""))
+            for m in shared)
+
+    def test_assistant_with_tool_calls_writes_raw_to_own_ctx(
+            self, conv):
+        store, cid, uid = conv
+        m = _msg(role="assistant", content="calling",
+                 source={"type": "agent", "name": "bot"},
+                 tool_calls=[{"id": "tc1", "name": "read",
+                              "arguments": {}}])
+        store.append_message(cid, m, agent_name="bot", user_id=uid)
+        # Own ctx keeps tool_calls intact
+        bot_ctx = store.load_agent_context(cid, "bot")
+        assert bot_ctx and any(msg.get("tool_calls")
+                               for msg in bot_ctx)
+        # Shared keeps text but strips tool_calls
+        shared = store.load_agent_context(cid, "")
+        assert shared
+        for s in shared:
+            assert not s.get("tool_calls")
+
+    def test_tool_result_stays_private_to_own_ctx(self, conv):
+        store, cid, uid = conv
+        m = _msg(role="tool", content="[result]",
+                 source={"type": "agent", "name": "bot"},
+                 tool_call_id="tc1")
+        store.append_message(cid, m, agent_name="bot", user_id=uid)
+        bot_ctx = store.load_agent_context(cid, "bot")
+        assert bot_ctx and any(msg.get("role") == "tool"
+                               for msg in bot_ctx)
+        shared = store.load_agent_context(cid, "")
+        if shared:
+            assert not any(msg.get("role") == "tool"
+                           for msg in shared)
+
+    def test_display_only_transcript_only(self, conv):
+        store, cid, uid = conv
+        m = _msg(role="assistant", content="narrate",
+                 source={"type": "agent", "name": "bot"},
+                 display_only=True)
+        store.append_message(cid, m, agent_name="bot", user_id=uid)
+        assert store.message_count(cid) == 1
+        bot_ctx = store.load_agent_context(cid, "bot")
+        # display_only must not appear in any ctx
+        assert not bot_ctx or not any(
+            "narrate" in str(msg.get("content", ""))
+            for msg in bot_ctx)
+        shared = store.load_agent_context(cid, "")
+        assert not shared or not any(
+            "narrate" in str(msg.get("content", ""))
+            for msg in shared)
+
+    def test_context_injection_skips_transcript_and_shared(self, conv):
+        store, cid, uid = conv
+        m = _msg(role="user", content="[System: resumed]",
+                 source={"type": "context"})
+        store.append_message(cid, m, agent_name="bot", user_id=uid)
+        # NOT in transcript
+        assert store.message_count(cid) == 0
+        # NOT in shared
+        shared = store.load_agent_context(cid, "")
+        assert not shared or not any(
+            "resumed" in str(msg.get("content", ""))
+            for msg in shared)
+        # In target agent ctx only
+        bot_ctx = store.load_agent_context(cid, "bot")
+        assert bot_ctx and any(
+            "resumed" in str(msg.get("content", ""))
+            for msg in bot_ctx)
+
+    def test_delegate_request_routes_to_from_to_and_shared(self, conv):
+        store, cid, uid = conv
+        # Seed cache: ensure both 'alice' and 'bob' are known agents
+        store.save_agent_context(cid, "alice", [])
+        store.save_agent_context(cid, "bob", [])
+        store._reload_cache(cid)
+        m = _msg(role="assistant", content="do X",
+                 source={"type": "agent_delegate",
+                         "from": "alice", "to": "bob",
+                         "kind": "request"})
+        store.append_message(cid, m, agent_name="alice", user_id=uid)
+        alice_ctx = store.load_agent_context(cid, "alice")
+        bob_ctx = store.load_agent_context(cid, "bob")
+        shared = store.load_agent_context(cid, "")
+        # alice sees [delegate alice → bob]:
+        assert alice_ctx and any(
+            "[delegate alice" in str(msg.get("content", ""))
+            for msg in alice_ctx)
+        # bob receives with explicit attribution
+        assert bob_ctx and any(
+            "Here is a message from agent 'alice'" in
+            str(msg.get("content", ""))
+            for msg in bob_ctx)
+        # shared visible with [alice to agent bob]: prefix
+        assert shared and any(
+            "[alice to agent bob]" in str(msg.get("content", ""))
+            for msg in shared)
+
+    def test_delegate_reply_stays_private_no_shared(self, conv):
+        store, cid, uid = conv
+        store.save_agent_context(cid, "alice", [])
+        store.save_agent_context(cid, "bob", [])
+        store._reload_cache(cid)
+        m = _msg(role="assistant", content="answer",
+                 source={"type": "agent_delegate",
+                         "from": "bob", "to": "alice",
+                         "kind": "reply"})
+        store.append_message(cid, m, agent_name="bob", user_id=uid)
+        alice_ctx = store.load_agent_context(cid, "alice")
+        bob_ctx = store.load_agent_context(cid, "bob")
+        shared = store.load_agent_context(cid, "")
+        # Both parties receive their tailored copy
+        assert alice_ctx and any(
+            "reply to your delegate" in str(msg.get("content", ""))
+            for msg in alice_ctx)
+        assert bob_ctx and any(
+            "[delegate bob" in str(msg.get("content", ""))
+            for msg in bob_ctx)
+        # Shared must NOT contain the reply
+        if shared:
+            assert not any(
+                "answer" in str(msg.get("content", ""))
+                for msg in shared)
+
+    def test_broadcast_to_other_agents(self, conv):
+        store, cid, uid = conv
+        store.save_agent_context(cid, "alice", [])
+        store.save_agent_context(cid, "bob", [])
+        store._reload_cache(cid)
+        m = _msg(role="assistant", content="hello world",
+                 source={"type": "agent", "name": "alice"})
+        store.append_message(cid, m, agent_name="alice", user_id=uid)
+        bob_ctx = store.load_agent_context(cid, "bob")
+        assert bob_ctx and any(
+            "[Agent alice]" in str(msg.get("content", ""))
+            for msg in bob_ctx)
+
+    def test_creates_conv_if_needed(self, store):
+        cid = store.generate_id()
+        m = _msg(role="assistant", content="hi",
+                 source={"type": "agent", "name": "bot"})
+        store.append_message(cid, m, agent_name="bot",
+                             user_id="newuser")
+        assert store.exists(cid)
+
+    def test_does_not_git_snapshot(self, conv):
+        store, cid, uid = conv
+        with patch.object(store, "git_snapshot") as gs:
+            m = _msg(role="assistant", content="x",
+                     source={"type": "agent", "name": "bot"})
+            store.append_message(cid, m, agent_name="bot",
+                                 user_id=uid)
+            gs.assert_not_called()
+
+
 # ── cleanup_orphan_claude_sessions / _prune_stale_cc_sessions ────────
 
 class TestCleanupOrphanClaudeSessions:

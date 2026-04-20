@@ -312,10 +312,6 @@ class AgentLoopTask(
                 "type": "integer", "required": False, "default": 64000,
                 "description": "Maximum context size in tokens (estimated). When reached, older messages are compacted into a summary.",
             },
-            "context_compact_threshold": {
-                "type": "float", "required": False, "default": 0.8,
-                "description": "Compact when context reaches this fraction of max_context_size (default 0.8 = 80%)",
-            },
             "context_keep_recent": {
                 "type": "integer", "required": False, "default": 6,
                 "description": "Number of recent messages to keep intact during compaction (never summarized)",
@@ -895,7 +891,7 @@ class AgentLoopTask(
                 _max_ctx = _summ_max_ctx or 64000
                 compact_msgs = self._compact(
                     messages, client, _max_ctx,
-                    threshold=0.6, conversation_id=conversation_id)
+                    target_fraction=0.25, conversation_id=conversation_id)
 
 
                 def _on_token(text):

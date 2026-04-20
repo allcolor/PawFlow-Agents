@@ -337,10 +337,6 @@ class LLMConnectionService(BaseService):
                 "type": "integer", "default": 0,
                 "description": "Max chars per tool result (0 = default 50000)",
             },
-            "context_compact_threshold": {
-                "type": "float", "default": 0,
-                "description": "Context compaction threshold 0-1 (0 = default 0.75)",
-            },
             "token_multiplier": {
                 "type": "float", "default": 0,
                 "description": (

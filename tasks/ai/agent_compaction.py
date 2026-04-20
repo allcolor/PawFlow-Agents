@@ -214,7 +214,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         synth_context = self._compact(
             list(messages), _cc,
             ctx.get("max_context_size", 64000),
-            threshold=compact_threshold,
+            target_fraction=compact_threshold,
             conversation_id=conversation_id,
         )
         model = ctx.get("model") or None
@@ -243,7 +243,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     synth_context = self._compact(
                         synth_context, _cc,
                         ctx.get("max_context_size", 64000),
-                        threshold=0.4,
+                        target_fraction=0.25,
                         conversation_id=conversation_id,
                     )
                     continue
@@ -512,7 +512,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         messages: List[LLMMessage],
         client: LLMClient,
         max_tokens: int,
-        threshold: float = 0.9,
+        trigger_fraction: float = 0.8,
+        target_fraction: float = 0.25,
         conversation_id: str = "",
         agent_name: str = "",
         tool_defs: list = None,
@@ -521,23 +522,33 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         force: bool = False,
         user_id: str = "",
     ) -> List[LLMMessage]:
-        """Unified compaction: cleanup + threshold check + summarize + rebuild.
+        """Iterative reduce-to-cap compaction. Output ≤ target_fraction × max.
 
-        Every token count below is the REAL tokenizer cost for the target
-        model: tiktoken cl100k_base output × service config token_multiplier
+        Every token count is the REAL tokenizer cost for the target model:
+        tiktoken cl100k_base output × service config token_multiplier
         (Opus 4.7 = 1.6, Sonnet/Haiku 4.6 = 1.1, OpenAI = 1.0). Thresholds,
         logs, and SSE events all operate in real-token space so behaviour
-        matches what the gauge displays.
+        matches what the context gauge displays.
 
-        When force=True, always compacts (used at context load time).
-        When force=False, only compacts if estimated tokens exceed threshold.
+        Two fractions govern behaviour (both of max_tokens):
+          * trigger_fraction (default 0.8) — when NOT forced, skip compact
+            while estimated tokens are still below this. 0.8 matches the
+            LLM API auto-trigger: compact kicks in once the context hits
+            80% of the budget. Manual /compact and CC compact_boundary
+            pass force=True and bypass this check.
+          * target_fraction (default 0.25) — HARD cap on output size. The
+            iterative algorithm below guarantees output ≤ cap; a terminal
+            force_fit brute-truncates content if earlier steps fell short.
 
-        Strategy:
-        Phase 0: Cleanup (orphans, images, base64, oversized tool results)
-        Phase 1: Progressive clearing of old tool results
-        Phase 2: LLM-based summarization of old messages
-        Phase 3: Rebuild (system + summary + recent + file re-read)
-        Phase 4: Persist + notify
+        Algorithm (always converges, 5 steps):
+          0. Cleanup (orphans, images, base64).
+          1. Summarise tail[:-RECENT] into a new level-1 bucket; output =
+             header + saved_recent. If ≤ cap → done.
+          2. rollup_all_except_last (needs ≥ 3 buckets) → retry output.
+          3. collapse_all (needs ≥ 2 buckets) → retry output.
+          4. Shrink saved_recent from (25 conv / 100 msgs) to (6 / 20),
+             summarise ejected messages into a new bucket → retry.
+          5. force_fit brute-truncate message contents to cap.
         """
         _cpt = chars_per_token if chars_per_token > 0 else 3.5
         # Resolve token_multiplier once from the service config so every
@@ -625,385 +636,192 @@ class AgentCompactionMixin(AgentSummarizeMixin):
 
         # NOTE: do NOT call _clear_seen_tool_results here — it stores to FileStore
         # which is wrong during compaction (thousands of files). Compaction uses
-        # _truncate_tool_results (in-place truncation) and _progressive_clear instead.
+        # _truncate_tool_results (in-place truncation) in the output window.
 
-        # ── Threshold check (skip when forced) ──
+        # ════════════════════════════════════════════════════════════════
+        #  Iterative reduce-to-cap algorithm (5 steps, always converges)
+        # ════════════════════════════════════════════════════════════════
         _original_count = len(messages)
-        estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
-                                          chars_per_token=chars_per_token,
-                                          token_multiplier=_tmul)
-        _original_tokens = estimated
-        limit = int(max_tokens * threshold)
+        cap = int(max_tokens * target_fraction)
+        trigger = int(max_tokens * trigger_fraction)
+        _bucket_target = max(1000, int(max_tokens * 0.05))
 
-        logger.debug(f"[compact] check: {estimated} est. tokens, limit={limit} "
-                     f"(max={max_tokens}×{threshold}), {len(messages)} msgs, "
-                     f"force={force}")
-
-        if not force and estimated <= limit:
-            return messages
-
-        logger.info(f"[compact] {'FORCED' if force else 'TRIGGERED'}: "
-                    f"{estimated} tokens, limit={limit}, compacting...")
-
-        # ── Phase 1: Progressive clearing of old tool results ──
-        estimated = self._progressive_clear_tool_results(
-            messages, limit, estimated,
-            keep_recent=6,
-            chars_per_token=_cpt,
-        )
-        if not force and estimated <= limit:
-            logger.info(f"[compact] Progressive clear sufficient: ~{estimated} tokens")
-            return messages
-
-        # Aggressive truncation if still way over
-        if estimated > limit * 2:
-            logger.warning(f"[compact] Still {estimated} tokens, aggressive truncation")
-            _cutoff = len(messages) - 6
-            for i, m in enumerate(messages):
-                if i == 0 and m.role == "system":
-                    continue
-                if i >= _cutoff:
-                    break
-                if isinstance(m.content, str) and len(m.content) > 200:
-                    m.content = m.content[:100] + "\n...[aggressively truncated]..."
-                elif isinstance(m.content, list):
-                    m.content = "[content truncated for context limit]"
-            estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
-                                              chars_per_token=chars_per_token,
-                                              token_multiplier=_tmul)
-
-        # ── Phase 2: Split + summarize ──
-        if len(messages) <= 7:
-            logger.info(f"[compact] Only {len(messages)} messages, cannot compact further")
-            return messages
-
-        system_msg = messages[0] if messages[0].role == "system" else None
+        system_msg = messages[0] if messages and messages[0].role == "system" else None
         start_idx = 1 if system_msg else 0
 
-        split_point = _select_recent_messages(messages, start_idx)
-        if split_point <= start_idx:
-            return messages
-
-        old_messages = messages[start_idx:split_point]
-        recent_messages = messages[split_point:]
-
-        # Build summarizer input from old messages. Keep conversation turns
-        # AND preserve tool calls as synopsis + truncated tool results, so
-        # the summary captures concrete work (commit SHAs, file edits, test
-        # results) — not just the free-text chatter around them. Previously
-        # this filtered out everything with `tool_calls`, which meant the
-        # summary never saw the actual actions and summaries would claim
-        # "Phase 3 in progress, not committed" even when commits had landed.
-        from core.llm_providers.cli_shared import textualize_message as _textualize
-        old_conversation: List[LLMMessage] = []
-        for m in old_messages:
-            # Drop system-injected user notes (re-read hints etc.)
-            if (m.role == "user" and isinstance(m.content, str)
-                    and m.content.startswith("[System:")):
-                continue
-            if m.role == "user":
-                old_conversation.append(m)
-                continue
-            if m.role == "assistant":
-                _rendered = _textualize(m)
-                if not _rendered:
-                    continue
-                # Clone to a plain-text assistant message so the summarizer
-                # reads commits/edits as content, not as opaque tool_calls.
-                old_conversation.append(LLMMessage(
-                    role="assistant",
-                    content=_rendered,
-                    source=getattr(m, "source", None),
-                    timestamp=m.timestamp,
-                    seq=m.seq,
-                ))
-                continue
-            if m.role == "tool":
-                _rendered = _textualize(m)
-                if not _rendered:
-                    continue
-                old_conversation.append(LLMMessage(
-                    role="user",  # summarizer sees it as narrative context
-                    content=_rendered,
-                    timestamp=m.timestamp,
-                    seq=m.seq,
-                ))
-        if not old_conversation:
-            old_conversation = old_messages[-2:] if len(old_messages) > 1 else old_messages
-
-        # Check if dropping tool plumbing alone is enough
-        # But only if the message count is sane (< 200) — 4000 conversation
-        # messages may fit in tokens but no LLM handles that many messages.
-        if not force:
-            _slim = ([system_msg] if system_msg else []) + old_conversation + recent_messages
-            _slim_est = self._estimate_tokens(_slim, tool_defs=tool_defs,
-                                               chars_per_token=chars_per_token,
-                                               token_multiplier=_tmul)
-            if _slim_est <= limit and len(_slim) < 200:
-                logger.info(f"[compact] Dropping tool plumbing sufficient: "
-                            f"{estimated} → {_slim_est} tokens, {len(_slim)} msgs")
-                compacted = []
-                if system_msg:
-                    compacted.append(system_msg)
-                compacted.extend(old_conversation)
-                compacted.extend(recent_messages)
-                self._truncate_tool_results(compacted)
-                self._persist_context(compacted, conversation_id, agent_name)
-                return compacted
-            elif _slim_est <= limit:
-                logger.info(f"[compact] Tool plumbing drop fits tokens ({_slim_est}) "
-                            f"but too many messages ({len(_slim)}), summarizing...")
-
-        # Summarize
-        _summary_target = max(1000, int(max_tokens * 0.05))
-        try:
-            summary = self._summarize_messages(
-                old_conversation, client, max_tokens,
-                target_tokens=_summary_target,
-                conversation_id=conversation_id,
-                agent_name=agent_name,
-                compact_instructions=compact_instructions,
-                user_id=user_id,
-            )
-        except Exception as e:
-            if force:
-                logger.error(f"[compact] Summary FAILED: {e}", exc_info=True)
-                raise RuntimeError(f"Compaction failed: {e}") from e
-            logger.error(f"[compact] Summarization failed: {e}")
-            summary = (
-                f"[Earlier conversation ({len(old_messages)} messages) could not be "
-                f"summarized due to: {e}. Context was dropped to fit within limits.]"
-            )
-
-        # Guard: empty summary
-        if not summary or len(summary.strip()) < 20:
-            if force:
-                raise RuntimeError(
-                    f"Compaction failed: summarizer returned {len(summary or '')} chars")
-            summary = f"[Summary unavailable — {len(old_messages)} earlier messages dropped]"
-
-        # ── Persist fresh summary as a new bucket ──
-        # Immutable — this summary will be reused verbatim at every future
-        # compact of this agent instead of regenerated from raw messages.
-        if (_bucket_store is not None and summary
-                and not summary.startswith("[")
-                and old_messages):
-            try:
-                # Every message must have seq + timestamp (invariant enforced
-                # by the migration + LLMMessage). No defensive fallbacks.
-                _seqs = [m.seq for m in old_messages]
-                _tss = [m.timestamp for m in old_messages]
-                _model = getattr(client, "default_model", "") or ""
-                _bucket_store.add_bucket(
-                    first_seq=min(_seqs), last_seq=max(_seqs),
-                    first_ts=min(_tss), last_ts=max(_tss),
-                    summary=summary, model=_model,
-                )
-                # Rollup: if the (multiplier-scaled) header exceeds 1/3 of
-                # ctx, consolidate all objects except the most recent into
-                # one new higher-level SB. Scaling via the service's
-                # token_multiplier makes the trigger fire at the real
-                # threshold for models whose tokenizer diverges from
-                # cl100k_base (Opus 4.7 in particular).
-                from core.token_counter import resolve_token_multiplier
-                _tmul = resolve_token_multiplier(
-                    getattr(client, "_config_ref", None))
-                if _bucket_store.should_rollup(max_tokens,
-                                                token_multiplier=_tmul):
-                    try:
-                        _sb_inputs = _bucket_store.get_consolidation_input()
-                        _sb_text = self._consolidate_buckets(
-                            _sb_inputs, client, user_id=user_id,
-                            conversation_id=conversation_id,
-                            agent_name=agent_name)
-                        if _sb_text and len(_sb_text.strip()) >= 20:
-                            _bucket_store.rollup(_sb_text, model=_model)
-                    except Exception as _sb_err:
-                        logger.warning(
-                            "[compact] super-bucket rollup failed "
-                            "(buckets kept, will retry next compact): %s",
-                            _sb_err)
-                # Rebuild header with the new bucket (and SB if rolled up)
-                _historical_header = _bucket_store.assemble_summary_header()
-            except Exception as _bs_err:
-                logger.warning("[compact] bucket persistence failed: %s",
-                                _bs_err)
-
-        # Auto-extract memories from compaction summary
-        if user_id and summary and not summary.startswith("["):
-            _extract_client = client
-            try:
-                _sum_llm, _, _ = self._get_summarizer_client(user_id)
-                if _sum_llm:
-                    _extract_client = _sum_llm
-            except Exception:
-                pass
-            self._auto_extract_memories(
-                summary, _extract_client, user_id,
-                agent_name=agent_name,
-                conversation_id=conversation_id,
-            )
-
-        # ── Phase 3: Rebuild ──
-        compacted: List[LLMMessage] = []
-        if system_msg:
-            compacted.append(system_msg)
-        # If a historical header exists (bucket store), it already contains
-        # the new bucket we just added. Use it as-is. Otherwise fall back to
-        # the standalone fresh summary (cold start, bucket store disabled).
-        _postamble = (
-            "The recent messages below are the current state.\n"
-            "Do NOT restart or re-propose completed work.\n\n"
-            "If you need more detail than the summary above (e.g. exact "
-            "commit SHAs, full test output, file contents you edited, tool "
-            "arguments, error tracebacks), call `read_history` with a "
-            "keyword or message range — the full transcript is preserved "
-            "there. Do NOT assume missing info means the work was not done; "
-            "check the transcript first."
-        )
-        if _historical_header:
-            _body = f"{_historical_header}\n{_postamble}"
-        else:
-            _body = (
-                f"[Conversation summary — earlier messages compacted]\n\n"
-                f"{summary}\n\n{_postamble}"
-            )
-        # Summary + ack are synthetic messages created at compact time,
-        # but they conceptually belong BEFORE the recent messages (they
-        # cover the history that's been rolled up). The store sorts by
-        # (ts, seq) on read, so force BOTH their ts AND their seq to be
-        # strictly below the first recent message — ts handles the usual
-        # case, seq guards against ts ties from float imprecision.
         from core.llm_client import _next_msg_seq
-        if recent_messages:
-            _first_recent_ts = min(m.timestamp for m in recent_messages)
-            _first_recent_seq = min(m.seq for m in recent_messages)
-        else:
-            import time as _t_compact
-            _first_recent_ts = _t_compact.time()
-            _first_recent_seq = _next_msg_seq() + 2
-        compacted.append(LLMMessage(
-            role="user", content=_body,
-            timestamp=_first_recent_ts - 0.002,
-            seq=_first_recent_seq - 2,
-        ))
-        compacted.append(LLMMessage(
-            role="assistant",
-            content="Understood. I have the summary and will continue from the recent messages.",
-            source={"type": "context"},
-            timestamp=_first_recent_ts - 0.001,
-            seq=_first_recent_seq - 1,
-        ))
-        compacted.extend(recent_messages)
+        import time as _t_compact
 
-        # File re-read: extract last read per file from OLD messages
-        # with exact offset/limit so re-read matches what the LLM saw.
-        _file_reads = {}
-        for m in old_messages:
-            if m.role == "assistant" and m.tool_calls:
-                for tc in m.tool_calls:
-                    _args = tc.arguments if isinstance(tc.arguments, dict) else {}
-                    _path = _args.get("path", "")
-                    _tool = getattr(tc, "name", "") or ""
-                    if _tool == "read" and _path:
-                        _read_info = {"path": _path}
-                        _off = _args.get("offset")
-                        _lim = _args.get("limit")
-                        _svc = _args.get("source", "")
-                        if _off:
-                            _read_info["offset"] = int(_off)
-                        if _lim:
-                            _read_info["limit"] = int(_lim)
-                        if _svc:
-                            _read_info["service"] = _svc
-                        _file_reads[_path] = _read_info
-                    elif _tool in ("edit", "write") and _path:
-                        _file_reads[_path] = {"path": _path}
-        for m in recent_messages:
-            if m.role == "assistant" and m.tool_calls:
-                for tc in m.tool_calls:
-                    _args = tc.arguments if isinstance(tc.arguments, dict) else {}
-                    _path = _args.get("path", "")
-                    if _path:
-                        _file_reads.pop(_path, None)
-        _file_list = list(_file_reads.values())[-5:]
-        if _file_list:
-            _files_note = "Files you were working with (lost after compaction). Re-read them now to restore context:\n"
-            for _fr in _file_list:
-                _desc = f"  - read(path=\"{_fr['path']}\""
-                if _fr.get("offset") or _fr.get("limit"):
-                    _params = []
-                    if _fr.get("offset"):
-                        _params.append(f"offset={_fr['offset']}")
-                    if _fr.get("limit"):
-                        _params.append(f"limit={_fr['limit']}")
-                    _desc += f" ({', '.join(_params)})"
-                if _fr.get("service"):
-                    _desc += f" [service: {_fr['service']}]"
-                _files_note += _desc + "\n"
-            _files_note += "Call read with the exact same parameters to restore your working context."
-            compacted.append(LLMMessage(
-                role="user",
-                content=f"[System: {_files_note}]"
-            ))
-            compacted.append(LLMMessage(
-                role="assistant",
-                content="I'll re-read these files now to restore my working context."
-            ))
-
-        # Truncate large tool results in recent zone
-        self._truncate_tool_results(compacted)
-
-        # Fallback: if still over max after summary, retry with aggressive split
-        new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,
-                                              chars_per_token=chars_per_token,
-                                              token_multiplier=_tmul)
-        if new_estimate > max_tokens and len(recent_messages) > 10:
-            logger.info(f"[compact] Still over max ({new_estimate}), aggressive split (6 conv, max 20)")
-            _split2 = _select_recent_messages(messages, start_idx,
-                                               min_conversation=6, max_total=20)
-            if _split2 > start_idx:
-                recent_messages = messages[_split2:]
-                compacted = []
-                if system_msg:
-                    compacted.append(system_msg)
-                if recent_messages:
-                    _frt = min(m.timestamp for m in recent_messages)
-                    _frs = min(m.seq for m in recent_messages)
+        def _build_output(saved: List[LLMMessage]) -> List[LLMMessage]:
+            """Assemble system + historical_header(from bucket_store) + saved."""
+            self._truncate_tool_results(saved)
+            out: List[LLMMessage] = []
+            if system_msg:
+                out.append(system_msg)
+            header = _bucket_store.assemble_summary_header() if _bucket_store else ""
+            if header:
+                if saved:
+                    _frt = min(m.timestamp for m in saved)
+                    _frs = min(m.seq for m in saved)
                 else:
-                    import time as _t_aggr
-                    _frt = _t_aggr.time()
+                    _frt = _t_compact.time()
                     _frs = _next_msg_seq() + 2
-                compacted.append(LLMMessage(
+                _postamble = (
+                    "\nThe recent messages below are the current state. "
+                    "Do NOT restart or re-propose completed work. If you need "
+                    "more detail than the summary above (commits, file contents, "
+                    "tool arguments), call read_history."
+                )
+                out.append(LLMMessage(
                     role="user",
-                    content=(f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
-                             f"Use read_history tool to access older messages if needed."),
+                    content=header + _postamble,
                     timestamp=_frt - 0.002,
                     seq=_frs - 2,
+                    source={"type": "context"},
                 ))
-                compacted.append(LLMMessage(
-                    role="assistant", content="Understood.",
+                out.append(LLMMessage(
+                    role="assistant",
+                    content="Understood. I have the summary and will continue from the recent messages.",
                     source={"type": "context"},
                     timestamp=_frt - 0.001,
                     seq=_frs - 1,
                 ))
-                compacted.extend(recent_messages)
-                self._truncate_tool_results(compacted)
-                new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,
-                                                      chars_per_token=chars_per_token,
-                                                      token_multiplier=_tmul)
-                logger.info(f"[compact] Aggressive: {len(compacted)} msgs (~{new_estimate} tokens)")
+            out.extend(saved)
+            return out
 
-        logger.info(f"[compact] Final: {new_estimate} tokens (was {_original_tokens}), "
-                    f"{len(compacted)} messages (was {_original_count})")
+        def _estimate(msgs: List[LLMMessage]) -> int:
+            return self._estimate_tokens(
+                msgs, tool_defs=tool_defs,
+                chars_per_token=chars_per_token,
+                token_multiplier=_tmul)
 
-        # ── Phase 4: Persist + cleanup + notify ──
+        def _build_bucket(msgs_in: List[LLMMessage]) -> None:
+            """Summarize msgs_in → new level-1 bucket, appended to store."""
+            if not msgs_in or _bucket_store is None:
+                return
+            try:
+                _seqs = [m.seq for m in msgs_in]
+                _tss = [m.timestamp for m in msgs_in]
+                _summary = self._summarize_messages(
+                    msgs_in, client,
+                    max_tokens=max_tokens,
+                    target_tokens=_bucket_target,
+                    conversation_id=conversation_id,
+                    agent_name=agent_name,
+                    compact_instructions=compact_instructions,
+                    user_id=user_id,
+                )
+                if _summary and len(_summary.strip()) >= 20:
+                    _bucket_store.add_bucket(
+                        first_seq=min(_seqs), last_seq=max(_seqs),
+                        first_ts=min(_tss), last_ts=max(_tss),
+                        summary=_summary,
+                        model=getattr(client, "default_model", "") or "")
+                    if user_id:
+                        try:
+                            _ex_client = client
+                            _sum_llm, _, _ = self._get_summarizer_client(user_id)
+                            if _sum_llm:
+                                _ex_client = _sum_llm
+                            self._auto_extract_memories(
+                                _summary, _ex_client, user_id,
+                                agent_name=agent_name,
+                                conversation_id=conversation_id)
+                        except Exception:
+                            logger.debug("memory extract failed", exc_info=True)
+            except Exception as _e:
+                logger.error("[compact] bucket summarize failed: %s", _e)
+
+        # ── Skip/trigger check ──
+        _initial_output = _build_output(messages[start_idx:])
+        _original_tokens = _estimate(_initial_output)
+
+        if not force and _original_tokens <= trigger:
+            return messages
+
+        logger.info("[compact] %s: %d tokens (trigger=%d, cap=%d, %d msgs)",
+                    "FORCED" if force else "TRIGGERED",
+                    _original_tokens, trigger, cap, _original_count)
+
+        # ── STEP 1: new bucket from (messages - last 25-conv-turn window) ──
+        _split = _select_recent_messages(
+            messages, start_idx=start_idx,
+            min_conversation=25, max_total=100)
+        saved_recent = messages[_split:]
+        _to_summarize = messages[start_idx:_split]
+        _build_bucket(_to_summarize)
+
+        compacted = _build_output(saved_recent)
+        new_estimate = _estimate(compacted)
+
+        # ── STEP 2: rollup [B_1..B_{N-1}] → SB, keep B_N ──
+        if new_estimate > cap and _bucket_store and _bucket_store.object_count >= 3:
+            logger.info("[compact] step 2 rollup (%d > cap %d, %d buckets)",
+                        new_estimate, cap, _bucket_store.object_count)
+            try:
+                _inputs = _bucket_store.get_rollup_input()
+                _sb = self._consolidate_buckets(
+                    _inputs, client, user_id=user_id,
+                    conversation_id=conversation_id, agent_name=agent_name)
+                if _sb and len(_sb.strip()) >= 20:
+                    _bucket_store.rollup_all_except_last(
+                        _sb, model=getattr(client, "default_model", "") or "")
+            except Exception as _e:
+                logger.warning("[compact] step 2 rollup failed: %s", _e)
+            compacted = _build_output(saved_recent)
+            new_estimate = _estimate(compacted)
+
+        # ── STEP 3: collapse all buckets → single SB ──
+        if new_estimate > cap and _bucket_store and _bucket_store.object_count >= 2:
+            logger.info("[compact] step 3 collapse (%d > cap %d, %d buckets)",
+                        new_estimate, cap, _bucket_store.object_count)
+            try:
+                _inputs = _bucket_store.get_collapse_input()
+                _single = self._consolidate_buckets(
+                    _inputs, client, user_id=user_id,
+                    conversation_id=conversation_id, agent_name=agent_name)
+                if _single and len(_single.strip()) >= 20:
+                    _bucket_store.collapse_all(
+                        _single, model=getattr(client, "default_model", "") or "")
+            except Exception as _e:
+                logger.warning("[compact] step 3 collapse failed: %s", _e)
+            compacted = _build_output(saved_recent)
+            new_estimate = _estimate(compacted)
+
+        # ── STEP 4: shrink saved window 25/100 → 6/20, eject 30 into new bucket ──
+        if new_estimate > cap and len(saved_recent) > 20:
+            logger.info("[compact] step 4 shrink-saved (%d > cap %d)",
+                        new_estimate, cap)
+            _fb_split = _select_recent_messages(
+                messages, start_idx=start_idx,
+                min_conversation=6, max_total=20)
+            if _fb_split > _split:
+                _ejected = messages[_split:_fb_split]
+                _build_bucket(_ejected)
+                saved_recent = messages[_fb_split:]
+                compacted = _build_output(saved_recent)
+                new_estimate = _estimate(compacted)
+
+        # ── STEP 5: force-fit content (brute truncate) — invariant garantee ──
+        if new_estimate > cap:
+            logger.warning(
+                "[compact] step 5 force-fit: %d > cap %d", new_estimate, cap)
+            compacted = self._force_fit_context(
+                compacted, cap,
+                chars_per_token=chars_per_token,
+                tool_defs=tool_defs,
+                token_multiplier=_tmul)
+            new_estimate = _estimate(compacted)
+
+        logger.info("[compact] Final: %d tokens (was %d, cap %d), "
+                    "%d messages (was %d)",
+                    new_estimate, _original_tokens, cap,
+                    len(compacted), _original_count)
+
+        # ── Phase final: persist + orphan cleanup + SSE ──
         self._persist_context(compacted, conversation_id, agent_name)
-
-        # Clean up tool_result spillover files no longer in context
         if conversation_id:
             self._cleanup_orphan_files(compacted, conversation_id)
-
         if conversation_id:
             try:
                 from core.conversation_event_bus import ConversationEventBus
@@ -1011,15 +829,15 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     conversation_id, "compact_progress", {
                         "stage": "done",
                         "agent": agent_name,
-                        "before": len(messages),
+                        "before": _original_count,
                         "after": len(compacted),
-                        "tokens_before": estimated,
+                        "tokens_before": _original_tokens,
                         "tokens_after": new_estimate,
                     })
             except Exception:
-                pass
-
+                logger.debug("compact SSE publish failed", exc_info=True)
         return compacted
+
 
     @staticmethod
     def _cleanup_orphan_files(compacted: List[LLMMessage],

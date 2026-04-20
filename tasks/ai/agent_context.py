@@ -1307,7 +1307,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 # Per-agent: use service max_tokens (= context window size)
                 _resolved_max_ctx
             ),
-            "context_compact_threshold": float(_cfg("context_compact_threshold", 0.75)),
             "context_keep_recent": int(_cfg("context_keep_recent", 6)),
             "chars_per_token": float(
                 (getattr(resolved_svc, 'config', {}) or {}).get("chars_per_token", 0)
@@ -1340,9 +1339,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                user_id: str,
                                max_context: int = 200000,
                                compact_instructions: str = "") -> List[LLMMessage]:
-        """Auto-compact messages if they exceed 90% of max_context.
+        """Auto-compact if the context is past the service trigger threshold.
 
-        Delegates to _compact which handles cleanup + threshold check + summarize.
+        Delegates to _compact which uses its own trigger_fraction (default
+        0.9: only fires once real-token usage crosses 90%) and enforces
+        the target_fraction hard cap (default 0.25) on its output.
         """
         _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id)
         if not _sc:
@@ -1351,7 +1352,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 "Set summarizer_service in agent or flow config.")
         return self._compact(
             messages, _sc, max_context,
-            threshold=0.9,
             conversation_id=conversation_id,
             agent_name=agent_name,
             chars_per_token=0,

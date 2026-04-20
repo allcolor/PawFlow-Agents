@@ -530,22 +530,17 @@ class AgentCoreMixin:
                     else:
                         _max_ctx = ctx.get("max_context_size", 64000)
                         _cpt = ctx.get("chars_per_token", 0)
-                        _threshold = ctx.get("context_compact_threshold", 0.75)
 
                         # Microcompaction: clear old tool results after idle gap
                         if iteration == 1:
                             self._microcompact_time_based(messages)
 
-                        # Threshold-triggered compact. No more 40% precompact
-                        # snapshot mechanism — the BucketStore pyramidal cache
-                        # now makes _compact O(tail since last bucket) instead
-                        # of O(full transcript), so doing it inline when needed
-                        # is cheap and always up-to-date. The prior snapshot
-                        # lived in memory only, was discarded on restart, and
-                        # duplicated what buckets now persist.
+                        # Auto-trigger compact via _compact's own
+                        # trigger_fraction (defaults to 0.8): fires when
+                        # real-token usage hits 80% of max_context_size.
+                        # Guarantees output ≤ 0.25 × max_context (cap).
                         llm_context = self._compact(
                             copy.deepcopy(messages), compact_client, _max_ctx,
-                            threshold=_threshold,
                             conversation_id=conversation_id,
                             agent_name=ctx.get("active_agent_name") or "",
                             tool_defs=ctx.get("tool_defs"),
@@ -614,7 +609,8 @@ class AgentCoreMixin:
                         _irpt_resp = client.complete_stream(
                             messages=self._compact(
                                 copy.deepcopy(messages), compact_client,
-                                ctx.get("max_context_size", 64000), threshold=0.6,
+                                ctx.get("max_context_size", 64000),
+                                target_fraction=0.25,
                                 conversation_id=conversation_id,
                                 agent_name=ctx.get("active_agent_name") or "",
                                 user_id=user_id),
@@ -626,7 +622,8 @@ class AgentCoreMixin:
                         ) if emitter.is_streaming else client.complete(
                             messages=self._compact(
                                 copy.deepcopy(messages), compact_client,
-                                ctx.get("max_context_size", 64000), threshold=0.6,
+                                ctx.get("max_context_size", 64000),
+                                target_fraction=0.25,
                                 conversation_id=conversation_id,
                                 agent_name=ctx.get("active_agent_name") or "",
                                 user_id=user_id),
@@ -920,7 +917,6 @@ class AgentCoreMixin:
                             messages = list(self._compact(
                                 _full_messages, _sc,
                                 max_tokens=ctx.get("max_context_size", 200000),
-                                threshold=0.9,
                                 conversation_id=conversation_id,
                                 agent_name=_agent_name,
                                 compact_instructions=ctx.get("compact_instructions", ""),
@@ -1090,7 +1086,7 @@ class AgentCoreMixin:
                             _agent_for_compact = ctx.get("active_agent_name") or ""
                             _compacted = self._compact(
                                 list(messages), compact_client,
-                                ctx.get("max_context_size", 64000), threshold=0.5,
+                                ctx.get("max_context_size", 64000),
                                 conversation_id=conversation_id,
                                 agent_name=_agent_for_compact,
                                 tool_defs=ctx.get("tool_defs"),

@@ -1,9 +1,10 @@
-"""Hierarchical compaction buckets - per-(conversation, agent) pyramidal summary cache.
+"""Hierarchical compaction buckets — per-(conversation, agent) pyramidal summary cache.
 
-Rollup policy (size-bounded): at compact time, if the assembled header
-exceeds 1/3 of the LLM's max_context_size (precise via tiktoken),
-consolidate ALL objects except the most recent into a single new
-higher-level object. Plancher: ROLLUP_MIN_OBJECTS objects required.
+Buckets are the storage layer used by _compact's reduce-to-cap loop:
+  * add_bucket(...)               — fresh level-1 summary of raw messages.
+  * rollup_all_except_last(text)  — collapse [B_1..B_{N-1}] into one SB,
+                                    keeping the most recent object.
+  * collapse_all(text)            — replace every object with ONE.
 
 Numbering: _next_b_num / _next_sb_num are monotonic forever.
 
@@ -11,11 +12,6 @@ meta.json v2 schema:
     {"version": 2, "last_seq": int, "last_ts": float,
      "objects": ["SB_00001", "B_00007", ...],
      "_next_b_num": int, "_next_sb_num": int}
-
-Migration v1 -> v2 (one-shot, on first _load_meta): old meta had
-{buckets, super_buckets} parallel lists; they are concatenated
-chronologically (SBs first, then Bs), counters initialized from max
-existing IDs.
 """
 
 import json
@@ -25,10 +21,6 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
-
-BUCKET_MSG_THRESHOLD = 500
-BUCKET_TOKEN_THRESHOLD = 100_000
-ROLLUP_MIN_OBJECTS = 3
 
 
 class BucketStore:
@@ -76,36 +68,6 @@ class BucketStore:
     def has_any(self) -> bool:
         return self.object_count > 0
 
-    def should_create_bucket(self, tail_msg_count: int,
-                             tail_token_estimate: int,
-                             msg_threshold: int = BUCKET_MSG_THRESHOLD,
-                             token_threshold: int = BUCKET_TOKEN_THRESHOLD) -> bool:
-        return (tail_msg_count >= msg_threshold
-                or tail_token_estimate >= token_threshold)
-
-    def should_rollup(self, ctx_max_tokens: int,
-                      token_multiplier: float = 1.0) -> bool:
-        """True when (scaled) header tokens >= ctx_max_tokens // 3.
-
-        Requires at least ROLLUP_MIN_OBJECTS. Uses tiktoken × multiplier
-        so Opus 4.7 (whose tokenizer costs ~1.33-1.47x more than cl100k)
-        triggers rollup at the real threshold instead of 2x later.
-        """
-        if self.object_count < ROLLUP_MIN_OBJECTS:
-            return False
-        if ctx_max_tokens <= 0:
-            return False
-        header = self.assemble_summary_header()
-        if not header:
-            return False
-        try:
-            from core.token_counter import count_tokens
-            header_tokens = count_tokens(header, multiplier=token_multiplier)
-        except Exception as e:
-            logger.warning("[bucket-store] token count failed (%s) - skipping rollup", e)
-            return False
-        return header_tokens >= (ctx_max_tokens // 3)
-
     def _bucket_path(self, bid: str) -> Path:
         return self._dir / f"{bid}.json"
 
@@ -148,21 +110,18 @@ class BucketStore:
                         bid, first_seq, last_seq, len(summary))
             return bid
 
-    def rollup(self, super_summary: str, model: str = "",
-               prompt_version: str = "v1") -> Optional[str]:
-        """Consolidate ALL objects except the most recent into one new SB.
+    def rollup_all_except_last(self, super_summary: str, model: str = "",
+                                prompt_version: str = "v1") -> Optional[str]:
+        """Consolidate [B_1..B_{N-1}] into one SB, keep B_N untouched.
 
-        Strategy 'all-except-last': keeps the most recent object intact
-        so future compacts still see recent context at full detail.
-        Naturally pyramidal - a newly-produced SB can itself be
-        consolidated on a later rollup.
-
-        Returns the new SB id, or None when fewer than ROLLUP_MIN_OBJECTS
-        objects exist.
+        Used by _compact step 2 when the output is still above the cap
+        after adding a fresh bucket. Requires ≥ 3 objects — with 2, go
+        straight to collapse_all instead. A newly-produced SB can itself
+        be consolidated on a later rollup, giving the pyramidal shape.
         """
         with self._lock:
             ids = list(self._meta.get("objects", []))
-            if len(ids) < ROLLUP_MIN_OBJECTS:
+            if len(ids) < 3:
                 return None
             to_consolidate = ids[:-1]
             last_id = ids[-1]
@@ -235,20 +194,86 @@ class BucketStore:
                 out.append(d)
         return out
 
-    def get_consolidation_input(self) -> List[Dict]:
-        """All objects except the most recent (the rollup input).
+    def get_rollup_input(self) -> List[Dict]:
+        """Docs for rollup_all_except_last (every object but the last).
 
-        Returns [] when fewer than ROLLUP_MIN_OBJECTS.
+        Returns [] when fewer than 3 objects exist.
         """
         ids = list(self._meta.get("objects", []))
-        if len(ids) < ROLLUP_MIN_OBJECTS:
+        if len(ids) < 3:
             return []
-        out = []
-        for bid in ids[:-1]:
-            d = self._read_bucket(bid)
-            if d:
-                out.append(d)
-        return out
+        return [d for d in (self._read_bucket(b) for b in ids[:-1]) if d]
+
+    def get_collapse_input(self) -> List[Dict]:
+        """Docs for collapse_all (every object).
+
+        Returns [] when fewer than 2 objects exist.
+        """
+        ids = list(self._meta.get("objects", []))
+        if len(ids) < 2:
+            return []
+        return [d for d in (self._read_bucket(b) for b in ids) if d]
+
+    def collapse_all(self, combined_summary: str, model: str = "",
+                     prompt_version: str = "v1") -> Optional[str]:
+        """Replace every object with a single new SB.
+
+        Used by _compact step 3 when rollup_all_except_last wasn't
+        enough and the output is still above cap with 2 buckets.
+        Requires ≥ 2 objects.
+        """
+        with self._lock:
+            ids = list(self._meta.get("objects", []))
+            if len(ids) < 2:
+                return None
+            first_seq = None
+            last_seq = 0
+            first_ts = None
+            last_ts = 0.0
+            max_level = 1
+            for bid in ids:
+                d = self._read_bucket(bid)
+                if not d:
+                    continue
+                if first_seq is None or d["first_seq"] < first_seq:
+                    first_seq = d["first_seq"]
+                if d["last_seq"] > last_seq:
+                    last_seq = d["last_seq"]
+                if first_ts is None or d["first_ts"] < first_ts:
+                    first_ts = d["first_ts"]
+                if d["last_ts"] > last_ts:
+                    last_ts = d["last_ts"]
+                lv = int(d.get("level", 1))
+                if lv > max_level:
+                    max_level = lv
+            n = int(self._meta.get("_next_sb_num", 1))
+            self._meta["_next_sb_num"] = n + 1
+            sid = f"SB_{n:05d}"
+            doc = {
+                "bucket_id": sid,
+                "level": max_level + 1,
+                "first_seq": int(first_seq or 0),
+                "last_seq": int(last_seq),
+                "first_ts": float(first_ts or 0.0),
+                "last_ts": float(last_ts),
+                "covers": list(ids),
+                "model": model,
+                "prompt_version": prompt_version,
+                "summary": combined_summary,
+            }
+            self._write_doc(sid, doc)
+            for bid in ids:
+                p = self._bucket_path(bid)
+                try:
+                    if p.exists():
+                        p.unlink()
+                except Exception as e:
+                    logger.warning("[bucket-store] failed to delete %s: %s", bid, e)
+            self._meta["objects"] = [sid]
+            self._save_meta()
+            logger.info("[bucket-store] collapsed %d objects into %s (level=%d)",
+                        len(ids), sid, max_level + 1)
+            return sid
 
     def assemble_summary_header(self) -> str:
         """Concatenate all summaries into one historical-context block."""

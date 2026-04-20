@@ -498,7 +498,7 @@ class TestFlowManagerHandler(unittest.TestCase):
             "id": flow_id,
             "name": name,
             "tasks": {"t1": {"type": "generateFlowFile"}},
-            "connections": [],
+            "relations": [],
         }
 
     def test_list_empty(self):
@@ -660,7 +660,7 @@ class TestPawFlowHelpHandler(unittest.TestCase):
     def test_flow_guide(self):
         result = self.handler.execute({"topic": "flow_guide"})
         self.assertIn("Flow JSON Structure", result)
-        self.assertIn("connections", result)
+        self.assertIn("relations", result)
         self.assertIn("tasks", result)
 
     def test_expressions_guide(self):

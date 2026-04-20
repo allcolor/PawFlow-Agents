@@ -158,7 +158,7 @@ class OAuthProviderService(BaseService):
             # Cleanup expired states
             now = time.time()
             self._states = {s: v for s, v in self._states.items()
-                            if (v if isinstance(v, (int, float)) else v.get("expires", 0)) > now}
+                            if v.get("expires", 0) > now}
         return state
 
     def validate_state(self, state: str):
@@ -167,11 +167,7 @@ class OAuthProviderService(BaseService):
             entry = self._states.pop(state, None)
             if entry is None:
                 return False
-            # Handle legacy format (just a float expiry)
-            if isinstance(entry, (int, float)):
-                return {} if time.time() < entry else False
-            expires = entry.get("expires", 0)
-            if time.time() >= expires:
+            if time.time() >= entry.get("expires", 0):
                 return False
             return entry.get("metadata", {})
 

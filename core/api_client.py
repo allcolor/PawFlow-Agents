@@ -1,7 +1,7 @@
 """HTTP API client for PawFlow GUI -- connects to a running PawFlow API server."""
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from urllib.parse import urlencode
@@ -217,21 +217,3 @@ class PawFlowApiClient:
 
     def get_audit_stats(self) -> Dict:
         return self._get("/api/v1/system/audit/stats")
-
-
-def get_api_client() -> Optional[PawFlowApiClient]:
-    """Get API client from session state, or None if in direct mode."""
-    try:
-        import streamlit as st
-        return st.session_state.get("api_client")
-    except ImportError:
-        return None
-
-
-def is_api_mode() -> bool:
-    """Check if GUI is running in API mode."""
-    try:
-        import streamlit as st
-        return st.session_state.get("api_mode", False)
-    except ImportError:
-        return False

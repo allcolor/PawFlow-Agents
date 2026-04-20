@@ -1041,13 +1041,14 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         conv_id = body.get("conversation_id", "")
         # instance_name = the name in the conv (user-chosen)
         # definition = the repo template name
-        # If only "name" is given (legacy), it's both instance_name and definition
-        instance_name = (body.get("instance_name") or body.get("name", "")).strip()
-        definition = (body.get("definition") or instance_name).strip()
+        instance_name = body.get("instance_name", "").strip()
+        definition = body.get("definition", "").strip()
         inst_params = body.get("params") or {}
         llm_service = body.get("llm_service", "").strip()
-        if not conv_id or not instance_name:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id or instance_name"}).encode())
+        if not conv_id or not instance_name or not definition:
+            flowfile.set_content(json.dumps({
+                "error": "Missing conversation_id, instance_name, or definition",
+            }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         if not llm_service:
@@ -1174,8 +1175,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         # Build set of definitions currently in the conv
         _conv_defs = set()
         for _iname, _icfg in conv_cfgs.items():
-            _conv_defs.add(_icfg.get("definition", _iname))
-            _conv_defs.add(_iname)  # legacy compat
+            _conv_defs.add(_icfg["definition"])
         out = []
         for a in all_agents:
             entry = {

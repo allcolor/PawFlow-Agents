@@ -420,11 +420,10 @@ class TestSlackFlow:
         assert "tasks" in data or "nodes" in data or "processors" in data
 
     def test_flow_has_correct_structure(self):
-        import os
         flow_path = str(_paths.REPOSITORY_DIR / "flows" / "global" / "default" / "slack_agent" / "versions" / "1.0.0.json")
         with open(flow_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        assert "connections" in data or "edges" in data or "links" in data
+        assert "relations" in data
 
 
 # ---------------------------------------------------------------------------

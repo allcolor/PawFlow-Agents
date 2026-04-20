@@ -196,24 +196,3 @@ class ConfigStore:
             logger.warning(f"Error cleaning sidecars: {e}")
         return cleaned
 
-    @staticmethod
-    def cleanup_sidecars(path: Path, valid_keys: Set[str]) -> int:
-        """Remove orphaned sidecar files for deleted keys."""
-        valid_names = set()
-        for key in valid_keys:
-            valid_names.add(_sidecar_path(path, key, encrypted=False).name)
-            valid_names.add(_sidecar_path(path, key, encrypted=True).name)
-
-        stem = path.stem
-        prefix = f"{stem}__"
-        cleaned = 0
-        try:
-            for f in path.parent.iterdir():
-                if (f.name.startswith(prefix)
-                        and (f.name.endswith(".dat") or f.name.endswith(".dat.enc"))
-                        and f.name not in valid_names):
-                    f.unlink()
-                    cleaned += 1
-        except Exception:
-            pass
-        return cleaned

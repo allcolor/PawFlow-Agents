@@ -566,7 +566,7 @@ async function _renderResourcesData(data) {
             + _scopeBadge(a.scope)
             + '<span style="color:#888;font-size:12px;flex:1;">' + aName + '</span>'
             + '<span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Add to conversation"'
-            + ' onclick="_addAgentToConv(this.dataset.n)" data-n="' + aName + '">+</span>'
+            + ' onclick="showAddAgentToConvDialog(this.dataset.n)" data-n="' + aName + '">+</span>'
             + '</div>';
         });
       } else {
@@ -1508,12 +1508,7 @@ function _removeAgentFromConv(name) {
     .then(loadResources);
 }
 
-function _addAgentToConv(name) {
-  cmdResourceAction('add_agent_to_conv', {name: name, conversation_id: conversationId})
-    .then(loadResources);
-}
-
-async function showAddAgentToConvDialog() {
+async function showAddAgentToConvDialog(presetDefinition) {
   var existing = document.getElementById('resourceEditorOverlay');
   if (existing) existing.remove();
   var overlay = document.createElement('div');
@@ -1552,10 +1547,16 @@ async function showAddAgentToConvDialog() {
     defSelect.style.cssText = 'width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin:4px 0 12px;';
     defSelect.innerHTML = '<option value="">-- Select a definition --</option>'
       + definitions.map(function(d) {
-        return '<option value="' + escapeHtml(d.name) + '">' + escapeHtml(d.name)
+        var sel = (presetDefinition && d.name === presetDefinition) ? ' selected' : '';
+        return '<option value="' + escapeHtml(d.name) + '"' + sel + '>' + escapeHtml(d.name)
           + (d.description ? ' \u2014 ' + escapeHtml(d.description) : '') + '</option>';
       }).join('');
     panel.appendChild(defSelect);
+    if (presetDefinition && definitions.some(function(d) { return d.name === presetDefinition; })) {
+      selectedDef = presetDefinition;
+      // _renderForm defined below; fire after selectedDef set
+      setTimeout(function() { _renderForm(); }, 0);
+    }
 
     // Form area (rendered when definition is selected)
     var formArea = document.createElement('div');

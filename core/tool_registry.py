@@ -27,68 +27,95 @@ from core.tool_handler import ToolHandler  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-# Handler classes moved to core/handlers/ — re-exported for compatibility
-from core.handlers import (  # noqa: F401
-    ApprovePlanHandler,
-    AskUserHandler,
-    AssignPlanHandler,
-    AssignTaskHandler,
-    LinkTaskHandler,
+# Handler classes live in per-feature submodules under core/handlers/.
+# Imported here so callers can resolve them off the registry module.
+from core.handlers.agent_tools import (  # noqa: F401
     BrowserActionHandler,
-    CancelPlanHandler,
-    CompleteTaskHandler,
     ConfigurableToolHandler,
-    CreateFileHandler,
-    CreatePlanHandler,
+    HTTPToolHandler,
+    LinkIdentityHandler,
+    MCPToolHandler,
+    TaskToolHandler,
+)
+from core.handlers.capabilities import (  # noqa: F401
+    CloneVoiceHandler,
+    DeleteVoiceHandler,
+    DescribeImageHandler,
+    Generate3DHandler,
+    LipsyncHandler,
+    RemixImageHandler,
+    RemoveBackgroundHandler,
+    SpeakHandler,
+    SpeechToVideoHandler,
+    TrainImageModelHandler,
+    TryOnHandler,
+    UpscaleImageHandler,
+    UpscaleVideoHandler,
+)
+from core.handlers.devops import (  # noqa: F401
+    ReadParentContextHandler,
+    RunTestsHandler,
+    SecurityScanHandler,
+)
+from core.handlers.dynamic_tool import (  # noqa: F401
     CreateToolHandler,
     DeleteToolHandler,
-    DeletePlanHandler,
-    ExecuteScriptHandler,
-    FlowManagerHandler,
-    ForgetHandler,
-    GetToolSchemaHandler,
-    HTTPToolHandler,
+)
+from core.handlers.file_ops import (  # noqa: F401
+    CreateFileHandler,
+    ScheduleContinuationHandler,
+    ScheduleRecheckHandler,
+)
+from core.handlers.flow_management import FlowManagerHandler  # noqa: F401
+from core.handlers.help_secrets import (  # noqa: F401
+    ListSecretsHandler,
+    PawFlowHelpHandler,
+    StoreSecretHandler,
+)
+from core.handlers.media import (  # noqa: F401
+    AudioGenerationHandler,
     EditImageHandler,
     ImageGenerationHandler,
     ImageModelInfoHandler,
-    LinkIdentityHandler,
-    ListSecretsHandler,
-    MCPToolHandler,
-    ManageResourceHandler,
-    NotifyUserHandler,
-    PawFlowHelpHandler,
-    ReadParentContextHandler,
+    VideoGenerationHandler,
+)
+from core.handlers.memory import (  # noqa: F401
+    ForgetHandler,
     RecallHandler,
     RememberHandler,
-    RunTestsHandler,
-    ScheduleContinuationHandler,
-    ScheduleRecheckHandler,
-    ScraplingFetchHandler,
-    SecurityScanHandler,
     SemanticRecallHandler,
+)
+from core.handlers.meta_tools import (  # noqa: F401
+    GetToolSchemaHandler,
+    UseToolHandler,
+)
+from core.handlers.plan_handlers import (  # noqa: F401
+    ApprovePlanHandler,
+    AssignPlanHandler,
+    CancelPlanHandler,
+    CreatePlanHandler,
+    DeletePlanHandler,
+    UpdatePlanHandler,
+    VerifyPlanStepHandler,
+)
+from core.handlers.resource_agent import (  # noqa: F401
+    ManageResourceHandler,
     ShowFileHandler,
     SpawnAgentsHandler,
-    StoreSecretHandler,
-    TaskToolHandler,
-    UpdatePlanHandler,
-    UseToolHandler,
-    VerifyPlanStepHandler,
+)
+from core.handlers.task_management import (  # noqa: F401
+    AssignTaskHandler,
+    CompleteTaskHandler,
+    LinkTaskHandler,
     VerifyTaskHandler,
-    VideoGenerationHandler,
-    AudioGenerationHandler,
-    Generate3DHandler,
-    UpscaleImageHandler,
-    UpscaleVideoHandler,
-    DescribeImageHandler,
-    RemixImageHandler,
-    RemoveBackgroundHandler,
-    TryOnHandler,
-    LipsyncHandler,
-    TrainImageModelHandler,
-    SpeechToVideoHandler,
-    CloneVoiceHandler,
-    SpeakHandler,
-    DeleteVoiceHandler,
+)
+from core.handlers.user_interaction import (  # noqa: F401
+    AskUserHandler,
+    NotifyUserHandler,
+)
+from core.handlers.web_fetch import (  # noqa: F401
+    ExecuteScriptHandler,
+    ScraplingFetchHandler,
     WebSearchHandler,
 )
 

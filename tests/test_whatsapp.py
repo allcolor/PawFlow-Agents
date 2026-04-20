@@ -346,9 +346,9 @@ class TestWhatsAppFlow:
         tasks = flow_data.get("tasks", {})
         assert len(tasks) > 0
 
-    def test_flow_has_connections(self, flow_data):
-        conns = flow_data.get("connections", [])
-        assert len(conns) > 0
+    def test_flow_has_relations(self, flow_data):
+        rels = flow_data.get("relations", [])
+        assert len(rels) > 0
 
     def test_flow_contains_whatsapp_receiver(self, flow_data):
         tasks = flow_data.get("tasks", {})

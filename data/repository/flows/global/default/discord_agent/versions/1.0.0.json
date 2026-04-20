@@ -43,7 +43,9 @@
       }
     }
   },
-  "connections": [
+  "fqn": "default.discord_agent:1.0.0",
+  "package": "default",
+  "relations": [
     {
       "source": "receive",
       "target": "agent",
@@ -58,7 +60,5 @@
         "success"
       ]
     }
-  ],
-  "fqn": "default.discord_agent:1.0.0",
-  "package": "default"
+  ]
 }

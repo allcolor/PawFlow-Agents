@@ -44,7 +44,9 @@
       }
     }
   },
-  "connections": [
+  "fqn": "default.slack_agent:1.0.0",
+  "package": "default",
+  "relations": [
     {
       "source": "receive",
       "target": "agent",
@@ -59,7 +61,5 @@
         "success"
       ]
     }
-  ],
-  "fqn": "default.slack_agent:1.0.0",
-  "package": "default"
+  ]
 }

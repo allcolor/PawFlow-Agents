@@ -318,12 +318,12 @@ class TestTelegramFlow(unittest.TestCase):
         assert "send_reply" in tasks
         assert tasks["send_reply"]["type"] == "telegramSend"
 
-    def test_flow_connections(self):
+    def test_flow_relations(self):
         path = _paths.REPOSITORY_DIR / "flows" / "global" / "default" / "telegram_agent" / "versions" / "1.0.0.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
-        conns = flow["connections"]
-        sources = [c["source"] for c in conns]
-        targets = [c["target"] for c in conns]
+        rels = flow["relations"]
+        sources = [c["source"] for c in rels]
+        targets = [c["target"] for c in rels]
         assert "receive" in sources
         assert "agent" in sources
         assert "agent" in targets

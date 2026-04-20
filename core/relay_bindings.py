@@ -31,40 +31,14 @@ def _get_store():
     return ConversationStore.instance()
 
 
-def _migrate(raw: Any) -> Dict[str, Any]:
-    """Migrate old format to new. Called once at load time.
-
-    Old: {"linked": ["a", "b"], "default": "a"}
-    New: {"linked": {"*": ["a", "b"]}, "default": {"*": "a"}}
-    """
-    if not isinstance(raw, dict) or "linked" not in raw:
-        return {"linked": {}, "default": {}}
-    linked = raw["linked"]
-    default = raw.get("default")
-    if isinstance(linked, list):
-        # Old format → convert
-        new = {
-            "linked": {_CONV: linked},
-            "default": {_CONV: default} if default else {},
-        }
-        return new
-    # Already new format
-    if not isinstance(linked, dict):
-        return {"linked": {}, "default": {}}
-    if not isinstance(raw.get("default"), dict):
-        raw["default"] = {_CONV: raw["default"]} if raw.get("default") else {}
-    return raw
-
-
 def get_bindings(cid: str) -> Dict[str, Any]:
-    """Get relay bindings for a conversation (migrated to new format)."""
-    store = _get_store()
-    raw = store.get_extra_cached(cid, _EXTRA_KEY, default=None)
-    b = _migrate(raw)
-    # Persist migration if format changed
-    if raw is not None and raw != b:
-        store.set_extra(cid, _EXTRA_KEY, b)
-    return b
+    """Get relay bindings for a conversation."""
+    raw = _get_store().get_extra_cached(cid, _EXTRA_KEY, default=None)
+    if not isinstance(raw, dict):
+        return {"linked": {}, "default": {}}
+    raw.setdefault("linked", {})
+    raw.setdefault("default", {})
+    return raw
 
 
 def get_linked(cid: str, agent: str = "") -> List[str]:

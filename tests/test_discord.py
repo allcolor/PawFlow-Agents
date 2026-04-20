@@ -290,9 +290,9 @@ class TestDiscordFlow:
         assert "discordReceiver" in types
         assert "discordSend" in types
 
-    def test_has_two_connections(self, flow_data):
-        connections = flow_data.get("connections", [])
-        assert len(connections) == 2
+    def test_has_two_relations(self, flow_data):
+        relations = flow_data.get("relations", [])
+        assert len(relations) == 2
 
 
 # ---------------------------------------------------------------------------

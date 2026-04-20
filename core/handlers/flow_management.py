@@ -410,16 +410,13 @@ class FlowManagerHandler(ToolHandler):
                             f"SEPARATE top-level keys in the 'tasks' dict, "
                             f"not nested inside other tasks."
                         )
-        # Validate relations (accept legacy "connections" key too)
-        conns = definition.get("relations", definition.get("connections", []))
-        if not isinstance(conns, list):
+        # Validate relations
+        rels = definition.get("relations", [])
+        if not isinstance(rels, list):
             return (
                 "Error: 'relations' must be a top-level array, not inside tasks. "
                 "Example: [{\"from\": \"taskA\", \"to\": \"taskB\", \"type\": \"success\"}]"
             )
-        # Normalize: ensure the key is "relations"
-        if "connections" in definition and "relations" not in definition:
-            definition["relations"] = definition.pop("connections")
 
         flow_id = definition["id"]
         flow_name = definition.get("name", flow_id)

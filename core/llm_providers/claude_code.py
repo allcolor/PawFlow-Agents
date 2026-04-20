@@ -1050,32 +1050,19 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # "visible = persisted" invariant — if the extras lock blocks,
             # we log loudly and still publish so the gauge doesn't freeze,
             # but we never skip logging the failure.)
-            if (event_type == "message_meta"
-                    and isinstance(data, dict)
-                    and (data.get("context_used") or 0) > 0
-                    and (data.get("context_max") or 0) > 0
-                    and agent_name):
-                try:
-                    from core.conversation_store import ConversationStore as _CS_pub
-                    _store_pub = _CS_pub.instance()
-                    _cu_map = _store_pub.get_extra(
-                        _event_cid, "context_usage") or {}
-                    _cu_map[agent_name] = {
-                        "used": int(data["context_used"]),
-                        "max": int(data["context_max"]),
-                        "pct": float(data.get("context_pct") or 0),
-                        "updated_at": int(time.time()),
-                    }
-                    _store_pub.set_extra(
-                        _event_cid, "context_usage", _cu_map)
-                except Exception as _ctx_err:
-                    logger.error(
-                        "[claude-code] context_usage persist failed for "
-                        "cid=%s agent=%s: %s — publishing SSE anyway",
-                        _event_cid, agent_name, _ctx_err, exc_info=True)
-            # Publish to EventBus AFTER persistence. Any failure here must
-            # be logged loudly (no silent swallow — a published event that
-            # vanishes mid-flight is a symptom we need to catch).
+            # Publish FIRST, persist AFTER (and off-thread). Doing the
+            # set_extra before publish on the CC parse thread freezes
+            # tool_call / tool_result / text delivery whenever the
+            # extras atomic-rename fails (Windows: PermissionError
+            # WinError 5 under AV/indexer holding a handle on the
+            # .json, very common on UNC-to-WSL paths) or whenever the
+            # per-conv extras lock is contended. The "visible =
+            # persisted" invariant does not hold here: the gauge
+            # value is naturally self-healing — every next message_meta
+            # overwrites it, so losing one persist attempt costs at
+            # most one stale sample on a reload window, while
+            # starving the SSE is immediately user-visible (webchat
+            # goes silent mid-turn).
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
@@ -1085,6 +1072,33 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     "[claude-code] publish_event failed for event=%s "
                     "cid=%s: %s", event_type, _event_cid, _pub_err,
                     exc_info=True)
+            if (event_type == "message_meta"
+                    and isinstance(data, dict)
+                    and (data.get("context_used") or 0) > 0
+                    and (data.get("context_max") or 0) > 0
+                    and agent_name):
+                def _persist_ctx_fill(cid=_event_cid, an=agent_name,
+                                       used=int(data["context_used"]),
+                                       mx=int(data["context_max"]),
+                                       pct=float(data.get("context_pct") or 0)):
+                    try:
+                        from core.conversation_store import ConversationStore as _CS_pub
+                        _store_pub = _CS_pub.instance()
+                        _cu_map = _store_pub.get_extra(
+                            cid, "context_usage") or {}
+                        _cu_map[an] = {
+                            "used": used, "max": mx, "pct": pct,
+                            "updated_at": int(time.time()),
+                        }
+                        _store_pub.set_extra(cid, "context_usage", _cu_map)
+                    except Exception as _ctx_err:
+                        logger.warning(
+                            "[claude-code] context_usage persist failed "
+                            "(bg thread) for cid=%s agent=%s: %s",
+                            cid, an, _ctx_err)
+                threading.Thread(
+                    target=_persist_ctx_fill, daemon=True,
+                    name=f"ctx-usage-persist-{agent_name[:8]}").start()
 
         # Read streaming output — accumulate per turn
         content_parts: List[str] = []  # final result text

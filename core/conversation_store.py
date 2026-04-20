@@ -746,12 +746,32 @@ class ConversationStore:
         return {}
 
     def _write_extras(self, cid: str, data: dict):
-        """Atomically write extras JSON (tmp + rename)."""
+        """Atomically write extras JSON (tmp + rename).
+
+        Retries on PermissionError: on Windows (esp. when the conv dir
+        sits on a UNC path to WSL), `os.replace` can fail with
+        WinError 5 while an AV scanner / Windows Search indexer still
+        holds a brief read handle on the destination after the previous
+        close. The rename is fast, a short backoff almost always clears
+        the handle. A hard raise here crashes the caller (_pub) —
+        retry quietly instead.
+        """
         path = self._extras_path(cid)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        _last_err = None
+        for _attempt in range(5):
+            try:
+                tmp.replace(path)
+                return
+            except PermissionError as e:
+                _last_err = e
+                time.sleep(0.05 * (2 ** _attempt))  # 50, 100, 200, 400, 800 ms
+        # After 1.5s of retries the target is still locked — surface the
+        # error (caller decides how to handle). Orphaned tmp stays on
+        # disk; next successful write replaces it.
+        raise _last_err
 
     # ══════════════════════════════════════════════════════════════════
     #  SINGLE READ POINT

@@ -80,9 +80,20 @@ class BucketStore:
 
     def add_bucket(self, first_seq: int, last_seq: int,
                    first_ts: float, last_ts: float,
-                   summary: str, model: str = "",
+                   summary: str,
+                   first_msg_id: str = "",
+                   last_msg_id: str = "",
+                   msg_count: int = 0,
+                   model: str = "",
                    prompt_version: str = "v1") -> str:
-        """Append a new level-1 object (fresh compact output)."""
+        """Append a new level-1 object (fresh compact output).
+
+        The three breadcrumb fields (first_msg_id / last_msg_id /
+        msg_count) power the nav hint rendered by
+        assemble_summary_header — the agent can quote them back via
+        read_history(action="range", from_msg_id=..., to_msg_id=...) to
+        reach the exact original messages behind this summary.
+        """
         with self._lock:
             n = int(self._meta.get("_next_b_num", 1))
             self._meta["_next_b_num"] = n + 1
@@ -94,6 +105,9 @@ class BucketStore:
                 "last_seq": int(last_seq),
                 "first_ts": float(first_ts),
                 "last_ts": float(last_ts),
+                "first_msg_id": first_msg_id,
+                "last_msg_id": last_msg_id,
+                "msg_count": int(msg_count),
                 "covers": None,
                 "model": model,
                 "prompt_version": prompt_version,
@@ -106,8 +120,8 @@ class BucketStore:
             self._meta["last_ts"] = max(self._meta.get("last_ts", 0.0),
                                          float(last_ts))
             self._save_meta()
-            logger.info("[bucket-store] added %s (seq %d..%d, %d chars)",
-                        bid, first_seq, last_seq, len(summary))
+            logger.info("[bucket-store] added %s (seq %d..%d, %d msgs, %d chars)",
+                        bid, first_seq, last_seq, msg_count, len(summary))
             return bid
 
     def rollup_all_except_last(self, super_summary: str, model: str = "",
@@ -125,36 +139,20 @@ class BucketStore:
                 return None
             to_consolidate = ids[:-1]
             last_id = ids[-1]
-            first_seq = None
-            last_seq = 0
-            first_ts = None
-            last_ts = 0.0
-            max_level = 1
-            for bid in to_consolidate:
-                d = self._read_bucket(bid)
-                if not d:
-                    continue
-                if first_seq is None or d["first_seq"] < first_seq:
-                    first_seq = d["first_seq"]
-                if d["last_seq"] > last_seq:
-                    last_seq = d["last_seq"]
-                if first_ts is None or d["first_ts"] < first_ts:
-                    first_ts = d["first_ts"]
-                if d["last_ts"] > last_ts:
-                    last_ts = d["last_ts"]
-                lv = int(d.get("level", 1))
-                if lv > max_level:
-                    max_level = lv
+            agg = self._aggregate(to_consolidate)
             n = int(self._meta.get("_next_sb_num", 1))
             self._meta["_next_sb_num"] = n + 1
             sid = f"SB_{n:05d}"
             doc = {
                 "bucket_id": sid,
-                "level": max_level + 1,
-                "first_seq": int(first_seq or 0),
-                "last_seq": int(last_seq),
-                "first_ts": float(first_ts or 0.0),
-                "last_ts": float(last_ts),
+                "level": agg["max_level"] + 1,
+                "first_seq": agg["first_seq"],
+                "last_seq": agg["last_seq"],
+                "first_ts": agg["first_ts"],
+                "last_ts": agg["last_ts"],
+                "first_msg_id": agg["first_msg_id"],
+                "last_msg_id": agg["last_msg_id"],
+                "msg_count": agg["msg_count"],
                 "covers": list(to_consolidate),
                 "model": model,
                 "prompt_version": prompt_version,
@@ -170,8 +168,8 @@ class BucketStore:
                     logger.warning("[bucket-store] failed to delete %s: %s", bid, e)
             self._meta["objects"] = [sid, last_id]
             self._save_meta()
-            logger.info("[bucket-store] rolled up %d objects into %s (level=%d)",
-                        len(to_consolidate), sid, max_level + 1)
+            logger.info("[bucket-store] rolled up %d objects into %s (level=%d, %d msgs)",
+                        len(to_consolidate), sid, agg["max_level"] + 1, agg["msg_count"])
             return sid
 
     def _read_bucket(self, bid: str) -> Optional[Dict]:
@@ -226,36 +224,20 @@ class BucketStore:
             ids = list(self._meta.get("objects", []))
             if len(ids) < 2:
                 return None
-            first_seq = None
-            last_seq = 0
-            first_ts = None
-            last_ts = 0.0
-            max_level = 1
-            for bid in ids:
-                d = self._read_bucket(bid)
-                if not d:
-                    continue
-                if first_seq is None or d["first_seq"] < first_seq:
-                    first_seq = d["first_seq"]
-                if d["last_seq"] > last_seq:
-                    last_seq = d["last_seq"]
-                if first_ts is None or d["first_ts"] < first_ts:
-                    first_ts = d["first_ts"]
-                if d["last_ts"] > last_ts:
-                    last_ts = d["last_ts"]
-                lv = int(d.get("level", 1))
-                if lv > max_level:
-                    max_level = lv
+            agg = self._aggregate(ids)
             n = int(self._meta.get("_next_sb_num", 1))
             self._meta["_next_sb_num"] = n + 1
             sid = f"SB_{n:05d}"
             doc = {
                 "bucket_id": sid,
-                "level": max_level + 1,
-                "first_seq": int(first_seq or 0),
-                "last_seq": int(last_seq),
-                "first_ts": float(first_ts or 0.0),
-                "last_ts": float(last_ts),
+                "level": agg["max_level"] + 1,
+                "first_seq": agg["first_seq"],
+                "last_seq": agg["last_seq"],
+                "first_ts": agg["first_ts"],
+                "last_ts": agg["last_ts"],
+                "first_msg_id": agg["first_msg_id"],
+                "last_msg_id": agg["last_msg_id"],
+                "msg_count": agg["msg_count"],
                 "covers": list(ids),
                 "model": model,
                 "prompt_version": prompt_version,
@@ -271,12 +253,76 @@ class BucketStore:
                     logger.warning("[bucket-store] failed to delete %s: %s", bid, e)
             self._meta["objects"] = [sid]
             self._save_meta()
-            logger.info("[bucket-store] collapsed %d objects into %s (level=%d)",
-                        len(ids), sid, max_level + 1)
+            logger.info("[bucket-store] collapsed %d objects into %s (level=%d, %d msgs)",
+                        len(ids), sid, agg["max_level"] + 1, agg["msg_count"])
             return sid
 
+    def _aggregate(self, bucket_ids: List[str]) -> Dict:
+        """Combine seq / ts / msg_id spans + msg_count across buckets.
+
+        Used by rollup_all_except_last and collapse_all to build the
+        consolidated doc. The span is the outer envelope — the SB covers
+        everything from the earliest source's first_msg_id to the latest
+        source's last_msg_id. msg_count sums cleanly because source
+        ranges are disjoint by construction (seq is strictly monotonic).
+        """
+        first_seq = None
+        last_seq = 0
+        first_ts = None
+        last_ts = 0.0
+        first_msg_id = ""
+        last_msg_id = ""
+        msg_count = 0
+        max_level = 1
+        # Track which source supplies first_msg_id / last_msg_id so we
+        # don't mix endpoints from different phases.
+        _earliest = None
+        _latest_seq = -1
+        for bid in bucket_ids:
+            d = self._read_bucket(bid)
+            if not d:
+                continue
+            _fs = int(d.get("first_seq", 0) or 0)
+            _ls = int(d.get("last_seq", 0) or 0)
+            if first_seq is None or _fs < first_seq:
+                first_seq = _fs
+                _earliest = d
+            if _ls > last_seq:
+                last_seq = _ls
+            if _ls > _latest_seq:
+                _latest_seq = _ls
+                last_msg_id = d.get("last_msg_id", "") or ""
+            if first_ts is None or d["first_ts"] < first_ts:
+                first_ts = d["first_ts"]
+            if d["last_ts"] > last_ts:
+                last_ts = d["last_ts"]
+            msg_count += int(d.get("msg_count", 0) or 0)
+            lv = int(d.get("level", 1))
+            if lv > max_level:
+                max_level = lv
+        if _earliest:
+            first_msg_id = _earliest.get("first_msg_id", "") or ""
+        return {
+            "first_seq": int(first_seq or 0),
+            "last_seq": int(last_seq),
+            "first_ts": float(first_ts or 0.0),
+            "last_ts": float(last_ts),
+            "first_msg_id": first_msg_id,
+            "last_msg_id": last_msg_id,
+            "msg_count": msg_count,
+            "max_level": max_level,
+        }
+
     def assemble_summary_header(self) -> str:
-        """Concatenate all summaries into one historical-context block."""
+        """Concatenate all summaries into one historical-context block.
+
+        Each phase header carries a navigation breadcrumb — msg_id range,
+        message count, full date range on both ends — so the agent can
+        call read_history(action="range", from_msg_id=..., to_msg_id=...)
+        to retrieve the exact original messages behind this summary.
+        """
+        from datetime import datetime
+
         docs = self.get_all_summaries()
         if not docs:
             return ""
@@ -284,11 +330,28 @@ class BucketStore:
         for d in docs:
             lv = int(d.get("level", 1))
             tag = "Archived phase" if lv >= 2 else "Recent phase"
+            _fid = d.get("first_msg_id", "") or ""
+            _lid = d.get("last_msg_id", "") or ""
+            _mc = int(d.get("msg_count", 0) or 0)
+            _fts = float(d.get("first_ts", 0.0) or 0.0)
+            _lts = float(d.get("last_ts", 0.0) or 0.0)
+            _fts_str = (datetime.fromtimestamp(_fts).strftime("%Y-%m-%d %H:%M")
+                         if _fts else "?")
+            _lts_str = (datetime.fromtimestamp(_lts).strftime("%Y-%m-%d %H:%M")
+                         if _lts else "?")
             parts.append(
                 f"\n=== {tag} ({d.get('bucket_id')}, level={lv}, seq "
-                f"{d.get('first_seq')}..{d.get('last_seq')}) ===\n"
-                f"{d.get('summary', '')}\n"
+                f"{d.get('first_seq')}..{d.get('last_seq')}"
+                + (f", {_mc} msgs" if _mc else "")
+                + f", {_fts_str} → {_lts_str}) ===\n"
             )
+            if _fid and _lid:
+                parts.append(
+                    f"[To retrieve the exact original messages behind this "
+                    f"phase, call read_history(action=\"range\", "
+                    f"from_msg_id=\"{_fid}\", to_msg_id=\"{_lid}\").]\n"
+                )
+            parts.append(f"{d.get('summary', '')}\n")
         return "".join(parts)
 
     def wipe(self):

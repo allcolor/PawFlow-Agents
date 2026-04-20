@@ -700,6 +700,14 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             if not msgs_in or _bucket_store is None:
                 return
             try:
+                # Find endpoints by seq so first_msg_id and last_msg_id
+                # line up with the first_seq / last_seq span — the agent's
+                # read_history(action="range", ...) call needs the exact
+                # ids of the true span extremes, not just min/max of a
+                # shuffled input list.
+                _sorted = sorted(msgs_in, key=lambda m: m.seq)
+                _first = _sorted[0]
+                _last = _sorted[-1]
                 _seqs = [m.seq for m in msgs_in]
                 _tss = [m.timestamp for m in msgs_in]
                 _summary = self._summarize_messages(
@@ -716,6 +724,9 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                         first_seq=min(_seqs), last_seq=max(_seqs),
                         first_ts=min(_tss), last_ts=max(_tss),
                         summary=_summary,
+                        first_msg_id=getattr(_first, "msg_id", "") or "",
+                        last_msg_id=getattr(_last, "msg_id", "") or "",
+                        msg_count=len(msgs_in),
                         model=getattr(client, "default_model", "") or "")
                     if user_id:
                         try:

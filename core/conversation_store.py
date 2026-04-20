@@ -1447,6 +1447,40 @@ class ConversationStore:
                 return None
         return self._read(cid, self._scan_transcript)
 
+    def load_range_by_msg_id(self, cid: str,
+                             from_msg_id: str,
+                             to_msg_id: str,
+                             user_id: str = "") -> Optional[List[Dict]]:
+        """Load messages in [from_msg_id, to_msg_id] inclusive.
+
+        Used by read_history(action="range") — drives the bucket nav hints
+        that let an agent zoom from a bucket summary back to the exact
+        original messages. Returns [] if either id is missing or out of
+        order. Returns None when the conversation doesn't exist / the
+        user doesn't own it.
+        """
+        if not self.exists(cid):
+            return None
+        if user_id:
+            cache = self._load_cache(cid)
+            if cache["user_id"] and cache["user_id"] != user_id:
+                return None
+        if not from_msg_id or not to_msg_id:
+            return []
+        all_msgs = self._read(cid, self._scan_transcript)
+        if not all_msgs:
+            return []
+        start = end = -1
+        for i, m in enumerate(all_msgs):
+            mid = m.get("msg_id") if isinstance(m, dict) else getattr(m, "msg_id", "")
+            if mid == from_msg_id and start < 0:
+                start = i
+            if mid == to_msg_id:
+                end = i
+        if start < 0 or end < 0 or end < start:
+            return []
+        return all_msgs[start:end + 1]
+
     def load_page(self, cid: str, limit: int = 50, offset: int = 0,
                   user_id: str = "") -> Optional[Dict]:
         """Load a paginated slice of the transcript.

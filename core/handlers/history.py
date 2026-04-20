@@ -10,6 +10,45 @@ logger = logging.getLogger(__name__)
 
 _ROLE_FILTERS = {"user", "assistant", "tool", "thinking"}
 
+# Cap every action that returns a list so one call can't shove 40k
+# messages (a super-bucket range) into the LLM's context.
+_MAX_LIMIT = 100
+_DEFAULT_LIMIT = 50
+
+
+def _paginate(items, offset, limit):
+    """Slice items[offset:offset+limit] with offset>=0 and limit<=_MAX_LIMIT.
+
+    Returns (slice, effective_offset, effective_limit, total). The
+    caller adds a 'next page' hint to the rendered output whenever
+    effective_offset + len(slice) < total.
+    """
+    try:
+        offset = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        raw_limit = int(limit) if limit is not None else _DEFAULT_LIMIT
+    except (TypeError, ValueError):
+        raw_limit = _DEFAULT_LIMIT
+    limit = max(1, min(raw_limit, _MAX_LIMIT))
+    total = len(items)
+    return items[offset:offset + limit], offset, limit, total
+
+
+def _page_footer(offset: int, limit: int, returned: int, total: int,
+                 action: str) -> str:
+    """Render the Showing X..Y of Z banner + pagination hint."""
+    if returned == 0:
+        return ""
+    last = offset + returned - 1
+    foot = f"\nShowing {offset}..{last} of {total} (limit={limit})."
+    if offset + returned < total:
+        foot += (f" More available — repeat the same "
+                 f"read_history(action=\"{action}\", ...) call "
+                 f"with offset={offset + limit}.")
+    return foot
+
 
 def _msg_ts(m) -> float:
     if isinstance(m, dict):
@@ -163,7 +202,14 @@ class ReadHistoryHandler(ToolHandler):
             "\n"
             "Tip: when compact/bucket summaries quote a UUID range, call "
             "read_history(action=\"range\", from_msg_id=..., to_msg_id=...) "
-            "to retrieve the raw messages behind that phase."
+            "to retrieve the raw messages behind that phase.\n"
+            "\n"
+            "Pagination: every call returns at most 100 messages. When the "
+            "matched set is larger, the response ends with a line telling "
+            "you the next offset to pass back with the SAME action + "
+            "filters. Default limit is 50. Super-bucket ranges can cover "
+            "tens of thousands of messages — always read by pages, never "
+            "try to fetch a whole SB in one shot."
         )
 
     @property
@@ -193,14 +239,22 @@ class ReadHistoryHandler(ToolHandler):
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Skip N most recent messages (for recent action, default 0).",
+                    "description": (
+                        "Pagination cursor. For 'recent' it skips the N most "
+                        "recent filtered messages; for every other list "
+                        "action (range, range_by_seq, range_by_date, search) "
+                        "it skips the first N results of the filtered match "
+                        "set. Default 0. Pass the value suggested at the end "
+                        "of the previous response to step to the next page."
+                    ),
                 },
                 "limit": {
                     "type": "integer",
                     "description": (
-                        "Max messages to return (default 10). For action=around "
-                        "the sign chooses direction: +N forward, -N backward "
-                        "(inclusive of the anchor)."
+                        "Max messages to return. Default 50, hard-capped at "
+                        "100. For action=around the sign also chooses "
+                        "direction: +N forward, -N backward (anchor "
+                        "inclusive); |limit| is clamped to 100."
                     ),
                 },
                 "query": {
@@ -343,7 +397,10 @@ class ReadHistoryHandler(ToolHandler):
         all_msgs = self._load_all(store)
         if not all_msgs:
             return "No history found"
-        results = []
+        # Collect every match first, then paginate — the offset/limit
+        # pair lets the LLM page through large hit sets instead of being
+        # silently cut off at 20 like the old impl did.
+        hits = []  # list of (index, msg)
         query_lower = query.lower()
         for i, msg in enumerate(all_msgs):
             if (role_filter or agent_filter) and not _apply_filters(
@@ -351,15 +408,23 @@ class ReadHistoryHandler(ToolHandler):
                 continue
             content = self._render_body(msg, role_filter)
             if query_lower in content.lower():
-                results.append(self._format_message(
-                    msg, i, preview=True, role_filter=role_filter))
-                if len(results) >= 20:
-                    break
-        if not results:
+                hits.append((i, msg))
+        if not hits:
             scope = _scope_label(role_filter, agent_filter)
             tag = f" ({scope})" if scope else ""
             return f"No messages matching '{query}'{tag}"
-        return f"Found {len(results)} match(es):\n\n" + "\n\n".join(results)
+        page, offset, limit, total = _paginate(
+            hits, arguments.get("offset"), arguments.get("limit"))
+        lines = [
+            self._format_message(m, i, preview=True, role_filter=role_filter)
+            for (i, m) in page
+        ]
+        scope = _scope_label(role_filter, agent_filter)
+        tag = f" [{scope}]" if scope else ""
+        footer = _page_footer(offset, limit, len(page), total, "search")
+        return (f"Found {total} match(es) for '{query}'{tag}:\n\n"
+                + "\n\n".join(lines)
+                + footer)
 
     def _do_range(self, store, arguments,
                   role_filter: str, agent_filter: str) -> str:
@@ -373,7 +438,10 @@ class ReadHistoryHandler(ToolHandler):
             return "Error: conversation not found"
         return self._render_slice(
             store, msgs, f"Range {from_id}..{to_id}",
-            role_filter, agent_filter)
+            role_filter, agent_filter,
+            action="range",
+            offset_arg=arguments.get("offset"),
+            limit_arg=arguments.get("limit"))
 
     def _do_range_by_seq(self, store, arguments,
                          role_filter: str, agent_filter: str) -> str:
@@ -389,7 +457,11 @@ class ReadHistoryHandler(ToolHandler):
                 if from_seq <= _msg_seq(m) <= to_seq]
         return self._render_slice(
             store, msgs, f"Seq range {from_seq}..{to_seq}",
-            role_filter, agent_filter, all_msgs=all_msgs)
+            role_filter, agent_filter,
+            action="range_by_seq",
+            offset_arg=arguments.get("offset"),
+            limit_arg=arguments.get("limit"),
+            all_msgs=all_msgs)
 
     def _do_range_by_date(self, store, arguments,
                           role_filter: str, agent_filter: str) -> str:
@@ -403,17 +475,24 @@ class ReadHistoryHandler(ToolHandler):
         label = (f"Date range {arguments.get('from_date', '')}.."
                  f"{arguments.get('to_date', '')}")
         return self._render_slice(
-            store, msgs, label, role_filter, agent_filter, all_msgs=all_msgs)
+            store, msgs, label, role_filter, agent_filter,
+            action="range_by_date",
+            offset_arg=arguments.get("offset"),
+            limit_arg=arguments.get("limit"),
+            all_msgs=all_msgs)
 
     def _do_around(self, store, arguments,
                    role_filter: str, agent_filter: str) -> str:
         """Anchor + signed limit. Anchor = msg_id | seq | date (exactly one)."""
         try:
-            limit = int(arguments.get("limit", 10))
+            limit = int(arguments.get("limit", _DEFAULT_LIMIT))
         except (TypeError, ValueError):
             return "Error: limit must be an integer (positive or negative)"
         if limit == 0:
             return "Error: limit must be non-zero (sign selects direction)"
+        # Cap magnitude — a single call can't dump more than _MAX_LIMIT msgs.
+        if abs(limit) > _MAX_LIMIT:
+            limit = _MAX_LIMIT if limit > 0 else -_MAX_LIMIT
         from_msg_id = arguments.get("from_msg_id", "")
         from_seq_raw = arguments.get("from_seq")
         from_date = arguments.get("from_date", "")
@@ -461,13 +540,31 @@ class ReadHistoryHandler(ToolHandler):
             window = all_msgs[lo:anchor_idx + 1]
         direction = "forward" if limit > 0 else "backward"
         label = f"Around anchor [#{anchor_idx}] ({direction} {abs(limit)})"
+        # around is anchor-relative: its "limit" already encodes the
+        # window size + direction, so we don't paginate further — just
+        # render everything the window holds. _render_slice still caps
+        # at _MAX_LIMIT via its paginator, which matches the abs(limit)
+        # we already clamped above.
         return self._render_slice(
-            store, window, label, role_filter, agent_filter, all_msgs=all_msgs)
+            store, window, label, role_filter, agent_filter,
+            action="around",
+            offset_arg=0,
+            limit_arg=_MAX_LIMIT,
+            all_msgs=all_msgs)
 
     def _do_recent(self, store, arguments,
                    role_filter: str, agent_filter: str) -> str:
-        limit = int(arguments.get("limit", 10))
-        offset = int(arguments.get("offset", 0))
+        # Cap and normalise — same _MAX_LIMIT ceiling as the other
+        # actions so a single call can never dump more than 100 msgs.
+        try:
+            limit = int(arguments.get("limit", _DEFAULT_LIMIT))
+        except (TypeError, ValueError):
+            limit = _DEFAULT_LIMIT
+        limit = max(1, min(limit, _MAX_LIMIT))
+        try:
+            offset = max(0, int(arguments.get("offset", 0)))
+        except (TypeError, ValueError):
+            offset = 0
         if role_filter or agent_filter:
             all_msgs = self._load_all(store) or []
             filtered = _apply_filters(all_msgs, role_filter, agent_filter)
@@ -486,7 +583,8 @@ class ReadHistoryHandler(ToolHandler):
             header = (f"Messages ({scope}) {start}-"
                       f"{start + len(window) - 1} of {total}")
             if start > 0:
-                header += f" (use offset={offset + limit} for older)"
+                header += (f". More older — repeat with "
+                           f"offset={offset + limit}.")
             return header + "\n\n" + "\n\n".join(lines)
         # Fast path: use the store's paginated tail reader (no filters).
         page = store.load_page(
@@ -501,13 +599,15 @@ class ReadHistoryHandler(ToolHandler):
                  for i, m in enumerate(msgs)]
         header = f"Messages {start_idx}-{start_idx + len(msgs) - 1} of {total}"
         if page.get("has_more"):
-            header += f" (use offset={offset + limit} for older)"
+            header += (f". More older — repeat with "
+                       f"offset={offset + limit}.")
         return header + "\n\n" + "\n\n".join(lines)
 
     # ── Rendering ─────────────────────────────────────────────────────
 
     def _render_slice(self, store, msgs: List, label: str,
                       role_filter: str, agent_filter: str,
+                      action: str, offset_arg, limit_arg,
                       all_msgs: Optional[List] = None) -> str:
         if msgs is None:
             return "Error: conversation not found"
@@ -523,15 +623,18 @@ class ReadHistoryHandler(ToolHandler):
                 return (f"No messages matching "
                         f"{_scope_label(role_filter, agent_filter)} "
                         f"inside {label}")
+        page, offset, limit, total = _paginate(msgs, offset_arg, limit_arg)
         lines = [
             self._format_message(
                 m, idx_by_id.get(_msg_id(m), -1), role_filter=role_filter)
-            for m in msgs
+            for m in page
         ]
         scope = _scope_label(role_filter, agent_filter)
         tag = f" [{scope}]" if scope else ""
-        return (f"{label}{tag} ({len(msgs)} messages):\n\n"
-                + "\n\n".join(lines))
+        footer = _page_footer(offset, limit, len(page), total, action)
+        return (f"{label}{tag} ({total} messages total):\n\n"
+                + "\n\n".join(lines)
+                + footer)
 
     @staticmethod
     def _get_content(msg) -> str:

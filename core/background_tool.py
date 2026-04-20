@@ -341,7 +341,7 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
             "tool_call_id": tc_id,
             "source": {"type": "system", "name": "background"},
         })
-        ConversationWriter.for_conversation(conv_id).enqueue([tool_msg])
+        ConversationWriter.for_conversation(conv_id).enqueue_message(tool_msg)
     except Exception as e:
         logger.error("[bg-tool] failed to write tool_result to transcript: %s", e)
 
@@ -405,8 +405,9 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
                 "content": content,
                 "source": {"type": "system", "name": "background"},
             })
-            # 1. Transcript (history)
-            ConversationWriter.for_conversation(conv_id).enqueue([msg])
+            # 1. Transcript + shared + other agents' contexts (all routes
+            #    covered by append_message based on role+source).
+            ConversationWriter.for_conversation(conv_id).enqueue_message(msg)
             # 2. PendingQueue (agent-visible ingress) + wake.
             # Routes through the same single path every other source
             # uses — no more "BG tool injected but agent never woke"

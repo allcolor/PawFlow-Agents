@@ -648,9 +648,13 @@ class AgentCoreMixin:
 
                     # Force-fit guard (skip for claude-code — it manages its own context)
                     if not ctx.get("_is_claude_code"):
+                        from core.token_counter import resolve_token_multiplier as _rtm
+                        _ff_tmul = _rtm(getattr(
+                            ctx.get("resolved_svc"), "config", None))
                         _pre_send_est = self._estimate_tokens(
                             llm_context, tool_defs=ctx.get("tool_defs"),
-                            chars_per_token=ctx.get("chars_per_token", 0))
+                            chars_per_token=ctx.get("chars_per_token", 0),
+                            token_multiplier=_ff_tmul)
                         logger.debug(
                             f"[compact] pre-send: {_pre_send_est} est. tokens, "
                             f"{len(llm_context)} msgs, max={_max_ctx}")
@@ -660,7 +664,8 @@ class AgentCoreMixin:
                             llm_context = self._force_fit_context(
                                 llm_context, _max_ctx,
                                 chars_per_token=ctx.get("chars_per_token", 0),
-                                tool_defs=ctx.get("tool_defs"))
+                                tool_defs=ctx.get("tool_defs"),
+                                token_multiplier=_ff_tmul)
 
                     # LLM call
                     _tb = ctx.get("thinking_budget", 0)

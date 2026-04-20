@@ -492,9 +492,14 @@ class AgentActionsMixin:
                 else:
                     # Shared context changed — clear all agent sessions
                     self._clear_claude_session(conv_id, "")
-                bus.publish_event(conv_id, "compact_progress", {
-                    "stage": "done", **result,
-                })
+                # Compact has its own compact_progress:done event fired
+                # inside _compact() with bucket-filter-accurate counts.
+                # Don't re-emit from here — that second emission used the
+                # full-transcript len() (35049 …) and confused the UI.
+                if op_name != "compact":
+                    bus.publish_event(conv_id, "compact_progress", {
+                        "stage": "done", **result,
+                    })
             except Exception as e:
                 bus.publish_event(conv_id, "compact_progress", {
                     "stage": "error", "error": str(e),

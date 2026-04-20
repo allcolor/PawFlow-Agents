@@ -866,23 +866,27 @@ class ConversationStore:
         with self._lock:  # class-level lock (also used for singleton)
             if self._loaded:
                 return
+            # Hold the lock across the scan so concurrent callers (boot-time
+            # cleanup_orphan_claude_sessions) wait for the cache to be fully
+            # populated. Previously we set _loaded=True BEFORE the scan,
+            # which let those callers observe a half-empty cache and treat
+            # live convs as orphans (safety net caught it, but it logged
+            # a "cache race" warning for every live conv).
+            count = 0
+            for user_dir in self._store_dir.iterdir():
+                if not user_dir.is_dir():
+                    continue
+                uid = user_dir.name
+                for conv_dir in user_dir.iterdir():
+                    if not conv_dir.is_dir():
+                        continue
+                    if not (conv_dir / "transcript.jsonl").exists() and not (conv_dir / "extras.json").exists():
+                        continue
+                    cid = conv_dir.name.replace("__", ":")
+                    self._cid_user[cid] = uid
+                    self._load_cache(cid)
+                    count += 1
             self._loaded = True
-        count = 0
-        # Scan data/conversations/{user}/{conv_id}/ directories
-        # First pass: populate cid→user mapping so _conv_dir never needs to scan
-        for user_dir in self._store_dir.iterdir():
-            if not user_dir.is_dir():
-                continue
-            uid = user_dir.name
-            for conv_dir in user_dir.iterdir():
-                if not conv_dir.is_dir():
-                    continue
-                if not (conv_dir / "transcript.jsonl").exists() and not (conv_dir / "extras.json").exists():
-                    continue
-                cid = conv_dir.name.replace("__", ":")
-                self._cid_user[cid] = uid
-                self._load_cache(cid)
-                count += 1
         if count:
             logger.info(f"ConversationStore: loaded {count} conversations from disk")
 

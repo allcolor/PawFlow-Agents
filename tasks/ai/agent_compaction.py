@@ -265,6 +265,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         max_tokens: int,
         chars_per_token: float = 0,
         tool_defs: list = None,
+        token_multiplier: float = 1.0,
     ) -> List[LLMMessage]:
         """Last resort: brute-force truncate messages to fit within max_tokens.
 
@@ -321,7 +322,9 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 new_m.content = m.content
             result.append(new_m)
 
-        est = self._estimate_tokens(result, tool_defs=tool_defs, chars_per_token=chars_per_token)
+        est = self._estimate_tokens(result, tool_defs=tool_defs,
+                                     chars_per_token=chars_per_token,
+                                     token_multiplier=token_multiplier)
         if est <= max_tokens:
             logger.info(f"[compact] force-fit step 1 OK: {est} tokens")
             return result
@@ -520,6 +523,12 @@ class AgentCompactionMixin(AgentSummarizeMixin):
     ) -> List[LLMMessage]:
         """Unified compaction: cleanup + threshold check + summarize + rebuild.
 
+        Every token count below is the REAL tokenizer cost for the target
+        model: tiktoken cl100k_base output × service config token_multiplier
+        (Opus 4.7 = 1.6, Sonnet/Haiku 4.6 = 1.1, OpenAI = 1.0). Thresholds,
+        logs, and SSE events all operate in real-token space so behaviour
+        matches what the gauge displays.
+
         When force=True, always compacts (used at context load time).
         When force=False, only compacts if estimated tokens exceed threshold.
 
@@ -531,6 +540,11 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         Phase 4: Persist + notify
         """
         _cpt = chars_per_token if chars_per_token > 0 else 3.5
+        # Resolve token_multiplier once from the service config so every
+        # _estimate_tokens below returns real-tokenizer cost.
+        from core.token_counter import resolve_token_multiplier
+        _tmul = resolve_token_multiplier(
+            getattr(client, "_config_ref", None))
 
         # ── Phase -1: Bucket-store pre-filter ──
         # Hierarchical cache: messages already covered by an existing bucket
@@ -616,7 +630,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         # ── Threshold check (skip when forced) ──
         _original_count = len(messages)
         estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
-                                          chars_per_token=chars_per_token)
+                                          chars_per_token=chars_per_token,
+                                          token_multiplier=_tmul)
         _original_tokens = estimated
         limit = int(max_tokens * threshold)
 
@@ -654,7 +669,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 elif isinstance(m.content, list):
                     m.content = "[content truncated for context limit]"
             estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
-                                              chars_per_token=chars_per_token)
+                                              chars_per_token=chars_per_token,
+                                              token_multiplier=_tmul)
 
         # ── Phase 2: Split + summarize ──
         if len(messages) <= 7:
@@ -721,7 +737,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         if not force:
             _slim = ([system_msg] if system_msg else []) + old_conversation + recent_messages
             _slim_est = self._estimate_tokens(_slim, tool_defs=tool_defs,
-                                               chars_per_token=chars_per_token)
+                                               chars_per_token=chars_per_token,
+                                               token_multiplier=_tmul)
             if _slim_est <= limit and len(_slim) < 200:
                 logger.info(f"[compact] Dropping tool plumbing sufficient: "
                             f"{estimated} → {_slim_est} tokens, {len(_slim)} msgs")
@@ -939,7 +956,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
 
         # Fallback: if still over max after summary, retry with aggressive split
         new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,
-                                              chars_per_token=chars_per_token)
+                                              chars_per_token=chars_per_token,
+                                              token_multiplier=_tmul)
         if new_estimate > max_tokens and len(recent_messages) > 10:
             logger.info(f"[compact] Still over max ({new_estimate}), aggressive split (6 conv, max 20)")
             _split2 = _select_recent_messages(messages, start_idx,
@@ -972,7 +990,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 compacted.extend(recent_messages)
                 self._truncate_tool_results(compacted)
                 new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,
-                                                      chars_per_token=chars_per_token)
+                                                      chars_per_token=chars_per_token,
+                                                      token_multiplier=_tmul)
                 logger.info(f"[compact] Aggressive: {len(compacted)} msgs (~{new_estimate} tokens)")
 
         logger.info(f"[compact] Final: {new_estimate} tokens (was {_original_tokens}), "

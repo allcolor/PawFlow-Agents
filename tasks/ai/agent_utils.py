@@ -683,7 +683,8 @@ class AgentUtilsMixin:
     @staticmethod
     def _estimate_tokens(messages: List[LLMMessage],
                          tool_defs: list = None,
-                         chars_per_token: float = 0) -> int:
+                         chars_per_token: float = 0,
+                         token_multiplier: float = 1.0) -> int:
         """Estimate token count for messages + tool definitions.
 
         Uses content-aware estimation: JSON content (starts with { or [)
@@ -693,6 +694,11 @@ class AgentUtilsMixin:
         *chars_per_token* controls the default ratio for natural language.
         Default (0) uses 3.5. The service config key ``chars_per_token``
         can override this per-LLM.
+
+        *token_multiplier* scales the tiktoken (cl100k_base) count up to
+        the real tokenizer of the target model — e.g. Opus 4.7 costs
+        ~1.6x more tokens than cl100k for the same text. Compact thresh-
+        old checks and the gauge both need REAL tokens, not raw.
         """
         # Precise counting via tiktoken — strip image data first
         try:
@@ -710,7 +716,7 @@ class AgentUtilsMixin:
                         for p in c
                     )
                 _stripped.append({"content": c})
-            return count_messages_tokens(_stripped)
+            return count_messages_tokens(_stripped, multiplier=token_multiplier)
         except Exception:
             pass
         # Fallback to character estimation
@@ -749,6 +755,8 @@ class AgentUtilsMixin:
                     _td_chars += len(json.dumps(params) if isinstance(params, dict) else str(params))
                 # Tool defs are JSON schemas — use 2 chars/token
                 total_tokens += int(_td_chars / 2.0)
+        if token_multiplier and token_multiplier != 1.0:
+            total_tokens = int(total_tokens * token_multiplier)
         return total_tokens
 
 

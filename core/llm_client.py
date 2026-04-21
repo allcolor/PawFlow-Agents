@@ -204,37 +204,71 @@ _msg_seq_lock = _threading.Lock()
 _msg_seq_bootstrapped = False
 
 
-def _bootstrap_seq_from_disk() -> int:
-    """Scan all existing conversation jsonl files and return max seq seen.
+def _tail_last_line(path) -> bytes:
+    """Read the last non-empty line of a file without loading it fully.
 
-    Called once at first _next_msg_seq() to continue numbering from where
-    the previous process left off — a fresh itertools.count(1) after a
-    restart would hand out seq=1,2,3… which collide (as tiebreakers) with
-    legacy low-seq messages and can scramble ordering in edge cases
-    (same-ts messages, tools that sort without ts).
+    Reads backwards in chunks from the end until we find a newline
+    that precedes real content. Avoids the O(file_size) cost of a
+    full scan when all we want is the latest record.
+    """
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)  # end
+            size = fh.tell()
+            if size == 0:
+                return b""
+            block = 4096
+            data = b""
+            pos = size
+            while pos > 0 and data.count(b"\n") < 2:
+                step = min(block, pos)
+                pos -= step
+                fh.seek(pos)
+                data = fh.read(size - pos)
+                block *= 2
+            # Drop trailing newline(s), take the segment after the last
+            # remaining newline.
+            stripped = data.rstrip(b"\r\n")
+            idx = stripped.rfind(b"\n")
+            return stripped[idx + 1:] if idx >= 0 else stripped
+    except Exception:
+        return b""
+
+
+def _bootstrap_seq_from_disk() -> int:
+    """Return the max seq across every conversation jsonl on disk.
+
+    Called once at the first _next_msg_seq() to continue numbering from
+    where the previous process left off — a fresh itertools.count(1)
+    after a restart would hand out seq=1,2,3… which collide (as
+    tiebreakers) with legacy low-seq messages and can scramble ordering.
+
+    Fast path: jsonl files are append-only with strictly increasing seq
+    per writer, so the highest seq lives on the last non-empty line. We
+    tail each file (constant-size read from the end) rather than
+    streaming the whole file — a large transcript used to cost ~10s of
+    blocking work inside the first http request that wanted to stamp a
+    message (see [agent_loop] SLOW action=msg took=10s).
     """
     try:
         import core.paths as _p
         import json as _json
-        from pathlib import Path as _Path
         root = _p.CONVERSATIONS_DIR
         if not root.exists():
             return 0
         max_seq = 0
         for f in root.rglob("*.jsonl"):
             try:
-                with open(f, "r", encoding="utf-8") as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            m = _json.loads(line)
-                        except Exception:
-                            continue
-                        s = m.get("seq") or 0
-                        if isinstance(s, int) and s > max_seq:
-                            max_seq = s
+                last = _tail_last_line(f)
+                if not last:
+                    continue
+                try:
+                    m = _json.loads(last.decode("utf-8", errors="replace"))
+                except Exception:
+                    continue
+                s = m.get("seq") or 0
+                if isinstance(s, int) and s > max_seq:
+                    max_seq = s
             except Exception:
                 continue
         return max_seq

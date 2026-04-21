@@ -145,7 +145,7 @@ class ServerRelayManager:
 
         # Resolve tools/ dir to absolute path (relative to server CWD)
         import os as _os
-        from core.docker_utils import to_host_path, detect_exec_mode
+        from core.docker_utils import to_host_path
         tools_abs = _os.path.abspath(relay_tools_dir)
         # In DinD, translate container path to host path for Docker daemon
         tools_host = to_host_path(tools_abs)
@@ -187,23 +187,12 @@ class ServerRelayManager:
             "--env", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         ]
 
-        # DinD: mount docker.sock so relay can spawn docker-* exec shells
-        exec_mode = detect_exec_mode()
-        if exec_mode == "docker" and _os.path.exists("/var/run/docker.sock"):
-            docker_run_args.extend([
-                "--volume", "/var/run/docker.sock:/var/run/docker.sock",
-            ])
-            # Propagate host path translation for nested container spawning
-            host_workdir = _os.environ.get("PAWFLOW_HOST_WORKDIR", "")
-            container_workdir = _os.environ.get("PAWFLOW_WORKDIR", "")
-            if host_workdir:
-                docker_run_args.extend([
-                    "--env", f"PAWFLOW_HOST_WORKDIR={host_workdir}",
-                ])
-            if container_workdir:
-                docker_run_args.extend([
-                    "--env", f"PAWFLOW_WORKDIR={container_workdir}",
-                ])
+        # NOTE: no docker.sock bind-mount. The server-spawned relay lives in
+        # an isolated named volume (pawflow_data_<conv_id>); it has no host
+        # path to bind-mount into a nested container, so spawn_relay / child-
+        # relay features are meaningless here. Exposing docker.sock would
+        # grant root-on-host via `docker run -v /:/host --privileged` for no
+        # functional gain.
 
         docker_run_args.extend([
             relay_image,

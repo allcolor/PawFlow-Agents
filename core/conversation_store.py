@@ -7,16 +7,26 @@ Each conversation is a directory:
     {agent}/context.jsonl         — per-agent LLM context
     extras.json                   — atomic JSON metadata (no duplication)
 
-Transcript line types:
-  {"t":"meta", "user_id":"...", "status":"idle", "created_at":N, "expires_at":N}
-  {"t":"msg", "role":"...", "content":"...", "msg_id":"...", "source":{}, "ts":N}
+Transcript line invariants (EVERY record, no exception):
+  - msg_id  : own UUID, unique per line (not shared across records)
+  - ts      : wall-clock epoch seconds when the line was written
+  - seq     : per-conversation strictly-increasing integer. If line B
+              follows line A in the file, seq_B > seq_A — always.
+
+Records that reference another line (e.g. msg_patch → msg) carry the
+target via a dedicated field (target_msg_id), never by squatting msg_id.
+
+Line types:
+  {"t":"meta", "msg_id":..., "ts":..., "seq":..., "user_id":"...", "status":"idle", "created_at":N, "expires_at":N}
+  {"t":"msg", "msg_id":..., "ts":..., "seq":..., "role":"...", "content":"...", "source":{}, ...}
   {"t":"msg", ..., "private":true}  (tool calls/results — agent context only)
-  {"t":"msg_patch", "msg_id":"...", ...}
-  {"t":"status", "status":"active"}
-  {"t":"trace_update", "trace_id":"...", ...}
+  {"t":"msg_patch", "msg_id":..., "ts":..., "seq":..., "target_msg_id":"...", ...fields}
+  {"t":"trace_update", "msg_id":..., "ts":..., "seq":..., "trace_id":"...", ...}
+  {"t":"status", "msg_id":..., "ts":..., "seq":..., "status":"active"}
 
 Context files ({agent}/context.jsonl, shared.jsonl):
-  One message dict per line (no "t" prefix — raw messages).
+  One message dict per line (no "t" prefix — raw messages, same
+  (msg_id, ts, seq) invariants).
 
 Per-conversation locks ensure atomicity of logical operations.
 """
@@ -71,6 +81,29 @@ class ConversationStore:
             if cid not in self._conv_locks:
                 self._conv_locks[cid] = threading.RLock()
             return self._conv_locks[cid]
+
+    @staticmethod
+    def _stamp_line(cid: str, line: Dict[str, Any]) -> Dict[str, Any]:
+        """Enforce the (msg_id, ts, seq) invariant on a jsonl record.
+
+        Every line persisted to transcript.jsonl (or a per-agent/shared
+        context file) MUST carry its OWN msg_id, ts and seq. Records
+        that reference another line (msg_patch → msg, trace_update →
+        trace) use a dedicated field for the linkage (target_msg_id,
+        trace_id) and never by sharing the referenced line's msg_id.
+
+        Fields already present are preserved; only missing ones are
+        minted here. ``cid`` is required so seq is drawn from the
+        correct per-conversation counter (see core.llm_client).
+        """
+        from core.llm_client import _next_msg_seq
+        if not line.get("msg_id"):
+            line["msg_id"] = uuid.uuid4().hex[:12]
+        if "ts" not in line and "timestamp" not in line:
+            line["ts"] = time.time()
+        if not isinstance(line.get("seq"), int):
+            line["seq"] = _next_msg_seq(cid)
+        return line
 
     @staticmethod
     def _safe_name(name: str) -> str:
@@ -512,7 +545,8 @@ class ConversationStore:
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+                line = self._stamp_line(cid, dict(m))
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
     @staticmethod
     def _prefix_content(content, prefix: str):
@@ -695,7 +729,7 @@ class ConversationStore:
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
-                xf = self._transform_for_shared(m)
+                xf = self._stamp_line(cid, self._transform_for_shared(m))
                 f.write(json.dumps(xf, ensure_ascii=False) + "\n")
 
     def _read_ctx_file(self, path: Path) -> List[Dict]:
@@ -939,16 +973,16 @@ class ConversationStore:
         self._conv_dir(cid, user_id=user_id).mkdir(parents=True, exist_ok=True)
 
         # Write transcript
-        meta_line = {"t": "meta", "user_id": user_id, "status": status or "idle",
-                     "created_at": _now, "ts": _now,
-                     "expires_at": _now + ttl if ttl > 0 else 0}
+        meta_line = self._stamp_line(cid, {
+            "t": "meta", "user_id": user_id, "status": status or "idle",
+            "created_at": _now, "ts": _now,
+            "expires_at": _now + ttl if ttl > 0 else 0,
+        })
         with open(self._transcript_path(cid), "w", encoding="utf-8") as f:
             f.write(json.dumps(meta_line, ensure_ascii=False) + "\n")
             for m in messages:
                 self._validate_message(m)
-                line = {"t": "msg", **m}
-                if "ts" not in line and "timestamp" not in line:
-                    line["ts"] = _now
+                line = self._stamp_line(cid, {"t": "msg", **m})
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
         # Write extras with metadata
@@ -1028,11 +1062,9 @@ class ConversationStore:
             # 1. Transcript — everything except synthetic context injections.
             if src_type != "context":
                 is_private = has_tool_calls or role == "tool"
-                line = {"t": "msg", **msg}
+                line = self._stamp_line(cid, {"t": "msg", **msg})
                 if is_private:
                     line["private"] = True
-                if "ts" not in line:
-                    line["ts"] = now
                 with open(self._transcript_path(cid), "a",
                           encoding="utf-8") as f:
                     f.write(json.dumps(line, ensure_ascii=False) + "\n")
@@ -1390,10 +1422,18 @@ class ConversationStore:
         for line in lines:
             t = line.get("t", "")
             if t == "msg_patch":
-                mid = line.get("msg_id", "")
+                # New format uses target_msg_id for the link; legacy
+                # data-on-disk (pre-invariant-fix) still squats msg_id.
+                mid = line.get("target_msg_id") or line.get("msg_id", "")
                 if mid:
-                    patches[mid] = {k: v for k, v in line.items()
-                                    if k not in ("t", "msg_id")}
+                    # Drop the patch's own identity fields from the
+                    # payload we fold back into the target msg — they
+                    # describe the patch line, not the message.
+                    patches[mid] = {
+                        k: v for k, v in line.items()
+                        if k not in ("t", "msg_id", "target_msg_id",
+                                     "ts", "seq")
+                    }
                 continue
             if t == "trace_update":
                 tid = line.get("trace_id", "")
@@ -1650,11 +1690,22 @@ class ConversationStore:
                     "offset": offset, "limit": limit, "has_more": has_more}
 
     def patch_message(self, cid: str, msg_id: str, **fields) -> None:
-        """Patch attributes on an existing message (appends a msg_patch record)."""
+        """Append a msg_patch record referencing an existing message.
+
+        The patch is itself a first-class line: it carries its OWN
+        msg_id / ts / seq (stamped by _stamp_line) and references the
+        target via ``target_msg_id``. Before, the patch squatted the
+        target's msg_id which broke the "every line has unique
+        msg_id + monotonic seq" invariant and tripped seq bootstrap.
+        """
         if not msg_id or not fields:
             return
         lock = self._get_conv_lock(cid)
-        line = {"t": "msg_patch", "msg_id": msg_id, "ts": time.time(), **fields}
+        line = self._stamp_line(cid, {
+            "t": "msg_patch",
+            "target_msg_id": msg_id,
+            **fields,
+        })
         with lock:
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
@@ -2097,10 +2148,11 @@ class ConversationStore:
         lock = self._get_conv_lock(cid)
         # msg_id is required for the context editor's delete path
         # (selection sends msg_ids; without one the row is not deletable).
-        line = {"t": "msg", "role": "sub_agent_trace", "display_only": True,
-                "msg_id": _uuid.uuid4().hex,
-                "trace_id": trace_id, "source": source, "content": "",
-                "trace": [], "ts": time.time()}
+        line = self._stamp_line(cid, {
+            "t": "msg", "role": "sub_agent_trace", "display_only": True,
+            "trace_id": trace_id, "source": source, "content": "",
+            "trace": [],
+        })
         with lock:
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
@@ -2110,8 +2162,12 @@ class ConversationStore:
                              entry_data: Dict, content_update: str = "") -> bool:
         entry_data.setdefault("ts", time.time())
         lock = self._get_conv_lock(cid)
-        line = {"t": "trace_update", "trace_id": trace_id,
-                "entry": entry_data, "content_update": content_update}
+        line = self._stamp_line(cid, {
+            "t": "trace_update",
+            "trace_id": trace_id,
+            "entry": entry_data,
+            "content_update": content_update,
+        })
         with lock:
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")

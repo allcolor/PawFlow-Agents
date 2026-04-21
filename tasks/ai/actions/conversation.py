@@ -699,13 +699,17 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                             first = json.loads(tr_lines[0])
                         except Exception:
                             first = None
+                        from core.conversation_store import ConversationStore as _CS
                         if isinstance(first, dict) and first.get("t") == "meta":
                             first["created_at"] = now_ts
                             first["ts"] = now_ts
+                            first = _CS._stamp_line(cid, first)
                             tr_lines[0] = json.dumps(first, ensure_ascii=False)
                         else:
-                            meta = {"t": "meta", "user_id": user_id, "status": "idle",
-                                    "created_at": now_ts, "expires_at": 0, "ts": now_ts}
+                            meta = _CS._stamp_line(cid, {
+                                "t": "meta", "user_id": user_id, "status": "idle",
+                                "created_at": now_ts, "expires_at": 0, "ts": now_ts,
+                            })
                             tr_lines.insert(0, json.dumps(meta, ensure_ascii=False))
                         tr_path.write_text("\n".join(tr_lines) + "\n", encoding="utf-8")
                 except Exception:
@@ -887,10 +891,11 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             # conversation appears at the top of the sidebar with the
             # correct date. An import is semantically a new conversation.
             now_ts = time.time()
-            meta_line = json.dumps({
+            from core.conversation_store import ConversationStore as _CS
+            meta_line = json.dumps(_CS._stamp_line(cid, {
                 "t": "meta", "user_id": user_id, "status": "idle",
                 "created_at": now_ts, "expires_at": 0, "ts": now_ts,
-            }, ensure_ascii=False)
+            }), ensure_ascii=False)
             (conv_dir / "transcript.jsonl").write_text(meta_line + "\n" + "\n".join(transcript_lines) + "\n", encoding="utf-8")
             # Shared context file: agents resuming the imported conv read
             # their LLM context from here (or from their own agent dir, which

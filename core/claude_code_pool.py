@@ -331,6 +331,13 @@ class ClaudeCodePool:
                 _bridge_mounts += [
                     "-v", f"{_translated}:/opt/pawflow/{_rf}:ro"]
 
+        logger.info(
+            "[pool] bridge dev-mounts (%d): %s",
+            len(_bridge_mounts) // 2,
+            " | ".join(_bridge_mounts[i] + " " + _bridge_mounts[i+1]
+                       for i in range(0, len(_bridge_mounts), 2))
+            if _bridge_mounts else "NONE")
+
         run_args = [
             "-d",  # detached
             "--rm",  # auto-remove on exit — prevents dead-container pileup

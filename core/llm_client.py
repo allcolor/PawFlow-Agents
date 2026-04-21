@@ -192,25 +192,26 @@ class LLMMessage:
         return ""
 
 
-# Process-global monotonic counter — the only true ordering source when
-# two messages are created within the same time.time() tick (Windows ~16ms
-# resolution makes collisions common during fast tool-use loops). Combined
-# with `timestamp`, the (ts, seq) pair gives a strict, deterministic order
-# rooted in CREATION time — independent of enqueue/persist races.
+# Per-conversation monotonic seq counters. `seq` is the only strict
+# ordering source when two messages share a time.time() tick (Windows
+# ~16ms resolution makes collisions common during fast tool-use loops).
+# Combined with `ts`, (ts, seq) gives a deterministic creation-order
+# within ONE conversation — no other conversation's seq is ever
+# compared, so there is no need (and it would just be wasted I/O) to
+# maintain a global sequence across the whole store.
+#
+# Each counter bootstraps itself on first use by tailing the single
+# file it belongs to (~100ms on UNC paths, vs. several seconds for the
+# old all-conversations scan). Conversations never touched in a given
+# process pay zero cost.
 import itertools as _itertools
 import threading as _threading
-_msg_seq_counter = None  # lazy-init from disk on first call
+_msg_seq_counters: Dict[str, Any] = {}
 _msg_seq_lock = _threading.Lock()
-_msg_seq_bootstrapped = False
 
 
 def _tail_last_line(path) -> bytes:
-    """Read the last non-empty line of a file without loading it fully.
-
-    Reads backwards in chunks from the end until we find a newline
-    that precedes real content. Avoids the O(file_size) cost of a
-    full scan when all we want is the latest record.
-    """
+    """Read the last non-empty line of a file without loading it fully."""
     try:
         with open(path, "rb") as fh:
             fh.seek(0, 2)  # end
@@ -226,8 +227,6 @@ def _tail_last_line(path) -> bytes:
                 fh.seek(pos)
                 data = fh.read(size - pos)
                 block *= 2
-            # Drop trailing newline(s), take the segment after the last
-            # remaining newline.
             stripped = data.rstrip(b"\r\n")
             idx = stripped.rfind(b"\n")
             return stripped[idx + 1:] if idx >= 0 else stripped
@@ -235,78 +234,72 @@ def _tail_last_line(path) -> bytes:
         return b""
 
 
-def _bootstrap_seq_from_disk() -> int:
-    """Return the max seq across every conversation jsonl on disk.
+def _bootstrap_seq_for(conversation_id: str) -> int:
+    """Return the max seq already persisted for `conversation_id`.
 
-    Called once at the first _next_msg_seq() to continue numbering from
-    where the previous process left off — a fresh itertools.count(1)
-    after a restart would hand out seq=1,2,3… which collide (as
-    tiebreakers) with legacy low-seq messages and can scramble ordering.
-
-    Fast path: jsonl files are append-only with strictly increasing seq
-    per writer, so the highest seq lives on the last non-empty line. We
-    tail each file (constant-size read from the end) rather than
-    streaming the whole file — a large transcript used to cost ~10s of
-    blocking work inside the first http request that wanted to stamp a
-    message (see [agent_loop] SLOW action=msg took=10s).
+    Tails the transcript jsonl (the authoritative per-conv append-only
+    file) — one file open, constant-size read. Per-agent context files
+    never hold higher seqs than transcript, so transcript alone is a
+    safe bootstrap source.
     """
+    if not conversation_id:
+        return 0
     try:
         import core.paths as _p
         import json as _json
-        import time as _tmod
-        import logging as _lmod
-        _log = _lmod.getLogger(__name__)
-        _t0 = _tmod.monotonic()
+        from pathlib import Path as _Path
+        transcript = None
         root = _p.CONVERSATIONS_DIR
-        if not root.exists():
+        if root.exists():
+            # conversations/<user>/<conv_id>/transcript.jsonl
+            for candidate in root.rglob(f"{conversation_id}/transcript.jsonl"):
+                transcript = candidate
+                break
+        if transcript is None or not transcript.exists():
             return 0
-        max_seq = 0
-        n_files = 0
-        for f in root.rglob("*.jsonl"):
-            n_files += 1
-            try:
-                last = _tail_last_line(f)
-                if not last:
-                    continue
-                try:
-                    m = _json.loads(last.decode("utf-8", errors="replace"))
-                except Exception:
-                    continue
-                s = m.get("seq") or 0
-                if isinstance(s, int) and s > max_seq:
-                    max_seq = s
-            except Exception:
-                continue
-        _dt = (_tmod.monotonic() - _t0) * 1000
-        if _dt > 200:
-            _log.info(
-                "[seq-bootstrap] scanned %d jsonl in %.0fms → max_seq=%d",
-                n_files, _dt, max_seq)
-        return max_seq
+        last = _tail_last_line(transcript)
+        if not last:
+            return 0
+        try:
+            m = _json.loads(last.decode("utf-8", errors="replace"))
+        except Exception:
+            return 0
+        s = m.get("seq") or 0
+        return s if isinstance(s, int) else 0
     except Exception:
         return 0
 
 
-def _next_msg_seq() -> int:
-    global _msg_seq_counter, _msg_seq_bootstrapped
+def _next_msg_seq(conversation_id: str) -> int:
+    """Return the next seq for `conversation_id`.
+
+    First call for a conv bootstraps the counter from disk (tail of
+    that single transcript). Empty conversation_id = special "no-conv"
+    bucket (rare — internal messages that don't belong to any
+    transcript); those share one counter.
+    """
+    cid = conversation_id or ""
     with _msg_seq_lock:
-        if not _msg_seq_bootstrapped:
-            _start = _bootstrap_seq_from_disk() + 1
-            _msg_seq_counter = _itertools.count(_start)
-            _msg_seq_bootstrapped = True
-        return next(_msg_seq_counter)
+        counter = _msg_seq_counters.get(cid)
+        if counter is None:
+            _start = _bootstrap_seq_for(cid) + 1
+            counter = _itertools.count(_start)
+            _msg_seq_counters[cid] = counter
+        return next(counter)
 
 
-def stamp_message(msg: Dict[str, Any]) -> Dict[str, Any]:
+def stamp_message(msg: Dict[str, Any],
+                   conversation_id: str = "") -> Dict[str, Any]:
     """Set ts + seq + msg_id on a message dict at CREATION time.
 
-    Use this at every site that builds a raw dict instead of going
-    through LLMMessage. Returns the same dict for chaining.
+    `conversation_id` selects which per-conv seq counter to use. Callers
+    that know the conversation MUST pass it; omitting it falls back to
+    the shared "no-conv" counter (only correct for messages that will
+    never land in any transcript, e.g. transient internal probes).
 
-    Every message MUST have all three fields. A message that is missing
-    even one is treated as freshly-created and gets fresh values for
-    the three — there is no "partial" state, no "already stamped once"
-    compromise. On-disk invariant: every persisted message has ts+seq+msg_id.
+    Every message MUST have ts + seq + msg_id. A message missing even
+    one is treated as freshly-created and gets fresh values for all
+    three atomically — no "partial" / "already stamped once" state.
 
     Producer rule: stamp at the moment the message is conceptually
     created, NOT at enqueue. Otherwise (ts, seq) ordering on disk
@@ -314,12 +307,10 @@ def stamp_message(msg: Dict[str, Any]) -> Dict[str, Any]:
     """
     import time as _time
     import uuid as _uuid
-    # Treat partial state as fresh: stamp everything atomically so we
-    # never end up with (ts set, seq unset) or similar impossible states.
     if not (msg.get("ts") or msg.get("timestamp")) or not msg.get("seq") \
             or not msg.get("msg_id"):
         msg["ts"] = msg.get("ts") or msg.get("timestamp") or _time.time()
-        msg["seq"] = msg.get("seq") or _next_msg_seq()
+        msg["seq"] = msg.get("seq") or _next_msg_seq(conversation_id)
         msg["msg_id"] = msg.get("msg_id") or _uuid.uuid4().hex[:12]
     return msg
 

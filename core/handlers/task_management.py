@@ -60,7 +60,8 @@ def _activate_dependents(conversation_id: str, completed_task_id: str,
             from core.llm_client import stamp_message
             ConversationWriter.for_conversation(sub_cid).enqueue_message(
                 stamp_message({"role": "user", "content": _msg,
-                               "msg_id": _task_uuid.uuid4().hex[:12]}))
+                               "msg_id": _task_uuid.uuid4().hex[:12]},
+                              sub_cid))
         activated.append(tid)
         try:
             _append_task_log(conversation_id, tid, {

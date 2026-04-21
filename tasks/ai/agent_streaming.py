@@ -96,7 +96,7 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
                 "source": {**(source or {}), "narrator": True},
                 "msg_id": msg_id,
                 "display_only": True,
-            })
+            }, conversation_id)
             _narr_sse = {
                 "type": "narration",
                 "data": {
@@ -303,7 +303,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                            "target_agent": _target or None},
                 "msg_id": _user_msg_id or None,
                 "channel": "web",
-            })
+            }, conversation_id)
             _stream_mark("stamped")
             if _attachments_body:
                 _stamped_user["attachments"] = _attachments_body
@@ -389,7 +389,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                                "target_agent": _target or None},
                     "msg_id": _user_msg_id or None,
                     "channel": "web",
-                })
+                }, conversation_id)
                 if _attachments_body:
                     _stamped_user["attachments"] = _attachments_body
             PendingQueue.for_agent(conversation_id, _target or "").enqueue(

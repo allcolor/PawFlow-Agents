@@ -824,7 +824,7 @@ class SpawnAgentsHandler(ToolHandler):
             "content": message,
             "msg_id": _msg_id,
             "source": _src,
-        })
+        }, conversation_id)
         # Publish a live SSE event AFTER the message lands on disk so
         # the webchat renders the delegate block in real time without
         # ever racing ahead of persisted state (visible => persisted).
@@ -1026,7 +1026,7 @@ class SpawnAgentsHandler(ToolHandler):
             "msg_id": msg_id,
             "display_only": True,
             "source": _source,
-        })
+        }, conv_id)
         _sse_evt = {
             "type": "new_message",
             "cid": _sse_cid,
@@ -1085,7 +1085,7 @@ class SpawnAgentsHandler(ToolHandler):
                 "content": text,
                 "source": source or {"type": "agent_delegate"},
                 "msg_id": msg_id or None,
-            })
+            }, conv_id)
             PendingQueue.for_agent(conv_id, caller_agent or "").enqueue(
                 msg, source="delegate_reply")
         except Exception as e:

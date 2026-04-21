@@ -268,7 +268,7 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
                     "name": _call_tool_name,
                     "arguments": _call_tool_args,
                 }],
-            })
+            }, _call_conv_id)
             _tc_sse = {
                 "type": "tool_call",
                 "data": {
@@ -303,7 +303,7 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
                 "role": "tool",
                 "content": result_text,
                 "tool_call_id": tc_id,
-            })
+            }, _call_conv_id)
             _tr_sse = {
                 "type": "tool_result",
                 "data": {

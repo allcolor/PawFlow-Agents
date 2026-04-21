@@ -176,7 +176,7 @@ class SpawnAgentTask(BaseTask):
                         "content": result.response,
                         "source": source,
                         "msg_id": _sa_msg_id,
-                    }),
+                    }, conv_id),
                     agent_name=agent_name,
                     sse_events=[_done_sse])
 
@@ -219,7 +219,7 @@ class SpawnAgentTask(BaseTask):
                     "name": self.config.get("_service_id", "flow"),
                     "target_agent": agent_name,
                 },
-            }),
+            }, conv_id),
             agent_name=agent_name)
 
         # Notify so the agentLoop picks it up at next checkpoint

@@ -261,7 +261,8 @@ class AgentPollerMixin:
                     from core.llm_client import stamp_message
                     ConversationWriter.for_conversation(entry_key).enqueue_message(
                         stamp_message({"role": "user", "content": "continue",
-                                       "msg_id": _poll_uuid.uuid4().hex[:12]}),
+                                       "msg_id": _poll_uuid.uuid4().hex[:12]},
+                                      entry_key),
                         wait=True)
                     messages_data = store.load(entry_key)
                 if not messages_data:

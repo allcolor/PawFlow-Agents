@@ -936,7 +936,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         if context_data is None:
             context_data = store.load(conv_id, user_id=user_id) or []
         from core.llm_client import stamp_message
-        msg = stamp_message({"role": role, "content": content})
+        msg = stamp_message({"role": role, "content": content}, conv_id)
         if before_msg_id:
             _idx = next((i for i, m in enumerate(context_data)
                           if m.get("msg_id") == before_msg_id), -1)

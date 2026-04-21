@@ -169,7 +169,7 @@ class AgentSideChannelsMixin:
             _btw_writer = ConversationWriter.for_conversation(conversation_id)
             _btw_writer.enqueue_message(
                 stamp_message({"role": "user", "content": f"[btw] {question}",
-                               "source": _btw_user_source}),
+                               "source": _btw_user_source}, conversation_id),
                 agent_name=agent_name, user_id=user_id)
             # btw_done SSE fires AFTER the assistant reply hits disk
             # (visible ⇒ persisted invariant).
@@ -184,7 +184,7 @@ class AgentSideChannelsMixin:
             }
             _btw_writer.enqueue_message(
                 stamp_message({"role": "assistant", "content": response.content,
-                               "source": _btw_agent_source}),
+                               "source": _btw_agent_source}, conversation_id),
                 agent_name=agent_name, user_id=user_id,
                 sse_events=[_btw_done_sse])
             logger.info(f"[btw:{conversation_id[:8]}] {agent_name} answered "

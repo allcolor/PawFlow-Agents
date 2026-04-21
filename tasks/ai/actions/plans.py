@@ -608,7 +608,7 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
         _stamped = stamp_message({
             "role": "user", "content": _user_msg, "msg_id": _msg_id,
             "source": _src,
-        })
+        }, conv_id)
         _sse_evt = {"type": "new_message", "data": {
             "role": "user", "content": _user_msg, "msg_id": _msg_id,
             "source": _src, "ts": _stamped.get("ts"),

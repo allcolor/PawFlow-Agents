@@ -97,7 +97,7 @@ class PublishMessageTask(BaseTask):
                 "content": text,
                 "source": source,
                 "msg_id": _pm_msg_id,
-            }),
+            }, conv_id),
             agent_name=agent_name,
             sse_events=[{"type": "done", "data": _done_evt}])
 

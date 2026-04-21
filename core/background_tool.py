@@ -340,7 +340,7 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
             "content": _result_content[:500],
             "tool_call_id": tc_id,
             "source": {"type": "system", "name": "background"},
-        })
+        }, conv_id)
         ConversationWriter.for_conversation(conv_id).enqueue_message(tool_msg)
     except Exception as e:
         logger.error("[bg-tool] failed to write tool_result to transcript: %s", e)
@@ -404,7 +404,7 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
                 "role": "user",
                 "content": content,
                 "source": {"type": "system", "name": "background"},
-            })
+            }, conv_id)
             # 1. Transcript + shared + other agents' contexts (all routes
             #    covered by append_message based on role+source).
             ConversationWriter.for_conversation(conv_id).enqueue_message(msg)

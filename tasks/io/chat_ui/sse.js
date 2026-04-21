@@ -1463,6 +1463,48 @@ function connectSSE(cid, onReady, opts) {
 // Old _dispatchCommandResult and _renderLoadedHistory removed —
 // all dispatch is now via RxJS action$ subscriptions in each module.
 
+// Track the server's process-start epoch. Every /api/agent + /api/ui
+// ack carries server_start_time; if it moves we know the backend was
+// restarted while the browser wasn't looking — its EventSource may
+// still appear OPEN (half-open TCP) but the new process has no
+// subscribers for this conversation, so events get buffered and the
+// UI never sees them. Force a clean reconnect and let replay deliver
+// the buffered events.
+//
+// We also force-reconnect when we observe *any* response but the
+// EventSource is not in OPEN state — covers the case where the browser
+// is still inside its auto-retry backoff and a fresh reconnect gets us
+// talking to the live backend immediately.
+var _lastServerStartTime = null;
+function _checkServerRestart(data) {
+  // start_time is only stamped on /api/agent + /api/ui acks. Responses
+  // from other paths still fall through here and trigger the sseDown
+  // branch, which is what we want — any live backend response is a
+  // signal we can piggyback on to notice a dead EventSource.
+  let restarted = false;
+  if (data && typeof data.server_start_time === 'number') {
+    const prev = _lastServerStartTime;
+    _lastServerStartTime = data.server_start_time;
+    restarted = prev !== null && prev !== data.server_start_time;
+  }
+  const sseDown = conversationId && (!eventSource ||
+    eventSource.readyState !== EventSource.OPEN);
+  if (!restarted && !sseDown) return;
+  if (restarted) {
+    console.warn('[SSE] server restart detected (start_time changed) — '
+      + 'reconnecting SSE');
+  } else {
+    console.warn('[SSE] stale connection (readyState=' +
+      (eventSource ? eventSource.readyState : 'none') +
+      ') while backend is reachable — reconnecting');
+  }
+  if (conversationId) {
+    if (eventSource) { try { eventSource.close(); } catch (_) {} eventSource = null; }
+    if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+    connectSSE(conversationId);
+  }
+}
+
 function _scheduleSSEReconnect(cid) {
   if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
   // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 60s

@@ -75,7 +75,10 @@ function cmdAgent(text, parts) {
       addMsg('user', resumeMsg);
       fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) })
         .then(r => r.json())
-        .then(data => { if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); } })
+        .then(data => {
+          if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); }
+          _checkServerRestart(data);
+        })
         .catch(e => addMsg('error', e.message))
         .finally(() => { sending = false; });
     }
@@ -295,6 +298,7 @@ function cmdAgentMsg(agentName, text) {
       if (data.error) { addMsg('error', data.error); sending = false; return; }
       if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); }
       if (data.message_count) serverMsgCount = data.message_count;
+      _checkServerRestart(data);
     }).catch(e => {
       addMsg('error', 'Failed to send to agent: ' + e.message);
       sending = false;

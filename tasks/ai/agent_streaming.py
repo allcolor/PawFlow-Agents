@@ -9,6 +9,14 @@ import threading
 import time
 from typing import Dict, Any, List, Optional
 
+
+# One-shot epoch taken when the module is first imported. Included in
+# every /api/agent ack so the client can detect a server restart: the
+# UI's SSE may believe it's still connected (half-open TCP) while the
+# new process has no subscribers for its conversation. On mismatch the
+# client force-reconnects SSE and picks up the buffered events.
+SERVER_START_TIME = time.time()
+
 from core import FlowFile
 from core.llm_client import (
     LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
@@ -352,7 +360,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 if _active_client.send_user_message(_user_text, attachments=_attachments):
                     logger.debug("[agent:%s] preempted active CC session", conversation_id[:8])
                     ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
-                                      "message_count": ConversationStore.instance().message_count(conversation_id)})
+                                      "message_count": ConversationStore.instance().message_count(conversation_id),
+                                      "server_start_time": SERVER_START_TIME})
                     flowfile.set_content(ack.encode("utf-8"))
                     flowfile.set_attribute("agent.conversation_id", conversation_id)
                     return [flowfile]
@@ -384,7 +393,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 dict(_stamped_user), source="http")
             bus.publish_event(conversation_id, "message_queued", {"conversation_id": conversation_id})
             ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
-                              "message_count": ConversationStore.instance().message_count(conversation_id)})
+                              "message_count": ConversationStore.instance().message_count(conversation_id),
+                              "server_start_time": SERVER_START_TIME})
             flowfile.set_content(ack.encode("utf-8"))
             flowfile.set_attribute("agent.conversation_id", conversation_id)
             return [flowfile]
@@ -464,7 +474,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             logger.info(f"Agent poller started (interval={poll_interval}s)")
 
         ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
-                          "message_count": ConversationStore.instance().message_count(conversation_id)})
+                          "message_count": ConversationStore.instance().message_count(conversation_id),
+                          "server_start_time": SERVER_START_TIME})
         _stream_mark("ack_built")
         flowfile.set_content(ack.encode("utf-8"))
         flowfile.set_attribute("agent.conversation_id", conversation_id)

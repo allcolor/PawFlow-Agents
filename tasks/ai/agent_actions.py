@@ -160,8 +160,10 @@ class AgentActionsMixin:
 
         threading.Thread(target=_bg, daemon=True,
                          name=f"cmd-{action}-{conversation_id[:8]}").start()
+        from tasks.ai.agent_streaming import SERVER_START_TIME
         flowfile.set_content(json.dumps({
             "status": "accepted", "action": action,
+            "server_start_time": SERVER_START_TIME,
         }).encode())
         return [flowfile]
 

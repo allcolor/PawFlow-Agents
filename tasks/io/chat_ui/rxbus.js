@@ -69,6 +69,10 @@ function action$(actionName, params = {}, opts = {}) {
     }
     // Read response body — if it's NOT {"status":"accepted"}, it's a sync result
     return resp.json().then(data => {
+      // Server-restart probe: every response carries server_start_time
+      // so we can detect a backend bounce before the UI notices SSE is
+      // stale. Defined in sse.js; may not be loaded in embedded views.
+      try { if (typeof _checkServerRestart === 'function') _checkServerRestart(data); } catch (_) {}
       if (data && data.status !== 'accepted') {
         // Sync response — tag with call's conv + id so the filter
         // below routes it to the right subscriber.

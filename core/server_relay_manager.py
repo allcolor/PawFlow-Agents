@@ -6,18 +6,17 @@ a persistent workspace on the server without requiring a local install.
 Each container:
 - Runs tools/pawflow_relay.py in manual mode (env vars, not CLI args)
 - Mounts a named Docker volume: pawflow_ws_{conv_id}
-- Connects back to the server's WSListener via wss://
+- Connects back to the main HTTPListenerService via ws(s)://host:<main>/ws/relay/<id>
 - Has exec enabled (--allow-exec)
 
 Metadata is stored in ConversationStore extra:
-  key="server_relay" value={relay_id, container_id, port, token, user_id}
+  key="server_relay" value={relay_id, container_id, token, user_id, ws_url, ...}
 
 Max 1 server relay per conversation (enforced in spawn).
 """
 
 import logging
 import secrets
-import socket
 import subprocess
 import threading
 from typing import Any, Dict, Optional
@@ -55,23 +54,8 @@ def _cfg(key: str) -> str:
         return _DEFAULTS[key]
 
 
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
-def _docker_cmd() -> list:
-    import os
-    if os.name == "nt":
-        return ["wsl", "docker"]
-    return ["docker"]
-
-
-def _get_host_ip() -> str:
-    """IP that Docker containers can use to reach the host."""
-    from core.docker_utils import get_host_ip
-    return get_host_ip()
+from core.docker_utils import docker_cmd, get_host_ip, to_host_path
+from pawflow_relay.utils import find_free_port
 
 
 def _volume_name(conv_id: str) -> str:
@@ -107,7 +91,7 @@ class ServerRelayManager:
     ) -> Dict[str, Any]:
         """Spawn a server relay for this conversation.
 
-        Returns metadata dict: {relay_id, container_id, port, ws_url}.
+        Returns metadata dict: {relay_id, container_id, ws_url, ...}.
         Raises if relay already exists or Docker unavailable.
         """
         from core.conversation_store import ConversationStore
@@ -126,15 +110,28 @@ class ServerRelayManager:
             logger.info("Dead server relay found for conv %s — re-spawning", conv_id)
             self._cleanup_container(existing.get("container_id", ""), remove=True)
 
-        port = _find_free_port()
-        desktop_host_port = _find_free_port()
-        audio_host_port = _find_free_port()
+        # VNC / audio host ports are real Docker publish ports — must be free.
+        desktop_host_port = find_free_port()
+        audio_host_port = find_free_port()
         token = secrets.token_urlsafe(32)
         relay_id = _relay_id_for_conv(conv_id)
         path = f"/ws/relay/{relay_id}"
         container_name = _container_name(conv_id)
         volume = _volume_name(conv_id)
-        host_ip = _get_host_ip()
+        host_ip = get_host_ip()
+
+        # Resolve the REAL main HTTPListenerService port + TLS state. The
+        # relay container registers its WS route on that listener, so the URL
+        # we hand it must point at the main listener — not a random free port.
+        from services.http_listener_service import HTTPListenerService
+        _listeners = HTTPListenerService.all_instances()
+        if not _listeners:
+            raise RuntimeError(
+                "Cannot spawn server relay: no HTTPListenerService running. "
+                "Start the main listener first.")
+        _main_listener = next(iter(_listeners.values()))
+        main_port = _main_listener._port
+        ws_scheme = "wss" if _main_listener.is_ssl else "ws"
 
         # Read config live from global_parameters.json
         relay_image = _cfg("server_relay_image")
@@ -145,7 +142,6 @@ class ServerRelayManager:
 
         # Resolve tools/ dir to absolute path (relative to server CWD)
         import os as _os
-        from core.docker_utils import to_host_path
         tools_abs = _os.path.abspath(relay_tools_dir)
         # In DinD, translate container path to host path for Docker daemon
         tools_host = to_host_path(tools_abs)
@@ -154,12 +150,13 @@ class ServerRelayManager:
         _TOOLS_IN_CONTAINER = "/opt/pawflow"
         _SCRIPT_IN_CONTAINER = f"{_TOOLS_IN_CONTAINER}/pawflow_relay.py"
 
-        # Register the WS listener on the server BEFORE spawning the container
-        self._install_relay_service(user_id, relay_id, port, path, token)
+        # Register the relay service on the server BEFORE spawning the container.
+        # RelayService.connect() registers a route on the main listener; the
+        # registered `port` here is purely informational — the real listening
+        # port is the main listener's, not this value.
+        self._install_relay_service(user_id, relay_id, main_port, path, token)
 
-        # Determine if WSListener uses TLS (if cryptography is installed)
-        ws_scheme = self._detect_ws_scheme()
-        ws_url_for_container = f"{ws_scheme}://{host_ip}:{port}{path}"
+        ws_url_for_container = f"{ws_scheme}://{host_ip}:{main_port}{path}"
 
         # Spawn the Docker container
         # Mount tools/ → /opt/pawflow/ so all relay modules (fs_actions, fs_exec, …)
@@ -198,7 +195,7 @@ class ServerRelayManager:
             relay_image,
             "python3", _SCRIPT_IN_CONTAINER,
         ])
-        cmd = _docker_cmd() + ["run"] + docker_run_args
+        cmd = docker_cmd() + ["run"] + docker_run_args
         logger.info("Spawning server relay container: %s  cmd=%s", container_name, cmd)
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=30,
@@ -217,7 +214,6 @@ class ServerRelayManager:
             "relay_id": relay_id,
             "container_id": container_id,
             "container_name": container_name,
-            "port": port,
             "path": path,
             "token": token,
             "user_id": user_id,
@@ -257,7 +253,7 @@ class ServerRelayManager:
         if volume:
             try:
                 subprocess.run(
-                    _docker_cmd() + ["volume", "rm", "-f", volume],
+                    docker_cmd() + ["volume", "rm", "-f", volume],
                     capture_output=True, timeout=15,
                 )
             except Exception as e:
@@ -361,7 +357,7 @@ class ServerRelayManager:
             return False
         try:
             result = subprocess.run(
-                _docker_cmd() + ["inspect", "--format", "{{.State.Running}}", container_id],
+                docker_cmd() + ["inspect", "--format", "{{.State.Running}}", container_id],
                 capture_output=True, text=True, timeout=5,
             )
             return result.returncode == 0 and result.stdout.strip() == "true"
@@ -373,7 +369,7 @@ class ServerRelayManager:
             return
         try:
             subprocess.run(
-                _docker_cmd() + ["stop", container_id],
+                docker_cmd() + ["stop", container_id],
                 capture_output=True, timeout=15,
             )
         except Exception as e:
@@ -381,7 +377,7 @@ class ServerRelayManager:
         if remove:
             try:
                 subprocess.run(
-                    _docker_cmd() + ["rm", "-f", container_id],
+                    docker_cmd() + ["rm", "-f", container_id],
                     capture_output=True, timeout=10,
                 )
             except Exception as e:
@@ -405,11 +401,3 @@ class ServerRelayManager:
             ServiceRegistry.get_instance().uninstall("user", user_id, relay_id)
         except Exception as e:
             logger.warning("Could not uninstall relay service %s: %s", relay_id, e)
-
-    def _detect_ws_scheme(self) -> str:
-        """Detect whether WSListener will use TLS (wss) or plain (ws)."""
-        try:
-            from cryptography import x509  # noqa: F401
-            return "wss"
-        except ImportError:
-            return "ws"

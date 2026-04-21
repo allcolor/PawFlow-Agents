@@ -207,7 +207,17 @@ class ToolRelayService(BaseService):
                                   name=f'tool-relay-{msg.get("method", "?")}').start()
         except Exception as e:
             _err_str = str(e)
-            if '0 bytes read' in _err_str:
+            # Peer-initiated close (normal end of session): treat as info.
+            # Covers "0 bytes read" (clean FIN), ECONNRESET (WinError 10054
+            # on Windows — container killed mid-read), IncompleteReadError
+            # from StreamReader, and ConnectionResetError from the sync
+            # reader pump.
+            _peer_close = (
+                '0 bytes read' in _err_str
+                or '10054' in _err_str
+                or 'reset by peer' in _err_str.lower()
+                or isinstance(e, (ConnectionResetError, asyncio.IncompleteReadError)))
+            if _peer_close:
                 logger.info('Tool relay disconnected: %s (closed by peer)', remote)
             else:
                 logger.error('Tool relay connection error (%s): %s', remote, e, exc_info=True)

@@ -338,7 +338,17 @@ class RelayService(BaseService):
             await self._relay_main_loop(reader, writer, service)
         except Exception as e:
             _err_str = str(e)
-            if '0 bytes read' in _err_str:
+            # Peer-initiated close is the nominal end of a relay session:
+            # clean FIN ("0 bytes read"), ECONNRESET (WinError 10054 —
+            # container killed mid-read on Windows), or StreamReader's
+            # IncompleteReadError. Log as info so we don't spam ERROR
+            # tracebacks for routine shutdowns.
+            _peer_close = (
+                '0 bytes read' in _err_str
+                or '10054' in _err_str
+                or 'reset by peer' in _err_str.lower()
+                or isinstance(e, (ConnectionResetError, asyncio.IncompleteReadError)))
+            if _peer_close:
                 logger.info('Relay disconnected: %s (closed by peer)', remote)
             else:
                 logger.error('Relay connection error (%s): %s', remote, e, exc_info=True)

@@ -14,11 +14,14 @@ import json
 
 import pytest
 
-from core.bucket_store import BucketStore
+from core.bucket_store import (
+    BucketStore, L1_TRIGGER_MSGS, BUCKET_OUTPUT_TARGET,
+    HEADER_BUDGET, ROLLUP_TRIGGER_COUNT,
+)
 
 
-def _fresh_store(tmp_path, agent="claude"):
-    return BucketStore.get(tmp_path / "conv1", agent)
+def _fresh_store(tmp_path, conv_dir_name="conv1"):
+    return BucketStore.get(tmp_path / conv_dir_name)
 
 
 def test_cold_start_has_no_objects(tmp_path):
@@ -40,7 +43,7 @@ def test_add_bucket_persists_and_updates_meta(tmp_path):
     assert (s._dir / "meta.json").exists()
     assert (s._dir / "B_00001.json").exists()
     # Fresh instance reads state from disk
-    s2 = BucketStore.get(tmp_path / "conv1", "claude")
+    s2 = BucketStore.get(tmp_path / "conv1")
     assert s2.object_count == 1
     assert s2.last_seq == 500
 
@@ -165,12 +168,12 @@ def test_wipe_clears_everything(tmp_path):
 
 
 def test_disk_is_source_of_truth(tmp_path):
-    a1 = BucketStore.get(tmp_path / "conv1", "claude")
+    a1 = BucketStore.get(tmp_path / "conv1")
     a1.add_bucket(1, 500, 1.0, 2.0, summary="x" * 100)
     assert a1.last_seq == 500
     import shutil
     shutil.rmtree(a1._dir)
-    a2 = BucketStore.get(tmp_path / "conv1", "claude")
+    a2 = BucketStore.get(tmp_path / "conv1")
     assert a2.last_seq == 0
     assert a2.object_count == 0
 
@@ -184,10 +187,72 @@ def test_get_rollup_input_excludes_last(tmp_path):
     assert len(inputs) == 3
     assert [d["bucket_id"] for d in inputs] == ["B_00001", "B_00002", "B_00003"]
     # Below 3 objects → []
-    s2 = _fresh_store(tmp_path, agent="other")
+    s2 = _fresh_store(tmp_path, conv_dir_name="conv2")
     s2.add_bucket(1, 10, 0.0, 1.0, summary="only")
     s2.add_bucket(11, 20, 1.0, 2.0, summary="two")
     assert s2.get_rollup_input() == []
+
+
+def test_absolute_constants_are_sane():
+    """Sanity bounds — changing these changes behaviour across all convs."""
+    assert L1_TRIGGER_MSGS > 0
+    assert BUCKET_OUTPUT_TARGET > 0
+    assert HEADER_BUDGET >= 10 * BUCKET_OUTPUT_TARGET
+    assert ROLLUP_TRIGGER_COUNT > 2
+
+
+def test_add_bucket_persists_tool_trace(tmp_path):
+    s = _fresh_store(tmp_path)
+    trace = {
+        "edits": {"src/foo.py": 3}, "creates": ["new.py"], "reads": {},
+        "deletes": [], "commands": [], "delegations": [],
+    }
+    s.add_bucket(1, 100, 0.0, 1.0, summary="narrative", tool_trace=trace)
+    docs = s.get_all_summaries()
+    assert docs[0]["tool_trace"] == trace
+
+
+def test_add_bucket_without_tool_trace_stores_none(tmp_path):
+    s = _fresh_store(tmp_path)
+    s.add_bucket(1, 10, 0.0, 1.0, summary="no trace")
+    docs = s.get_all_summaries()
+    assert docs[0]["tool_trace"] is None
+
+
+def test_assemble_header_renders_tool_trace(tmp_path):
+    s = _fresh_store(tmp_path)
+    s.add_bucket(1, 100, 0.0, 1.0, summary="narrative of phase 1",
+                  tool_trace={"edits": {"src/x.py": 2}, "creates": [],
+                                "reads": {}, "deletes": [], "commands": [],
+                                "delegations": []})
+    header = s.assemble_summary_header()
+    assert "narrative of phase 1" in header
+    assert "Files edited:" in header
+    assert "src/x.py" in header
+
+
+def test_estimated_header_chars_sums_summaries(tmp_path):
+    s = _fresh_store(tmp_path)
+    s.add_bucket(1, 10, 0.0, 1.0, summary="a" * 100)
+    s.add_bucket(11, 20, 1.0, 2.0, summary="b" * 200)
+    assert s.estimated_header_chars() == 300
+
+
+def test_rollup_accepts_merged_tool_trace(tmp_path):
+    s = _fresh_store(tmp_path)
+    for i in range(4):
+        s.add_bucket(i * 10 + 1, (i + 1) * 10, float(i), float(i) + 1,
+                      summary=f"b{i}",
+                      tool_trace={"edits": {f"f{i}.py": 1}, "creates": [],
+                                    "reads": {}, "deletes": [], "commands": [],
+                                    "delegations": []})
+    merged = {"edits": {"f0.py": 1, "f1.py": 1, "f2.py": 1}, "creates": [],
+              "reads": {}, "deletes": [], "commands": [], "delegations": []}
+    sid = s.rollup_all_except_last("merged narrative", tool_trace=merged)
+    assert sid == "SB_00001"
+    docs = s.get_all_summaries()
+    sb = next(d for d in docs if d["bucket_id"] == sid)
+    assert sb["tool_trace"] == merged
 
 
 def test_get_collapse_input_returns_every_object(tmp_path):
@@ -198,6 +263,6 @@ def test_get_collapse_input_returns_every_object(tmp_path):
     inputs = s.get_collapse_input()
     assert [d["bucket_id"] for d in inputs] == ["B_00001", "B_00002", "B_00003"]
     # Below 2 → []
-    s2 = _fresh_store(tmp_path, agent="other")
+    s2 = _fresh_store(tmp_path, conv_dir_name="conv2")
     s2.add_bucket(1, 10, 0.0, 1.0, summary="only")
     assert s2.get_collapse_input() == []

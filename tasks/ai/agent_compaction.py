@@ -647,7 +647,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 from core.bucket_store import BucketStore
                 from core.conversation_store import ConversationStore
                 _conv_dir = ConversationStore.instance()._conv_dir(conversation_id)
-                _bucket_store = BucketStore.get(_conv_dir, agent_name)
+                _bucket_store = BucketStore.get(_conv_dir)
                 _historical_header = _bucket_store.assemble_summary_header()
                 # Pre-filter by seq. seq is a strictly-monotonic global
                 # counter (bootstrap from disk + monotonic per-process +

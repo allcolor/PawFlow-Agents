@@ -1,6 +1,11 @@
-"""Hierarchical compaction buckets — per-(conversation, agent) pyramidal summary cache.
+"""Hierarchical compaction buckets — per-conversation pyramidal summary cache.
 
-Buckets are the storage layer used by _compact's reduce-to-cap loop:
+One pyramid per conversation, shared across all agents. Input comes from
+shared.jsonl (agent-neutral, tool-stripped) and is enriched with a tool
+activity digest at build time. The BucketStore itself is pure storage
+— building is owned by core/bg_bucket_builder.py.
+
+Buckets are the storage layer used by the reduce-to-cap pipeline:
   * add_bucket(...)               — fresh level-1 summary of raw messages.
   * rollup_all_except_last(text)  — collapse [B_1..B_{N-1}] into one SB,
                                     keeping the most recent object.
@@ -12,30 +17,59 @@ meta.json v2 schema:
     {"version": 2, "last_seq": int, "last_ts": float,
      "objects": ["SB_00001", "B_00007", ...],
      "_next_b_num": int, "_next_sb_num": int}
+
+Bucket doc also carries an optional `tool_trace` (structured activity
+record produced by core/tool_activity_digest.py).
 """
 
 import json
 import logging
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-class BucketStore:
-    """Per-agent pyramidal summary cache for a single conversation."""
+# ── Absolute sizing constants (NOT relative to any agent's ctx) ──
+# Pyramid is shared across agents: sizing is decoupled from each agent's
+# max_tokens. A small-ctx agent will simply fall through to the private
+# squeeze path more often — by design.
+#
+# L1_TRIGGER_MSGS: shared-msg count since last bucket that triggers a
+#   new level-1 bucket in the bg worker. 150 aligns with CC's
+#   compact_boundary cadence (~150-200 CC msgs ≈ ~75-125 shared msgs
+#   after tool stripping), so the first bg bucket typically lands
+#   before the second CC compact of a new conversation.
+# BUCKET_OUTPUT_TARGET: target token size of each L1 / SB summary.
+# HEADER_BUDGET: total pyramid header size budget (sum of summaries).
+#   Above this, the bg worker fires a rollup to consolidate.
+# ROLLUP_TRIGGER_COUNT: hard ceiling on object count (safety net even
+#   if summaries stay small).
+L1_TRIGGER_MSGS = 150
+BUCKET_OUTPUT_TARGET = 2000
+HEADER_BUDGET = 30000
+ROLLUP_TRIGGER_COUNT = 30
 
-    def __init__(self, conv_dir: Path, agent_name: str):
-        self._dir = conv_dir / "summaries" / (agent_name or "_shared")
+
+class BucketStore:
+    """Per-conversation pyramidal summary cache (single _shared pyramid).
+
+    Writers: only core.bg_bucket_builder.BgBucketWriter should call
+    mutating methods (add_bucket, rollup_all_except_last, collapse_all,
+    wipe). Agents read-only via assemble_summary_header() / properties.
+    """
+
+    def __init__(self, conv_dir: Path):
+        self._dir = conv_dir / "summaries" / "_shared"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._meta_path = self._dir / "meta.json"
         self._lock = threading.Lock()
         self._meta = self._load_meta()
 
     @classmethod
-    def get(cls, conv_dir: Path, agent_name: str) -> "BucketStore":
-        return cls(conv_dir, agent_name)
+    def get(cls, conv_dir: Path) -> "BucketStore":
+        return cls(conv_dir)
 
     def _empty_meta(self) -> Dict:
         return {"version": 2, "last_seq": 0, "last_ts": 0.0,
@@ -85,7 +119,8 @@ class BucketStore:
                    last_msg_id: str = "",
                    msg_count: int = 0,
                    model: str = "",
-                   prompt_version: str = "v1") -> str:
+                   prompt_version: str = "v1",
+                   tool_trace: Optional[Dict[str, Any]] = None) -> str:
         """Append a new level-1 object (fresh compact output).
 
         The three breadcrumb fields (first_msg_id / last_msg_id /
@@ -93,6 +128,11 @@ class BucketStore:
         assemble_summary_header — the agent can quote them back via
         read_history(action="range", from_msg_id=..., to_msg_id=...) to
         reach the exact original messages behind this summary.
+
+        tool_trace (optional) carries a structured activity record
+        (see core/tool_activity_digest.py) — files edited/created/read,
+        commands run, delegations. Persisted alongside the narrative
+        summary for UI rendering and rollup aggregation.
         """
         with self._lock:
             n = int(self._meta.get("_next_b_num", 1))
@@ -112,6 +152,7 @@ class BucketStore:
                 "model": model,
                 "prompt_version": prompt_version,
                 "summary": summary,
+                "tool_trace": tool_trace or None,
             }
             self._write_doc(bid, doc)
             self._meta["objects"].append(bid)
@@ -125,13 +166,18 @@ class BucketStore:
             return bid
 
     def rollup_all_except_last(self, super_summary: str, model: str = "",
-                                prompt_version: str = "v1") -> Optional[str]:
+                                prompt_version: str = "v1",
+                                tool_trace: Optional[Dict[str, Any]] = None
+                                ) -> Optional[str]:
         """Consolidate [B_1..B_{N-1}] into one SB, keep B_N untouched.
 
-        Used by _compact step 2 when the output is still above the cap
-        after adding a fresh bucket. Requires ≥ 3 objects — with 2, go
-        straight to collapse_all instead. A newly-produced SB can itself
-        be consolidated on a later rollup, giving the pyramidal shape.
+        Fires from the bg worker when pyramid header > HEADER_BUDGET
+        or object_count > ROLLUP_TRIGGER_COUNT. Requires ≥ 3 objects
+        — with 2, go straight to collapse_all. A newly-produced SB can
+        itself be consolidated on a later rollup, giving the pyramid.
+
+        tool_trace, if supplied, carries the merged activity trace
+        (see core.tool_activity_digest.merge_traces) of the sources.
         """
         with self._lock:
             ids = list(self._meta.get("objects", []))
@@ -157,6 +203,7 @@ class BucketStore:
                 "model": model,
                 "prompt_version": prompt_version,
                 "summary": super_summary,
+                "tool_trace": tool_trace or None,
             }
             self._write_doc(sid, doc)
             for bid in to_consolidate:
@@ -192,6 +239,19 @@ class BucketStore:
                 out.append(d)
         return out
 
+    def estimated_header_chars(self) -> int:
+        """Rough char budget of the current pyramid header.
+
+        Used by the bg worker's rollup-trigger check — compares to
+        HEADER_BUDGET (in chars, via a 1-token≈4-char approximation
+        done at the caller). Cheaper than a full tokenizer pass.
+        """
+        total = 0
+        for d in self.get_all_summaries():
+            s = d.get("summary", "") or ""
+            total += len(s)
+        return total
+
     def get_rollup_input(self) -> List[Dict]:
         """Docs for rollup_all_except_last (every object but the last).
 
@@ -213,12 +273,14 @@ class BucketStore:
         return [d for d in (self._read_bucket(b) for b in ids) if d]
 
     def collapse_all(self, combined_summary: str, model: str = "",
-                     prompt_version: str = "v1") -> Optional[str]:
+                     prompt_version: str = "v1",
+                     tool_trace: Optional[Dict[str, Any]] = None
+                     ) -> Optional[str]:
         """Replace every object with a single new SB.
 
-        Used by _compact step 3 when rollup_all_except_last wasn't
-        enough and the output is still above cap with 2 buckets.
-        Requires ≥ 2 objects.
+        Fires from the bg worker as a last-resort consolidation when
+        rollup_all_except_last isn't enough to bring the pyramid back
+        under HEADER_BUDGET. Requires ≥ 2 objects.
         """
         with self._lock:
             ids = list(self._meta.get("objects", []))
@@ -242,6 +304,7 @@ class BucketStore:
                 "model": model,
                 "prompt_version": prompt_version,
                 "summary": combined_summary,
+                "tool_trace": tool_trace or None,
             }
             self._write_doc(sid, doc)
             for bid in ids:
@@ -352,6 +415,20 @@ class BucketStore:
                     f"from_msg_id=\"{_fid}\", to_msg_id=\"{_lid}\").]\n"
                 )
             parts.append(f"{d.get('summary', '')}\n")
+            # Render structured tool_trace as an appended block. The
+            # summarizer prompt already asks for a "## Files & operations"
+            # section in the narrative, but the structured form is the
+            # authoritative record (narrative may abridge), so we emit
+            # both. Cheap duplication (~few hundred chars per bucket).
+            _tt = d.get("tool_trace")
+            if _tt:
+                try:
+                    from core.tool_activity_digest import (
+                        format_activity_digest, is_empty)
+                    if not is_empty(_tt):
+                        parts.append(format_activity_digest(_tt) + "\n")
+                except Exception:
+                    logger.debug("tool_trace render failed", exc_info=True)
         return "".join(parts)
 
     def wipe(self):

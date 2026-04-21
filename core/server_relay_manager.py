@@ -151,10 +151,9 @@ class ServerRelayManager:
         _SCRIPT_IN_CONTAINER = f"{_TOOLS_IN_CONTAINER}/pawflow_relay.py"
 
         # Register the relay service on the server BEFORE spawning the container.
-        # RelayService.connect() registers a route on the main listener; the
-        # registered `port` here is purely informational — the real listening
-        # port is the main listener's, not this value.
-        self._install_relay_service(user_id, relay_id, main_port, path, token)
+        # RelayService.connect() registers /ws/relay/<service_id> on the main
+        # HTTPListenerService — no separate port or path to configure.
+        self._install_relay_service(user_id, relay_id, token)
 
         ws_url_for_container = f"{ws_scheme}://{host_ip}:{main_port}{path}"
 
@@ -214,7 +213,6 @@ class ServerRelayManager:
             "relay_id": relay_id,
             "container_id": container_id,
             "container_name": container_name,
-            "path": path,
             "token": token,
             "user_id": user_id,
             "ws_url": ws_url_for_container,
@@ -383,7 +381,7 @@ class ServerRelayManager:
             except Exception as e:
                 logger.debug("Container rm error (%s): %s", container_id[:12], e)
 
-    def _install_relay_service(self, user_id: str, relay_id: str, port: int, path: str, token: str) -> None:
+    def _install_relay_service(self, user_id: str, relay_id: str, token: str) -> None:
         from core.service_registry import ServiceRegistry
         registry = ServiceRegistry.get_instance()
         registry.install(
@@ -391,7 +389,7 @@ class ServerRelayManager:
             scope_id=user_id,
             service_id=relay_id,
             service_type="relay",
-            config={"port": port, "path": path, "token": token, "mode": "readwrite"},
+            config={"token": token, "mode": "readwrite"},
             description="Server workspace relay (server-spawned)",
         )
 

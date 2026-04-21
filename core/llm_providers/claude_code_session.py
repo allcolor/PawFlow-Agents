@@ -544,18 +544,14 @@ class ClaudeCodeSessionMixin:
                 except Exception:
                     pass
 
-            # Create a fresh tool relay. Port in config is vestigial
-            # (the refactored ToolRelayService.connect registers a route
-            # on the main listener at /ws/tools/{service_id} and ignores
-            # its config port), but the service schema still lists it so
-            # we pass something sane to avoid a validation error.
+            # Create a fresh tool relay. ToolRelayService registers its
+            # WS route on the main HTTPListenerService at
+            # /ws/tools/{service_id} — no separate port or path.
             import uuid
             token = uuid.uuid4().hex
             service_id = "_tool_relay"
             reg.install(SCOPE_GLOBAL, "", service_id=service_id,
                         service_type="toolRelay", config={
-                "port": main_port,
-                "path": "/ws/tools",
                 "token": token,
                 "_service_id": service_id,
             }, description="Auto-created tool relay for Claude Code MCP bridge")

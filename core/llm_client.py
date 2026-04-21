@@ -155,30 +155,31 @@ class LLMMessage:
     thinking: str = ""  # LLM thinking/reasoning output (part of context, visible in transcript)
     is_error: bool = False  # True = LLM error message (displayed as error in UI)
     timestamp: float = 0.0  # creation time (epoch seconds)
-    seq: int = 0  # process-global monotonic creation order — tiebreaker when ts collides
+    seq: int = 0  # per-conversation monotonic — minted at creation from conversation_id's counter
+    conversation_id: str = ""  # the conv this message belongs to (required at creation)
 
     def __post_init__(self):
-        # Invariant: every non-system message carries msg_id + timestamp + seq
-        # from creation. System prompts are ephemeral (rebuilt from the agent
-        # definition at each load) and exempt — if missing, they get fresh
-        # stamps here since they'll never be persisted as the source of
-        # truth anyway. A non-system message arriving here without seq is a
-        # producer bug — fail loud instead of inventing a fallback order.
+        # A message exists only inside a conversation. conversation_id
+        # is therefore required at every construction — no exception,
+        # no "legacy path", no reconstructed-from-disk shortcut (the
+        # caller that reads a jsonl knows the cid from the folder name
+        # and must pass it). (msg_id, timestamp, seq) are all stamped
+        # here so the three-invariant triplet is always complete once
+        # the object exists.
+        if not self.conversation_id:
+            raise ValueError(
+                f"LLMMessage(role={self.role!r}) requires "
+                f"conversation_id — a message has no existence "
+                f"outside a conversation. Thread the cid from the "
+                f"call site instead of leaving it empty.")
         if not self.msg_id:
             import uuid
             self.msg_id = uuid.uuid4().hex[:12]
         if not self.timestamp:
             import time
             self.timestamp = time.time()
-            self.seq = _next_msg_seq()
-        elif not self.seq:
-            if self.role == "system":
-                self.seq = _next_msg_seq()
-            else:
-                raise ValueError(
-                    f"LLMMessage reconstructed with timestamp={self.timestamp} "
-                    f"but no seq (role={self.role}) — producer bug, "
-                    f"seq must be set at creation")
+        if not self.seq:
+            self.seq = _next_msg_seq(self.conversation_id)
 
     @property
     def text_content(self) -> str:
@@ -192,21 +193,23 @@ class LLMMessage:
         return ""
 
 
-# Per-conversation monotonic seq counters. `seq` is the only strict
-# ordering source when two messages share a time.time() tick (Windows
-# ~16ms resolution makes collisions common during fast tool-use loops).
-# Combined with `ts`, (ts, seq) gives a deterministic creation-order
-# within ONE conversation — no other conversation's seq is ever
-# compared, so there is no need (and it would just be wasted I/O) to
-# maintain a global sequence across the whole store.
+# Per-conversation monotonic seq counters. `seq` is the strict
+# ordering axis inside ONE conversation (tiebreaker when ts collides
+# — Windows ~16ms resolution makes ts collisions common during fast
+# tool-use loops). Ordering is never compared across conversations,
+# so per-conv counters are enough and avoid the cost of a
+# whole-store scan at bootstrap.
 #
-# Each counter bootstraps itself on first use by tailing the single
-# file it belongs to (~100ms on UNC paths, vs. several seconds for the
-# old all-conversations scan). Conversations never touched in a given
-# process pay zero cost.
-import itertools as _itertools
+# Each counter bootstraps itself on first use from the conv's own
+# transcript.jsonl (one-time scan for the max seq already on disk).
+# Implementation is a plain int per cid (protected by a lock) rather
+# than itertools.count because we need to peek at the current maximum
+# — ConversationStore._stamp_line rejects any record whose seq would
+# violate the strict-monotonic invariant on disk, and that check
+# compares the caller-provided seq against the counter's current
+# state.
 import threading as _threading
-_msg_seq_counters: Dict[str, Any] = {}
+_msg_seq_state: Dict[str, int] = {}  # cid -> last seq handed out
 _msg_seq_lock = _threading.Lock()
 
 
@@ -259,34 +262,70 @@ def _bootstrap_seq_for(conversation_id: str) -> int:
         return 0
 
 
-def _next_msg_seq(conversation_id: str = "") -> int:
-    """Return the next seq for `conversation_id`.
+def _next_msg_seq(conversation_id: str) -> int:
+    """Return the next seq for ``conversation_id``.
 
-    First call for a conv bootstraps the counter from disk (tail of
-    that single transcript). Empty conversation_id = shared "no-conv"
-    bucket — used by LLMMessage.__post_init__ for transient in-memory
-    stamping where the producer hasn't threaded a conv id through yet.
-    Ordering across conversations never matters (seq is only a
-    tiebreaker within one transcript), so the shared bucket is safe.
+    First call for a conv bootstraps the counter from disk (one-time
+    scan of that conv's transcript for the historical max seq). Empty
+    ``conversation_id`` is rejected — a message has no existence
+    outside a conversation.
     """
-    cid = conversation_id or ""
+    if not conversation_id:
+        raise ValueError(
+            "_next_msg_seq requires a non-empty conversation_id — "
+            "a message exists only inside a conversation; thread the "
+            "cid from the call site.")
     with _msg_seq_lock:
-        counter = _msg_seq_counters.get(cid)
-        if counter is None:
-            _start = _bootstrap_seq_for(cid) + 1
-            counter = _itertools.count(_start)
-            _msg_seq_counters[cid] = counter
-        return next(counter)
+        cur = _msg_seq_state.get(conversation_id)
+        if cur is None:
+            cur = _bootstrap_seq_for(conversation_id)
+        cur += 1
+        _msg_seq_state[conversation_id] = cur
+        return cur
+
+
+def _peek_msg_seq(conversation_id: str) -> int:
+    """Return the last seq handed out for this conv (0 if none yet).
+
+    Used by ConversationStore._stamp_line to check that an incoming
+    record's seq respects the strict-monotonic invariant before it
+    lands on disk.
+    """
+    if not conversation_id:
+        return 0
+    with _msg_seq_lock:
+        cur = _msg_seq_state.get(conversation_id)
+        if cur is None:
+            cur = _bootstrap_seq_for(conversation_id)
+            _msg_seq_state[conversation_id] = cur
+        return cur
+
+
+def _observe_msg_seq(conversation_id: str, seq: int) -> None:
+    """Mark ``seq`` as the latest value handed out for this conv.
+
+    Called when a caller provided its own seq (e.g. an LLMMessage built
+    with conv_id at creation time, which stamped its seq via
+    _next_msg_seq then carried it through enqueue). Keeps the state in
+    sync so subsequent _next_msg_seq calls don't collide with seqs
+    that already escaped the counter.
+    """
+    if not conversation_id or not isinstance(seq, int):
+        return
+    with _msg_seq_lock:
+        cur = _msg_seq_state.get(conversation_id)
+        if cur is None:
+            cur = _bootstrap_seq_for(conversation_id)
+        if seq > cur:
+            _msg_seq_state[conversation_id] = seq
 
 
 def stamp_message(msg: Dict[str, Any],
-                   conversation_id: str = "") -> Dict[str, Any]:
+                   conversation_id: str) -> Dict[str, Any]:
     """Set ts + seq + msg_id on a message dict at CREATION time.
 
-    `conversation_id` selects which per-conv seq counter to use. Callers
-    that know the conversation MUST pass it; omitting it falls back to
-    the shared "no-conv" counter (only correct for messages that will
-    never land in any transcript, e.g. transient internal probes).
+    ``conversation_id`` is required: a message only exists inside a
+    conversation, and seq is drawn from that conv's counter.
 
     Every message MUST have ts + seq + msg_id. A message missing even
     one is treated as freshly-created and gets fresh values for all
@@ -296,6 +335,9 @@ def stamp_message(msg: Dict[str, Any],
     created, NOT at enqueue. Otherwise (ts, seq) ordering on disk
     diverges from the real creation order.
     """
+    if not conversation_id:
+        raise ValueError(
+            "stamp_message requires a non-empty conversation_id")
     import time as _time
     import uuid as _uuid
     if not (msg.get("ts") or msg.get("timestamp")) or not msg.get("seq") \

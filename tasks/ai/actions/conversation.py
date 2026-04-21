@@ -699,14 +699,14 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                             first = json.loads(tr_lines[0])
                         except Exception:
                             first = None
-                        from core.conversation_store import ConversationStore as _CS
+                        _cs_inst = store  # ConversationStore instance already in scope
                         if isinstance(first, dict) and first.get("t") == "meta":
                             first["created_at"] = now_ts
                             first["ts"] = now_ts
-                            first = _CS._stamp_line(cid, first)
+                            first = _cs_inst._stamp_line(cid, first)
                             tr_lines[0] = json.dumps(first, ensure_ascii=False)
                         else:
-                            meta = _CS._stamp_line(cid, {
+                            meta = _cs_inst._stamp_line(cid, {
                                 "t": "meta", "user_id": user_id, "status": "idle",
                                 "created_at": now_ts, "expires_at": 0, "ts": now_ts,
                             })
@@ -891,8 +891,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             # conversation appears at the top of the sidebar with the
             # correct date. An import is semantically a new conversation.
             now_ts = time.time()
-            from core.conversation_store import ConversationStore as _CS
-            meta_line = json.dumps(_CS._stamp_line(cid, {
+            meta_line = json.dumps(store._stamp_line(cid, {
                 "t": "meta", "user_id": user_id, "status": "idle",
                 "created_at": now_ts, "expires_at": 0, "ts": now_ts,
             }), ensure_ascii=False)

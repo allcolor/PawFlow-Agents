@@ -474,7 +474,8 @@ class AgentCoreMixin:
                     for idx, tc_id in enumerate(missing):
                         messages.insert(i + 1 + idx, LLMMessage(
                             role="tool", content="[Result unavailable — cleared by context compaction]",
-                            tool_call_id=tc_id))
+                            tool_call_id=tc_id,
+                            conversation_id=conversation_id))
                     _repaired = True
         if _repaired:
             logger.warning(f"[agent:{conversation_id[:8]}] repaired orphan tool_calls in context")
@@ -582,6 +583,8 @@ class AgentCoreMixin:
                                     role="user", content=_new_content,
                                     tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
                                     source=_um.source, msg_id=_um.msg_id,
+                                    timestamp=_um.timestamp, seq=_um.seq,
+                                    conversation_id=conversation_id,
                                 )
                             else:
                                 _uc = _um.content or ""
@@ -589,6 +592,8 @@ class AgentCoreMixin:
                                     role="user", content=_uc + _meta_note,
                                     tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
                                     source=_um.source, msg_id=_um.msg_id,
+                                    timestamp=_um.timestamp, seq=_um.seq,
+                                    conversation_id=conversation_id,
                                 )
                             break
 
@@ -605,6 +610,7 @@ class AgentCoreMixin:
                                 "provide your best answer with the information you have "
                                 "gathered. Mention what you were still working on so the "
                                 "user can ask you to continue if needed.]"),
+                            conversation_id=conversation_id,
                         ))
                         _irpt_resp = client.complete_stream(
                             messages=self._compact(
@@ -634,7 +640,8 @@ class AgentCoreMixin:
                         )
                         _append(LLMMessage(
                             role="assistant", content=_irpt_resp.content,
-                            source=_agent_source()))
+                            source=_agent_source(),
+                            conversation_id=conversation_id))
                         response_content = _irpt_resp.content
                         total_tokens_in += _irpt_resp.tokens_in
                         total_tokens_out += _irpt_resp.tokens_out
@@ -718,7 +725,8 @@ class AgentCoreMixin:
 
                         if text:
                             msg = LLMMessage(
-                                role="assistant", content=text, source=_src)
+                                role="assistant", content=text, source=_src,
+                                conversation_id=conversation_id)
                             _append(msg)  # persists immediately
                             turn_msgs.append(msg)
                             client._last_turn_msg_id = getattr(msg, "msg_id", "")
@@ -773,7 +781,8 @@ class AgentCoreMixin:
                             tc_msg = LLMMessage(
                                 role="assistant", content="",
                                 tool_calls=tc_objects, thinking=_thinking_text,
-                                source=_src)
+                                source=_src,
+                                conversation_id=conversation_id)
                             _append(tc_msg)
                             turn_msgs.append(tc_msg)
 
@@ -791,7 +800,8 @@ class AgentCoreMixin:
                                 tr_content = self._wrap_tool_output(_display_name, tr_content)
                                 tr_msg = LLMMessage(
                                     role="tool", content=tr_content,
-                                    tool_call_id=tc_obj.id)
+                                    tool_call_id=tc_obj.id,
+                                    conversation_id=conversation_id)
                                 tr_msg._tool_name = _display_name
                                 _append(tr_msg)
                                 turn_msgs.append(tr_msg)
@@ -1258,11 +1268,13 @@ class AgentCoreMixin:
                             _append(LLMMessage(role="assistant", content="",
                                                source=_agent_source(response.tokens_in, response.tokens_out,
                                                                     tok_cache_creation=response.cache_creation_tokens,
-                                                                    tok_cache_read=response.cache_read_tokens)))
+                                                                    tok_cache_read=response.cache_read_tokens),
+                                               conversation_id=conversation_id))
                             _append(LLMMessage(role="user", content=(
                                 "[System: You produced reasoning but no visible response or tool calls. "
                                 "You MUST either call a tool or provide a text response to the user. "
-                                "Do not just think — act or respond.]")))
+                                "Do not just think — act or respond.]"),
+                                conversation_id=conversation_id))
                             _need_more_retried = True
                             continue
                         _src_no_tools = _agent_source(response.tokens_in, response.tokens_out, response.model,
@@ -1292,7 +1304,8 @@ class AgentCoreMixin:
                         thinking=response.thinking or "",
                         source=_agent_source(response.tokens_in, response.tokens_out, response.model,
                                              tok_cache_creation=response.cache_creation_tokens,
-                                             tok_cache_read=response.cache_read_tokens)))
+                                             tok_cache_read=response.cache_read_tokens),
+                        conversation_id=conversation_id))
 
                     if poll_silent and response.tool_calls:
                         poll_silent = False
@@ -1323,7 +1336,8 @@ class AgentCoreMixin:
                         # any instructions embedded in file contents, web pages,
                         # grep matches, etc. are read as data, not as orders.
                         _wrapped = self._wrap_tool_output(tc.name, result_text)
-                        _tr_msg = LLMMessage(role="tool", content=_wrapped, tool_call_id=tc.id)
+                        _tr_msg = LLMMessage(role="tool", content=_wrapped, tool_call_id=tc.id,
+                                              conversation_id=conversation_id)
                         _tr_msg._tool_name = tc.name
                         _append(_tr_msg)
                         # Preview for SSE
@@ -1429,7 +1443,8 @@ class AgentCoreMixin:
                         # No assistant message at all — create one
                         _err_msg = LLMMessage(
                             role="assistant", content=_fatal_error_msg,
-                            is_error=True, source=_agent_source())
+                            is_error=True, source=_agent_source(),
+                            conversation_id=conversation_id)
                         new_messages.append(_err_msg)
                         messages.append(_err_msg)
                         _err_mid = _err_msg.msg_id
@@ -1455,7 +1470,8 @@ class AgentCoreMixin:
                             f"[System: Automatic continuation — round {current_round + 1}]\n"
                             f"Continue with your plan: {continuation_plan}\n"
                             f"Build on your previous findings. When done, provide a final synthesis. "
-                            f"If you still have more work, call schedule_continuation again.")))
+                            f"If you still have more work, call schedule_continuation again."),
+                        conversation_id=conversation_id))
                     response_content = ""
                     time.sleep(continuation_delay)
                     continue

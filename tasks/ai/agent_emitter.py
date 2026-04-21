@@ -439,6 +439,7 @@ class StreamEmitter(AgentEmitter):
                             role="user", content=_ptext,
                             source={"type": "user",
                                     "name": _pff.get_attribute("http.auth.principal") or self._user_id},
+                            conversation_id=self.conversation_id,
                         )
                         if _pmid:
                             _msg.msg_id = _pmid
@@ -487,6 +488,7 @@ class StreamEmitter(AgentEmitter):
             _msg = LLMMessage(
                 role=_role, content=_content, source=_src,
                 msg_id=_mid, timestamp=_ts or 0.0, seq=_seq or 0,
+                conversation_id=self.conversation_id,
             )
             append_fn(_msg)
 

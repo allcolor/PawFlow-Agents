@@ -439,7 +439,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             if _claude_has_session:
                 # CC has an active session — it already has the context.
                 # Just need a system prompt placeholder; user message appended later.
-                messages = [LLMMessage(role="system", content=system_prompt)]
+                messages = [LLMMessage(role="system", content=system_prompt,
+                                        conversation_id=conversation_id)]
                 base_message_count = 0
                 _context_diverged = True  # skip compact
                 logger.info(f"[context:{conversation_id[:8]}] CC session active — skipping context load")
@@ -505,7 +506,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     pass
 
         if not messages:
-            messages = [LLMMessage(role="system", content=system_prompt)]
+            messages = [LLMMessage(role="system", content=system_prompt,
+                                    conversation_id=conversation_id)]
             # Fresh conversation — everything is new (including system prompt)
             base_message_count = 0
         else:
@@ -534,10 +536,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     role="user",
                     content=f"[System: Project instructions from {_agent_md[0]}]\n\n{_agent_md[1]}",
                     source={"type": "context"},
+                    conversation_id=conversation_id,
                 ))
                 messages.insert(_inject_idx + 1, LLMMessage(
                     role="assistant", content="Understood.",
                     source={"type": "context"},
+                    conversation_id=conversation_id,
                 ))
 
         if use_conv_store and not conversation_id:
@@ -811,7 +815,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         "Continue from where you left off. "
                         "Do NOT restart work that was already done.]")
                     messages.append(LLMMessage(
-                        role="user", content=" ".join(_resume_parts)))
+                        role="user", content=" ".join(_resume_parts),
+                        conversation_id=conversation_id))
                     # Clear checkpoint after injection
                     _cp_store.set_extra(conversation_id, _cp_key, None)
                     logger.info(f"[context:{conversation_id[:8]}] injected resume from cancel checkpoint")
@@ -862,7 +867,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             if _is_btw:
                 user_source["btw"] = True
             _umid = flowfile.get_attribute("_user_msg_id") or (body_json.get("msg_id", "") if body_json else "")
-            _umsg = LLMMessage(role="user", content=user_content, source=user_source)
+            _umsg = LLMMessage(role="user", content=user_content, source=user_source,
+                               conversation_id=conversation_id)
             if _umid:
                 _umsg.msg_id = _umid
             messages.append(_umsg)
@@ -1216,7 +1222,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Final update: inject the fully-built system_prompt into messages[0]
         # (must happen AFTER all modifications: narration, resilience, FS context, memory digest)
         if messages and messages[0].role == "system":
-            messages[0] = LLMMessage(role="system", content=system_prompt)
+            messages[0] = LLMMessage(role="system", content=system_prompt,
+                                      conversation_id=conversation_id)
 
         # Resolve thinking_budget auto-detect (-1)
         if thinking_budget < 0:
@@ -1259,7 +1266,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         "Do NOT call any other tools until the plan is approved."
                     )
                     if messages and messages[0].role == "system":
-                        messages[0] = LLMMessage(role="system", content=system_prompt)
+                        messages[0] = LLMMessage(role="system", content=system_prompt,
+                                      conversation_id=conversation_id)
             except Exception:
                 pass
 

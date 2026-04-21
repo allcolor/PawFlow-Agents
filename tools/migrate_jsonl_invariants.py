@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""One-shot migration: enforce (msg_id, ts, seq) + strict-monotonic-seq
-invariants on every conversation jsonl file on disk.
+"""One-shot migration: enforce the five-field invariant
+(msg_id, ts, seq, conversation_id, user_id) + strict-monotonic-seq on
+every conversation jsonl file on disk.
 
 Run from the PawFlow root:
     python tools/migrate_jsonl_invariants.py
@@ -44,13 +45,36 @@ def _mk_msg_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def _derive_cid_user(path: Path) -> tuple:
+    """Infer (conversation_id, user_id) from the jsonl file's location.
+
+    The store layout is data/runtime/conversations/<user>/<conv>/...
+    Both fields are embedded in the path; we reflect them into every
+    record during migration so the invariant holds from the line
+    itself (no need to join against the folder structure).
+    """
+    parts = path.resolve().parts
+    # Find index of "conversations" dir
+    try:
+        idx = parts.index("conversations")
+    except ValueError:
+        return "", ""
+    if idx + 2 >= len(parts):
+        return "", ""
+    user = parts[idx + 1]
+    conv = parts[idx + 2]
+    return conv, user
+
+
 def _migrate_file(path: Path) -> dict:
     """Return a dict with per-file stats; rewrite file if anything changed."""
+    cid, user_id = _derive_cid_user(path)
     stats = {
         "file": str(path.relative_to(ROOT)),
         "lines": 0, "touched": 0,
         "minted_msg_id": 0, "dedup_msg_id": 0, "minted_ts": 0,
         "seq_reassigned": 0, "patch_renamed": 0,
+        "minted_cid": 0, "minted_user": 0,
     }
     try:
         raw_lines = path.read_text(encoding="utf-8").splitlines()
@@ -124,6 +148,15 @@ def _migrate_file(path: Path) -> dict:
         else:
             running_max_seq = s
 
+        # conversation_id + user_id embedded in the record itself
+        # (derived from the folder path).
+        if cid and not obj.get("conversation_id"):
+            obj["conversation_id"] = cid
+            stats["minted_cid"] += 1
+        if user_id and not obj.get("user_id"):
+            obj["user_id"] = user_id
+            stats["minted_user"] += 1
+
         if obj != before:
             stats["touched"] += 1
             changed = True
@@ -145,7 +178,8 @@ def main():
         return 0
     totals = {"files": 0, "touched_files": 0, "lines": 0, "touched": 0,
               "minted_msg_id": 0, "dedup_msg_id": 0, "minted_ts": 0,
-              "seq_reassigned": 0, "patch_renamed": 0}
+              "seq_reassigned": 0, "patch_renamed": 0,
+              "minted_cid": 0, "minted_user": 0}
     per_file = []
     for p in sorted(CONV_ROOT.rglob("*.jsonl")):
         s = _migrate_file(p)
@@ -157,17 +191,21 @@ def main():
         totals["minted_ts"] += s["minted_ts"]
         totals["seq_reassigned"] += s["seq_reassigned"]
         totals["patch_renamed"] += s["patch_renamed"]
+        totals["minted_cid"] += s["minted_cid"]
+        totals["minted_user"] += s["minted_user"]
         if s["touched"] > 0:
             totals["touched_files"] += 1
             per_file.append(s)
 
     print(f"Scanned {totals['files']} jsonl files, {totals['lines']} lines")
     print(f"Rewrote {totals['touched_files']} files, {totals['touched']} lines touched")
-    print(f"  minted msg_id:     {totals['minted_msg_id']}")
-    print(f"  de-duped msg_id:   {totals['dedup_msg_id']}")
-    print(f"  minted ts:         {totals['minted_ts']}")
-    print(f"  seq reassigned:    {totals['seq_reassigned']}")
-    print(f"  msg_patch renamed: {totals['patch_renamed']}")
+    print(f"  minted msg_id:          {totals['minted_msg_id']}")
+    print(f"  de-duped msg_id:        {totals['dedup_msg_id']}")
+    print(f"  minted ts:              {totals['minted_ts']}")
+    print(f"  seq reassigned:         {totals['seq_reassigned']}")
+    print(f"  msg_patch renamed:      {totals['patch_renamed']}")
+    print(f"  minted conversation_id: {totals['minted_cid']}")
+    print(f"  minted user_id:         {totals['minted_user']}")
     if per_file:
         print("\nTop 10 most-touched files:")
         per_file.sort(key=lambda x: -x["touched"])

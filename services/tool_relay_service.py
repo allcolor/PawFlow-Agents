@@ -1,12 +1,10 @@
 """Tool Relay Service — WebSocket listener for MCP bridge connections.
 
-Same pattern as RelayService: binds a port, accepts relay connections.
-The MCP bridge (running as Claude Code subprocess) connects here to
-execute PawFlow tools.
+Same pattern as RelayService: registers /ws/tools/<service_id> on the main
+HTTPListenerService and accepts MCP bridge connections (Claude Code
+subprocess) that execute PawFlow tools.
 
 Config:
-    port: int       — WS listener port (default: 9091, shared with filesystem)
-    path: str       — WS endpoint path (default: /ws/tools)
     token: str      — Shared token (bridge must match to connect)
 
 Protocol:
@@ -94,16 +92,11 @@ class ToolRelayService(BaseService):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self._port = int(config.get("port", 9091))
         self._service_id = config.get("_service_id", "")
-        self._connection = None  # WSListener ref
+        self._connection = None  # main HTTPListenerService ref (set by connect)
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
-            "port": {"type": "integer", "required": False, "default": 9091,
-                     "description": "WebSocket listener port (shared with filesystem relay)"},
-            "path": {"type": "string", "required": False, "default": "/ws/tools",
-                     "description": "WebSocket endpoint path"},
             "token": {"type": "string", "required": True, "sensitive": True,
                       "description": "Authentication token (MCP bridge must match)"},
         }

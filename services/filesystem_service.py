@@ -207,7 +207,6 @@ class RelayService(BaseService):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self._port = int(config.get("port", 9091))
         self._service_id = config.get("_service_id", "")
 
         self._project_context: Optional[Dict] = None  # auto-fetched on relay connect
@@ -225,10 +224,6 @@ class RelayService(BaseService):
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
-            "port": {"type": "integer", "required": False, "default": 9091,
-                     "description": "WebSocket listener port for relay connections"},
-            "path": {"type": "string", "required": False, "default": "/ws/relay",
-                     "description": "WebSocket endpoint path"},
             "token": {"type": "string", "required": True, "sensitive": True,
                       "description": "Authentication token (relay must match)"},
             "mode": {"type": "select", "required": False, "default": "readwrite",

@@ -82,27 +82,58 @@ class ConversationStore:
                 self._conv_locks[cid] = threading.RLock()
             return self._conv_locks[cid]
 
-    @staticmethod
-    def _stamp_line(cid: str, line: Dict[str, Any]) -> Dict[str, Any]:
-        """Enforce the (msg_id, ts, seq) invariant on a jsonl record.
+    def _stamp_line(self, cid: str, line: Dict[str, Any]) -> Dict[str, Any]:
+        """Enforce the five-field invariant on every persisted record:
+        ``(msg_id, ts, seq, conversation_id, user_id)``.
 
-        Every line persisted to transcript.jsonl (or a per-agent/shared
-        context file) MUST carry its OWN msg_id, ts and seq. Records
-        that reference another line (msg_patch → msg, trace_update →
-        trace) use a dedicated field for the linkage (target_msg_id,
-        trace_id) and never by sharing the referenced line's msg_id.
+        A message has no existence outside a conversation, and a
+        conversation belongs to a user — so every jsonl line must carry
+        its own identity (msg_id), its creation instant (ts), its
+        per-conv monotonic ordering (seq), its parent conversation
+        (conversation_id) and the owning user (user_id). Records that
+        reference another line (msg_patch → msg, trace_update → trace)
+        use a dedicated linkage field (target_msg_id, trace_id), never
+        by squatting another line's msg_id.
 
-        Fields already present are preserved; only missing ones are
-        minted here. ``cid`` is required so seq is drawn from the
-        correct per-conversation counter (see core.llm_client).
+        Fields already present on the record are preserved; missing
+        ones are minted. Passing cid="" is rejected — producers that
+        build a line without a cid have a bug at their call site; fix
+        there, not here.
         """
-        from core.llm_client import _next_msg_seq
+        if not cid:
+            raise ValueError(
+                "_stamp_line requires a non-empty conversation_id — "
+                "every persisted record lives inside a conversation")
+        from core.llm_client import (
+            _next_msg_seq, _peek_msg_seq, _observe_msg_seq)
         if not line.get("msg_id"):
             line["msg_id"] = uuid.uuid4().hex[:12]
         if "ts" not in line and "timestamp" not in line:
             line["ts"] = time.time()
-        if not isinstance(line.get("seq"), int):
+        incoming_seq = line.get("seq")
+        if isinstance(incoming_seq, int):
+            # Caller pre-stamped seq (e.g. LLMMessage that knew its
+            # conv_id at creation). Enforce the strict-monotonic
+            # invariant: the new line's seq MUST be greater than the
+            # last one already handed out for this conv. Silently
+            # re-numbering would mask producer bugs — raise with a
+            # stack so the offending call site is obvious.
+            last_seq = _peek_msg_seq(cid)
+            if incoming_seq <= last_seq:
+                raise ValueError(
+                    f"seq invariant violated on conversation {cid}: "
+                    f"incoming seq={incoming_seq} but last handed out "
+                    f"was {last_seq}. Seq must be strictly greater "
+                    f"than every prior record in this conv — the "
+                    f"caller stamped it from the wrong counter or "
+                    f"reused an old value.")
+            _observe_msg_seq(cid, incoming_seq)
+        else:
             line["seq"] = _next_msg_seq(cid)
+        if not line.get("conversation_id"):
+            line["conversation_id"] = cid
+        if not line.get("user_id"):
+            line["user_id"] = self._cid_user.get(cid, "")
         return line
 
     @staticmethod

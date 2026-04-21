@@ -824,7 +824,7 @@ class AgentLoopTask(
                 ctx_data = store.load_agent_context(conversation_id, _agent)
                 if not ctx_data:
                     ctx_data = store.load(conversation_id) or []
-                messages = self._deserialize_messages(ctx_data) if ctx_data else []
+                messages = self._deserialize_messages(ctx_data, conversation_id=conversation_id) if ctx_data else []
                 import uuid as _uuid_synth
                 _synth_msg_id = _uuid_synth.uuid4().hex[:12]
                 if not messages:

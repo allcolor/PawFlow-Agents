@@ -91,7 +91,7 @@ class AgentSideChannelsMixin:
 
             # 2. Build lightweight context: system + last N messages (truncated)
             raw = store.load(conversation_id) or []
-            recent = self._deserialize_messages(raw[-6:]) if len(raw) > 6 else self._deserialize_messages(raw)
+            recent = self._deserialize_messages(raw[-6:], conversation_id=conversation_id) if len(raw) > 6 else self._deserialize_messages(raw, conversation_id=conversation_id)
             # Truncate each message content to keep context small
             summary_parts = []
             for m in recent:

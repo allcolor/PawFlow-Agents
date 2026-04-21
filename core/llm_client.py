@@ -193,23 +193,25 @@ class LLMMessage:
         return ""
 
 
-# Per-conversation monotonic seq counters. `seq` is the strict
-# ordering axis inside ONE conversation (tiebreaker when ts collides
-# — Windows ~16ms resolution makes ts collisions common during fast
-# tool-use loops). Ordering is never compared across conversations,
-# so per-conv counters are enough and avoid the cost of a
-# whole-store scan at bootstrap.
+# Per-conversation monotonic seq state.
 #
-# Each counter bootstraps itself on first use from the conv's own
-# transcript.jsonl (one-time scan for the max seq already on disk).
-# Implementation is a plain int per cid (protected by a lock) rather
-# than itertools.count because we need to peek at the current maximum
-# — ConversationStore._stamp_line rejects any record whose seq would
-# violate the strict-monotonic invariant on disk, and that check
-# compares the caller-provided seq against the counter's current
-# state.
+# Two distinct values are tracked per conv:
+#
+# - _msg_seq_state[cid]     : last seq handed out by the counter.
+#                             Advances on every _next_msg_seq() call
+#                             (i.e. at LLMMessage creation time).
+# - _msg_seq_persisted[cid] : last seq actually written to disk for
+#                             this conv. Advances on every successful
+#                             _stamp_line() call.
+#
+# ConversationStore._stamp_line rejects a record whose seq is <=
+# _msg_seq_persisted[cid] (someone is re-using an already-written
+# seq). Comparing against _msg_seq_state would be wrong — the counter
+# hands out a value BEFORE the record is persisted, so issued == last
+# is the nominal case for the very record currently being written.
 import threading as _threading
-_msg_seq_state: Dict[str, int] = {}  # cid -> last seq handed out
+_msg_seq_state: Dict[str, int] = {}       # cid -> last seq handed out
+_msg_seq_persisted: Dict[str, int] = {}   # cid -> last seq actually written
 _msg_seq_lock = _threading.Lock()
 
 
@@ -284,31 +286,13 @@ def _next_msg_seq(conversation_id: str) -> int:
         return cur
 
 
-def _peek_msg_seq(conversation_id: str) -> int:
-    """Return the last seq handed out for this conv (0 if none yet).
-
-    Used by ConversationStore._stamp_line to check that an incoming
-    record's seq respects the strict-monotonic invariant before it
-    lands on disk.
-    """
-    if not conversation_id:
-        return 0
-    with _msg_seq_lock:
-        cur = _msg_seq_state.get(conversation_id)
-        if cur is None:
-            cur = _bootstrap_seq_for(conversation_id)
-            _msg_seq_state[conversation_id] = cur
-        return cur
-
-
 def _observe_msg_seq(conversation_id: str, seq: int) -> None:
-    """Mark ``seq`` as the latest value handed out for this conv.
+    """Bump the ISSUED-counter state if ``seq`` is greater than current.
 
-    Called when a caller provided its own seq (e.g. an LLMMessage built
-    with conv_id at creation time, which stamped its seq via
-    _next_msg_seq then carried it through enqueue). Keeps the state in
-    sync so subsequent _next_msg_seq calls don't collide with seqs
-    that already escaped the counter.
+    Called when a caller produced its own seq (e.g. an LLMMessage built
+    with conv_id at creation, which stamped its seq via _next_msg_seq
+    then carried it through enqueue). Keeps the issued counter in sync
+    so the next _next_msg_seq call doesn't collide.
     """
     if not conversation_id or not isinstance(seq, int):
         return
@@ -318,6 +302,40 @@ def _observe_msg_seq(conversation_id: str, seq: int) -> None:
             cur = _bootstrap_seq_for(conversation_id)
         if seq > cur:
             _msg_seq_state[conversation_id] = seq
+
+
+def _peek_persisted_seq(conversation_id: str) -> int:
+    """Return the highest seq actually written to disk for this conv.
+
+    Used by ConversationStore._stamp_line to enforce "strictly greater
+    than every prior record ON DISK". Bootstraps from the transcript
+    on first access so monotony holds across process restarts.
+    """
+    if not conversation_id:
+        return 0
+    with _msg_seq_lock:
+        cur = _msg_seq_persisted.get(conversation_id)
+        if cur is None:
+            cur = _bootstrap_seq_for(conversation_id)
+            _msg_seq_persisted[conversation_id] = cur
+        return cur
+
+
+def _record_persisted_seq(conversation_id: str, seq: int) -> None:
+    """Mark ``seq`` as the latest seq actually written to disk.
+
+    Called from _stamp_line once a record has been accepted. The next
+    write must strictly exceed this value; the counter can still hand
+    out the same value in the meantime (issued ≥ persisted always).
+    """
+    if not conversation_id or not isinstance(seq, int):
+        return
+    with _msg_seq_lock:
+        cur = _msg_seq_persisted.get(conversation_id)
+        if cur is None:
+            cur = _bootstrap_seq_for(conversation_id)
+        if seq > cur:
+            _msg_seq_persisted[conversation_id] = seq
 
 
 def stamp_message(msg: Dict[str, Any],

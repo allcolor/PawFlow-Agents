@@ -912,7 +912,7 @@ class AgentCoreMixin:
                                     conversation_id, _agent_name)
                             if not _full_ctx:
                                 raise RuntimeError("No context to compact")
-                            _full_messages = self._deserialize_messages(_full_ctx)
+                            _full_messages = self._deserialize_messages(_full_ctx, conversation_id=conversation_id)
                             logger.info("[agent:%s] Loaded %d messages from shared context for compaction",
                                         conversation_id[:8], len(_full_messages))
 

@@ -423,7 +423,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         if preloaded_messages is not None:
             # Caller provided messages (e.g. poller task sub-conversation)
             try:
-                messages = self._deserialize_messages(preloaded_messages)
+                messages = self._deserialize_messages(preloaded_messages, conversation_id=conversation_id)
                 # display_only messages already filtered by _deserialize_messages
                 logger.info(f"[context:{(conversation_id or '?')[:8]}] using preloaded messages: "
                             f"{len(messages)} messages")
@@ -451,7 +451,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
               if context_data is not None:
                 # Context has diverged — use it directly
                 try:
-                    messages = self._deserialize_messages(context_data)
+                    messages = self._deserialize_messages(context_data, conversation_id=conversation_id)
                     # Filter out display-only messages (sub-agent traces)
                     # display_only messages already filtered by _deserialize_messages
                     _context_diverged = True
@@ -471,7 +471,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 existing = store.load_shared_for_agent(conversation_id, _context_agent)
                 if existing:
                     try:
-                        messages = self._deserialize_messages(existing)
+                        messages = self._deserialize_messages(existing, conversation_id=conversation_id)
                         # Filter out display-only messages (sub-agent traces)
                         # display_only messages already filtered by _deserialize_messages
                         logger.info(f"[context:{conversation_id[:8]}] loaded messages as context: "
@@ -501,7 +501,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     for _e in _raw:
                         if isinstance(_e, dict):
                             _stamp(_e)
-                    messages = self._deserialize_messages(_raw)
+                    messages = self._deserialize_messages(_raw, conversation_id=conversation_id)
                 except (json.JSONDecodeError, KeyError):
                     pass
 

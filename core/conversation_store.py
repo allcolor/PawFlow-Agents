@@ -105,7 +105,8 @@ class ConversationStore:
                 "_stamp_line requires a non-empty conversation_id — "
                 "every persisted record lives inside a conversation")
         from core.llm_client import (
-            _next_msg_seq, _peek_msg_seq, _observe_msg_seq)
+            _next_msg_seq, _peek_persisted_seq, _record_persisted_seq,
+            _observe_msg_seq)
         if not line.get("msg_id"):
             line["msg_id"] = uuid.uuid4().hex[:12]
         if "ts" not in line and "timestamp" not in line:
@@ -113,23 +114,26 @@ class ConversationStore:
         incoming_seq = line.get("seq")
         if isinstance(incoming_seq, int):
             # Caller pre-stamped seq (e.g. LLMMessage that knew its
-            # conv_id at creation). Enforce the strict-monotonic
-            # invariant: the new line's seq MUST be greater than the
-            # last one already handed out for this conv. Silently
-            # re-numbering would mask producer bugs — raise with a
-            # stack so the offending call site is obvious.
-            last_seq = _peek_msg_seq(cid)
-            if incoming_seq <= last_seq:
+            # conv_id at creation). Enforce strict monotony against
+            # what is ACTUALLY on disk for this conv — re-using an
+            # already-persisted seq is the bug we want to catch.
+            # (Checking against the issued counter would false-positive
+            # on the very record currently being written, since the
+            # counter already handed its seq out at LLMMessage
+            # construction time.)
+            last_written = _peek_persisted_seq(cid)
+            if incoming_seq <= last_written:
                 raise ValueError(
                     f"seq invariant violated on conversation {cid}: "
-                    f"incoming seq={incoming_seq} but last handed out "
-                    f"was {last_seq}. Seq must be strictly greater "
-                    f"than every prior record in this conv — the "
-                    f"caller stamped it from the wrong counter or "
-                    f"reused an old value.")
+                    f"incoming seq={incoming_seq} but last persisted "
+                    f"was {last_written}. Seq must be strictly greater "
+                    f"than every prior record on disk — the caller "
+                    f"stamped it from the wrong counter or reused an "
+                    f"old value.")
             _observe_msg_seq(cid, incoming_seq)
         else:
             line["seq"] = _next_msg_seq(cid)
+        _record_persisted_seq(cid, line["seq"])
         if not line.get("conversation_id"):
             line["conversation_id"] = cid
         if not line.get("user_id"):

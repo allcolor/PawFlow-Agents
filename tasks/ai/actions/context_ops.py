@@ -248,7 +248,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         if not source_data:
             flowfile.set_content(json.dumps({"error": "No context data"}).encode())
             return [flowfile]
-        msgs = self._deserialize_messages(source_data)
+        msgs = self._deserialize_messages(source_data, conversation_id=conversation_id)
         max_ctx = _ctx_max_tokens(_ctx_agent)
 
         # Category breakdown
@@ -484,7 +484,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _compact_instructions = body.get("instructions", "")
 
         def _do_compact():
-            msgs = self._deserialize_messages(_compact_source)
+            msgs = self._deserialize_messages(_compact_source, conversation_id=conversation_id)
             before = len(msgs)
             estimated = self._estimate_tokens(msgs)
             # Single path: _compact now reads the BucketStore and only
@@ -559,12 +559,12 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     else:
                         store.save_agent_context(conv_id, name, list(_msgs))
                     _total = max(_total, len(_msgs))
-                deserialized = self._deserialize_messages(_rb_msgs) if _rb_msgs else []
+                deserialized = self._deserialize_messages(_rb_msgs, conversation_id=conversation_id) if _rb_msgs else []
                 estimated = self._estimate_tokens(deserialized)
                 store.invalidate_claude_sessions(conv_id)
                 return {"before": _total, "after": _total,
                         "tokens_after": estimated, "agent": "ALL"}
-            deserialized = self._deserialize_messages(_rb_msgs)
+            deserialized = self._deserialize_messages(_rb_msgs, conversation_id=conversation_id)
             estimated = self._estimate_tokens(deserialized)
             _ctx_save(conv_id, _rb_msgs, _rb_agent)
             # If agent context == shared context after rebuild, remove the
@@ -668,7 +668,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                             _total_chars += len(_t)
             estimated = _total_chars // 4  # rough
         else:
-            deserialized = self._deserialize_messages(context_data)
+            deserialized = self._deserialize_messages(context_data, conversation_id=conversation_id)
             estimated = self._estimate_tokens(deserialized)
         # Classify messages for display
         display_msgs = []
@@ -766,7 +766,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         if new_role:
             context_data[_idx]["role"] = new_role
         _ctx_save(conv_id, context_data, _ctx_agent)
-        deserialized = self._deserialize_messages(context_data)
+        deserialized = self._deserialize_messages(context_data, conversation_id=conversation_id)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
             "ok": True,
@@ -854,7 +854,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 if 0 <= idx < len(context_data):
                     context_data.pop(idx)
             _ctx_save(conv_id, context_data, _ctx_agent)
-            deserialized = self._deserialize_messages(context_data)
+            deserialized = self._deserialize_messages(context_data, conversation_id=conversation_id)
             estimated = self._estimate_tokens(deserialized)
             flowfile.set_content(json.dumps({
                 "ok": True,
@@ -889,7 +889,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         _ctx_save(conv_id, context_data, _ctx_agent)
-        deserialized = self._deserialize_messages(context_data)
+        deserialized = self._deserialize_messages(context_data, conversation_id=conversation_id)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
             "ok": True,
@@ -912,7 +912,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
         _ctx_save(conv_id, new_context, _ctx_agent)
-        deserialized = self._deserialize_messages(new_context)
+        deserialized = self._deserialize_messages(new_context, conversation_id=conversation_id)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
             "ok": True,
@@ -960,7 +960,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         else:
             context_data.append(msg)
         _ctx_save(conv_id, context_data, _ctx_agent)
-        deserialized = self._deserialize_messages(context_data)
+        deserialized = self._deserialize_messages(context_data, conversation_id=conversation_id)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
             "ok": True,
@@ -990,7 +990,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         def _do_restart():
-            deserialized = self._deserialize_messages(_rf_msgs)
+            deserialized = self._deserialize_messages(_rf_msgs, conversation_id=conversation_id)
             system_msgs = [m for m in deserialized if m.role == "system"]
             non_system = [m for m in deserialized if m.role != "system"]
             if keep_last == 0:

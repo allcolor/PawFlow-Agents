@@ -130,7 +130,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         def _do_resume():
-            deserialized = self._deserialize_messages(_rs_msgs)
+            deserialized = self._deserialize_messages(_rs_msgs, conversation_id=conversation_id)
             content_msgs = [m for m in deserialized if m.role != "system"]
             context_max = int(self.config.get("max_context_size", 64000))
             # Resolve agent's max_tokens
@@ -270,7 +270,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         def _do_clear():
-            deserialized = self._deserialize_messages(_clear_msgs)
+            deserialized = self._deserialize_messages(_clear_msgs, conversation_id=conversation_id)
             system_msgs = [m for m in deserialized if m.role == "system"]
             serialized_ctx = self._serialize_messages(system_msgs)
             # Clear shared context

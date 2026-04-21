@@ -91,6 +91,76 @@ def _sync_relay_scripts(service, reg_info):
 
 # Module-level WS frame helpers (shared by relay services)
 
+def _attach_sync_sock_to_loop(sock, loop):
+    """Bridge a sync socket (SSL or plain TCP) to an asyncio event loop.
+
+    Python 3.14's ``loop.connect_accepted_socket()`` rejects SSLSockets
+    outright (``TypeError: Socket cannot be of type SSLSocket``). Since
+    TLS is terminated by the HTTPListener *before* it hands the socket
+    to the WS route handler, we receive an already-wrapped socket with
+    decrypted bytes — exactly what asyncio refuses to accept.
+
+    The workaround: a background reader thread does blocking ``recv()``
+    on the socket and feeds bytes into an ``asyncio.StreamReader`` via
+    ``call_soon_threadsafe``. The writer is a minimal shim that does
+    blocking ``sendall()`` directly on the socket (WS frames are small,
+    so the in-thread send is fine).
+
+    Returns ``(reader, writer_shim)`` usable with ``_ws_recv_frame`` /
+    ``_ws_send_frame`` as if they came from ``connect_accepted_socket``.
+    """
+    sock.setblocking(True)
+    reader = asyncio.StreamReader(loop=loop)
+
+    def _read_pump():
+        try:
+            while True:
+                try:
+                    data = sock.recv(65536)
+                except OSError as e:
+                    loop.call_soon_threadsafe(reader.set_exception, e)
+                    return
+                if not data:
+                    loop.call_soon_threadsafe(reader.feed_eof)
+                    return
+                loop.call_soon_threadsafe(reader.feed_data, data)
+        except Exception as e:
+            loop.call_soon_threadsafe(reader.set_exception, e)
+
+    threading.Thread(
+        target=_read_pump, daemon=True,
+        name=f"ws-sock-read-{id(sock)}").start()
+
+    class _SockWriter:
+        __slots__ = ("_sock", "_closed")
+
+        def __init__(self, s):
+            self._sock = s
+            self._closed = False
+
+        def write(self, data):
+            if self._closed:
+                return
+            try:
+                self._sock.sendall(data)
+            except OSError:
+                self._closed = True
+
+        async def drain(self):
+            return
+
+        def close(self):
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+
+    return reader, _SockWriter(sock)
+
+
 async def _ws_recv_frame(reader):
     hdr = await reader.readexactly(2)
     opcode = hdr[0] & 0x0F
@@ -198,7 +268,7 @@ class RelayService(BaseService):
 
     def connect(self):
         from services.http_listener_service import HTTPListenerService
-        instances = getattr(HTTPListenerService, '_instances', {}) or {}
+        instances = HTTPListenerService.all_instances()
         if not instances:
             logger.warning('RelayService %s: no HTTPListenerService running yet, route not registered',
                            self._service_id)
@@ -228,14 +298,9 @@ class RelayService(BaseService):
         import asyncio
         remote = meta.get('remote_addr', '?')
         try:
-            sock.setblocking(False)
             loop = asyncio.new_event_loop()
             try:
-                reader = asyncio.StreamReader(loop=loop)
-                protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
-                transport, _ = loop.run_until_complete(
-                    loop.connect_accepted_socket(lambda: protocol, sock))
-                writer = asyncio.StreamWriter(transport, protocol, reader, loop)
+                reader, writer = _attach_sync_sock_to_loop(sock, loop)
                 loop.run_until_complete(
                     self._serve_relay_session(reader, writer, loop, remote))
             finally:
@@ -533,9 +598,7 @@ class RelayService(BaseService):
             writer, loop = conn["writer"], conn["loop"]
 
             async def _send(w=writer):
-                listener = self._connection
-                if listener:
-                    await listener._ws_send(w, payload)
+                await _ws_send_frame(w, payload)
 
             try:
                 asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
@@ -597,9 +660,7 @@ class RelayService(BaseService):
             writer, loop = conn["writer"], conn["loop"]
 
             async def _send(w=writer):
-                listener = self._connection
-                if listener:
-                    await listener._ws_send(w, payload)
+                await _ws_send_frame(w, payload)
 
             try:
                 asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
@@ -666,9 +727,7 @@ class RelayService(BaseService):
             writer, loop = conn["writer"], conn["loop"]
 
             async def _send(w=writer):
-                listener = self._connection
-                if listener:
-                    await listener._ws_send(w, payload)
+                await _ws_send_frame(w, payload)
 
             try:
                 asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)

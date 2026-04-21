@@ -810,12 +810,39 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                     k, v = line.split(":", 1)
                     headers[k.strip()] = v.strip()
 
+            _remote = client_address[0] if client_address else "?"
+
+            # Internal-auth bypass for server-spawned components (CC
+            # container MCP bridge, server-side relays). A valid
+            # `pawflow_internal` cookie on a /ws/tools/* route skips
+            # gateway + session checks. Route-level register-step token
+            # auth (inside the tool relay register message) still runs.
+            # Tokens are minted fresh per MCP config write and held
+            # in-memory only.
+            _internal_ok = False
+            if path.startswith("/ws/tools/"):
+                try:
+                    from core.internal_auth import validate_token
+                    _ch = headers.get("Cookie", "")
+                    for _p in _ch.split(";"):
+                        _p = _p.strip()
+                        if _p.startswith("pawflow_internal="):
+                            if validate_token(_p[len("pawflow_internal="):]):
+                                _internal_ok = True
+                            break
+                except Exception as _ie:
+                    logger.error("internal-auth check failed: %s", _ie,
+                                 exc_info=True)
+
             # Private gateway check for WebSocket connections
             try:
                 from services.private_gateway import is_enabled, is_banned, _verify_cookie, _COOKIE_NAME
-                if is_enabled():
+                if is_enabled() and not _internal_ok:
                     ip = client_address[0] if client_address else "0.0.0.0"
                     if is_banned(ip):
+                        logger.warning(
+                            "[ws] rejected %s on %s: private gateway banned IP",
+                            _remote, path)
                         sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
                         sock.close()
                         return
@@ -829,6 +856,12 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                                 gw_ok = True
                                 break
                     if not gw_ok:
+                        logger.warning(
+                            "[ws] rejected %s on %s: private gateway enabled "
+                            "but %s cookie missing/invalid (cookie_header "
+                            "has %d parts)",
+                            _remote, path, _COOKIE_NAME,
+                            len([p for p in cookie_header.split(";") if p.strip()]))
                         sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
                         sock.close()
                         return
@@ -839,31 +872,45 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 return
 
             # Session auth check for WebSocket connections
-            try:
-                from core.security import SecurityManager
-                sm = SecurityManager.get_instance()
-                ws_token = None
-                cookie_header = headers.get("Cookie", "")
-                for part in cookie_header.split(";"):
-                    part = part.strip()
-                    if part.startswith("pawflow_token="):
-                        ws_token = part[len("pawflow_token="):]
-                        break
-                if not ws_token and "token=" in query:
-                    from urllib.parse import parse_qs
-                    ws_token = parse_qs(query).get("token", [""])[0]
-                if not ws_token or (
-                    not sm.get_session(ws_token) and
-                    not sm.validate_api_key(ws_token)
-                ):
-                    sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
+            # (skipped when internal-auth already cleared the request —
+            # CC container / server-side relays have no user session).
+            if not _internal_ok:
+                try:
+                    from core.security import SecurityManager
+                    sm = SecurityManager.get_instance()
+                    ws_token = None
+                    cookie_header = headers.get("Cookie", "")
+                    for part in cookie_header.split(";"):
+                        part = part.strip()
+                        if part.startswith("pawflow_token="):
+                            ws_token = part[len("pawflow_token="):]
+                            break
+                    if not ws_token and "token=" in query:
+                        from urllib.parse import parse_qs
+                        ws_token = parse_qs(query).get("token", [""])[0]
+                    if not ws_token:
+                        logger.warning(
+                            "[ws] rejected %s on %s: no session token "
+                            "(expected pawflow_token cookie or ?token= query)",
+                            _remote, path)
+                        sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
+                        sock.close()
+                        return
+                    _session_ok = bool(sm.get_session(ws_token))
+                    _apikey_ok = False if _session_ok else bool(sm.validate_api_key(ws_token))
+                    if not _session_ok and not _apikey_ok:
+                        logger.warning(
+                            "[ws] rejected %s on %s: session token present but "
+                            "invalid (not a live session nor API key)",
+                            _remote, path)
+                        sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
+                        sock.close()
+                        return
+                except Exception as e:
+                    logger.error("WS session auth check failed: %s", e, exc_info=True)
+                    sock.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
                     sock.close()
                     return
-            except Exception as e:
-                logger.error("WS session auth check failed: %s", e, exc_info=True)
-                sock.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
-                sock.close()
-                return
 
             # Match route
             result = self._route_registry.match("GET", path)
@@ -956,6 +1003,12 @@ class HTTPListenerService(BaseService):
         """Find the HTTPListenerService for a port."""
         with _instances_lock:
             return _instances.get(port)
+
+    @classmethod
+    def all_instances(cls) -> Dict[int, "HTTPListenerService"]:
+        """Snapshot of every running listener keyed by port."""
+        with _instances_lock:
+            return dict(_instances)
 
     def __new__(cls, config=None):
         if config is None:

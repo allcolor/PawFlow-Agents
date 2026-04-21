@@ -505,45 +505,67 @@ class ClaudeCodeSessionMixin:
             return cls._tool_relay_cache
         try:
             from core.service_registry import ServiceRegistry, SCOPE_GLOBAL
+            from services.http_listener_service import HTTPListenerService
             reg = ServiceRegistry.get_instance()
 
-            # Check if a live tool relay already exists (from this server run)
+            # Main HTTP listener port — the relay registers a route on it
+            # rather than binding its own dedicated port (post-refactor).
+            # Without a listener running, there's nothing to register on.
+            listener_instances = HTTPListenerService.all_instances()
+            if not listener_instances:
+                logger.error(
+                    "[tool-relay] no HTTPListenerService running — "
+                    "Claude Code MCP bridge cannot reach PawFlow tools "
+                    "until the main listener is up.")
+                return "", ""
+            main_port = next(iter(listener_instances.keys()))
+
+            # wss:// — the main listener force-redirects plain HTTP to
+            # HTTPS when TLS is configured (correct behaviour), so even
+            # on the internal hop we stay on TLS. Auth is handled by the
+            # ephemeral pawflow_internal cookie (see core/internal_auth.py)
+            # plus the tool relay's own register-step token.
+            def _build_url(service_id: str) -> str:
+                return f"wss://localhost:{main_port}/ws/tools/{service_id}"
+
+            # Reuse a live tool relay from this run if present.
             for sdef in reg.resolve_by_type("toolRelay"):
                 svc = reg.get_live_instance(sdef.scope, sdef.scope_id, sdef.service_id)
                 if svc:
                     cfg = getattr(sdef, "config", {}) or {}
-                    port = int(cfg.get("port", 0))
                     token = cfg.get("token", "")
-                    if port and token:
-                        cls._tool_relay_cache = (
-                            f"wss://localhost:{port}/ws/tools", token)
+                    _sid = cfg.get("_service_id", sdef.service_id)
+                    if token and _sid:
+                        cls._tool_relay_cache = (_build_url(_sid), token)
                         return cls._tool_relay_cache
-                # Stale from previous run — remove it
+                # Stale from a previous run — remove it.
                 try:
                     reg.uninstall(sdef.scope, sdef.scope_id, sdef.service_id)
                 except Exception:
                     pass
 
-            # Create fresh tool relay with dynamic port
+            # Create a fresh tool relay. Port in config is vestigial
+            # (the refactored ToolRelayService.connect registers a route
+            # on the main listener at /ws/tools/{service_id} and ignores
+            # its config port), but the service schema still lists it so
+            # we pass something sane to avoid a validation error.
             import uuid
-            import socket as _sock
-            with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as _s:
-                _s.bind(("", 0))
-                free_port = _s.getsockname()[1]
             token = uuid.uuid4().hex
             service_id = "_tool_relay"
             reg.install(SCOPE_GLOBAL, "", service_id=service_id,
                         service_type="toolRelay", config={
-                "port": free_port,
+                "port": main_port,
                 "path": "/ws/tools",
                 "token": token,
                 "_service_id": service_id,
             }, description="Auto-created tool relay for Claude Code MCP bridge")
             svc = reg.get_live_instance(SCOPE_GLOBAL, "", service_id)
             if svc:
-                logger.info("Tool relay created: port=%d", free_port)
-                cls._tool_relay_cache = (
-                    f"wss://localhost:{free_port}/ws/tools", token)
+                logger.info(
+                    "[tool-relay] registered route /ws/tools/%s on main "
+                    "listener port %d",
+                    service_id, main_port)
+                cls._tool_relay_cache = (_build_url(service_id), token)
                 return cls._tool_relay_cache
         except Exception as e:
             logger.error("Failed to get/create tool relay: %s", e)
@@ -747,6 +769,14 @@ class ClaudeCodeSessionMixin:
             relay_url = relay_url.replace("localhost", _host_ip)
             relay_url = relay_url.replace("127.0.0.1", _host_ip)
 
+        # Server-spawned CC container has no user session cookies. Mint a
+        # fresh internal-auth token scoped to this call: the MCP bridge
+        # sends it in the WS upgrade Cookie, and the listener bypasses the
+        # private-gateway + session checks for /ws/tools/* on valid tokens.
+        # Regenerated on every spawn/config write, TTL-bound, in-memory only.
+        from core.internal_auth import mint_token
+        internal_token = mint_token()
+
         config = {
             "mcpServers": {
                 "pawflow": {
@@ -755,6 +785,7 @@ class ClaudeCodeSessionMixin:
                     "env": {
                         "PAWFLOW_TOOL_RELAY_URL": relay_url,
                         "PAWFLOW_TOOL_RELAY_TOKEN": relay_token,
+                        "PAWFLOW_INTERNAL_TOKEN": internal_token,
                         "PAWFLOW_USER_ID": user_id or "",
                         "PAWFLOW_CONVERSATION_ID": conversation_id or "",
                         "PAWFLOW_AGENT_NAME": agent_name or "",

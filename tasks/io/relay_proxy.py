@@ -30,7 +30,7 @@ _ROUTE_OWNER = "_relay_proxy"
 
 def _get_http_listener():
     from services.http_listener_service import HTTPListenerService
-    instances = getattr(HTTPListenerService, "_instances", {}) or {}
+    instances = HTTPListenerService.all_instances()
     return next(iter(instances.values()), None)
 
 

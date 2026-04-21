@@ -114,7 +114,7 @@ class ToolRelayService(BaseService):
 
     def connect(self):
         from services.http_listener_service import HTTPListenerService
-        instances = getattr(HTTPListenerService, '_instances', {}) or {}
+        instances = HTTPListenerService.all_instances()
         if not instances:
             logger.warning('ToolRelayService %s: no HTTPListenerService running yet, route not registered',
                            self._service_id)
@@ -136,16 +136,12 @@ class ToolRelayService(BaseService):
 
     def _handle_ws(self, sock, path_params, meta):
         import asyncio
+        from services.filesystem_service import _attach_sync_sock_to_loop
         remote = meta.get('remote_addr', '?')
         try:
-            sock.setblocking(False)
             loop = asyncio.new_event_loop()
             try:
-                reader = asyncio.StreamReader(loop=loop)
-                protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
-                transport, _ = loop.run_until_complete(
-                    loop.connect_accepted_socket(lambda: protocol, sock))
-                writer = asyncio.StreamWriter(transport, protocol, reader, loop)
+                reader, writer = _attach_sync_sock_to_loop(sock, loop)
                 loop.run_until_complete(self._serve_tool_session(reader, writer, loop, remote))
             finally:
                 loop.close()

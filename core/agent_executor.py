@@ -505,24 +505,25 @@ class SubAgentExecutor:
                 store = ConversationStore.instance()
                 existing = store.load(sub_conv_id)
                 if existing and len(existing) > 1:
-                    messages = self._deserialize_sub_messages(existing)
+                    messages = self._deserialize_sub_messages(existing, sub_conv_id)
                     # Append the new message as parent's response (resume)
                     messages.append(LLMMessage(
                         role="user", content=task.message,
                         source=user_source,
+                        conversation_id=sub_conv_id,
                     ))
                     _resumed = True
                     logger.info("Resuming sub-conv %s with %d messages (+1 new)",
                                 sub_conv_id, len(messages) - 1)
                 else:
                     messages = self._build_initial_context(
-                        task, sys_prompt, user_source)
+                        task, sys_prompt, user_source, sub_conv_id)
             except Exception:
                 messages = self._build_initial_context(
-                    task, sys_prompt, user_source)
+                    task, sys_prompt, user_source, sub_conv_id)
         else:
             messages = self._build_initial_context(
-                task, sys_prompt, user_source)
+                task, sys_prompt, user_source, sub_conv_id)
 
         # Register in the live-delegate registry so a second delegate
         # call from the same caller to the same agent PREEMPTS this
@@ -744,6 +745,7 @@ class SubAgentExecutor:
                     content=response.content,
                     tool_calls=response.tool_calls,
                     source=agent_source,
+                    conversation_id=sub_conv_id or task.parent_conversation_id,
                 ))
 
                 for tc in response.tool_calls:
@@ -805,6 +807,7 @@ class SubAgentExecutor:
                         role="tool",
                         content=tool_result,
                         tool_call_id=tc.id,
+                        conversation_id=sub_conv_id or task.parent_conversation_id,
                     ))
 
                 # Persist sub-conversation after each iteration
@@ -933,9 +936,12 @@ class SubAgentExecutor:
 
         return result
 
-    def _build_initial_context(self, task, sys_prompt, user_source):
+    def _build_initial_context(self, task, sys_prompt, user_source,
+                                sub_conv_id: str = ""):
         """Build initial messages for a sub-agent based on context_mode."""
-        messages = [LLMMessage(role="system", content=sys_prompt)]
+        _cid = sub_conv_id or task.parent_conversation_id
+        messages = [LLMMessage(role="system", content=sys_prompt,
+                                conversation_id=_cid)]
         # Inject context messages if provided
         if task.context_messages:
             for cm in task.context_messages:
@@ -945,14 +951,16 @@ class SubAgentExecutor:
                     messages.append(LLMMessage(
                         role=cm.get("role", "user"),
                         content=cm.get("content", ""),
+                        conversation_id=_cid,
                     ))
         # Add the actual task message
         messages.append(LLMMessage(role="user", content=task.message,
-                                   source=user_source))
+                                   source=user_source,
+                                   conversation_id=_cid))
         return messages
 
     @staticmethod
-    def _deserialize_sub_messages(raw_messages):
+    def _deserialize_sub_messages(raw_messages, sub_conv_id: str = ""):
         """Convert stored dicts back to LLMMessage (preserving tool_calls)."""
         result = []
         for m in raw_messages:
@@ -960,6 +968,10 @@ class SubAgentExecutor:
                 msg = LLMMessage(
                     role=m.get("role", "user"),
                     content=m.get("content", ""),
+                    conversation_id=(m.get("conversation_id") or sub_conv_id),
+                    msg_id=m.get("msg_id", ""),
+                    timestamp=m.get("ts") or m.get("timestamp") or 0.0,
+                    seq=m.get("seq") or 0,
                 )
                 if m.get("tool_calls"):
                     msg.tool_calls = [
@@ -1037,6 +1049,10 @@ class SubAgentExecutor:
         self, messages: List[LLMMessage], model: str,
     ) -> str:
         """Force a final response when max iterations reached."""
+        # Inherit conv_id from the last message (all must share it).
+        _cid = next(
+            (m.conversation_id for m in reversed(messages)
+             if getattr(m, "conversation_id", "")), "")
         messages.append(LLMMessage(
             role="user",
             content=(
@@ -1044,6 +1060,7 @@ class SubAgentExecutor:
                 "response now. Synthesize all information gathered. "
                 "Do NOT call any more tools.]"
             ),
+            conversation_id=_cid,
         ))
         try:
             resp = self._client.complete(

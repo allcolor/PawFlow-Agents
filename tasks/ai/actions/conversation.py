@@ -148,12 +148,15 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             sys_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
             # NO datetime in system prompt — breaks KV cache
             new_context = [
-                LLMMessage(role="system", content=sys_prompt),
+                LLMMessage(role="system", content=sys_prompt,
+                            conversation_id=conv_id),
                 LLMMessage(role="user",
-                           content=f"[Conversation summary â€” earlier messages compacted]\n\n{summary}"),
+                           content=f"[Conversation summary â€” earlier messages compacted]\n\n{summary}",
+                           conversation_id=conv_id),
                 LLMMessage(role="assistant",
                            content="Understood. I have the context from our earlier conversation. Continuing from where we left off.",
-                           source={"type": "context"}),
+                           source={"type": "context"},
+                           conversation_id=conv_id),
             ]
             store.save_agent_context(conv_id, _rs_agent, self._serialize_messages(new_context))
             return {"summary_length": len(summary),

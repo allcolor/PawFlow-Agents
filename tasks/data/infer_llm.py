@@ -142,12 +142,18 @@ class InferLLMTask(BaseTask):
             # Build messages
             messages = []
             system_prompt = self.config.get("system_prompt", "")
+            # Synthetic conv-scope for infer pipelines: inferLLM is a
+            # data-flow processor, the "conversation" is a one-shot
+            # prompt scoped to this flow's service_id.
+            _infer_cid = f"_infer:{self.config.get('_service_id', 'infer')}"
             if system_prompt:
                 # Interpolate ${attr.name} from FlowFile attributes
                 resolved = self._interpolate(system_prompt, flowfile)
-                messages.append(LLMMessage(role="system", content=resolved))
+                messages.append(LLMMessage(role="system", content=resolved,
+                                            conversation_id=_infer_cid))
 
-            messages.append(LLMMessage(role="user", content=user_text))
+            messages.append(LLMMessage(role="user", content=user_text,
+                                        conversation_id=_infer_cid))
 
             logger.debug(
                 "inferLLM input: %d chars, fragment.id=%s",

@@ -52,6 +52,8 @@ def regroup_split_assistant_messages(messages: List[Any]) -> List[Any]:
                 msg_id=m.msg_id,
                 timestamp=m.timestamp,
                 seq=m.seq,
+                conversation_id=(getattr(m, "conversation_id", "")
+                                  or getattr(nxt, "conversation_id", "")),
             )
             out.append(merged)
             i += 2

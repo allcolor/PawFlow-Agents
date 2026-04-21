@@ -58,7 +58,7 @@ class TestLLMConnectionService:
 
         with patch.object(svc._client, "_http_post", return_value=OPENAI_RESPONSE):
             response = svc.complete(
-                messages=[LLMMessage("user", "Hello")],
+                messages=[LLMMessage("user", "Hello", conversation_id="test_conv")],
                 temperature=0.5,
                 max_tokens=100,
             )
@@ -81,8 +81,8 @@ class TestLLMConnectionService:
         with patch.object(svc._client, "_http_post", return_value=ANTHROPIC_RESPONSE):
             response = svc.complete(
                 messages=[
-                    LLMMessage("system", "You are helpful"),
-                    LLMMessage("user", "Bonjour"),
+                    LLMMessage("system", "You are helpful", conversation_id="test_conv"),
+                    LLMMessage("user", "Bonjour", conversation_id="test_conv"),
                 ],
             )
 
@@ -107,8 +107,8 @@ class TestLLMConnectionService:
 
         with patch.object(svc._client, "_http_post", side_effect=mock_post):
             svc.complete(messages=[
-                LLMMessage("system", "Be concise"),
-                LLMMessage("user", "Hi"),
+                LLMMessage("system", "Be concise", conversation_id="test_conv"),
+                LLMMessage("user", "Hi", conversation_id="test_conv"),
             ])
 
         # System should be a top-level field with cache_control, not in messages
@@ -134,7 +134,7 @@ class TestLLMConnectionService:
 
         with patch.object(svc._client, "_http_post", side_effect=mock_post):
             svc.complete(
-                messages=[LLMMessage("user", "Give JSON")],
+                messages=[LLMMessage("user", "Give JSON", conversation_id="test_conv")],
                 response_format="json",
             )
 

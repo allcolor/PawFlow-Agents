@@ -83,23 +83,22 @@ class TestSummarizeToolCall(unittest.TestCase):
 class TestTextualizeMessage(unittest.TestCase):
 
     def test_user_message(self):
-        m = LLMMessage(role="user", content="Hello")
+        m = LLMMessage(role="user", content="Hello", conversation_id="test_conv")
         self.assertEqual(textualize_message(m), "Hello")
 
     def test_empty_user_returns_none(self):
-        m = LLMMessage(role="user", content="   ")
+        m = LLMMessage(role="user", content="   ", conversation_id="test_conv")
         self.assertIsNone(textualize_message(m))
 
     def test_assistant_text_only(self):
-        m = LLMMessage(role="assistant", content="Sure, done.")
+        m = LLMMessage(role="assistant", content="Sure, done.", conversation_id="test_conv")
         self.assertEqual(textualize_message(m), "Sure, done.")
 
     def test_assistant_tool_only(self):
         m = LLMMessage(
             role="assistant", content="",
             tool_calls=[LLMToolCall(id="a", name="bash",
-                                     arguments={"command": "git status"})],
-        )
+                                     arguments={"command": "git status"})], conversation_id="test_conv")
         out = textualize_message(m)
         self.assertTrue(out.startswith("[ran: "))
         self.assertIn("bash", out)
@@ -109,8 +108,7 @@ class TestTextualizeMessage(unittest.TestCase):
         m = LLMMessage(
             role="assistant", content="Let me check.",
             tool_calls=[LLMToolCall(id="a", name="bash",
-                                     arguments={"command": "ls"})],
-        )
+                                     arguments={"command": "ls"})], conversation_id="test_conv")
         out = textualize_message(m)
         self.assertIn("Let me check.", out)
         self.assertIn("[ran: bash", out)
@@ -121,8 +119,7 @@ class TestTextualizeMessage(unittest.TestCase):
             tool_calls=[
                 LLMToolCall(id="a", name="bash", arguments={"command": "ls"}),
                 LLMToolCall(id="b", name="read", arguments={"path": "/f"}),
-            ],
-        )
+            ], conversation_id="test_conv")
         out = textualize_message(m)
         self.assertIn("bash", out)
         self.assertIn("read", out)
@@ -134,35 +131,34 @@ class TestTextualizeMessage(unittest.TestCase):
             tool_calls=[LLMToolCall(
                 id="a", name="mcp__pawflow__use_tool",
                 arguments={"tool_name": "grep", "arguments": {"pattern": "foo"}},
-            )],
-        )
+            )], conversation_id="test_conv")
         out = textualize_message(m)
         self.assertIn("grep", out)
         self.assertNotIn("mcp__pawflow__use_tool", out)
 
     def test_tool_result_short(self):
-        m = LLMMessage(role="tool", content="5 files", tool_call_id="a")
+        m = LLMMessage(role="tool", content="5 files", tool_call_id="a", conversation_id="test_conv")
         out = textualize_message(m)
         self.assertEqual(out, "[tool_result: 5 files]")
 
     def test_tool_result_truncated(self):
         big = "x" * (_TOOL_RESULT_TRUNC + 200)
-        m = LLMMessage(role="tool", content=big, tool_call_id="a")
+        m = LLMMessage(role="tool", content=big, tool_call_id="a", conversation_id="test_conv")
         out = textualize_message(m)
         self.assertTrue(out.startswith("[tool_result: "))
         self.assertIn("...[+200c]", out)
         self.assertLess(len(out), _TOOL_RESULT_TRUNC + 80)
 
     def test_tool_result_empty(self):
-        m = LLMMessage(role="tool", content="   ", tool_call_id="a")
+        m = LLMMessage(role="tool", content="   ", tool_call_id="a", conversation_id="test_conv")
         self.assertIsNone(textualize_message(m))
 
     def test_system_message(self):
-        m = LLMMessage(role="system", content="You are X.")
+        m = LLMMessage(role="system", content="You are X.", conversation_id="test_conv")
         self.assertEqual(textualize_message(m), "You are X.")
 
     def test_unknown_role(self):
-        m = LLMMessage(role="weird", content="hi")
+        m = LLMMessage(role="weird", content="hi", conversation_id="test_conv")
         self.assertIsNone(textualize_message(m))
 
 

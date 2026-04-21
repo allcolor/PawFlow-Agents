@@ -842,6 +842,7 @@ class AgentLoopTask(
                     content=(
                         "[System: INTERRUPTED. Reply in 2-3 sentences max: "
                         "what you did, what's left to do. No details, no code.]"),
+                    conversation_id=conversation_id,
                 ))
 
                 # Resolve LLM for synthesis — NEVER use claude-code
@@ -885,7 +886,8 @@ class AgentLoopTask(
                                 found.add(messages[j].tool_call_id)
                         for tc_id in tc_ids - found:
                             messages.insert(i + 1, LLMMessage(
-                                role="tool", content="[Unavailable]", tool_call_id=tc_id))
+                                role="tool", content="[Unavailable]", tool_call_id=tc_id,
+                                conversation_id=conversation_id))
 
                 # Compact + call LLM (stream tokens to user)
                 _max_ctx = _summ_max_ctx or 64000
@@ -914,7 +916,8 @@ class AgentLoopTask(
                     msg_id=_synth_msg_id,
                     source={"type": "agent", "name": agent_name or "",
                             "tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out,
-                            "model": resp.model})
+                            "model": resp.model},
+                    conversation_id=conversation_id)
                 messages.append(_interrupt_msg)
                 _serialized = self._serialize_messages(messages[-2:])
                 from core.conversation_writer import ConversationWriter

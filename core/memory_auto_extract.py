@@ -77,7 +77,8 @@ def _extract_with_llm(client, summary: str) -> list:
     try:
         from core.llm_client import LLMMessage
         messages = [
-            LLMMessage(role="user", content=_EXTRACT_PROMPT + summary),
+            LLMMessage(role="user", content=_EXTRACT_PROMPT + summary,
+                        conversation_id="_memory_extract"),
         ]
         resp = client.complete(
             messages=messages,

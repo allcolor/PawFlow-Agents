@@ -69,7 +69,8 @@ class AgentSerializationMixin:
 
 
     def _deserialize_messages(self, data: List[Dict[str, Any]], *,
-                              include_display_only: bool = False) -> List[LLMMessage]:
+                              include_display_only: bool = False,
+                              conversation_id: str = "") -> List[LLMMessage]:
         """Deserialize messages from storage.
 
         By default, display_only messages (narrations, sub_agent_trace) are
@@ -115,6 +116,8 @@ class AgentSerializationMixin:
                 thinking=entry.get("thinking", ""),
                 timestamp=_ts,
                 seq=_seq,
+                conversation_id=(entry.get("conversation_id")
+                                  or conversation_id),
             ))
         return messages
 

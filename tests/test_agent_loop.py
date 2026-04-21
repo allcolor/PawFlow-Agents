@@ -60,13 +60,13 @@ class TestToolUseDataclasses(unittest.TestCase):
 
     def test_message_with_tool_calls(self):
         tc = LLMToolCall(id="call_1", name="search", arguments={"q": "test"})
-        msg = LLMMessage(role="assistant", content="", tool_calls=[tc])
+        msg = LLMMessage(role="assistant", content="", tool_calls=[tc], conversation_id="test_conv")
         assert msg.role == "assistant"
         assert len(msg.tool_calls) == 1
         assert msg.tool_calls[0].name == "search"
 
     def test_message_tool_result(self):
-        msg = LLMMessage(role="tool", content="found 3 results", tool_call_id="call_1")
+        msg = LLMMessage(role="tool", content="found 3 results", tool_call_id="call_1", conversation_id="test_conv")
         assert msg.role == "tool"
         assert msg.tool_call_id == "call_1"
 
@@ -81,7 +81,7 @@ class TestToolUseDataclasses(unittest.TestCase):
         assert resp.tool_calls == []
 
     def test_message_default_content(self):
-        msg = LLMMessage(role="user")
+        msg = LLMMessage(role="user", conversation_id="test_conv")
         assert msg.content == ""
         assert msg.tool_calls is None
         assert msg.tool_call_id is None
@@ -97,8 +97,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
 
     def test_openai_simple_messages(self):
         messages = [
-            LLMMessage(role="system", content="You are helpful."),
-            LLMMessage(role="user", content="Hi"),
+            LLMMessage(role="system", content="You are helpful.", conversation_id="test_conv"),
+            LLMMessage(role="user", content="Hi", conversation_id="test_conv"),
         ]
         result = self.client._build_openai_messages(messages)
         assert len(result) == 2
@@ -107,7 +107,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
 
     def test_openai_tool_call_message(self):
         tc = LLMToolCall(id="call_1", name="search", arguments={"q": "test"})
-        msg = LLMMessage(role="assistant", content="", tool_calls=[tc])
+        msg = LLMMessage(role="assistant", content="", tool_calls=[tc], conversation_id="test_conv")
         result = self.client._build_openai_messages([msg])
         assert result[0]["role"] == "assistant"
         assert len(result[0]["tool_calls"]) == 1
@@ -121,9 +121,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         # Tool message must follow an assistant message with matching tool_calls
         assistant_msg = LLMMessage(
             role="assistant", content="Let me search",
-            tool_calls=[LLMToolCall(id="call_1", name="search", arguments={"q": "test"})],
-        )
-        tool_msg = LLMMessage(role="tool", content="result", tool_call_id="call_1")
+            tool_calls=[LLMToolCall(id="call_1", name="search", arguments={"q": "test"})], conversation_id="test_conv")
+        tool_msg = LLMMessage(role="tool", content="result", tool_call_id="call_1", conversation_id="test_conv")
         result = self.client._build_openai_messages([assistant_msg, tool_msg])
         assert result[1]["role"] == "tool"
         assert result[1]["content"] == "result"
@@ -131,16 +130,16 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
 
     def test_openai_orphan_tool_message_dropped(self):
         # Orphan tool message (no matching assistant tool_call) should be filtered out
-        msg = LLMMessage(role="tool", content="result", tool_call_id="orphan_1")
+        msg = LLMMessage(role="tool", content="result", tool_call_id="orphan_1", conversation_id="test_conv")
         result = self.client._build_openai_messages([msg])
         assert len(result) == 0
 
     def test_anthropic_simple_messages(self):
         client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         messages = [
-            LLMMessage(role="system", content="System prompt"),
-            LLMMessage(role="user", content="Hello"),
-            LLMMessage(role="assistant", content="Hi!"),
+            LLMMessage(role="system", content="System prompt", conversation_id="test_conv"),
+            LLMMessage(role="user", content="Hello", conversation_id="test_conv"),
+            LLMMessage(role="assistant", content="Hi!", conversation_id="test_conv"),
         ]
         system_text, api_msgs = client._build_anthropic_messages(messages)
         assert system_text == "System prompt"
@@ -151,7 +150,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
     def test_anthropic_tool_call_message(self):
         client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         tc = LLMToolCall(id="tu_1", name="calc", arguments={"x": 5})
-        msg = LLMMessage(role="assistant", content="Let me calculate.", tool_calls=[tc])
+        msg = LLMMessage(role="assistant", content="Let me calculate.", tool_calls=[tc], conversation_id="test_conv")
         _, api_msgs = client._build_anthropic_messages([msg])
         assert len(api_msgs) == 1
         content_blocks = api_msgs[0]["content"]
@@ -163,7 +162,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
 
     def test_anthropic_tool_result_message(self):
         client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
-        msg = LLMMessage(role="tool", content="result=10", tool_call_id="tu_1")
+        msg = LLMMessage(role="tool", content="result=10", tool_call_id="tu_1", conversation_id="test_conv")
         _, api_msgs = client._build_anthropic_messages([msg])
         assert api_msgs[0]["role"] == "user"
         content = api_msgs[0]["content"]
@@ -201,7 +200,7 @@ class TestOpenAIToolCallParsing(unittest.TestCase):
         }
 
         client = LLMClient(provider="openai", config={"api_key": "test"})
-        resp = client.complete([LLMMessage(role="user", content="weather?")])
+        resp = client.complete([LLMMessage(role="user", content="weather?", conversation_id="test_conv")])
         assert len(resp.tool_calls) == 1
         assert resp.tool_calls[0].name == "search"
         assert resp.tool_calls[0].arguments == {"query": "weather"}
@@ -219,7 +218,7 @@ class TestOpenAIToolCallParsing(unittest.TestCase):
         }
 
         client = LLMClient(provider="openai", config={"api_key": "test"})
-        resp = client.complete([LLMMessage(role="user", content="weather?")])
+        resp = client.complete([LLMMessage(role="user", content="weather?", conversation_id="test_conv")])
         assert resp.tool_calls == []
         assert resp.content == "The weather is sunny."
 
@@ -233,7 +232,7 @@ class TestOpenAIToolCallParsing(unittest.TestCase):
 
         client = LLMClient(provider="openai", config={"api_key": "test"})
         tools = [LLMToolDefinition(name="search", description="Search", parameters={"type": "object", "properties": {}})]
-        client.complete([LLMMessage(role="user", content="hi")], tools=tools)
+        client.complete([LLMMessage(role="user", content="hi", conversation_id="test_conv")], tools=tools)
 
         call_body = mock_post.call_args[0][1]
         assert "tools" in call_body
@@ -263,7 +262,7 @@ class TestAnthropicToolCallParsing(unittest.TestCase):
         }
 
         client = LLMClient(provider="anthropic", config={"api_key": "test"})
-        resp = client.complete([LLMMessage(role="user", content="weather?")])
+        resp = client.complete([LLMMessage(role="user", content="weather?", conversation_id="test_conv")])
         assert resp.content == "I'll search for that."
         assert len(resp.tool_calls) == 1
         assert resp.tool_calls[0].name == "search"
@@ -281,7 +280,7 @@ class TestAnthropicToolCallParsing(unittest.TestCase):
 
         client = LLMClient(provider="anthropic", config={"api_key": "test"})
         tools = [LLMToolDefinition(name="calc", description="Calculator", parameters={"type": "object", "properties": {}})]
-        client.complete([LLMMessage(role="user", content="hi")], tools=tools)
+        client.complete([LLMMessage(role="user", content="hi", conversation_id="test_conv")], tools=tools)
 
         call_body = mock_post.call_args[0][1]
         assert "tools" in call_body
@@ -599,10 +598,10 @@ class TestAgentLoopTask(unittest.TestCase):
         task = AgentLoopTask({"api_key": "test"})
         tc = LLMToolCall(id="c1", name="search", arguments={"q": "test"})
         messages = [
-            LLMMessage(role="system", content="sys"),
-            LLMMessage(role="user", content="hi"),
-            LLMMessage(role="assistant", content="", tool_calls=[tc]),
-            LLMMessage(role="tool", content="result", tool_call_id="c1"),
+            LLMMessage(role="system", content="sys", conversation_id="test_conv"),
+            LLMMessage(role="user", content="hi", conversation_id="test_conv"),
+            LLMMessage(role="assistant", content="", tool_calls=[tc], conversation_id="test_conv"),
+            LLMMessage(role="tool", content="result", tool_call_id="c1", conversation_id="test_conv"),
         ]
         serialized = task._serialize_messages(messages)
         deserialized = task._deserialize_messages(serialized)

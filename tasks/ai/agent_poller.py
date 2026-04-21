@@ -527,7 +527,8 @@ class AgentPollerMixin:
             user_id=_poll_uid,
         )
         if checkin_content:
-            ctx["messages"].append(LLMMessage(role="user", content=checkin_content))
+            ctx["messages"].append(LLMMessage(role="user", content=checkin_content,
+                                               conversation_id=conversation_id))
         ctx["_base_message_count"] = len(ctx["messages"])
 
         return ctx

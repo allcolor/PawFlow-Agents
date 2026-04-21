@@ -214,6 +214,8 @@ class AgentIdentityMixin:
                         tool_calls=m.tool_calls,
                         tool_call_id=m.tool_call_id,
                         source=m.source,
+                        timestamp=m.timestamp, seq=m.seq, msg_id=m.msg_id,
+                        conversation_id=m.conversation_id,
                     )
             elif m.role == "user" and isinstance(m.content, str) and m.content:
                 # Don't prefix system-injected user messages or summaries
@@ -230,6 +232,8 @@ class AgentIdentityMixin:
                             tool_calls=m.tool_calls,
                             tool_call_id=m.tool_call_id,
                             source=m.source,
+                            timestamp=m.timestamp, seq=m.seq, msg_id=m.msg_id,
+                            conversation_id=m.conversation_id,
                         )
             result.append(m)
         return result
@@ -251,6 +255,8 @@ class AgentIdentityMixin:
             role="system",
             content=m0.content + suffix,
             source=m0.source,
+            timestamp=m0.timestamp, seq=m0.seq, msg_id=m0.msg_id,
+            conversation_id=m0.conversation_id,
         )
         return result
 

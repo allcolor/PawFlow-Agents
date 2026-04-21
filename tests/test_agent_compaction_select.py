@@ -14,22 +14,21 @@ from tasks.ai.agent_compaction import _select_recent_messages
 
 
 def _user(t):
-    return LLMMessage(role="user", content=t)
+    return LLMMessage(role="user", content=t, conversation_id="test_conv")
 
 
 def _asst(t):
-    return LLMMessage(role="assistant", content=t)
+    return LLMMessage(role="assistant", content=t, conversation_id="test_conv")
 
 
 def _asst_tool(name="bash", args=None):
     return LLMMessage(
         role="assistant", content="",
-        tool_calls=[LLMToolCall(id="t", name=name, arguments=args or {})],
-    )
+        tool_calls=[LLMToolCall(id="t", name=name, arguments=args or {})], conversation_id="test_conv")
 
 
 def _tool(t):
-    return LLMMessage(role="tool", content=t, tool_call_id="t")
+    return LLMMessage(role="tool", content=t, tool_call_id="t", conversation_id="test_conv")
 
 
 class TestSelectRecentMessages(unittest.TestCase):

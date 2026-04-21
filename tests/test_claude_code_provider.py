@@ -56,15 +56,15 @@ class TestSerializeMessages(unittest.TestCase):
         self.client._user_id = "test-user"
 
     def test_simple_user_message(self):
-        msgs = [LLMMessage(role="user", content="Hello")]
+        msgs = [LLMMessage(role="user", content="Hello", conversation_id="test_conv")]
         sys_prompt, user_text = self.client._serialize_messages_for_cli(msgs, None)
         self.assertEqual(sys_prompt, "")
         self.assertIn("Hello", user_text)
 
     def test_system_plus_user(self):
         msgs = [
-            LLMMessage(role="system", content="You are helpful."),
-            LLMMessage(role="user", content="Hi"),
+            LLMMessage(role="system", content="You are helpful.", conversation_id="test_conv"),
+            LLMMessage(role="user", content="Hi", conversation_id="test_conv"),
         ]
         sys_prompt, user_text = self.client._serialize_messages_for_cli(msgs, None)
         self.assertIn("You are helpful.", sys_prompt)
@@ -72,9 +72,9 @@ class TestSerializeMessages(unittest.TestCase):
 
     def test_conversation_history(self):
         msgs = [
-            LLMMessage(role="user", content="Search for Python"),
-            LLMMessage(role="assistant", content="I'll search for that."),
-            LLMMessage(role="user", content="Tell me more"),
+            LLMMessage(role="user", content="Search for Python", conversation_id="test_conv"),
+            LLMMessage(role="assistant", content="I'll search for that.", conversation_id="test_conv"),
+            LLMMessage(role="user", content="Tell me more", conversation_id="test_conv"),
         ]
         sys_prompt, user_text = self.client._serialize_messages_for_cli(msgs, None)
         self.assertIn("<conversation_history>", user_text)
@@ -87,13 +87,12 @@ class TestSerializeMessages(unittest.TestCase):
     def test_tool_calls_in_history(self):
         """Tool calls render as synopsis and tool results are included truncated."""
         msgs = [
-            LLMMessage(role="user", content="Search"),
+            LLMMessage(role="user", content="Search", conversation_id="test_conv"),
             LLMMessage(
                 role="assistant", content="Searching...",
-                tool_calls=[LLMToolCall(id="tc1", name="web_search", arguments={"q": "test"})],
-            ),
-            LLMMessage(role="tool", content="Found 5 results", tool_call_id="tc1"),
-            LLMMessage(role="user", content="Thanks"),
+                tool_calls=[LLMToolCall(id="tc1", name="web_search", arguments={"q": "test"})], conversation_id="test_conv"),
+            LLMMessage(role="tool", content="Found 5 results", tool_call_id="tc1", conversation_id="test_conv"),
+            LLMMessage(role="user", content="Thanks", conversation_id="test_conv"),
         ]
         _, user_text = self.client._serialize_messages_for_cli(msgs, None)
         self.assertIn("Searching...", user_text)
@@ -111,13 +110,12 @@ class TestSerializeMessages(unittest.TestCase):
     def test_tool_only_assistant_has_ran_synopsis(self):
         """Assistant with no free text but tool_calls renders as '[ran: ...]'."""
         msgs = [
-            LLMMessage(role="user", content="Do it"),
+            LLMMessage(role="user", content="Do it", conversation_id="test_conv"),
             LLMMessage(
                 role="assistant", content="",
                 tool_calls=[LLMToolCall(id="tc1", name="bash",
-                                         arguments={"command": "ls -la"})],
-            ),
-            LLMMessage(role="tool", content="total 0", tool_call_id="tc1"),
+                                         arguments={"command": "ls -la"})], conversation_id="test_conv"),
+            LLMMessage(role="tool", content="total 0", tool_call_id="tc1", conversation_id="test_conv"),
         ]
         _, user_text = self.client._serialize_messages_for_cli(msgs, None)
         self.assertIn("[ran:", user_text)
@@ -128,7 +126,7 @@ class TestSerializeMessages(unittest.TestCase):
         """Tool results longer than the limit are suffixed with a remainder count."""
         big = "x" * 1000
         msgs = [
-            LLMMessage(role="tool", content=big, tool_call_id="tc1"),
+            LLMMessage(role="tool", content=big, tool_call_id="tc1", conversation_id="test_conv"),
         ]
         _, user_text = self.client._serialize_messages_for_cli(msgs, None)
         self.assertIn("[tool_result:", user_text)
@@ -136,8 +134,8 @@ class TestSerializeMessages(unittest.TestCase):
 
     def test_system_with_tools(self):
         msgs = [
-            LLMMessage(role="system", content="System instruction"),
-            LLMMessage(role="user", content="Do something"),
+            LLMMessage(role="system", content="System instruction", conversation_id="test_conv"),
+            LLMMessage(role="user", content="Do something", conversation_id="test_conv"),
         ]
         tools = [LLMToolDefinition(name="t1", description="D1", parameters={})]
         sys_prompt, _ = self.client._serialize_messages_for_cli(msgs, tools)
@@ -237,7 +235,7 @@ class TestStreamClaude(unittest.TestCase):
             tokens = []
             turns = []
             resp = self.client.complete_stream(
-                [LLMMessage(role="user", content="Hi")],
+                [LLMMessage(role="user", content="Hi", conversation_id="test_conv")],
                 callback=lambda t: tokens.append(t),
                 turn_callback=lambda text, tc: turns.append(text),
             )
@@ -250,7 +248,7 @@ class TestStreamClaude(unittest.TestCase):
         with patch.object(self.client, '_pool_popen',
                           side_effect=FileNotFoundError()):
             with self.assertRaises(LLMClientError) as ctx:
-                self.client.complete_stream([LLMMessage(role="user", content="Hi")])
+                self.client.complete_stream([LLMMessage(role="user", content="Hi", conversation_id="test_conv")])
             self.assertIn("not found", str(ctx.exception))
 
 
@@ -519,7 +517,7 @@ class TestStreamContinuesPastResultWhenPreemptPending(unittest.TestCase):
              patch.object(client, '_check_preempt_in_jsonl',
                           return_value='pending'):
             client.complete_stream(
-                [LLMMessage(role="user", content="Hi")],
+                [LLMMessage(role="user", content="Hi", conversation_id="test_conv")],
                 turn_callback=lambda text, tc: turns.append(text),
             )
 
@@ -570,7 +568,7 @@ class TestStreamContinuesPastResultWhenPreemptPending(unittest.TestCase):
              patch.object(client, '_check_preempt_in_jsonl',
                           return_value='done'):
             client.complete_stream(
-                [LLMMessage(role="user", content="Hi")],
+                [LLMMessage(role="user", content="Hi", conversation_id="test_conv")],
                 turn_callback=lambda text, tc: turns.append(text),
             )
 
@@ -612,7 +610,7 @@ class TestStreamContinuesPastResultWhenPreemptPending(unittest.TestCase):
                           return_value='unread'), \
              patch('core.llm_providers.claude_code.time.sleep'):
             client.complete_stream(
-                [LLMMessage(role="user", content="Hi")],
+                [LLMMessage(role="user", content="Hi", conversation_id="test_conv")],
                 turn_callback=lambda text, tc: turns.append(text),
             )
 
@@ -651,7 +649,7 @@ class TestStreamContinuesPastResultWhenPreemptPending(unittest.TestCase):
         with patch.object(client, '_pool_popen',
                           return_value=(mock_proc, None)):
             client.complete_stream(
-                [LLMMessage(role="user", content="Hi")],
+                [LLMMessage(role="user", content="Hi", conversation_id="test_conv")],
                 turn_callback=lambda text, tc: turns.append(text),
             )
 

@@ -324,7 +324,8 @@ class AgentToolExecMixin:
 
     def _handle_response_no_tools(self, response_text: str, client_provider: str,
                                   tool_defs, need_more_retried: bool,
-                                  source: dict = None):
+                                  source: dict = None,
+                                  conversation_id: str = ""):
         """Handle an LLM response with no tool calls.
 
         Returns (action, msgs_to_append, final_text, need_more_retried).
@@ -336,12 +337,13 @@ class AgentToolExecMixin:
             clean = self._strip_echo_prefix(response_text.replace("[NEED_MORE]", "").strip())
             msgs = []
             if clean:
-                msgs.append(LLMMessage(role="assistant", content=clean, source=source))
+                msgs.append(LLMMessage(role="assistant", content=clean, source=source,
+                                        conversation_id=conversation_id))
             msgs.append(LLMMessage(role="system", content=(
                 "Continue. You have another turn. "
                 "Use <tool_call> tags if you need tools, "
                 "or provide your final answer."
-            )))
+            ), conversation_id=conversation_id))
             return "continue", msgs, "", need_more_retried
 
         # Heuristic: tool mentioned by name without <tool_call> tag
@@ -350,20 +352,22 @@ class AgentToolExecMixin:
             mentioned = [tn for tn in tool_names if tn in response_text]
             if mentioned and not need_more_retried:
                 msgs = [
-                    LLMMessage(role="assistant", content=response_text, source=source),
+                    LLMMessage(role="assistant", content=response_text, source=source,
+                                conversation_id=conversation_id),
                     LLMMessage(role="system", content=(
                         f"You mentioned tool(s) {mentioned} but did not emit <tool_call> tags. "
                         "You MUST use <tool_call> tags to invoke tools. Example:\n"
                         '<tool_call>{"name": "' + mentioned[0] + '", "arguments": {...}}</tool_call>\n'
                         "Please emit the correct <tool_call> tag(s) now, "
                         "or provide your final answer without mentioning tools."
-                    )),
+                    ), conversation_id=conversation_id),
                 ]
                 return "continue", msgs, "", True
 
         # Final response
         final = self._strip_echo_prefix(response_text)
-        msgs = [LLMMessage(role="assistant", content=final, source=source)]
+        msgs = [LLMMessage(role="assistant", content=final, source=source,
+                            conversation_id=conversation_id)]
         return "break", msgs, final, need_more_retried
 
 

@@ -1282,7 +1282,8 @@ class AgentCoreMixin:
                                                       tok_cache_read=response.cache_read_tokens)
                         action, msgs, final, _need_more_retried = self._handle_response_no_tools(
                             _resp_text, _client_provider, tool_defs,
-                            _need_more_retried, source=_src_no_tools)
+                            _need_more_retried, source=_src_no_tools,
+                            conversation_id=conversation_id)
                         # Attach thinking to the first assistant message
                         _thinking_txt = response.thinking or ""
                         for _m in msgs:

@@ -145,7 +145,8 @@ class LearnHandler(ToolHandler):
         try:
             from core.llm_client import LLMMessage
             resp = _sum_client.complete(
-                messages=[LLMMessage(role="user", content=prompt)],
+                messages=[LLMMessage(role="user", content=prompt,
+                                      conversation_id=self._conversation_id)],
                 temperature=0.3,
                 max_tokens=2000,
             )

@@ -121,11 +121,12 @@ class AgentSideChannelsMixin:
                 "This does not affect your current task.]"
             )
             btw_messages = [
-                LLMMessage(role="system", content=btw_system),
+                LLMMessage(role="system", content=btw_system,
+                            conversation_id=conversation_id),
                 LLMMessage(role="user", content=(
                     f"[Brief context of our conversation:\n{context_summary}]\n\n"
                     f"Quick question: {question}"
-                )),
+                ), conversation_id=conversation_id),
             ]
 
             # 3. Single LLM call, no tools, stream tokens via SSE
@@ -304,6 +305,7 @@ class AgentSideChannelsMixin:
                     role="assistant",
                     content=content,
                     source=source,
+                    conversation_id=conversation_id,
                 )
                 from core.conversation_writer import ConversationWriter
                 _sub_writer = ConversationWriter.for_conversation(conversation_id)

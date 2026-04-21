@@ -83,7 +83,7 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
     narrator_svc_name = ctx.get("narrator_service", "")
     if not narrator_svc_name:
         return ""  # No narrator configured → tools execute silently
-    narration = _call_narrator(narrator_svc_name, tool_calls, ctx)
+    narration = _call_narrator(narrator_svc_name, tool_calls, ctx, conversation_id)
     if narration:
         # Persist first, then fire SSE (visible ⇒ persisted). Narrator
         # message is display-only → transcript only per router rules.
@@ -129,7 +129,7 @@ def _track_narrator(resp, ctx):
         logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~114", exc_info=True)
 
 
-def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
+def _call_narrator(svc_name: str, tool_calls, ctx, conversation_id: str = "") -> str:
     """Call a narrator LLM to describe what the agent is doing."""
     try:
         from core.service_registry import ServiceRegistry
@@ -174,7 +174,8 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
         _NARRATOR_TIMEOUT = 4  # seconds
         with concurrent.futures.ThreadPoolExecutor(1) as pool:
             future = pool.submit(svc.complete,
-                                 [LLMMessage(role="user", content=prompt)],
+                                 [LLMMessage(role="user", content=prompt,
+                                              conversation_id=conversation_id)],
                                  None, 0.3, 150)
             try:
                 resp = future.result(timeout=_NARRATOR_TIMEOUT)
@@ -189,7 +190,8 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
         return ""
 
 
-def _call_narrator_with_client(client, tool_calls, ctx=None) -> str:
+def _call_narrator_with_client(client, tool_calls, ctx=None,
+                                 conversation_id: str = "") -> str:
     """Use the current LLM client to narrate tool_calls in one sentence."""
     if not client:
         return ""
@@ -204,7 +206,9 @@ def _call_narrator_with_client(client, tool_calls, ctx=None) -> str:
             f"The AI agent is about to call these tools: {tools_desc}\n"
             f"Write ONE short sentence (max 15 words) describing what it's doing. "
             f"Be specific about the actual action, not generic. Write only the sentence.")
-        resp = client.complete([LLMMessage(role="user", content=prompt)], max_tokens=50, temperature=0.3)
+        resp = client.complete([LLMMessage(role="user", content=prompt,
+                                             conversation_id=conversation_id)],
+                                max_tokens=50, temperature=0.3)
         if ctx:
             _track_narrator(resp, ctx)
         text = (resp.content or "").strip()
@@ -829,7 +833,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 )
 
                 resp = title_client.complete(
-                    [LLMMessage(role="user", content=prompt)],
+                    [LLMMessage(role="user", content=prompt,
+                                 conversation_id=conversation_id)],
                     max_tokens=30, temperature=0.3,
                 )
                 title = (resp.content or "").strip().strip('"\'')

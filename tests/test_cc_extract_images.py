@@ -18,7 +18,7 @@ from core.llm_providers.claude_code import LLMClaudeCodeMixin
 def _msg(role, content):
     # bypass the ts/seq invariant for pure structural tests
     return LLMMessage(role=role, content=content,
-                      timestamp=1.0, seq=1)
+                      timestamp=1.0, seq=1, conversation_id="test_conv")
 
 
 def test_last_user_image_url_no_placeholder():

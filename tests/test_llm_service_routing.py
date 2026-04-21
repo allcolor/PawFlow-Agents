@@ -167,14 +167,13 @@ class TestLLMMessageSource(unittest.TestCase):
     """Test LLMMessage.source field."""
 
     def test_source_default_none(self):
-        msg = LLMMessage(role="user", content="hello")
+        msg = LLMMessage(role="user", content="hello", conversation_id="test_conv")
         self.assertIsNone(msg.source)
 
     def test_source_set(self):
         msg = LLMMessage(
             role="assistant", content="hi",
-            source={"type": "agent", "name": "researcher", "llm_service": "grok"},
-        )
+            source={"type": "agent", "name": "researcher", "llm_service": "grok"}, conversation_id="test_conv")
         self.assertEqual(msg.source["type"], "agent")
         self.assertEqual(msg.source["name"], "researcher")
         self.assertEqual(msg.source["llm_service"], "grok")
@@ -182,8 +181,7 @@ class TestLLMMessageSource(unittest.TestCase):
     def test_source_user(self):
         msg = LLMMessage(
             role="user", content="question",
-            source={"type": "user", "name": "alice"},
-        )
+            source={"type": "user", "name": "alice"}, conversation_id="test_conv")
         self.assertEqual(msg.source["type"], "user")
         self.assertEqual(msg.source["name"], "alice")
 
@@ -286,9 +284,9 @@ class TestMessageSerializationSource(unittest.TestCase):
         task = AgentLoopTask.__new__(AgentLoopTask)
         msgs = [
             LLMMessage(role="user", content="hi",
-                       source={"type": "user", "name": "alice"}),
+                       source={"type": "user", "name": "alice"}, conversation_id="test_conv"),
             LLMMessage(role="assistant", content="hello",
-                       source={"type": "agent", "name": "bot", "llm_service": "gpt"}),
+                       source={"type": "agent", "name": "bot", "llm_service": "gpt"}, conversation_id="test_conv"),
         ]
         serialized = task._serialize_messages(msgs)
         self.assertEqual(serialized[0]["source"]["type"], "user")

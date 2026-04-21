@@ -264,7 +264,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
 
         Returns (content, tokens_in, tokens_out, model).
         """
-        messages.append(LLMMessage(role="user", content=prompt))
+        messages.append(LLMMessage(role="user", content=prompt,
+                                    conversation_id=conversation_id))
         _cc = compact_client or client
         synth_context = self._compact(
             list(messages), _cc,
@@ -289,7 +290,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                         max_tokens=ctx["max_tokens"],
                         tools=None,
                     )
-                messages.append(LLMMessage(role="assistant", content=resp.content))
+                messages.append(LLMMessage(role="assistant", content=resp.content,
+                                            conversation_id=conversation_id))
                 return resp.content, resp.tokens_in, resp.tokens_out, resp.model
             except Exception as synth_err:
                 err_str = str(synth_err)
@@ -321,6 +323,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         chars_per_token: float = 0,
         tool_defs: list = None,
         token_multiplier: float = 1.0,
+        conversation_id: str = "",
     ) -> List[LLMMessage]:
         """Last resort: brute-force truncate messages to fit within max_tokens.
 
@@ -364,6 +367,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 tool_call_id=getattr(m, 'tool_call_id', None),
                 tool_calls=m.tool_calls,
                 source=getattr(m, 'source', None),
+                conversation_id=conversation_id or getattr(m, 'conversation_id', ''),
             )
             if isinstance(m.content, str):
                 new_m.content = m.content[:budget] if len(m.content) > budget else m.content
@@ -389,11 +393,15 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         keep = []
         if result and result[0].role == "system":
             keep.append(result[0])
+            _cid = conversation_id or getattr(result[0], 'conversation_id', '')
             keep.append(LLMMessage(
                 role="user",
                 content=f"[{len(result) - keep_n - 1} earlier messages dropped to fit context limit]",
+                conversation_id=_cid,
             ))
-            keep.append(LLMMessage(role="assistant", content="Understood, continuing.", source={"type": "context"}))
+            keep.append(LLMMessage(role="assistant", content="Understood, continuing.",
+                                    source={"type": "context"},
+                                    conversation_id=_cid))
         keep.extend(result[-keep_n:])
         return keep
 
@@ -443,7 +451,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             _inner._event_cid = ""
             try:
                 resp = client.complete(
-                    messages=[LLMMessage(role="user", content=prompt)],
+                    messages=[LLMMessage(role="user", content=prompt,
+                                          conversation_id="_memory_extract")],
                     temperature=0.3,
                     max_tokens=1000,
                 )
@@ -548,7 +557,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             f"- Output must be at most {target_tokens} tokens (~1/3 of input)."
         )
         from core.llm_client import LLMMessage
-        synth = [LLMMessage(role="user", content=combined)]
+        synth = [LLMMessage(role="user", content=combined,
+                             conversation_id=conversation_id)]
         try:
             return self._summarize_messages(
                 synth, client, max_tokens=target_tokens * 4,
@@ -813,6 +823,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     timestamp=_frt - 0.002,
                     seq=_frs - 2,
                     source={"type": "context"},
+                    conversation_id=conversation_id,
                 ))
                 out.append(LLMMessage(
                     role="assistant",
@@ -820,6 +831,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     source={"type": "context"},
                     timestamp=_frt - 0.001,
                     seq=_frs - 1,
+                    conversation_id=conversation_id,
                 ))
             out.extend(saved)
             return out
@@ -992,7 +1004,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     compacted, cap,
                     chars_per_token=chars_per_token,
                     tool_defs=tool_defs,
-                    token_multiplier=_tmul)
+                    token_multiplier=_tmul,
+                    conversation_id=conversation_id)
                 new_estimate = _estimate(compacted)
 
             logger.info("[compact] Final: %d tokens (was %d, cap %d), "

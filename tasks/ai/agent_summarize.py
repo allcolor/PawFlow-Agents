@@ -579,7 +579,8 @@ class AgentSummarizeMixin:
                 _stream_response = None
                 try:
                     _stream_response = client.complete_stream(
-                        messages=[LLMMessage(role="user", content=prompt)],
+                        messages=[LLMMessage(role="user", content=prompt,
+                                               conversation_id="_compact")],
                         max_tokens=min(target_tokens * 3, 8000),
                     )
                 except Exception as e:
@@ -656,7 +657,8 @@ class AgentSummarizeMixin:
                 )
                 set_compact_key(compact_key)
 
-            messages = [LLMMessage(role="user", content=prompt)]
+            messages = [LLMMessage(role="user", content=prompt,
+                                     conversation_id="_compact")]
 
             for iteration in range(max_loop):
                 try:
@@ -690,7 +692,8 @@ class AgentSummarizeMixin:
                 # Process tool calls
                 assistant_msg = LLMMessage(
                     role="assistant", content=response.content or "",
-                    tool_calls=response.tool_calls)
+                    tool_calls=response.tool_calls,
+                    conversation_id="_compact")
                 messages.append(assistant_msg)
 
                 for tc in response.tool_calls:
@@ -720,20 +723,23 @@ class AgentSummarizeMixin:
                             return direct_summary
                         messages.append(LLMMessage(
                             role="tool", content="Summary received.",
-                            tool_call_id=tc.id))
+                            tool_call_id=tc.id,
+                            conversation_id="_compact"))
 
                     elif tool_name == "read":
                         # Execute read via handler
                         result = read_handler.execute(args)
                         messages.append(LLMMessage(
                             role="tool", content=result,
-                            tool_call_id=tc.id))
+                            tool_call_id=tc.id,
+                            conversation_id="_compact"))
 
                     else:
                         messages.append(LLMMessage(
                             role="tool",
                             content=f"Error: only 'read' and 'compact_result' tools are available.",
-                            tool_call_id=tc.id))
+                            tool_call_id=tc.id,
+                            conversation_id="_compact"))
 
             # Check if compact_result was called during this attempt
             try:

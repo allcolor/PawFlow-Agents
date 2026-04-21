@@ -203,8 +203,10 @@ class NiFiScriptConverter:
 
         try:
             messages = [
-                LLMMessage(role="system", content=SYSTEM_PROMPT),
-                LLMMessage(role="user", content=prompt),
+                LLMMessage(role="system", content=SYSTEM_PROMPT,
+                            conversation_id="_nifi_convert"),
+                LLMMessage(role="user", content=prompt,
+                            conversation_id="_nifi_convert"),
             ]
             response = self._llm_client.complete(
                 messages, temperature=0.2, max_tokens=max_tokens,
@@ -235,10 +237,12 @@ class NiFiScriptConverter:
         """Convert using LLM."""
         try:
             messages = [
-                LLMMessage(role="system", content=SYSTEM_PROMPT),
+                LLMMessage(role="system", content=SYSTEM_PROMPT,
+                            conversation_id="_nifi_convert"),
                 LLMMessage(
                     role="user",
                     content=f"Convert this NiFi Groovy script to PawFlow Python:\n\n```groovy\n{groovy_script}\n```",
+                    conversation_id="_nifi_convert",
                 ),
             ]
             response = self._llm_client.complete(

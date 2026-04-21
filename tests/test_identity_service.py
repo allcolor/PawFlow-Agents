@@ -339,9 +339,9 @@ class TestMessageChannelField(unittest.TestCase):
         from core.llm_client import LLMMessage
         task = AgentLoopTask({"api_key": "test"})
         msgs = [
-            LLMMessage(role="user", content="hello"),
-            LLMMessage(role="assistant", content="hi there"),
-            LLMMessage(role="tool", content="result", tool_call_id="tc1"),
+            LLMMessage(role="user", content="hello", conversation_id="test_conv"),
+            LLMMessage(role="assistant", content="hi there", conversation_id="test_conv"),
+            LLMMessage(role="tool", content="result", tool_call_id="tc1", conversation_id="test_conv"),
         ]
         serialized = task._serialize_messages(msgs, channel="telegram")
         self.assertEqual(serialized[0]["channel"], "telegram")
@@ -353,7 +353,7 @@ class TestMessageChannelField(unittest.TestCase):
         from tasks.ai.agent_loop import AgentLoopTask
         from core.llm_client import LLMMessage
         task = AgentLoopTask({"api_key": "test"})
-        msgs = [LLMMessage(role="user", content="hello")]
+        msgs = [LLMMessage(role="user", content="hello", conversation_id="test_conv")]
         serialized = task._serialize_messages(msgs)
         self.assertNotIn("channel", serialized[0])
 

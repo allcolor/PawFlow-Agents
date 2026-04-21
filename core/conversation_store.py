@@ -759,6 +759,11 @@ class ConversationStore:
         """Append transformed messages to the shared context file.
 
         No dedup: see _append_ctx_file for rationale.
+
+        After the write, pings core.bg_bucket_builder to check if the
+        shared pyramid should be advanced (L1_TRIGGER_MSGS gap). The
+        builder is a no-op if the resolver isn't registered or the
+        gap is too small — cheap O(1) call either way.
         """
         path = self._shared_ctx_path(cid)
         with open(path, "a", encoding="utf-8") as f:
@@ -766,6 +771,16 @@ class ConversationStore:
                 self._validate_message(m)
                 xf = self._stamp_line(cid, self._transform_for_shared(m))
                 f.write(json.dumps(xf, ensure_ascii=False) + "\n")
+
+        # Trigger bg pyramid build if applicable. Non-blocking, safe to
+        # fail silently — the bg builder owns its own error logging.
+        try:
+            from core.bg_bucket_builder import BgBucketBuilder
+            _uid = self._cid_user.get(cid, "") or ""
+            if _uid:
+                BgBucketBuilder.instance().maybe_trigger(cid, _uid)
+        except Exception:
+            logger.debug("bg bucket trigger failed", exc_info=True)
 
     def _read_ctx_file(self, path: Path) -> List[Dict]:
         """Read all messages from a context JSONL file, sorted by (ts, seq).

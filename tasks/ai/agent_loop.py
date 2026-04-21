@@ -142,6 +142,23 @@ class AgentLoopTask(
             poller.start()
             logger.info(f"Agent poller started at flow init (interval={poll_interval}s)")
 
+        # Wire the shared-pyramid background builder to this task's
+        # summarizer resolver and summarize pipeline. First task that
+        # initializes wins; subsequent tasks re-bind to their own
+        # instance (the functions are bound methods, so they carry
+        # self — but all AgentLoopTask instances share the same
+        # Class-level methods, so the specific instance is a detail).
+        try:
+            from core.bg_bucket_builder import BgBucketBuilder
+            _bb = BgBucketBuilder.instance()
+            _bb.set_summarizer_resolver(
+                lambda uid: self._get_summarizer_client(uid))
+            _bb.set_summarize_fn(self._summarize_messages)
+            logger.info("[bg-bucket] wired resolver + summarize_fn "
+                         "from AgentLoopTask.initialize()")
+        except Exception:
+            logger.warning("[bg-bucket] wiring failed", exc_info=True)
+
 
     @classmethod
     def wake_poller(cls):

@@ -641,42 +641,6 @@ class BgBucketBuilder:
         except Exception:
             logger.debug("[bg-bucket] progress SSE failed", exc_info=True)
 
-    def _consolidate_summaries(self, bucket_docs: List[Dict],
-                                client: Any) -> str:
-        """One-shot LLM call to merge N summaries into one."""
-        parts: List[str] = []
-        for d in bucket_docs:
-            bid = d.get("bucket_id", "?")
-            fs = d.get("first_seq", 0)
-            ls = d.get("last_seq", 0)
-            summary = d.get("summary", "") or ""
-            parts.append(f"=== Phase {bid} (seq {fs}..{ls}) ===\n{summary}")
-        user_content = "\n\n".join(parts)
-
-        from core.llm_client import LLMMessage
-        _bucket_cid = "_bucket_rollup"
-        messages = [
-            LLMMessage(role="system",
-                        content=_ROLLUP_SYSTEM_PROMPT.format(
-                            target_tokens=BUCKET_OUTPUT_TARGET),
-                        conversation_id=_bucket_cid),
-            LLMMessage(role="user",
-                        content=f"PHASES TO MERGE:\n\n{user_content}",
-                        conversation_id=_bucket_cid),
-        ]
-
-        try:
-            resp = client.complete(
-                messages=messages,
-                temperature=0.2,
-                max_tokens=BUCKET_OUTPUT_TARGET * 2,
-                tools=None,
-            )
-            return (resp.content or "").strip()
-        except Exception:
-            logger.exception("[bg-bucket] consolidate LLM call failed")
-            return ""
-
     def _publish_built(self, cid: str, count: int,
                         store: BucketStore) -> None:
         try:

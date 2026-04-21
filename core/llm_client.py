@@ -270,13 +270,15 @@ def _bootstrap_seq_for(conversation_id: str) -> int:
         return 0
 
 
-def _next_msg_seq(conversation_id: str) -> int:
+def _next_msg_seq(conversation_id: str = "") -> int:
     """Return the next seq for `conversation_id`.
 
     First call for a conv bootstraps the counter from disk (tail of
-    that single transcript). Empty conversation_id = special "no-conv"
-    bucket (rare — internal messages that don't belong to any
-    transcript); those share one counter.
+    that single transcript). Empty conversation_id = shared "no-conv"
+    bucket — used by LLMMessage.__post_init__ for transient in-memory
+    stamping where the producer hasn't threaded a conv id through yet.
+    Ordering across conversations never matters (seq is only a
+    tiebreaker within one transcript), so the shared bucket is safe.
     """
     cid = conversation_id or ""
     with _msg_seq_lock:

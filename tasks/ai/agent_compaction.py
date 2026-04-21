@@ -794,7 +794,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     _frs = min(m.seq for m in saved)
                 else:
                     _frt = _t_compact.time()
-                    _frs = _next_msg_seq() + 2
+                    _frs = _next_msg_seq(conversation_id) + 2
                 _postamble = (
                     "\nThe recent messages below are the current state. "
                     "Do NOT restart or re-propose completed work. If you need "

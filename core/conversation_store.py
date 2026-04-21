@@ -114,22 +114,22 @@ class ConversationStore:
         incoming_seq = line.get("seq")
         if isinstance(incoming_seq, int):
             # Caller pre-stamped seq (e.g. LLMMessage that knew its
-            # conv_id at creation). Enforce strict monotony against
-            # what is ACTUALLY on disk for this conv — re-using an
-            # already-persisted seq is the bug we want to catch.
-            # (Checking against the issued counter would false-positive
-            # on the very record currently being written, since the
-            # counter already handed its seq out at LLMMessage
-            # construction time.)
+            # conv_id at creation). Enforce monotony against what is
+            # ACTUALLY on disk for this conv — a LOWER seq is a bug
+            # (out-of-order write / stale counter). Equal is allowed
+            # because append_message routes one logical msg into
+            # multiple files (transcript + shared + agent ctx), each
+            # write calling _stamp_line with the SAME (seq, msg_id)
+            # pair. _record_persisted_seq is idempotent on equal, so
+            # the post-state is unchanged.
             last_written = _peek_persisted_seq(cid)
-            if incoming_seq <= last_written:
+            if incoming_seq < last_written:
                 raise ValueError(
                     f"seq invariant violated on conversation {cid}: "
                     f"incoming seq={incoming_seq} but last persisted "
-                    f"was {last_written}. Seq must be strictly greater "
-                    f"than every prior record on disk — the caller "
-                    f"stamped it from the wrong counter or reused an "
-                    f"old value.")
+                    f"was {last_written}. Seq must not be less than "
+                    f"prior records on disk — the caller stamped it "
+                    f"from the wrong counter or reused an old value.")
             _observe_msg_seq(cid, incoming_seq)
         else:
             line["seq"] = _next_msg_seq(cid)

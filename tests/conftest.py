@@ -119,6 +119,15 @@ def _isolate_data_dir(tmp_path_factory):
 
     from core.llm_client import _next_msg_seq
 
+    # Session-scoped monotonic seq counter for test message fill. Every
+    # call hands out a strictly-increasing integer, starting above any
+    # realistic cid's on-disk seq so it always passes the "> last
+    # persisted" check in _stamp_line (which consumes the incoming
+    # value rather than re-issuing). This replaces the old
+    # _next_msg_seq() call that broke when cid became mandatory.
+    import itertools as _test_itertools
+    _test_seq_counter = _test_itertools.count(10_000_000)
+
     @staticmethod
     def _validate_with_fill(m):
         if m.get("role") != "system":
@@ -127,7 +136,7 @@ def _isolate_data_dir(tmp_path_factory):
             if not m.get("ts") and not m.get("timestamp"):
                 m["ts"] = _time_fill.time()
             if not m.get("seq"):
-                m["seq"] = _next_msg_seq()
+                m["seq"] = next(_test_seq_counter)
         return _orig_validate(m)
 
     _cs_mod.ConversationStore._validate_message = _validate_with_fill

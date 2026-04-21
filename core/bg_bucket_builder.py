@@ -509,6 +509,22 @@ class BgBucketBuilder:
             "[bg-bucket] built bucket cid=%s seq %d..%d (%d msgs, "
             "summary=%d chars)",
             cid[:8], first_seq, last_seq, len(chunk), len(summary))
+
+        # Feed the memory extractor: each bucket summary is a distilled
+        # phase of the conversation — exactly the right granularity for
+        # long-term facts/preferences/decisions. Runs here (bg worker)
+        # so the hot path compact stays fast. Best-effort, failures
+        # never propagate.
+        try:
+            from core.memory_auto_extract import auto_extract_memories
+            auto_extract_memories(
+                user_id=user_id, summary=summary,
+                agent_name="", llm_client=client)
+        except Exception:
+            logger.debug(
+                "[bg-bucket] auto_extract_memories failed for cid=%s "
+                "bucket seq %d..%d",
+                cid[:8], first_seq, last_seq, exc_info=True)
         return True
 
     def _maybe_rollup(self, store: BucketStore, client: Any,
@@ -569,7 +585,12 @@ class BgBucketBuilder:
         """Merge N bucket summaries into one via the injected summarize
         pipeline. Inputs stay as text (each phase is one synthetic
         LLMMessage carrying the previous bucket's summary). The
-        pipeline's internal chunking handles oversized consolidation."""
+        pipeline's internal chunking handles oversized consolidation.
+
+        The resulting super-summary is also fed to the memory extractor
+        — it's the highest-signal distillation we produce (N phases
+        merged), so facts that emerge here are strong candidates for
+        long-term storage."""
         if not bucket_docs or self._summarize_fn is None:
             return ""
         from core.llm_client import LLMMessage
@@ -584,7 +605,7 @@ class BgBucketBuilder:
             llm_msgs.append(LLMMessage(
                 role="user", content=content, conversation_id=_cid))
         try:
-            return self._summarize_fn(
+            result = self._summarize_fn(
                 llm_msgs, client,
                 max_tokens=ctx_max or 0,
                 target_tokens=BUCKET_OUTPUT_TARGET,
@@ -596,6 +617,17 @@ class BgBucketBuilder:
         except Exception:
             logger.exception("[bg-bucket] consolidate failed")
             return ""
+
+        if result and user_id:
+            try:
+                from core.memory_auto_extract import auto_extract_memories
+                auto_extract_memories(
+                    user_id=user_id, summary=result,
+                    agent_name="", llm_client=client)
+            except Exception:
+                logger.debug("[bg-bucket] consolidate memory extract failed",
+                              exc_info=True)
+        return result
 
     def _publish_progress(self, cid: str, stage: str,
                            payload: Dict[str, Any]) -> None:

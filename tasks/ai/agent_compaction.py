@@ -636,23 +636,40 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         _tmul = resolve_token_multiplier(
             getattr(client, "_config_ref", None))
 
-        # ── Phase -1: Bucket-store pre-filter ──
-        # Hierarchical cache: messages already covered by an existing bucket
-        # never need to be re-summarized. Drop them from the input so the
-        # summarizer only sees the new tail since the last bucket.
+        # ── Phase -1: Advance the shared pyramid ──
+        # The shared pyramid is the authoritative history asset, built
+        # and maintained by core.bg_bucket_builder (the only writer).
+        # This hot path is READ-ONLY on the pyramid.
+        #
+        # Two regimes:
+        #   force=True  (manual /compact, CC compact_boundary, /compact
+        #                --rebuild) → block on build_now_sync so the
+        #                pyramid is caught up (incl. partial flush of
+        #                "in-progress" msgs) before we assemble.
+        #   force=False (auto trigger at 80%) → fire maybe_trigger
+        #                (async), continue immediately. Hot path will
+        #                squeeze privately if the tail is too big.
         _bucket_store = None
-        _historical_header = ""
-        if conversation_id and agent_name:
+        if conversation_id:
             try:
+                from core.bg_bucket_builder import BgBucketBuilder
                 from core.bucket_store import BucketStore
                 from core.conversation_store import ConversationStore
+                _bb = BgBucketBuilder.instance()
+                if force and user_id:
+                    try:
+                        _bb.build_now_sync(
+                            conversation_id, user_id,
+                            allow_partial=True)
+                    except Exception:
+                        logger.warning(
+                            "[compact] build_now_sync failed — continuing "
+                            "with whatever pyramid state exists",
+                            exc_info=True)
+                elif user_id:
+                    _bb.maybe_trigger(conversation_id, user_id)
                 _conv_dir = ConversationStore.instance()._conv_dir(conversation_id)
                 _bucket_store = BucketStore.get(_conv_dir)
-                _historical_header = _bucket_store.assemble_summary_header()
-                # Pre-filter by seq. seq is a strictly-monotonic global
-                # counter (bootstrap from disk + monotonic per-process +
-                # on-disk invariant enforced by the migration) — filtering
-                # by seq alone is correct and unambiguous.
                 _last_seq = _bucket_store.last_seq
                 if _last_seq > 0:
                     _before = len(messages)
@@ -663,15 +680,15 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     _dropped = _before - len(messages)
                     if _dropped:
                         logger.info(
-                            "[compact] bucket pre-filter: dropped %d msgs "
-                            "already covered by buckets (last_seq=%d)",
-                            _dropped, _last_seq)
+                            "[compact] pyramid pre-filter: dropped %d msgs "
+                            "covered (last_seq=%d, pyramid_objects=%d)",
+                            _dropped, _last_seq, _bucket_store.object_count)
             except Exception as _bs_err:
-                logger.warning("[compact] bucket store init failed: %s — "
-                                "falling back to full-transcript compact",
-                                _bs_err)
+                logger.warning(
+                    "[compact] bucket store init failed: %s — falling back "
+                    "to tail-only compact (no pyramid header)",
+                    _bs_err)
                 _bucket_store = None
-                _historical_header = ""
 
         # ── Phase 0: Cleanup ──
         messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
@@ -791,14 +808,21 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 lines.append(_call)
             return "\n".join(lines)
 
+        # Pyramid header read ONCE here (fresh from store). Step 2c may
+        # replace _pyramid_header with a compressed version (private to
+        # this compact, does NOT touch the shared pyramid). _build_output
+        # uses the current value of _pyramid_header at call time via
+        # closure — re-binding it is how 2c takes effect.
+        _pyramid_header = (
+            _bucket_store.assemble_summary_header() if _bucket_store else "")
+
         def _build_output(saved: List[LLMMessage]) -> List[LLMMessage]:
-            """Assemble system + historical_header(from bucket_store) + saved."""
+            """Assemble system + pyramid_header (context bridge) + saved."""
             self._truncate_tool_results(saved)
             out: List[LLMMessage] = []
             if system_msg:
                 out.append(system_msg)
-            header = _bucket_store.assemble_summary_header() if _bucket_store else ""
-            if header:
+            if _pyramid_header:
                 if saved:
                     _frt = min(m.timestamp for m in saved)
                     _frs = min(m.seq for m in saved)
@@ -811,15 +835,11 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     "more detail than the summary above (commits, file contents, "
                     "tool arguments), call read_history."
                 )
-                # File re-read hint: scan EVERY input message (both the
-                # already-bucketed part and saved_recent) so the agent sees
-                # any file it was working on, even if that work has been
-                # compacted away. Capped to 5 most-recent-per-path.
                 _files_note = _format_files_note(
                     _collect_recent_files(messages, limit=5))
                 out.append(LLMMessage(
                     role="user",
-                    content=header + _postamble + _files_note,
+                    content=_pyramid_header + _postamble + _files_note,
                     timestamp=_frt - 0.002,
                     seq=_frs - 2,
                     source={"type": "context"},
@@ -842,53 +862,12 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 chars_per_token=chars_per_token,
                 token_multiplier=_tmul)
 
-        def _build_bucket(msgs_in: List[LLMMessage]) -> None:
-            """Summarize msgs_in → new level-1 bucket, appended to store."""
-            if not msgs_in or _bucket_store is None:
-                return
-            try:
-                # Find endpoints by seq so first_msg_id and last_msg_id
-                # line up with the first_seq / last_seq span — the agent's
-                # read_history(action="range", ...) call needs the exact
-                # ids of the true span extremes, not just min/max of a
-                # shuffled input list.
-                _sorted = sorted(msgs_in, key=lambda m: m.seq)
-                _first = _sorted[0]
-                _last = _sorted[-1]
-                _seqs = [m.seq for m in msgs_in]
-                _tss = [m.timestamp for m in msgs_in]
-                _summary = self._summarize_messages(
-                    msgs_in, client,
-                    max_tokens=max_tokens,
-                    target_tokens=_bucket_target,
-                    conversation_id=conversation_id,
-                    agent_name=agent_name,
-                    compact_instructions=compact_instructions,
-                    user_id=user_id,
-                )
-                if _summary and len(_summary.strip()) >= 20:
-                    _bucket_store.add_bucket(
-                        first_seq=min(_seqs), last_seq=max(_seqs),
-                        first_ts=min(_tss), last_ts=max(_tss),
-                        summary=_summary,
-                        first_msg_id=getattr(_first, "msg_id", "") or "",
-                        last_msg_id=getattr(_last, "msg_id", "") or "",
-                        msg_count=len(msgs_in),
-                        model=getattr(client, "default_model", "") or "")
-                    if user_id:
-                        try:
-                            _ex_client = client
-                            _sum_llm, _, _ = self._get_summarizer_client(user_id)
-                            if _sum_llm:
-                                _ex_client = _sum_llm
-                            self._auto_extract_memories(
-                                _summary, _ex_client, user_id,
-                                agent_name=agent_name,
-                                conversation_id=conversation_id)
-                        except Exception:
-                            logger.debug("memory extract failed", exc_info=True)
-            except Exception as _e:
-                logger.error("[compact] bucket summarize failed: %s", _e)
+        # Hot path never calls add_bucket. Bucket creation is owned
+        # exclusively by core.bg_bucket_builder — either sync-fired
+        # above (force=True) or async via maybe_trigger. The squeeze
+        # phase below may LLM-digest the tail, but that digest stays
+        # private (source.type="private_compaction") and never enters
+        # the shared pyramid.
 
         # ── Skip/trigger check ──
         _initial_output = _build_output(messages[start_idx:])
@@ -937,69 +916,86 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         # exception increments. Skipped-by-trigger runs above don't
         # touch the counter so they don't mask real failures.
         try:
-            # ── STEP 1: new bucket from (messages - last 25-conv-turn window) ──
-            _split = _select_recent_messages(
-                messages, start_idx=start_idx,
-                min_conversation=25, max_total=100)
-            saved_recent = messages[_split:]
-            _to_summarize = messages[start_idx:_split]
-            _build_bucket(_to_summarize)
+            # ═════════════════════════════════════════════════════════
+            #  Hot-path squeeze (4 steps, pyramid read-only)
+            # ═════════════════════════════════════════════════════════
+            # Section A = [sys] + [pyramid_header bridge]
+            # Section B = messages post pre-filter (uncovered tail)
+            # Output   = A + B, must fit ≤ cap.
+            # ─────────────────────────────────────────────────────────
 
+            saved_recent = messages[start_idx:]
             compacted = _build_output(saved_recent)
             new_estimate = _estimate(compacted)
 
-            # ── STEP 2: rollup [B_1..B_{N-1}] → SB, keep B_N ──
-            if new_estimate > cap and _bucket_store and _bucket_store.object_count >= 3:
-                logger.info("[compact] step 2 rollup (%d > cap %d, %d buckets)",
-                            new_estimate, cap, _bucket_store.object_count)
-                try:
-                    _inputs = _bucket_store.get_rollup_input()
-                    _sb = self._consolidate_buckets(
-                        _inputs, client, user_id=user_id,
-                        conversation_id=conversation_id, agent_name=agent_name)
-                    if _sb and len(_sb.strip()) >= 20:
-                        _bucket_store.rollup_all_except_last(
-                            _sb, model=getattr(client, "default_model", "") or "")
-                except Exception as _e:
-                    logger.warning("[compact] step 2 rollup failed: %s", _e)
+            # ── STEP 2a: truncate tool results in tail (deterministic) ──
+            if new_estimate > cap:
+                logger.info(
+                    "[compact] step 2a tool-result truncate (%d > cap %d)",
+                    new_estimate, cap)
+                self._truncate_tool_results(saved_recent)
                 compacted = _build_output(saved_recent)
                 new_estimate = _estimate(compacted)
 
-            # ── STEP 3: collapse all buckets → single SB ──
-            if new_estimate > cap and _bucket_store and _bucket_store.object_count >= 2:
-                logger.info("[compact] step 3 collapse (%d > cap %d, %d buckets)",
-                            new_estimate, cap, _bucket_store.object_count)
-                try:
-                    _inputs = _bucket_store.get_collapse_input()
-                    _single = self._consolidate_buckets(
-                        _inputs, client, user_id=user_id,
-                        conversation_id=conversation_id, agent_name=agent_name)
-                    if _single and len(_single.strip()) >= 20:
-                        _bucket_store.collapse_all(
-                            _single, model=getattr(client, "default_model", "") or "")
-                except Exception as _e:
-                    logger.warning("[compact] step 3 collapse failed: %s", _e)
-                compacted = _build_output(saved_recent)
-                new_estimate = _estimate(compacted)
+            # ── STEP 2b / 2c: iterative LLM squeeze ──
+            # At each iter, pick the dominant side (header vs tail) and
+            # shrink it. Header-shrink is a PRIVATE compression of the
+            # pyramid header for this agent (shared pyramid untouched).
+            # Tail-shrink digests the oldest part of saved_recent into
+            # a private_compaction msg (also ephemeral).
+            _iter = 0
+            _MAX_ITERS = 4  # safety; force-fit catches what remains
+            while new_estimate > cap and _iter < _MAX_ITERS:
+                _iter += 1
+                _hdr_chars = len(_pyramid_header or "")
+                _tail_chars = sum(
+                    len(m.content or "") for m in saved_recent
+                    if isinstance(m.content, str))
 
-            # ── STEP 4: shrink saved window 25/100 → 6/20, eject 30 into new bucket ──
-            if new_estimate > cap and len(saved_recent) > 20:
-                logger.info("[compact] step 4 shrink-saved (%d > cap %d)",
-                            new_estimate, cap)
-                _fb_split = _select_recent_messages(
-                    messages, start_idx=start_idx,
-                    min_conversation=6, max_total=20)
-                if _fb_split > _split:
-                    _ejected = messages[_split:_fb_split]
-                    _build_bucket(_ejected)
-                    saved_recent = messages[_fb_split:]
+                if _pyramid_header and _hdr_chars > _tail_chars * 1.5:
+                    # 2c: compress pyramid header privately for this agent
+                    logger.info(
+                        "[compact] step 2c compress-header (iter=%d, "
+                        "hdr=%d chars, tail=%d chars)",
+                        _iter, _hdr_chars, _tail_chars)
+                    _new_hdr = self._compress_pyramid_header_for_agent(
+                        _pyramid_header, client, cap,
+                        user_id=user_id,
+                        conversation_id=conversation_id)
+                    if _new_hdr and len(_new_hdr) < _hdr_chars:
+                        _pyramid_header = _new_hdr
+                        compacted = _build_output(saved_recent)
+                        new_estimate = _estimate(compacted)
+                        continue
+                    break  # compression didn't help
+                else:
+                    # 2b: digest oldest part of tail into private compaction
+                    if len(saved_recent) < 10:
+                        break
+                    logger.info(
+                        "[compact] step 2b digest-tail (iter=%d, "
+                        "tail_msgs=%d)",
+                        _iter, len(saved_recent))
+                    _digest_msg, _new_tail = self._digest_oldest_tail(
+                        saved_recent, client, cap,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        keep=6)
+                    if _digest_msg is None:
+                        break
+                    # Inject digest at the FRONT of saved_recent so the
+                    # bridge/header stays untouched. The digest carries
+                    # source.type=private_compaction and is regenerable
+                    # at the next compact.
+                    saved_recent = [_digest_msg] + _new_tail
                     compacted = _build_output(saved_recent)
                     new_estimate = _estimate(compacted)
 
-            # ── STEP 5: force-fit content (brute truncate) — invariant garantee ──
+            # ── STEP 2d: force-fit (brute truncate) — hard guarantee ──
             if new_estimate > cap:
                 logger.warning(
-                    "[compact] step 5 force-fit: %d > cap %d", new_estimate, cap)
+                    "[compact] step 2d force-fit: %d > cap %d",
+                    new_estimate, cap)
                 compacted = self._force_fit_context(
                     compacted, cap,
                     chars_per_token=chars_per_token,
@@ -1057,6 +1053,119 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 conversation_id, agent_name, succeeded=False)
             raise
 
+
+    def _compress_pyramid_header_for_agent(
+            self, header_text: str, client, cap: int, *,
+            user_id: str, conversation_id: str) -> str:
+        """Privately compress a too-big pyramid header for ONE agent.
+
+        Fires from _compact step 2c when an agent's ctx is too small to
+        carry the full shared pyramid header. The result is injected
+        into this compact's output only — shared pyramid is untouched.
+
+        Uses the existing chunked-summarize pipeline
+        (_summarize_messages / _call_summarize), so oversized headers
+        are internally split without extra code here.
+
+        Return "" on failure (caller stops iterating).
+        """
+        if not header_text or not client or cap <= 0:
+            return ""
+        # Target ~60% of the cap so there's room for tail + response.
+        # Chars → tokens ~ /4 for mixed text.
+        target_tokens = max(500, int(cap * 0.60))
+        try:
+            return self._call_summarize(
+                client, header_text,
+                target_tokens=target_tokens,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                compact_instructions=(
+                    "Compress this multi-phase conversation summary to "
+                    f"~{target_tokens} tokens. Preserve: key decisions, "
+                    "user intent evolution, agent handoffs, and "
+                    "deduplicated `## Files & operations` (keep the most-"
+                    "touched paths up to 20). Be aggressive — this will "
+                    "replace the full summary for a single agent whose "
+                    "context is too small to carry it all."
+                ),
+                final=True,
+            ) or ""
+        except Exception:
+            logger.warning("[compact] header compress failed",
+                            exc_info=True)
+            return ""
+
+    def _digest_oldest_tail(
+            self, tail: List[LLMMessage], client, cap: int, *,
+            user_id: str, conversation_id: str,
+            keep: int = 6) -> "tuple[Optional[LLMMessage], List[LLMMessage]]":
+        """Privately digest the oldest (len-keep) msgs of a tail.
+
+        Fires from _compact step 2b when the tail (post-pyramid, post-
+        tool-truncate) still busts cap. Produces ONE
+        source.type="private_compaction" msg that covers those older
+        msgs. The returned msg is regenerable at the next compact (no
+        special persistence — it's in agent_ctx until the next /compact
+        rebuilds from transcript).
+
+        Return (digest_msg, kept_tail) or (None, tail) on failure.
+        """
+        if not tail or len(tail) <= keep or not client:
+            return None, tail
+        to_digest = tail[:-keep]
+        kept = tail[-keep:]
+        target_tokens = max(300, cap // 10)
+        try:
+            summary = self._summarize_messages(
+                to_digest, client,
+                max_tokens=max(cap * 4, 16000),
+                target_tokens=target_tokens,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                compact_instructions=(
+                    "This is the oldest part of an agent's current work "
+                    "tail — tool calls, file edits, decisions in "
+                    "progress. Preserve: tool-call sequences, file "
+                    "paths, the state of any ongoing task, errors "
+                    "encountered. End with a short `## Files & "
+                    "operations` section listing the files and "
+                    "commands touched."
+                ),
+            )
+        except Exception:
+            logger.warning("[compact] tail digest failed", exc_info=True)
+            return None, tail
+        if not summary or len(summary.strip()) < 20:
+            return None, tail
+
+        _first_seq = min((m.seq for m in to_digest), default=0)
+        _last_seq = max((m.seq for m in to_digest), default=0)
+        _first_id = next(
+            (m.msg_id for m in to_digest if getattr(m, "msg_id", "")),
+            "")
+        _last_id = ""
+        for m in reversed(to_digest):
+            if getattr(m, "msg_id", ""):
+                _last_id = m.msg_id
+                break
+        digest_msg = LLMMessage(
+            role="user",
+            content=(
+                "[Private tail digest — older working context "
+                "compressed to fit this agent's window]\n\n"
+                + summary
+            ),
+            source={
+                "type": "private_compaction",
+                "covers_msg_count": len(to_digest),
+                "covers_seq": [int(_first_seq), int(_last_seq)],
+                "covers_msg_ids": [_first_id, _last_id],
+                "regen_at_next_compact": True,
+            },
+            conversation_id=conversation_id,
+        )
+        return digest_msg, kept
 
     @staticmethod
     def _cleanup_orphan_files(compacted: List[LLMMessage],

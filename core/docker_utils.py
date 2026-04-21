@@ -104,15 +104,29 @@ def docker_cmd() -> list:
 def translate_path(host_path: str) -> str:
     """Translate a host path to a Docker-compatible path.
 
-    Windows: C:\\Projets\\fssandbox → /mnt/c/Projets/fssandbox
-    Linux:   /home/user/project → /home/user/project (unchanged)
+    Handles:
+      - Drive letters:   C:\\foo\\bar           → /mnt/c/foo/bar
+      - WSL UNC paths:   \\\\wsl$\\<distro>\\x  → /x
+                         \\\\wsl.localhost\\<distro>\\x → /x
+
+    PawFlow runs Docker via `wsl docker`, so the daemon sees Linux-native
+    paths only. Passing `//wsl$/Ubuntu-24.04/…` as a -v source makes
+    Docker silently bind-mount an empty directory (that literal path
+    doesn't exist inside the WSL distro), which breaks dev-mounts of
+    the MCP bridge / relay scripts — the container ends up with no
+    /opt/pawflow/mcp_bridge.py and Claude replies tool-less.
     """
     if not is_windows():
         return host_path
 
     # Convert Windows path to WSL path
-    # C:\Projets\foo → /mnt/c/Projets/foo
     path = host_path.replace("\\", "/")
+    lower = path.lower()
+    for prefix in ("//wsl$/", "//wsl.localhost/"):
+        if lower.startswith(prefix):
+            rest = path[len(prefix):]
+            _, _, rel = rest.partition("/")
+            return "/" + rel
     if len(path) >= 2 and path[1] == ":":
         drive = path[0].lower()
         path = f"/mnt/{drive}{path[2:]}"

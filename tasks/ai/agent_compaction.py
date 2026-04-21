@@ -85,6 +85,61 @@ class AgentCompactionMixin(AgentSummarizeMixin):
     # Max chars kept per tool result after compaction truncation
     _TOOL_TRUNC_LIMIT = 800
 
+    # Circuit breaker — track consecutive NON-FORCED compact failures
+    # per (conv_id, agent_name). After _COMPACT_FAIL_CAP in a row the
+    # auto-compact path for that agent skips itself for the rest of
+    # the process lifetime. Manual /compact (force=True) bypasses —
+    # the user explicitly asked so we still try. Reset on any success.
+    # Session-scoped, in-memory. Prevents the "hit context limit, retry
+    # compact, fail, hit again, retry, fail, …" loop that CC measured
+    # at 3k+ consecutive failures in a single session (~250k wasted
+    # API calls/day globally).
+    _COMPACT_FAIL_CAP = 3
+    _compact_fail_counts: Dict[tuple, int] = {}
+    _compact_fail_lock = threading.Lock()
+
+    @classmethod
+    def _compact_breaker_key(cls, conversation_id: str, agent_name: str) -> tuple:
+        return (conversation_id or "", agent_name or "")
+
+    @classmethod
+    def _compact_breaker_should_skip(cls, conversation_id: str,
+                                      agent_name: str) -> int:
+        """Return current failure count if cap reached, 0 otherwise."""
+        with cls._compact_fail_lock:
+            count = cls._compact_fail_counts.get(
+                cls._compact_breaker_key(conversation_id, agent_name), 0)
+            return count if count >= cls._COMPACT_FAIL_CAP else 0
+
+    @classmethod
+    def _compact_breaker_fail(cls, conversation_id: str, agent_name: str) -> int:
+        with cls._compact_fail_lock:
+            k = cls._compact_breaker_key(conversation_id, agent_name)
+            cls._compact_fail_counts[k] = cls._compact_fail_counts.get(k, 0) + 1
+            return cls._compact_fail_counts[k]
+
+    @classmethod
+    def _compact_breaker_reset(cls, conversation_id: str, agent_name: str) -> None:
+        with cls._compact_fail_lock:
+            cls._compact_fail_counts.pop(
+                cls._compact_breaker_key(conversation_id, agent_name), None)
+
+    @classmethod
+    def _compact_breaker_record(cls, conversation_id: str, agent_name: str,
+                                 succeeded: bool) -> None:
+        """Unified success/fail entry point. Called once per compact attempt
+        that actually did work (skipped-by-trigger runs don't call this)."""
+        if succeeded:
+            cls._compact_breaker_reset(conversation_id, agent_name)
+            return
+        n = cls._compact_breaker_fail(conversation_id, agent_name)
+        if n >= cls._COMPACT_FAIL_CAP:
+            logger.error(
+                "[compact] circuit breaker tripped for %s/%s after %d "
+                "consecutive failures — auto-compact disabled for this "
+                "agent until server restart. Manual /compact still works.",
+                (conversation_id or "?")[:8], agent_name or "-", n)
+
     def _microcompact_time_based(self, messages: List[LLMMessage],
                                   keep_recent: int = 5,
                                   gap_minutes: int = 60) -> int:
@@ -551,6 +606,20 @@ class AgentCompactionMixin(AgentSummarizeMixin):
           5. force_fit brute-truncate message contents to cap.
         """
         _cpt = chars_per_token if chars_per_token > 0 else 3.5
+        # Circuit breaker: skip auto-compact after N consecutive failures.
+        # Forced compacts (manual /compact, CC compact_boundary) bypass —
+        # the user / CC explicitly asked so we still try.
+        if not force:
+            _tripped = self._compact_breaker_should_skip(
+                conversation_id, agent_name)
+            if _tripped:
+                logger.warning(
+                    "[compact] circuit breaker tripped for %s/%s "
+                    "(%d consecutive failures) — skipping auto-compact; "
+                    "manual /compact still works.",
+                    conversation_id[:8] if conversation_id else "?",
+                    agent_name or "-", _tripped)
+                return messages
         # Resolve token_multiplier once from the service config so every
         # _estimate_tokens below returns real-tokenizer cost.
         from core.token_counter import resolve_token_multiplier
@@ -652,6 +721,66 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         from core.llm_client import _next_msg_seq
         import time as _t_compact
 
+        def _collect_recent_files(msgs: List[LLMMessage], limit: int = 5) -> List[Dict]:
+            """Walk msgs, pull the last `limit` file tool_call args.
+
+            Each entry: {path, offset?, limit?, service?}. Keeps the most
+            recent read/edit/write per path (dedup by path). Used to
+            inject a "you were editing X" hint in the compact output so
+            the agent doesn't lose track of the files it was working on.
+            Inspired by CC's postCompact file-restore attachment.
+            """
+            out: Dict[str, Dict] = {}  # path -> info (overwritten = most recent)
+            _FILE_TOOLS = {"read", "edit", "write"}
+            for m in msgs:
+                if m.role != "assistant" or not m.tool_calls:
+                    continue
+                for tc in m.tool_calls:
+                    _name = (getattr(tc, "name", "") or "").lower()
+                    if _name not in _FILE_TOOLS:
+                        continue
+                    _args = tc.arguments if isinstance(tc.arguments, dict) else {}
+                    _path = _args.get("path") or _args.get("file_path") or ""
+                    if not _path:
+                        continue
+                    entry = {"path": _path, "tool": _name}
+                    if _name == "read":
+                        _off = _args.get("offset")
+                        _lim = _args.get("limit")
+                        if _off:
+                            entry["offset"] = int(_off)
+                        if _lim:
+                            entry["limit"] = int(_lim)
+                    _svc = _args.get("source") or _args.get("filesystem") or ""
+                    if _svc:
+                        entry["service"] = _svc
+                    out[_path] = entry  # overwrite → keep latest
+            return list(out.values())[-limit:]
+
+        def _format_files_note(files: List[Dict]) -> str:
+            if not files:
+                return ""
+            lines = [
+                "\n\n[Files you were working with (state lost after compact). "
+                "Re-read them now with the exact same parameters to restore "
+                "your working view before continuing:]"
+            ]
+            for fi in files:
+                _p = fi.get("path", "")
+                _call = f"  - read(path={_p!r}"
+                params = []
+                if "offset" in fi:
+                    params.append(f"offset={fi['offset']}")
+                if "limit" in fi:
+                    params.append(f"limit={fi['limit']}")
+                if params:
+                    _call += ", " + ", ".join(params)
+                if "service" in fi:
+                    _call += f", source={fi['service']!r}"
+                _call += ")"
+                lines.append(_call)
+            return "\n".join(lines)
+
         def _build_output(saved: List[LLMMessage]) -> List[LLMMessage]:
             """Assemble system + historical_header(from bucket_store) + saved."""
             self._truncate_tool_results(saved)
@@ -672,9 +801,15 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     "more detail than the summary above (commits, file contents, "
                     "tool arguments), call read_history."
                 )
+                # File re-read hint: scan EVERY input message (both the
+                # already-bucketed part and saved_recent) so the agent sees
+                # any file it was working on, even if that work has been
+                # compacted away. Capped to 5 most-recent-per-path.
+                _files_note = _format_files_note(
+                    _collect_recent_files(messages, limit=5))
                 out.append(LLMMessage(
                     role="user",
-                    content=header + _postamble,
+                    content=header + _postamble + _files_note,
                     timestamp=_frt - 0.002,
                     seq=_frs - 2,
                     source={"type": "context"},
@@ -754,100 +889,160 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     "FORCED" if force else "TRIGGERED",
                     _original_tokens, trigger, cap, _original_count)
 
-        # ── STEP 1: new bucket from (messages - last 25-conv-turn window) ──
-        _split = _select_recent_messages(
-            messages, start_idx=start_idx,
-            min_conversation=25, max_total=100)
-        saved_recent = messages[_split:]
-        _to_summarize = messages[start_idx:_split]
-        _build_bucket(_to_summarize)
-
-        compacted = _build_output(saved_recent)
-        new_estimate = _estimate(compacted)
-
-        # ── STEP 2: rollup [B_1..B_{N-1}] → SB, keep B_N ──
-        if new_estimate > cap and _bucket_store and _bucket_store.object_count >= 3:
-            logger.info("[compact] step 2 rollup (%d > cap %d, %d buckets)",
-                        new_estimate, cap, _bucket_store.object_count)
-            try:
-                _inputs = _bucket_store.get_rollup_input()
-                _sb = self._consolidate_buckets(
-                    _inputs, client, user_id=user_id,
-                    conversation_id=conversation_id, agent_name=agent_name)
-                if _sb and len(_sb.strip()) >= 20:
-                    _bucket_store.rollup_all_except_last(
-                        _sb, model=getattr(client, "default_model", "") or "")
-            except Exception as _e:
-                logger.warning("[compact] step 2 rollup failed: %s", _e)
-            compacted = _build_output(saved_recent)
-            new_estimate = _estimate(compacted)
-
-        # ── STEP 3: collapse all buckets → single SB ──
-        if new_estimate > cap and _bucket_store and _bucket_store.object_count >= 2:
-            logger.info("[compact] step 3 collapse (%d > cap %d, %d buckets)",
-                        new_estimate, cap, _bucket_store.object_count)
-            try:
-                _inputs = _bucket_store.get_collapse_input()
-                _single = self._consolidate_buckets(
-                    _inputs, client, user_id=user_id,
-                    conversation_id=conversation_id, agent_name=agent_name)
-                if _single and len(_single.strip()) >= 20:
-                    _bucket_store.collapse_all(
-                        _single, model=getattr(client, "default_model", "") or "")
-            except Exception as _e:
-                logger.warning("[compact] step 3 collapse failed: %s", _e)
-            compacted = _build_output(saved_recent)
-            new_estimate = _estimate(compacted)
-
-        # ── STEP 4: shrink saved window 25/100 → 6/20, eject 30 into new bucket ──
-        if new_estimate > cap and len(saved_recent) > 20:
-            logger.info("[compact] step 4 shrink-saved (%d > cap %d)",
-                        new_estimate, cap)
-            _fb_split = _select_recent_messages(
-                messages, start_idx=start_idx,
-                min_conversation=6, max_total=20)
-            if _fb_split > _split:
-                _ejected = messages[_split:_fb_split]
-                _build_bucket(_ejected)
-                saved_recent = messages[_fb_split:]
-                compacted = _build_output(saved_recent)
-                new_estimate = _estimate(compacted)
-
-        # ── STEP 5: force-fit content (brute truncate) — invariant garantee ──
-        if new_estimate > cap:
-            logger.warning(
-                "[compact] step 5 force-fit: %d > cap %d", new_estimate, cap)
-            compacted = self._force_fit_context(
-                compacted, cap,
-                chars_per_token=chars_per_token,
-                tool_defs=tool_defs,
-                token_multiplier=_tmul)
-            new_estimate = _estimate(compacted)
-
-        logger.info("[compact] Final: %d tokens (was %d, cap %d), "
-                    "%d messages (was %d)",
-                    new_estimate, _original_tokens, cap,
-                    len(compacted), _original_count)
-
-        # ── Phase final: persist + orphan cleanup + SSE ──
-        self._persist_context(compacted, conversation_id, agent_name)
-        if conversation_id:
-            self._cleanup_orphan_files(compacted, conversation_id)
-        if conversation_id:
+        # ── Pre-compact hooks ──
+        # Third-party code can modify compact_instructions or abort via
+        # core.compact_hooks.subscribe_pre_compact(...).
+        from core.compact_hooks import fire_pre_compact, fire_post_compact
+        _trigger_label = "manual" if force else "auto"
+        _pre_ctx = {
+            "trigger": _trigger_label,
+            "conversation_id": conversation_id,
+            "agent_name": agent_name,
+            "user_id": user_id,
+            "compact_instructions": compact_instructions or "",
+            "force": bool(force),
+            "original_tokens": _original_tokens,
+        }
+        _pre_result = fire_pre_compact(_pre_ctx)
+        if _pre_result.get("abort"):
+            logger.info("[compact] pre-hook aborted compaction — returning "
+                        "messages unchanged")
+            return messages
+        compact_instructions = _pre_result.get("compact_instructions", "") or ""
+        _user_display = _pre_result.get("user_display_message", "") or ""
+        if _user_display and conversation_id:
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
-                    conversation_id, "compact_progress", {
-                        "stage": "done",
-                        "agent": agent_name,
-                        "before": _original_count,
-                        "after": len(compacted),
-                        "tokens_before": _original_tokens,
-                        "tokens_after": new_estimate,
-                    })
+                    conversation_id, "compact_progress",
+                    {"stage": "hook_message", "message": _user_display,
+                     "agent": agent_name})
             except Exception:
-                logger.debug("compact SSE publish failed", exc_info=True)
-        return compacted
+                logger.debug("compact hook_message publish failed", exc_info=True)
+
+        # Circuit breaker tracking: everything past this point counts as
+        # "compact attempted" — a clean return resets the counter, any
+        # exception increments. Skipped-by-trigger runs above don't
+        # touch the counter so they don't mask real failures.
+        try:
+            # ── STEP 1: new bucket from (messages - last 25-conv-turn window) ──
+            _split = _select_recent_messages(
+                messages, start_idx=start_idx,
+                min_conversation=25, max_total=100)
+            saved_recent = messages[_split:]
+            _to_summarize = messages[start_idx:_split]
+            _build_bucket(_to_summarize)
+
+            compacted = _build_output(saved_recent)
+            new_estimate = _estimate(compacted)
+
+            # ── STEP 2: rollup [B_1..B_{N-1}] → SB, keep B_N ──
+            if new_estimate > cap and _bucket_store and _bucket_store.object_count >= 3:
+                logger.info("[compact] step 2 rollup (%d > cap %d, %d buckets)",
+                            new_estimate, cap, _bucket_store.object_count)
+                try:
+                    _inputs = _bucket_store.get_rollup_input()
+                    _sb = self._consolidate_buckets(
+                        _inputs, client, user_id=user_id,
+                        conversation_id=conversation_id, agent_name=agent_name)
+                    if _sb and len(_sb.strip()) >= 20:
+                        _bucket_store.rollup_all_except_last(
+                            _sb, model=getattr(client, "default_model", "") or "")
+                except Exception as _e:
+                    logger.warning("[compact] step 2 rollup failed: %s", _e)
+                compacted = _build_output(saved_recent)
+                new_estimate = _estimate(compacted)
+
+            # ── STEP 3: collapse all buckets → single SB ──
+            if new_estimate > cap and _bucket_store and _bucket_store.object_count >= 2:
+                logger.info("[compact] step 3 collapse (%d > cap %d, %d buckets)",
+                            new_estimate, cap, _bucket_store.object_count)
+                try:
+                    _inputs = _bucket_store.get_collapse_input()
+                    _single = self._consolidate_buckets(
+                        _inputs, client, user_id=user_id,
+                        conversation_id=conversation_id, agent_name=agent_name)
+                    if _single and len(_single.strip()) >= 20:
+                        _bucket_store.collapse_all(
+                            _single, model=getattr(client, "default_model", "") or "")
+                except Exception as _e:
+                    logger.warning("[compact] step 3 collapse failed: %s", _e)
+                compacted = _build_output(saved_recent)
+                new_estimate = _estimate(compacted)
+
+            # ── STEP 4: shrink saved window 25/100 → 6/20, eject 30 into new bucket ──
+            if new_estimate > cap and len(saved_recent) > 20:
+                logger.info("[compact] step 4 shrink-saved (%d > cap %d)",
+                            new_estimate, cap)
+                _fb_split = _select_recent_messages(
+                    messages, start_idx=start_idx,
+                    min_conversation=6, max_total=20)
+                if _fb_split > _split:
+                    _ejected = messages[_split:_fb_split]
+                    _build_bucket(_ejected)
+                    saved_recent = messages[_fb_split:]
+                    compacted = _build_output(saved_recent)
+                    new_estimate = _estimate(compacted)
+
+            # ── STEP 5: force-fit content (brute truncate) — invariant garantee ──
+            if new_estimate > cap:
+                logger.warning(
+                    "[compact] step 5 force-fit: %d > cap %d", new_estimate, cap)
+                compacted = self._force_fit_context(
+                    compacted, cap,
+                    chars_per_token=chars_per_token,
+                    tool_defs=tool_defs,
+                    token_multiplier=_tmul)
+                new_estimate = _estimate(compacted)
+
+            logger.info("[compact] Final: %d tokens (was %d, cap %d), "
+                        "%d messages (was %d)",
+                        new_estimate, _original_tokens, cap,
+                        len(compacted), _original_count)
+
+            # ── Phase final: persist + orphan cleanup + SSE ──
+            self._persist_context(compacted, conversation_id, agent_name)
+            if conversation_id:
+                self._cleanup_orphan_files(compacted, conversation_id)
+            if conversation_id:
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        conversation_id, "compact_progress", {
+                            "stage": "done",
+                            "agent": agent_name,
+                            "before": _original_count,
+                            "after": len(compacted),
+                            "tokens_before": _original_tokens,
+                            "tokens_after": new_estimate,
+                        })
+                except Exception:
+                    logger.debug("compact SSE publish failed", exc_info=True)
+            # ── Post-compact hooks ──
+            # Hooks can mutate _post_ctx["compacted"] in place to append
+            # extra messages (e.g. plan attachment, skill listing).
+            _post_ctx = {
+                "trigger": _trigger_label,
+                "conversation_id": conversation_id,
+                "agent_name": agent_name,
+                "user_id": user_id,
+                "before_messages": _original_count,
+                "after_messages": len(compacted),
+                "tokens_before": _original_tokens,
+                "tokens_after": new_estimate,
+                "compacted": compacted,
+            }
+            try:
+                fire_post_compact(_post_ctx)
+            except Exception:
+                logger.debug("post_compact hooks raised", exc_info=True)
+            self._compact_breaker_record(
+                conversation_id, agent_name, succeeded=True)
+            return compacted
+        except Exception:
+            self._compact_breaker_record(
+                conversation_id, agent_name, succeeded=False)
+            raise
 
 
     @staticmethod

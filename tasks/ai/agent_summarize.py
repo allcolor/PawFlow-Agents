@@ -22,6 +22,72 @@ from core.llm_client import (
 
 logger = logging.getLogger(__name__)
 
+# When the summarizer LLM call itself hits prompt_too_long (rare — we
+# already chunk inputs above _CHUNK_CHAR_LIMIT — but possible if the
+# provider's count is tighter than ours, the CC session's own tool-loop
+# overhead bloated context, or the model counts ours + system prompt +
+# tool schemas differently), drop the oldest 25% of the input text and
+# retry with the tail. Inspired by CC's truncateHeadForPTLRetry but
+# applied to our text-based input instead of API-round groups.
+_PTL_MARKERS = (
+    "prompt_too_long",
+    "prompt is too long",
+    "exceed_context_size",
+    "context_length_exceeded",
+    "n_prompt_tokens",
+    "maximum context length",
+)
+_PTL_MAX_RETRIES = 3
+# How much of the head to drop per retry. 25% first, 50%, 75% — bounded
+# so we never fully empty the input (would produce garbage summary).
+_PTL_DROP_SCHEDULE = (0.25, 0.50, 0.75)
+
+
+def _is_ptl_error(exc: BaseException) -> bool:
+    """True when an exception matches the prompt-too-long family."""
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _PTL_MARKERS)
+
+
+def _strip_analysis_wrapper(text: str) -> str:
+    """Remove <analysis>...</analysis> blocks and outer <summary> tags.
+
+    The 9-section summarizer prompt asks the model to produce an
+    <analysis> scratchpad followed by the final <summary>. The tool-call
+    arg should already contain ONLY the summary body, but models
+    sometimes include the wrapper anyway. Defensive one-pass strip.
+    """
+    import re as _re
+    if not text:
+        return text
+    t = _re.sub(r"<analysis>[\s\S]*?</analysis>\s*", "", text, flags=_re.IGNORECASE)
+    # Strip outer <summary>...</summary> if the model kept them.
+    _m = _re.match(r"\s*<summary>\s*([\s\S]*?)\s*</summary>\s*$", t,
+                   flags=_re.IGNORECASE)
+    if _m:
+        t = _m.group(1)
+    return t.strip() or text  # fall back to raw if strip emptied it
+
+
+def _truncate_head(text: str, drop_fraction: float) -> str:
+    """Drop the oldest `drop_fraction` of `text` on line boundaries.
+
+    Prefix a one-line marker so the summarizer knows older content was
+    cut (matches CC's PTL_RETRY_MARKER intent). Returns empty string if
+    the drop would leave nothing useful — caller must detect and raise.
+    """
+    if drop_fraction <= 0 or drop_fraction >= 1:
+        return text
+    lines = text.split("\n")
+    if len(lines) < 4:
+        return text
+    cut = int(len(lines) * drop_fraction)
+    kept = lines[cut:]
+    if not kept:
+        return ""
+    return ("[earlier conversation truncated for compaction retry]\n"
+            + "\n".join(kept))
+
 # Tool definitions for the mini summarizer loop (API providers)
 _READ_TOOL = LLMToolDefinition(
     name="read",
@@ -276,28 +342,77 @@ class AgentSummarizeMixin:
 
         _focus = f"\n- FOCUS: {compact_instructions}" if compact_instructions else ""
         if final:
-            # Final pass: full structured summary the agent will read.
+            # Final pass: 9-section structured summary, analysis-first.
+            # Inspired by Claude Code's compact prompt: the <analysis>
+            # block is a scratchpad the model uses to enumerate work
+            # chronologically BEFORE it compresses. Forcing the draft
+            # step catches work that a straight-to-summary pass skips,
+            # and it's cheap — caller strips the <analysis> tags and
+            # keeps only the <summary> body. Nine sections (vs the old
+            # seven) add:
+            #   * Problem Solving (split from Errors)
+            #   * All User Messages (verbatim — critical for intent)
+            # and demand DIRECT QUOTES for Current Work + Next Step so
+            # the post-compact agent doesn't drift on what was being
+            # done right before the cut.
             _format_rules = (
-                f"- Summary must be maximum {target_tokens} tokens.\n"
-                f"- Use this checklist — every section MUST be present:\n"
-                f"  1. USER_INTENT 2. DECISIONS 3. FILES_MODIFIED (with paths)\n"
-                f"  4. ERRORS 5. CURRENT_STATE 6. PENDING 7. CONTEXT\n"
+                f"- Total output ≤ {target_tokens} tokens (hard cap).\n"
+                f"- Structure your reply as TWO blocks, in this order:\n"
+                f"  <analysis>…scratchpad…</analysis>\n"
+                f"  <summary>…final 9-section summary…</summary>\n"
+                f"\n"
+                f"<analysis> — drafting scratchpad (caller strips it):\n"
+                f"  1. Walk the conversation chronologically. For each segment\n"
+                f"     list: user's explicit request, your approach, key\n"
+                f"     decisions, file names, full code snippets, function\n"
+                f"     signatures, file edits, errors + how you fixed them,\n"
+                f"     specific user feedback.\n"
+                f"  2. Double-check technical accuracy + completeness.\n"
+                f"\n"
+                f"<summary> — the authoritative output. Nine numbered\n"
+                f"  sections, every one MUST be present:\n"
+                f"  1. Primary Request and Intent — every user request, in detail.\n"
+                f"  2. Key Technical Concepts — technologies, frameworks,\n"
+                f"     patterns discussed.\n"
+                f"  3. Files and Code Sections — enumerate every file read,\n"
+                f"     modified, or created. Quote code snippets for the\n"
+                f"     most recent / most important edits. Explain WHY\n"
+                f"     each touch mattered.\n"
+                f"  4. Errors and Fixes — every error hit + the fix.\n"
+                f"     Call out user feedback that redirected the fix.\n"
+                f"  5. Problem Solving — problems resolved + ongoing\n"
+                f"     troubleshooting (separate from raw errors).\n"
+                f"  6. All User Messages — list EVERY non-tool-result user\n"
+                f"     message, verbatim. Critical for intent continuity.\n"
+                f"  7. Pending Tasks — explicit asks still open.\n"
+                f"  8. Current Work — precisely what was being worked on\n"
+                f"     immediately before this summary. Include file names\n"
+                f"     and code snippets. Use DIRECT QUOTES from the most\n"
+                f"     recent messages showing exactly where you left off\n"
+                f"     (verbatim, no paraphrase).\n"
+                f"  9. Optional Next Step — the next action, IF it lines up\n"
+                f"     with the user's most recent explicit request and the\n"
+                f"     work you were doing at step 8. If the last task was\n"
+                f"     concluded, list next steps ONLY when explicitly asked\n"
+                f"     — do NOT start on tangential or old completed work\n"
+                f"     without confirming. Include verbatim quotes showing\n"
+                f"     what was in flight.\n"
+                f"\n"
                 f"- Skip raw tool output, JSON blobs, and technical plumbing.\n"
-                f"- RECENCY WEIGHTING: emphasize the LATEST work — what the user "
-                f"is currently focused on. Older threads (especially any content "
-                f"tagged as 'earlier planning work' or carried over from a prior "
-                f"compacted summary) should be compressed into at most one short "
-                f"bullet under CONTEXT — just enough that a reader knows it "
-                f"happened, without re-stating goals or decisions. If an older "
-                f"topic has clearly been completed or superseded, drop it. The "
-                f"summary's job is to set up the CURRENT state, not to preserve "
-                f"history indefinitely."
+                f"- RECENCY WEIGHTING: emphasize the LATEST work. Older\n"
+                f"  threads (especially content carried over from a prior\n"
+                f"  compacted summary or tagged as 'earlier planning') are\n"
+                f"  compressed into one short line under section 1 — just\n"
+                f"  enough to know it happened. If an older topic was\n"
+                f"  clearly finished or superseded, drop it. The summary's\n"
+                f"  job is to set up CURRENT state, not to preserve history\n"
+                f"  indefinitely."
             )
         else:
-            # Intermediate chunk pass: free-form, no 7-section template.
-            # The 7-section structure has a ~4000-char floor that bloats
-            # per-chunk summaries 5× over their target. The final pass
-            # builds the structure from the chunk notes.
+            # Intermediate chunk pass: free-form, no 9-section template.
+            # Section structure has a floor that bloats per-chunk summaries
+            # 5× over their target. The final pass builds structure from
+            # the chunk notes.
             _format_rules = (
                 f"- Output AT MOST {target_tokens} tokens. Stay terse.\n"
                 f"- No headers, no template — free-form bullet notes.\n"
@@ -306,6 +421,13 @@ class AgentSummarizeMixin:
                 f"No fluff, no narration, no meta-commentary.\n"
                 f"- Skip raw tool output and JSON plumbing."
             )
+        _analysis_note = (
+            "\n- When calling compact_result(summary=...), pass ONLY the\n"
+            "  9-section body. Do NOT include the <analysis>...</analysis>\n"
+            "  scratchpad and do NOT wrap the body in <summary> tags. The\n"
+            "  analysis is for your own drafting; the downstream reader\n"
+            "  only sees what you put in `summary`."
+        ) if final else ""
         prompt = (
             f"You are a summarizer. Read the file and produce a summary.\n\n"
             f"STEP 1: Read the file:\n"
@@ -317,6 +439,7 @@ class AgentSummarizeMixin:
             f"- You may ONLY use these 2 tools: read and compact_result.\n"
             f"- Do NOT respond with text. Your ONLY output is tool calls.\n"
             f"{_format_rules}"
+            f"{_analysis_note}"
             f"{_focus}\n"
             f"\ncompact_key (use EXACTLY this): {compact_key}"
         )
@@ -328,20 +451,94 @@ class AgentSummarizeMixin:
             getattr(client, '_client', None) and getattr(client._client, 'provider', ''))
 
         max_retries = 3
-        try:
+
+        def _build_prompt_for(_fid: str, _ckey: str) -> str:
+            """Rebuild the summarizer prompt for a given file_id + key.
+
+            Extracted so PTL retries (which allocate a fresh file_id and
+            compact_key per attempt) can regenerate the prompt verbatim
+            with the new values. Structure matches the block below —
+            kept identical so behaviour is unchanged on attempt 0.
+            """
+            return (
+                f"You are a summarizer. Read the file and produce a summary.\n\n"
+                f"STEP 1: Read the file:\n"
+                f"  read(path=\"{_fid}\", source=\"filestore\")\n"
+                f"  The file may be large — paginate with offset/limit until you've read ALL of it.\n\n"
+                f"STEP 2: After reading ALL pages, deliver your summary:\n"
+                f"  compact_result(summary=\"<your summary>\", compact_key=\"{_ckey}\")\n\n"
+                f"RULES:\n"
+                f"- You may ONLY use these 2 tools: read and compact_result.\n"
+                f"- Do NOT respond with text. Your ONLY output is tool calls.\n"
+                f"{_format_rules}"
+                f"{_focus}\n"
+                f"\ncompact_key (use EXACTLY this): {_ckey}"
+            )
+
+        def _run_once(_text: str, _fid: str, _ckey: str, _prompt: str) -> str:
             if _provider == "claude-code":
                 return self._summarize_via_cc(
-                    client, prompt, file_id, compact_key, target_tokens,
+                    client, _prompt, _fid, _ckey, target_tokens,
                     max_retries, _pub, conversation_id, user_id)
-            else:
-                return self._summarize_via_api(
-                    client, prompt, file_id, compact_key, target_tokens,
-                    max_retries, _pub)
+            return self._summarize_via_api(
+                client, _prompt, _fid, _ckey, target_tokens,
+                max_retries, _pub)
+
+        # PTL retry loop: if the summarizer LLM itself raises a
+        # prompt-too-long-family error (rare — we already chunk above
+        # _CHUNK_CHAR_LIMIT, but tool-loop overhead or provider-side
+        # count mismatch can still tip over), truncate the head of the
+        # input text, store it as a fresh file, rebuild the prompt with
+        # the new file_id + compact_key, and retry. Up to 3 shots with
+        # increasing cut depth (25% / 50% / 75%). Better to ship a
+        # lossy summary than leave the user blocked.
+        cur_text = text
+        cur_fid = file_id
+        cur_key = compact_key
+        cur_prompt = prompt
+        issued_fids = [file_id]  # for cleanup in finally
+        last_err: Optional[BaseException] = None
+        try:
+            for attempt in range(_PTL_MAX_RETRIES + 1):
+                try:
+                    return _run_once(cur_text, cur_fid, cur_key, cur_prompt)
+                except Exception as e:
+                    last_err = e
+                    if not _is_ptl_error(e) or attempt >= _PTL_MAX_RETRIES:
+                        raise
+                    drop = _PTL_DROP_SCHEDULE[attempt]
+                    truncated = _truncate_head(cur_text, drop)
+                    if not truncated or len(truncated) >= len(cur_text):
+                        logger.error(
+                            "[compact] PTL retry exhausted — nothing left "
+                            "to drop (attempt %d, drop=%.0f%%)",
+                            attempt + 1, drop * 100)
+                        raise
+                    cur_text = truncated
+                    cur_key = "CK_" + uuid.uuid4().hex[:8]
+                    cur_fid = FileStore.instance().store(
+                        "compact_input.txt", cur_text.encode("utf-8"),
+                        "text/plain",
+                        user_id=user_id, conversation_id=conversation_id,
+                        category="compact")
+                    issued_fids.append(cur_fid)
+                    set_compact_key(cur_key)
+                    cur_prompt = _build_prompt_for(cur_fid, cur_key)
+                    logger.warning(
+                        "[compact] PTL retry %d/%d: %s → drop %.0f%% "
+                        "(%d → %d chars, new file=%s)",
+                        attempt + 1, _PTL_MAX_RETRIES,
+                        str(e)[:120], drop * 100,
+                        len(text), len(cur_text), cur_fid)
+            # Unreachable — loop exits via return/raise.
+            raise last_err if last_err else RuntimeError(
+                "compact summarizer exhausted retries without exception")
         finally:
-            try:
-                FileStore.instance().delete(file_id)
-            except Exception:
-                pass
+            for _fid in issued_fids:
+                try:
+                    FileStore.instance().delete(_fid)
+                except Exception:
+                    pass
 
     def _summarize_via_cc(self, client, prompt: str, file_id: str,
                           compact_key: str, target_tokens: int,
@@ -397,7 +594,7 @@ class AgentSummarizeMixin:
                     if summary:
                         logger.info("[compact-cc] got %d chars summary (attempt %d)",
                                     len(summary), attempt)
-                        return summary
+                        return _strip_analysis_wrapper(summary)
                 except TimeoutError:
                     logger.warning("[compact-cc] attempt %d: compact_result not called", attempt)
 
@@ -410,7 +607,7 @@ class AgentSummarizeMixin:
                         "[compact-cc] attempt %d: CC returned text instead "
                         "of compact_result tool call, using as summary "
                         "(%d chars)", attempt, len(_text))
-                    return _text
+                    return _strip_analysis_wrapper(_text)
 
             raise RuntimeError("Claude Code failed to call compact_result after retries")
         finally:
@@ -480,7 +677,7 @@ class AgentSummarizeMixin:
                     try:
                         summary = wait_for_compact_result(compact_key, timeout=1)
                         if summary:
-                            return summary
+                            return _strip_analysis_wrapper(summary)
                     except (TimeoutError, RuntimeError):
                         pass
                     # If the LLM just returned text, use it as the summary directly
@@ -512,7 +709,7 @@ class AgentSummarizeMixin:
                                 logger.info("[compact-api] got %d chars summary "
                                             "(attempt %d, iter %d)",
                                             len(summary), attempt, iteration)
-                                return summary
+                                return _strip_analysis_wrapper(summary)
                         except (TimeoutError, RuntimeError):
                             pass
                         # Fallback: extract from arguments directly
@@ -542,7 +739,7 @@ class AgentSummarizeMixin:
             try:
                 summary = wait_for_compact_result(compact_key, timeout=2)
                 if summary:
-                    return summary
+                    return _strip_analysis_wrapper(summary)
             except (TimeoutError, RuntimeError):
                 pass
             logger.warning("[compact-api] attempt %d: compact_result not called", attempt)

@@ -69,6 +69,14 @@ class ToolRelayClient:
             sock = ctx.wrap_socket(sock, server_hostname=host)
         self._sock = sock
 
+        # Internal-auth cookie: the CC container has no user session;
+        # the server mints a short-lived token into PAWFLOW_INTERNAL_TOKEN
+        # on every MCP config write. Presented here, the main listener
+        # bypasses the private-gateway + session checks for /ws/tools/*.
+        internal = os.environ.get("PAWFLOW_INTERNAL_TOKEN", "")
+        cookie_line = (
+            f"Cookie: pawflow_internal={internal}\r\n" if internal else "")
+
         # WebSocket upgrade
         ws_key = base64.b64encode(os.urandom(16)).decode()
         upgrade = (
@@ -78,6 +86,7 @@ class ToolRelayClient:
             f"Connection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {ws_key}\r\n"
             f"Sec-WebSocket-Version: 13\r\n"
+            f"{cookie_line}"
             f"\r\n"
         )
         sock.sendall(upgrade.encode("latin-1"))

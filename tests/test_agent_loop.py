@@ -1105,10 +1105,13 @@ class TestContextActionsAsync(unittest.TestCase):
 
     def test_edit_context_async(self):
         """edit_context modifies a message by msg_id via async path."""
+        import uuid
         from core.conversation_store import ConversationStore
-        from core.llm_client import stamp_message
         store = ConversationStore.instance()
-        _user_msg = stamp_message({"role": "user", "content": "hello"}, "ctx_edit1")
+        # Pre-mint msg_id only (seq is assigned by save() in order to
+        # avoid mixing pre-stamped seqs with auto-generated ones).
+        _user_msg_id = uuid.uuid4().hex[:12]
+        _user_msg = {"role": "user", "content": "hello", "msg_id": _user_msg_id}
         store.save("ctx_edit1", [
             {"role": "system", "content": "sys"},
             _user_msg,
@@ -1116,7 +1119,7 @@ class TestContextActionsAsync(unittest.TestCase):
         ack, data = self._exec_async(self._make_task(), {
             "action": "edit_context",
             "conversation_id": "ctx_edit1",
-            "msg_id": _user_msg["msg_id"],
+            "msg_id": _user_msg_id,
             "content": "modified hello",
         })
         assert ack["status"] == "accepted"
@@ -1124,7 +1127,7 @@ class TestContextActionsAsync(unittest.TestCase):
         assert data["ok"] is True
         ctx = store.load_context("ctx_edit1")
         assert ctx is not None
-        _edited = next(m for m in ctx if m.get("msg_id") == _user_msg["msg_id"])
+        _edited = next(m for m in ctx if m.get("msg_id") == _user_msg_id)
         assert _edited["content"] == "modified hello"
 
     def test_replace_context_async(self):
@@ -1152,11 +1155,14 @@ class TestContextActionsAsync(unittest.TestCase):
 
     def test_delete_context_message_async(self):
         """delete_context_message removes a message by msg_id via async path."""
+        import uuid
         from core.conversation_store import ConversationStore
-        from core.llm_client import stamp_message
         store = ConversationStore.instance()
-        _user_msg = stamp_message({"role": "user", "content": "hello"}, "ctx_del1")
-        _asst_msg = stamp_message({"role": "assistant", "content": "world"}, "ctx_del1")
+        # Pre-mint msg_ids only; save() assigns seqs in order.
+        _user_msg_id = uuid.uuid4().hex[:12]
+        _asst_msg_id = uuid.uuid4().hex[:12]
+        _user_msg = {"role": "user", "content": "hello", "msg_id": _user_msg_id}
+        _asst_msg = {"role": "assistant", "content": "world", "msg_id": _asst_msg_id}
         store.save("ctx_del1", [
             {"role": "system", "content": "sys"},
             _user_msg,
@@ -1165,7 +1171,7 @@ class TestContextActionsAsync(unittest.TestCase):
         ack, data = self._exec_async(self._make_task(), {
             "action": "delete_context_message",
             "conversation_id": "ctx_del1",
-            "msg_id": _user_msg["msg_id"],
+            "msg_id": _user_msg_id,
         })
         assert ack["status"] == "accepted"
         assert data is not None
@@ -1173,8 +1179,8 @@ class TestContextActionsAsync(unittest.TestCase):
         ctx = store.load_context("ctx_del1")
         assert len(ctx) == 2
         # Deleted msg is gone, the other user/asst remains
-        assert not any(m.get("msg_id") == _user_msg["msg_id"] for m in ctx)
-        assert any(m.get("msg_id") == _asst_msg["msg_id"] for m in ctx)
+        assert not any(m.get("msg_id") == _user_msg_id for m in ctx)
+        assert any(m.get("msg_id") == _asst_msg_id for m in ctx)
 
     def test_add_context_message_async(self):
         """add_context_message appends a message via async path."""

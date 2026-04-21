@@ -744,8 +744,14 @@ class ClaudeCodeSessionMixin:
 
     def _setup_mcp_config(self, workdir: str, user_id: str = "",
                           conversation_id: str = "",
-                          agent_name: str = "") -> str:
-        """Write MCP config to workdir and return the file path."""
+                          agent_name: str = "") -> tuple:
+        """Write MCP config to workdir.
+
+        Returns (mcp_path, internal_token). The caller owns the lifecycle of
+        ``internal_token`` and MUST pass it to ``core.internal_auth.revoke_token``
+        once the CC invocation ends (success or failure), otherwise the token
+        lingers valid in memory until server restart.
+        """
         _containerize = getattr(self, 'containerize', False)
 
         if _containerize:
@@ -754,7 +760,7 @@ class ClaudeCodeSessionMixin:
         else:
             mcp_bridge = self._get_mcp_bridge_path()
             if not os.path.exists(mcp_bridge):
-                return ""
+                return "", ""
             import sys as _sys
             python_bin = _sys.executable or "python"
 
@@ -799,7 +805,7 @@ class ClaudeCodeSessionMixin:
             json.dump(config, f, indent=2)
 
         logger.info("MCP config written: %s (relay=%s)", mcp_path, relay_url)
-        return mcp_path
+        return mcp_path, internal_token
 
     def _get_mcp_bridge_path(self) -> str:
         """Path to the MCP bridge script (tools/mcp_bridge.py at project root)."""

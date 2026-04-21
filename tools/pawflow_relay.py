@@ -2076,13 +2076,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         reconnect_delay = min(reconnect_delay * 2, 60)
 
 
-def _find_free_port():
-    """Find a free TCP port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
 def _acquire_gateway_cookie(api_url, gateway_key):
     """POST /_gateway with the access key, return the _pf_gw cookie value or empty string."""
     import http.client

@@ -804,7 +804,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     self._current_pool_index)
             except Exception:
                 logger.debug("swallowed exception at core/llm_providers/claude_code.py:~805", exc_info=True)
-        mcp_path = self._setup_mcp_config(workdir, user_id, conv_id, agent_name)
+        mcp_path, _mcp_internal_token = self._setup_mcp_config(
+            workdir, user_id, conv_id, agent_name)
         _containerize = getattr(self, 'containerize', False)
 
         # In pool mode, MCP config path is inside /cc_sessions/...
@@ -1983,6 +1984,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             _stderr = self._cleanup_proc(proc)
             # Recover refreshed tokens from workdir (Claude Code may have refreshed them)
             self._recover_tokens(workdir)
+            # Revoke the internal-auth token minted for this CC invocation —
+            # scoped to the lifetime of this stream, not retained across calls.
+            # Without this, tokens accumulate in core.internal_auth._tokens
+            # until server restart (memory-only, but a lingering valid token
+            # leaked from .mcp.json or process env stays replayable).
+            if _mcp_internal_token:
+                try:
+                    from core.internal_auth import revoke_token
+                    revoke_token(_mcp_internal_token)
+                except Exception:
+                    logger.debug("internal-auth revoke failed", exc_info=True)
 
         # Don't error on non-zero exit if we got a successful result
         # (process was killed after break on result event — that's expected)

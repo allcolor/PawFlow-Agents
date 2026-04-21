@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+import sys as _boot_sys
+_boot_sys.stderr.write(
+    f"[FSRelay] BOOT: script=__file__-will-be-set, argv[0]={_boot_sys.argv[0]!r}, "
+    f"python={_boot_sys.version.split()[0]}\n")
+_boot_sys.stderr.flush()
 """PawFlow Relay — Connects to the PawFlow server to provide filesystem access.
 
 Runs on the user's machine and connects TO the server (reverse WebSocket).
@@ -2354,6 +2359,14 @@ def main():
     parser.add_argument("--session-token", default=os.environ.get("PAWFLOW_SESSION_TOKEN", ""),
                         help="User session token / pawflow_token cookie (env: PAWFLOW_SESSION_TOKEN)")
     args = parser.parse_args()
+    sys.stderr.write(
+        f"[FSRelay] args parsed: server={bool(args.server)}, "
+        f"token={bool(args.token)}, relay_id={args.relay_id!r}, "
+        f"docker_image={args.docker_image!r}, "
+        f"gateway_cookie={'set' if args.gateway_cookie else 'EMPTY'}, "
+        f"gateway_key={'set' if args.gateway_key else 'EMPTY'}, "
+        f"session_token={'set' if args.session_token else 'EMPTY'}\n")
+    sys.stderr.flush()
     # Apply env var defaults that argparse store_true can't handle natively
     if _env_allow_exec:
         args.allow_exec = True
@@ -2394,7 +2407,7 @@ def main():
         f"  Local exec:{'enabled' if args.allow_local else 'disabled'}\n"
         f"  Token:     {masked}\n"
         f"  Auto-reg:  {'no (manual)' if args.server else 'yes'}\n"
-        f"  Gateway:   {'key provided' if args.gateway_key else 'none'}\n\n"
+        f"  Gateway:   {'cookie provided' if args.gateway_cookie else ('key provided' if args.gateway_key else 'none')}\n\n"
     )
 
     # Acquire / set gateway cookie and session token
@@ -2402,12 +2415,22 @@ def main():
     if args.gateway_cookie:
         _gateway_cookie = args.gateway_cookie
     elif args.gateway_key:
-        _gw_url = login_url or args.login_url.rstrip("/")
-        if not _gw_url:
+        # In auto-register mode, login_url is populated from the OAuth
+        # flow. In manual mode (--server + --token), login_url is empty
+        # and args.login_url defaults to http://localhost:9090 — which
+        # would be the container itself. Derive from ws_url so the
+        # gateway POST reaches the actual server instead.
+        if login_url:
+            _gw_url = login_url
+        else:
             from urllib.parse import urlparse as _gw_parse
             _gw_parsed = _gw_parse(ws_url)
             _gw_scheme = "https" if _gw_parsed.scheme in ("wss", "https") else "http"
             _gw_url = f"{_gw_scheme}://{_gw_parsed.hostname}:{_gw_parsed.port or 80}"
+        sys.stderr.write(
+            f"[FSRelay] Acquiring gateway cookie at {_gw_url!r} "
+            f"(login_url={login_url!r}, ws_url={ws_url!r})\n")
+        sys.stderr.flush()
         _gateway_cookie = _acquire_gateway_cookie(_gw_url, args.gateway_key)
     if args.session_token:
         _session_token = args.session_token
@@ -2508,6 +2531,12 @@ def main():
             _cleanup()
     else:
         # Direct mode: connect to server from this process
+        sys.stderr.write(
+            f"[FSRelay] Entering direct mode: gateway_cookie="
+            f"{'set' if _gateway_cookie else 'EMPTY'}, "
+            f"session_token={'set' if _session_token else 'EMPTY'}, "
+            f"server={ws_url}\n")
+        sys.stderr.flush()
         try:
             _ws_connect(ws_url, token, token, args.relay_id,
                          root_dir, args.readonly, allow_exec=args.allow_exec,

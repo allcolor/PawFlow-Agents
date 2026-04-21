@@ -57,12 +57,14 @@ class PawCode:
 
     def __init__(self, server_url: str, directory: str,
                  docker_image: str = "", gateway_cookie: str = "",
+                 gateway_key: str = "",
                  docker_cpus: str = "", docker_memory: str = "",
                  allow_local: bool = False):
         self.server_url = server_url
         self.directory = str(Path(directory).resolve())
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
+        self.gateway_key = gateway_key
         self.docker_cpus = docker_cpus
         self.docker_memory = docker_memory
         self.allow_local = allow_local
@@ -815,6 +817,8 @@ class PawCode:
             self.server_url, self.session_token, self.username,
             self.directory,
             docker_image=self.docker_image,
+            gateway_cookie=self.gateway_cookie,
+            gateway_key=self.gateway_key,
             docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
             allow_local=self.allow_local,
             on_token_refresh=self._on_relay_token_refresh,
@@ -936,6 +940,7 @@ class PawCode:
             directory,
             docker_image=self.docker_image,
             gateway_cookie=self.gateway_cookie,
+            gateway_key=self.gateway_key,
             docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
             allow_local=self.allow_local,
             on_token_refresh=self._on_relay_token_refresh,
@@ -1078,6 +1083,7 @@ def main():
         directory=args.dir,
         docker_image=args.docker_image,
         gateway_cookie=gateway_cookie,
+        gateway_key=args.gateway_key,
         docker_cpus=args.docker_cpus,
         docker_memory=args.docker_memory,
         allow_local=args.allow_local,

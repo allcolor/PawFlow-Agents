@@ -29,6 +29,7 @@ class RelayThread:
     def __init__(self, server_url: str, session_token: str, username: str,
                  directory: str, docker_image: str = "",
                  gateway_cookie: str = "",
+                 gateway_key: str = "",
                  docker_cpus: str = "", docker_memory: str = "",
                  allow_local: bool = False,
                  on_token_refresh=None):
@@ -38,6 +39,7 @@ class RelayThread:
         self.directory = str(Path(directory).resolve())
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
+        self.gateway_key = gateway_key
         self.docker_cpus = docker_cpus or os.environ.get("PAWFLOW_RELAY_CPUS", "2")
         self.docker_memory = docker_memory or os.environ.get("PAWFLOW_RELAY_MEMORY", "4g")
         self.allow_local = allow_local
@@ -241,23 +243,137 @@ class RelayThread:
         max_restart_delay = 60
 
         while not self._stop_event.is_set():
+            # Guard: every restart MUST carry a non-empty token. An empty
+            # value has caused two distinct failure modes in the wild:
+            # (a) the Windows wsl.exe wrapper silently drops "" args so
+            #     the inner argparse sees `--token --relay-id …` and
+            #     rejects with "expected one argument", (b) even if the
+            #     "" reaches the container, pawflow_relay.py's mode
+            #     selector (tools/pawflow_relay.py:2371) treats empty
+            #     token as "enter auto-registration" and tries to open
+            #     a browser from inside Docker, which has no display.
+            # Better to stop the loop loud than to burn restart budget.
+            if not self.ws_token:
+                sys.stderr.write(
+                    "[Relay] FATAL: ws_token is empty at restart — "
+                    "RelayThread.start() must run before _run_docker_relay. "
+                    "Stopping restart loop.\n")
+                break
             self._docker_container = make_container_name(self.relay_id, "relay")
             from urllib.parse import urlparse as _up
             _parsed = _up(self.server_url)
             _scheme = 'wss' if _parsed.scheme == 'https' else 'ws'
             _server_host = _parsed.hostname or 'localhost'
             _server_port = _parsed.port or (443 if _parsed.scheme == 'https' else 80)
-            # Docker container uses host.docker.internal for localhost targets
-            _container_host = get_host_ip() if _server_host in ('localhost', '127.0.0.1') else _server_host
-            ws_url = f"{_scheme}://{_container_host}:{_server_port}/ws/relay/{self.relay_id}"
+            # Resolve the hostname via the host's name resolver (which honors
+            # /etc/hosts or %WINDIR%\System32\drivers\etc\hosts) so custom
+            # aliases for localhost (e.g. pawflow.allcolor.org → 127.0.0.1)
+            # are caught here. The Docker container has its own DNS and
+            # wouldn't see the host's hosts file, so resolving inside it
+            # would pick the public IP and hit NAT hairpin.
+            #
+            # Fix: keep the original hostname in the URL (so TLS cert
+            # validation works — the cert is issued for that hostname),
+            # and add an /etc/hosts entry inside the container via
+            # --add-host, pointing the hostname to the host-reachable IP.
+            _ws_host_override = ""
+            try:
+                import socket as _socket
+                _resolved_ip = _socket.gethostbyname(_server_host)
+            except Exception:
+                _resolved_ip = ""
+            if _resolved_ip and _resolved_ip.startswith("127."):
+                _host_ip = get_host_ip()
+                _ws_host_override = f"{_server_host}:{_host_ip}"
+                sys.stderr.write(
+                    f"[Relay] '{_server_host}' → {_resolved_ip} "
+                    f"(loopback); adding --add-host "
+                    f"{_server_host}:{_host_ip} so the container reaches "
+                    f"the host without breaking TLS cert validation\n")
+            elif not _resolved_ip and _server_host in ('localhost', '127.0.0.1'):
+                _host_ip = get_host_ip()
+                _ws_host_override = f"{_server_host}:{_host_ip}"
+            ws_url = f"{_scheme}://{_server_host}:{_server_port}/ws/relay/{self.relay_id}"
             self._desktop_host_port = find_free_port()
             self._audio_host_port = find_free_port()
+            _tok_masked = (self.ws_token[:4] + "****") if len(self.ws_token) > 4 else "****"
+            sys.stderr.write(
+                f"[Relay] Docker launch: token={_tok_masked} "
+                f"(len={len(self.ws_token)}), "
+                f"session_token={'set' if self.session_token else 'EMPTY'}, "
+                f"gateway_cookie={'set' if self.gateway_cookie else 'EMPTY'}, "
+                f"ws_url={ws_url}\n")
+            # Dev-mount the relay scripts from the host so iterating on
+            # them doesn't require rebuilding the Docker image every time.
+            # The baked /opt/pawflow/*.py inside the image is overlaid by
+            # these read-only binds when the source exists on disk.
+            _tools_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "tools")
+            _relay_script_mounts = []
+            _mount_report = []
+            for _rf in ("pawflow_relay.py", "fs_actions.py", "fs_exec.py",
+                        "fs_screen.py", "fs_mcp.py"):
+                _src = os.path.join(_tools_dir, _rf)
+                if os.path.exists(_src):
+                    _translated = translate_path(to_host_path(_src))
+                    _relay_script_mounts += [
+                        "-v", f"{_translated}:/opt/pawflow/{_rf}:ro"]
+                    _mount_report.append(f"{_rf}→{_translated}")
+                else:
+                    _mount_report.append(f"{_rf}:MISSING({_src})")
+            sys.stderr.write(
+                f"[Relay] dev-mount scripts ({_tools_dir}): "
+                f"{'; '.join(_mount_report)}\n")
+            sys.stderr.flush()
+
+            _extra_add_host = (
+                ["--add-host", _ws_host_override] if _ws_host_override else [])
+
+            # Gateway key + cookie may contain shell metacharacters
+            # ((, ), !, ", ', …) that trip bash re-parsing when wsl.exe
+            # forwards the command. Write them to a temp env-file instead.
+            # Docker reads `--env-file` verbatim (KEY=VALUE lines, no shell
+            # expansion), which sidesteps the quoting mess entirely.
+            import tempfile as _tempfile
+            _env_file_fd, _env_file_path = _tempfile.mkstemp(
+                prefix="pf-relay-env-", suffix=".env")
+            try:
+                with os.fdopen(_env_file_fd, "w", encoding="utf-8") as _ef:
+                    _ef.write(f"PAWFLOW_GATEWAY_KEY={self.gateway_key or ''}\n")
+                    _ef.write(
+                        f"PAWFLOW_GATEWAY_COOKIE="
+                        f"{self.gateway_cookie if not self.gateway_key else ''}\n")
+                try:
+                    os.chmod(_env_file_path, 0o600)
+                except Exception:
+                    pass
+            except Exception:
+                try:
+                    os.close(_env_file_fd)
+                except Exception:
+                    pass
+                raise
+            # Best-effort cleanup of any previous env-file from a prior
+            # restart iteration (avoid leaking secrets in temp dir).
+            _prev_env = getattr(self, "_env_file_path", "")
+            if _prev_env and _prev_env != _env_file_path:
+                try:
+                    os.unlink(_prev_env)
+                except Exception:
+                    pass
+            self._env_file_path = _env_file_path
+            _env_file_container = translate_path(to_host_path(_env_file_path))
+
             docker_run_cmd = docker_cmd() + [
                 "run", "--rm",
                 "--name", self._docker_container,
+                "--env-file", _env_file_container,
                 "-v", f"{translate_path(to_host_path(self.directory))}:/workspace",
                 "-v", f"pawflow_home_{self.relay_id}:/home/pawflow",
+                *_relay_script_mounts,
                 "--add-host", "host.docker.internal:host-gateway",
+                *_extra_add_host,
                 "--cpus", self.docker_cpus, "--memory", self.docker_memory,
                 "--shm-size", "512m",
                 "--security-opt", "no-new-privileges",
@@ -271,7 +387,6 @@ class RelayThread:
                 "-e", "GIT_CONFIG_KEY_3=core.untrackedCache",
                 "-e", "GIT_CONFIG_VALUE_3=false",
                 "-e", f"PAWFLOW_HOST_HELPER={get_host_ip()}:{host_helper_port}",
-                "-e", f"PAWFLOW_GATEWAY_COOKIE={self.gateway_cookie}",
                 "-e", f"PAWFLOW_SESSION_TOKEN={self.session_token}",
                 "--publish", f"{self._desktop_host_port}:6080",
                 "--publish", f"{self._audio_host_port}:6180",
@@ -290,17 +405,38 @@ class RelayThread:
                 "--allow-automation",
                 "--allow-local-screen",
             ] + (["--allow-local"] if self.allow_local else [])
+            # One-shot diagnostic: dump the -v flags so we can confirm
+            # the relay-script dev-mount lands on /opt/pawflow/*.py.
+            _v_args = [a for i, a in enumerate(docker_run_cmd)
+                       if i > 0 and docker_run_cmd[i - 1] == "-v"]
+            sys.stderr.write(
+                f"[Relay] docker run -v flags ({len(_v_args)}): "
+                f"{' | '.join(_v_args)}\n")
+            sys.stderr.flush()
             _start_time = time.time()
             try:
+                # Merge stdout into stderr so we capture *everything* the
+                # container emits in a single reader. Python's print()
+                # defaults to stdout; anything written there would be lost
+                # if we only drained stderr.
                 self._docker_proc = _sp.Popen(
-                    docker_run_cmd, stdin=_sp.DEVNULL, stdout=_sp.PIPE, stderr=_sp.PIPE)
+                    docker_run_cmd, stdin=_sp.DEVNULL,
+                    stdout=_sp.PIPE, stderr=_sp.STDOUT)
 
                 def _read_relay_logs():
+                    # Write to the unpatched stderr so pawflow_cli's
+                    # [FSRelay]-suppression filter (app.py) doesn't eat
+                    # our diagnostics.
+                    _out = getattr(sys, "__stderr__", None) or sys.stderr
                     try:
-                        for line in self._docker_proc.stderr:
+                        for line in self._docker_proc.stdout:
                             msg = line.decode("utf-8", errors="replace").rstrip()
                             if msg:
-                                sys.stderr.write(f"[Relay] {msg}\n")
+                                _out.write(f"[Relay] {msg}\n")
+                                try:
+                                    _out.flush()
+                                except Exception:
+                                    pass
                     except Exception:
                         pass
                 threading.Thread(target=_read_relay_logs, daemon=True,

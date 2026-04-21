@@ -253,11 +253,17 @@ def _bootstrap_seq_from_disk() -> int:
     try:
         import core.paths as _p
         import json as _json
+        import time as _tmod
+        import logging as _lmod
+        _log = _lmod.getLogger(__name__)
+        _t0 = _tmod.monotonic()
         root = _p.CONVERSATIONS_DIR
         if not root.exists():
             return 0
         max_seq = 0
+        n_files = 0
         for f in root.rglob("*.jsonl"):
+            n_files += 1
             try:
                 last = _tail_last_line(f)
                 if not last:
@@ -271,6 +277,11 @@ def _bootstrap_seq_from_disk() -> int:
                     max_seq = s
             except Exception:
                 continue
+        _dt = (_tmod.monotonic() - _t0) * 1000
+        if _dt > 200:
+            _log.info(
+                "[seq-bootstrap] scanned %d jsonl in %.0fms → max_seq=%d",
+                n_files, _dt, max_seq)
         return max_seq
     except Exception:
         return 0

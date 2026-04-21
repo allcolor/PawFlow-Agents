@@ -1476,28 +1476,26 @@ function connectSSE(cid, onReady, opts) {
 // is still inside its auto-retry backoff and a fresh reconnect gets us
 // talking to the live backend immediately.
 var _lastServerStartTime = null;
+var _lastRestartReconnectAt = 0;
 function _checkServerRestart(data) {
-  // start_time is only stamped on /api/agent + /api/ui acks. Responses
-  // from other paths still fall through here and trigger the sseDown
-  // branch, which is what we want — any live backend response is a
-  // signal we can piggyback on to notice a dead EventSource.
-  let restarted = false;
-  if (data && typeof data.server_start_time === 'number') {
-    const prev = _lastServerStartTime;
-    _lastServerStartTime = data.server_start_time;
-    restarted = prev !== null && prev !== data.server_start_time;
-  }
-  const sseDown = conversationId && (!eventSource ||
-    eventSource.readyState !== EventSource.OPEN);
-  if (!restarted && !sseDown) return;
-  if (restarted) {
-    console.warn('[SSE] server restart detected (start_time changed) — '
-      + 'reconnecting SSE');
-  } else {
-    console.warn('[SSE] stale connection (readyState=' +
-      (eventSource ? eventSource.readyState : 'none') +
-      ') while backend is reachable — reconnecting');
-  }
+  // Only reconnect on an explicit server bounce (start_time changed).
+  // The earlier "readyState !== OPEN → reconnect" heuristic ran every
+  // time the SSE was legitimately mid-CONNECTING (e.g. right after a
+  // reconnect) and re-triggered itself on every subsequent ack → the
+  // stream never stabilised and responses disappeared. Keep this
+  // strictly gated on the start_time signal; the scheduled backoff in
+  // _scheduleSSEReconnect already handles truly dead sockets.
+  if (!data || typeof data.server_start_time !== 'number') return;
+  const prev = _lastServerStartTime;
+  _lastServerStartTime = data.server_start_time;
+  if (prev === null || prev === data.server_start_time) return;
+  // Debounce: if we just reconnected for this reason, don't stack
+  // another reconnect for every response that's racing in behind.
+  const now = Date.now();
+  if (now - _lastRestartReconnectAt < 3000) return;
+  _lastRestartReconnectAt = now;
+  console.warn('[SSE] server restart detected (start_time ' + prev
+    + ' → ' + data.server_start_time + ') — reconnecting SSE');
   if (conversationId) {
     if (eventSource) { try { eventSource.close(); } catch (_) {} eventSource = null; }
     if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }

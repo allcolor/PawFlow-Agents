@@ -304,11 +304,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 "msg_id": _user_msg_id or None,
                 "channel": "web",
             })
+            _stream_mark("stamped")
             if _attachments_body:
                 _stamped_user["attachments"] = _attachments_body
             if not _skip_pre_persist:
                 try:
-                    ConversationWriter.for_conversation(conversation_id).enqueue_message(
+                    _cw = ConversationWriter.for_conversation(conversation_id)
+                    _stream_mark("writer_obtained")
+                    _cw.enqueue_message(
                         dict(_stamped_user), agent_name=_target or "",
                         user_id=_uid)
                     _stream_mark("pre_persist")

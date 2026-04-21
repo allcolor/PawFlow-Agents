@@ -604,7 +604,7 @@ class TestAgentLoopTask(unittest.TestCase):
             LLMMessage(role="tool", content="result", tool_call_id="c1", conversation_id="test_conv"),
         ]
         serialized = task._serialize_messages(messages)
-        deserialized = task._deserialize_messages(serialized)
+        deserialized = task._deserialize_messages(serialized, conversation_id="test_conv")
 
         assert len(deserialized) == 4
         assert deserialized[0].role == "system"
@@ -1108,7 +1108,7 @@ class TestContextActionsAsync(unittest.TestCase):
         from core.conversation_store import ConversationStore
         from core.llm_client import stamp_message
         store = ConversationStore.instance()
-        _user_msg = stamp_message({"role": "user", "content": "hello"})
+        _user_msg = stamp_message({"role": "user", "content": "hello"}, "ctx_edit1")
         store.save("ctx_edit1", [
             {"role": "system", "content": "sys"},
             _user_msg,
@@ -1155,8 +1155,8 @@ class TestContextActionsAsync(unittest.TestCase):
         from core.conversation_store import ConversationStore
         from core.llm_client import stamp_message
         store = ConversationStore.instance()
-        _user_msg = stamp_message({"role": "user", "content": "hello"})
-        _asst_msg = stamp_message({"role": "assistant", "content": "world"})
+        _user_msg = stamp_message({"role": "user", "content": "hello"}, "ctx_del1")
+        _asst_msg = stamp_message({"role": "assistant", "content": "world"}, "ctx_del1")
         store.save("ctx_del1", [
             {"role": "system", "content": "sys"},
             _user_msg,

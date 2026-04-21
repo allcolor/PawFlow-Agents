@@ -299,11 +299,11 @@ class TestMessageSerializationSource(unittest.TestCase):
         task = AgentLoopTask.__new__(AgentLoopTask)
         data = [
             stamp_message({"role": "user", "content": "hi",
-                           "source": {"type": "user", "name": "alice"}}),
+                           "source": {"type": "user", "name": "alice"}}, "test_cid"),
             stamp_message({"role": "assistant", "content": "hello",
-                           "source": {"type": "agent", "name": "bot"}}),
+                           "source": {"type": "agent", "name": "bot"}}, "test_cid"),
         ]
-        msgs = task._deserialize_messages(data)
+        msgs = task._deserialize_messages(data, conversation_id="test_cid")
         self.assertEqual(msgs[0].source["type"], "user")
         self.assertEqual(msgs[1].source["name"], "bot")
 
@@ -312,8 +312,8 @@ class TestMessageSerializationSource(unittest.TestCase):
         from tasks.ai.agent_loop import AgentLoopTask
         from core.llm_client import stamp_message
         task = AgentLoopTask.__new__(AgentLoopTask)
-        data = [stamp_message({"role": "user", "content": "hi"})]
-        msgs = task._deserialize_messages(data)
+        data = [stamp_message({"role": "user", "content": "hi"}, "test_cid")]
+        msgs = task._deserialize_messages(data, conversation_id="test_cid")
         self.assertIsNone(msgs[0].source)
 
     def test_deserialize_unstamped_raises(self):

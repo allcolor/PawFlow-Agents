@@ -416,6 +416,12 @@ class SubAgentExecutor:
         _resumed = False
         if task.parent_conversation_id and task.context_mode != "full":
             sub_conv_id = f"{task.parent_conversation_id}::task::{task.id}"
+        elif not task.parent_conversation_id:
+            # Orphan sub-agent (tests / standalone execution): mint an
+            # ephemeral cid so LLMMessage invariant holds throughout
+            # the run. Nothing is persisted since there's no parent.
+            from core.conversation_store import ConversationStore
+            sub_conv_id = ConversationStore.instance().generate_id()
 
         # CC provider needs conv_id/agent_name/user_id on the client. Set
         # them before the LLM call so per-session workdir + credentials
@@ -940,6 +946,12 @@ class SubAgentExecutor:
                                 sub_conv_id: str = ""):
         """Build initial messages for a sub-agent based on context_mode."""
         _cid = sub_conv_id or task.parent_conversation_id
+        if not _cid:
+            # Orphan sub-agent (tests / standalone execution with no
+            # parent conv) — mint an ephemeral cid so the LLMMessage
+            # invariant holds. Messages aren't persisted anyway.
+            from core.conversation_store import ConversationStore
+            _cid = ConversationStore.instance().generate_id()
         messages = [LLMMessage(role="system", content=sys_prompt,
                                 conversation_id=_cid)]
         # Inject context messages if provided

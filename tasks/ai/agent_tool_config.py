@@ -313,10 +313,11 @@ class AgentToolConfigMixin:
                 # Try conversation-scoped relay bindings first (per-agent)
                 _agent_name = agent_name
                 _relay_svc = None
+                _default_relay = ""
                 if conversation_id:
                     try:
                         from core.relay_bindings import get_default
-                        _default_relay = get_default(conversation_id, agent=_agent_name)
+                        _default_relay = get_default(conversation_id, agent=_agent_name) or ""
                         if _default_relay:
                             from core.service_registry import ServiceRegistry
                             _relay_svc = ServiceRegistry.get_instance().resolve(_default_relay, user_id=user_id)

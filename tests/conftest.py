@@ -205,3 +205,19 @@ def _isolate_data_dir(tmp_path_factory):
     # Restore originals
     for attr, val in originals.items():
         setattr(paths, attr, val)
+
+
+# Per-test reset of process-level seq state. tests/ redirects all paths
+# to tmpdir so disk state resets naturally — but _msg_seq_state and
+# _msg_seq_persisted are module-level caches in core.llm_client. Without
+# this reset, a test that reuses a cid ("c1", "test_conv") sees seq
+# counters accumulated from prior tests and can trip the strict-monotony
+# invariant against its own fresh-on-disk state.
+@pytest.fixture(autouse=True)
+def _reset_seq_state():
+    from core import llm_client as _lc
+    _lc._msg_seq_state.clear()
+    _lc._msg_seq_persisted.clear()
+    yield
+    _lc._msg_seq_state.clear()
+    _lc._msg_seq_persisted.clear()

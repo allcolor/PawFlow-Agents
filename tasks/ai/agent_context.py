@@ -309,6 +309,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 self._pending_channel_chat_id = channel_chat_id
                 self._pending_channel_name = channel
 
+        # Every LLMMessage we're about to build requires a cid. Mint
+        # one now so downstream LLMMessage constructors have a valid
+        # value. Works for both persistent (use_conv_store=True) and
+        # ephemeral (no store: attribute-only conv, unit tests) modes
+        # — the invariant is "every message belongs to a conv", not
+        # "every conv is persisted".
+        if not conversation_id:
+            from core.conversation_store import ConversationStore
+            conversation_id = ConversationStore.instance().generate_id()
+
         messages: List[LLMMessage] = []
 
         # Determine active agent name early (needed for per-agent context loading)
@@ -500,7 +510,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     from core.llm_client import stamp_message as _stamp
                     for _e in _raw:
                         if isinstance(_e, dict):
-                            _stamp(_e)
+                            _stamp(_e, conversation_id)
                     messages = self._deserialize_messages(_raw, conversation_id=conversation_id)
                 except (json.JSONDecodeError, KeyError):
                     pass
@@ -544,10 +554,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     conversation_id=conversation_id,
                 ))
 
-        if use_conv_store and not conversation_id:
-            from core.conversation_store import ConversationStore
-            conversation_id = ConversationStore.instance().generate_id()
-
+        # cid was generated early (above) so any downstream
+        # LLMMessage already has it. Defensive check only.
         if use_conv_store and not conversation_id:
             raise ValueError(
                 "BUG: no conversation_id after generate_id() — this should never happen"

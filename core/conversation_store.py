@@ -1785,12 +1785,6 @@ class ConversationStore:
                 self.set_extra(cid, key, "")
                 logger.info("Invalidated claude session '%s' for conv %s", key, cid[:8])
                 _had_any = True
-        # Observability: when this fires, we want to know EXACTLY who called it.
-        # Manual context edits, rebuilds, rotations are legit; anything else is
-        # likely a bug (e.g. fired 5min after the user closed the editor).
-        if _had_any:
-            logger.info("invalidate_claude_sessions(%s) caller stack:",
-                        cid[:8], stack_info=True)
         # Wipe stale session files on disk (all jsonls + companion dirs
         # for this conv). Safe: we just cleared the "current" flags,
         # so every jsonl under sess_dir is now obsolete.

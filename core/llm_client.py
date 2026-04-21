@@ -210,62 +210,51 @@ _msg_seq_counters: Dict[str, Any] = {}
 _msg_seq_lock = _threading.Lock()
 
 
-def _tail_last_line(path) -> bytes:
-    """Read the last non-empty line of a file without loading it fully."""
-    try:
-        with open(path, "rb") as fh:
-            fh.seek(0, 2)  # end
-            size = fh.tell()
-            if size == 0:
-                return b""
-            block = 4096
-            data = b""
-            pos = size
-            while pos > 0 and data.count(b"\n") < 2:
-                step = min(block, pos)
-                pos -= step
-                fh.seek(pos)
-                data = fh.read(size - pos)
-                block *= 2
-            stripped = data.rstrip(b"\r\n")
-            idx = stripped.rfind(b"\n")
-            return stripped[idx + 1:] if idx >= 0 else stripped
-    except Exception:
-        return b""
-
-
 def _bootstrap_seq_for(conversation_id: str) -> int:
-    """Return the max seq already persisted for `conversation_id`.
+    """Return the max seq already persisted for ``conversation_id``.
 
-    Tails the transcript jsonl (the authoritative per-conv append-only
-    file) — one file open, constant-size read. Per-agent context files
-    never hold higher seqs than transcript, so transcript alone is a
-    safe bootstrap source.
+    Scans the whole transcript for the maximum seq. This is a one-time
+    cost per conv per process (next call comes from the in-memory
+    counter) so an O(file) pass is acceptable — what matters is
+    *correctness*, not saving milliseconds.
+
+    Why full scan and not just the tail: side records (``msg_patch``,
+    ``meta``, ``trace_update``) have no seq, and a pathological bug can
+    pollute the real tail with tiny seqs (older code bootstrapped from
+    0 after finding a seq-less tail line, then handed out seq=1,2,3…
+    which survived on disk interleaved with legit high seqs — the
+    compact pre-filter "seq > bucket.last_seq" then dropped the
+    low-seq recent messages as "already bucketed"). A full scan picks
+    up the true historical peak and lets subsequent writes continue
+    strictly above everything already persisted.
     """
     if not conversation_id:
         return 0
     try:
         import core.paths as _p
         import json as _json
-        from pathlib import Path as _Path
         transcript = None
         root = _p.CONVERSATIONS_DIR
         if root.exists():
-            # conversations/<user>/<conv_id>/transcript.jsonl
             for candidate in root.rglob(f"{conversation_id}/transcript.jsonl"):
                 transcript = candidate
                 break
         if transcript is None or not transcript.exists():
             return 0
-        last = _tail_last_line(transcript)
-        if not last:
-            return 0
-        try:
-            m = _json.loads(last.decode("utf-8", errors="replace"))
-        except Exception:
-            return 0
-        s = m.get("seq") or 0
-        return s if isinstance(s, int) else 0
+        max_seq = 0
+        with open(transcript, "rb") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    m = _json.loads(raw.decode("utf-8", errors="replace"))
+                except Exception:
+                    continue
+                s = m.get("seq")
+                if isinstance(s, int) and s > max_seq:
+                    max_seq = s
+        return max_seq
     except Exception:
         return 0
 

@@ -111,7 +111,7 @@ class RelayThread:
         fired another re-register — self-reinforcing loop observed in
         the wild.
         """
-        config_str = f"port={self.port},path=/ws/relay,token={self.ws_token},mode=readwrite"
+        config_str = f"port=0,path=/ws/relay,token={self.ws_token},mode=readwrite"
         if self.docker_image:
             config_str += f",docker_image={self.docker_image}"
         if self.allow_local:
@@ -126,7 +126,7 @@ class RelayThread:
     def start(self):
         """Register the service and start the relay thread."""
         self._kill_docker()
-        self.port = find_free_port()
+        self.port = 0  # no longer used; route is on main HTTP listener
         self.ws_token = secrets.token_urlsafe(32)
 
         # Delete old service if exists (retry: absorbs server boot race)
@@ -136,9 +136,9 @@ class RelayThread:
         except Exception:
             pass
 
-        # Create new service (retry: the first boot after pawflow start can
-        # return non-JSON/5xx while the server finishes loading handlers)
-        config_str = f"port={self.port},path=/ws/relay,token={self.ws_token},mode=readwrite"
+        # Create new service. 'port' is kept for legacy config schema
+        # compatibility; the server now registers on the main HTTP listener.
+        config_str = f"port=0,path=/ws/relay,token={self.ws_token},mode=readwrite"
         if self.docker_image:
             config_str += f",docker_image={self.docker_image}"
         if self.allow_local:
@@ -242,7 +242,14 @@ class RelayThread:
 
         while not self._stop_event.is_set():
             self._docker_container = make_container_name(self.relay_id, "relay")
-            ws_url = f"wss://{get_host_ip()}:{self.port}/ws/relay"
+            from urllib.parse import urlparse as _up
+            _parsed = _up(self.server_url)
+            _scheme = 'wss' if _parsed.scheme == 'https' else 'ws'
+            _server_host = _parsed.hostname or 'localhost'
+            _server_port = _parsed.port or (443 if _parsed.scheme == 'https' else 80)
+            # Docker container uses host.docker.internal for localhost targets
+            _container_host = get_host_ip() if _server_host in ('localhost', '127.0.0.1') else _server_host
+            ws_url = f"{_scheme}://{_container_host}:{_server_port}/ws/relay/{self.relay_id}"
             self._desktop_host_port = find_free_port()
             self._audio_host_port = find_free_port()
             docker_run_cmd = docker_cmd() + [
@@ -264,6 +271,8 @@ class RelayThread:
                 "-e", "GIT_CONFIG_KEY_3=core.untrackedCache",
                 "-e", "GIT_CONFIG_VALUE_3=false",
                 "-e", f"PAWFLOW_HOST_HELPER={get_host_ip()}:{host_helper_port}",
+                "-e", f"PAWFLOW_GATEWAY_COOKIE={self.gateway_cookie}",
+                "-e", f"PAWFLOW_SESSION_TOKEN={self.session_token}",
                 "--publish", f"{self._desktop_host_port}:6080",
                 "--publish", f"{self._audio_host_port}:6180",
                 "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",

@@ -113,19 +113,116 @@ class ToolRelayService(BaseService):
         return self._service_id
 
     def connect(self):
-        """Register route on the shared WS listener (same port as filesystem)."""
-        from services.filesystem_service import WSListener
-        path = self.config.get("path", "/ws/tools")
-        listener = WSListener.get_or_create(self._port)
-        listener.register_route(path, self)
+        from services.http_listener_service import HTTPListenerService
+        instances = getattr(HTTPListenerService, '_instances', {}) or {}
+        if not instances:
+            logger.warning('ToolRelayService %s: no HTTPListenerService running yet, route not registered',
+                           self._service_id)
+            return
+        listener = next(iter(instances.values()))
+        route = f'/ws/tools/{self._service_id}'
+        self._route_path = route
+        listener.register_route('GET', route, self._service_id, callback=None, ws_handler=self._handle_ws)
         self._connection = listener
-        logger.info("ToolRelayService '%s' listening on port %d path %s",
-                     self._service_id, self._port, path)
+        logger.info('ToolRelayService %s registered on main listener path %s', self._service_id, route)
 
     def disconnect(self):
-        if self._connection:
-            self._connection.unregister_route(self.config.get("path", "/ws/tools"))
+        if self._connection and getattr(self, '_route_path', ''):
+            try:
+                self._connection.unregister_routes(self._service_id)
+            except Exception as e:
+                logger.error('Failed to unregister tool relay route %s: %s', self._route_path, e, exc_info=True)
             self._connection = None
+
+    def _handle_ws(self, sock, path_params, meta):
+        import asyncio
+        remote = meta.get('remote_addr', '?')
+        try:
+            sock.setblocking(False)
+            loop = asyncio.new_event_loop()
+            try:
+                reader = asyncio.StreamReader(loop=loop)
+                protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
+                transport, _ = loop.run_until_complete(
+                    loop.connect_accepted_socket(lambda: protocol, sock))
+                writer = asyncio.StreamWriter(transport, protocol, reader, loop)
+                loop.run_until_complete(self._serve_tool_session(reader, writer, loop, remote))
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error('Tool relay WS handler error (%s): %s', remote, e, exc_info=True)
+
+    async def _serve_tool_session(self, reader, writer, loop, remote):
+        import asyncio
+        from services.filesystem_service import _ws_recv_frame, _ws_send_frame
+        service = self
+        try:
+            opcode, payload = await _ws_recv_frame(reader)
+            if opcode != 0x01:
+                return
+            reg = json.loads(payload.decode('utf-8'))
+            if reg.get('type') != 'register':
+                return
+            relay_token = reg.get('token', '')
+            if not relay_token or relay_token != service.config.get('token', ''):
+                await _ws_send_frame(writer, json.dumps(
+                    {'type': 'error', 'message': 'Token mismatch'}).encode())
+                return
+            relay_id = reg.get('relay_id', '')
+            _user_id = reg.get('user_id', '')
+            _conv_id = reg.get('conversation_id', '')
+            _agent_name = reg.get('agent_name', '')
+            logger.info('Tool relay connected: user=%s conv=%s agent=%s addr=%s',
+                         _user_id, _conv_id, _agent_name, remote)
+            await _ws_send_frame(writer, json.dumps({
+                'type': 'registered', 'relay_id': relay_id}).encode())
+            KEEPALIVE = 120
+            while True:
+                try:
+                    opcode, payload = await asyncio.wait_for(
+                        _ws_recv_frame(reader), timeout=KEEPALIVE)
+                except asyncio.TimeoutError:
+                    await _ws_send_frame(writer, json.dumps({'type': 'ping'}).encode())
+                    continue
+                if opcode == 0x08:
+                    break
+                if opcode == 0x09:
+                    await _ws_send_frame(writer, payload, opcode=0x0A)
+                    continue
+                if opcode != 0x01:
+                    continue
+                msg = json.loads(payload.decode('utf-8'))
+                if msg.get('type') == 'ping':
+                    await _ws_send_frame(writer, json.dumps({'type': 'pong'}).encode())
+                    continue
+                if msg.get('type') != 'request':
+                    continue
+                def _exec(m=msg, _ui=_user_id, _ci=_conv_id, _an=_agent_name):
+                    try:
+                        resp = service.handle_tool_request(m, _ui, _ci, _an)
+                    except Exception as e:
+                        resp = {'type': 'error',
+                                'request_id': m.get('request_id', ''),
+                                'error': str(e)}
+                    asyncio.run_coroutine_threadsafe(
+                        _ws_send_frame(writer, json.dumps(resp).encode('utf-8')),
+                        loop)
+                threading.Thread(target=_exec, daemon=True,
+                                  name=f'tool-relay-{msg.get("method", "?")}').start()
+        except Exception as e:
+            _err_str = str(e)
+            if '0 bytes read' in _err_str:
+                logger.info('Tool relay disconnected: %s (closed by peer)', remote)
+            else:
+                logger.error('Tool relay connection error (%s): %s', remote, e, exc_info=True)
+        finally:
+            try:
+                writer.close()
+            except Exception as e:
+                logger.debug('writer.close failed: %s', e, exc_info=True)
+            logger.info('Tool relay disconnected: %s', remote)
+
+
 
     # ── WebSocket message handling ──
     # Called by WSListener when a connection comes in on our path.

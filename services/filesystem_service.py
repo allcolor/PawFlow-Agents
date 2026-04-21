@@ -89,406 +89,41 @@ def _sync_relay_scripts(service, reg_info):
         logger.warning("Relay script sync failed: %s", e)
 
 
-# ── Shared WS Listener (singleton per port) ──────────────────────
+# Module-level WS frame helpers (shared by relay services)
 
-class WSListener:
-    """Shared WebSocket listener — one per port, multiple relay/tool services."""
+async def _ws_recv_frame(reader):
+    hdr = await reader.readexactly(2)
+    opcode = hdr[0] & 0x0F
+    masked = bool(hdr[1] & 0x80)
+    length = hdr[1] & 0x7F
+    if length == 126:
+        length = struct.unpack('!H', await reader.readexactly(2))[0]
+    elif length == 127:
+        length = struct.unpack('!Q', await reader.readexactly(8))[0]
+    if masked:
+        mask = await reader.readexactly(4)
+        data = await reader.readexactly(length)
+        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+    else:
+        payload = await reader.readexactly(length)
+    return opcode, payload
 
-    _instances: Dict[int, "WSListener"] = {}
-    _lock = threading.Lock()
 
-    @classmethod
-    def get_or_create(cls, port: int) -> "WSListener":
-        with cls._lock:
-            if port not in cls._instances:
-                inst = cls(port)
-                cls._instances[port] = inst
-            return cls._instances[port]
+async def _ws_send_frame(writer, data, opcode=0x01):
+    frame = bytes([0x80 | opcode])
+    length = len(data)
+    if length < 126:
+        frame += bytes([length])
+    elif length < 65536:
+        frame += bytes([126]) + struct.pack('!H', length)
+    else:
+        frame += bytes([127]) + struct.pack('!Q', length)
+    frame += data
+    writer.write(frame)
+    await writer.drain()
 
-    # VNC proxy routes: session_id → localhost port
-    _vnc_proxies: Dict[str, int] = {}
-    _vnc_lock = threading.Lock()
 
-    @classmethod
-    def register_vnc_proxy(cls, session_id: str, port: int):
-        with cls._vnc_lock:
-            cls._vnc_proxies[session_id] = port
-
-    @classmethod
-    def unregister_vnc_proxy(cls, session_id: str):
-        with cls._vnc_lock:
-            cls._vnc_proxies.pop(session_id, None)
-
-    def __init__(self, port: int):
-        self._port = port
-        self._routes: Dict[str, "RelayService"] = {}  # path → service
-        self._routes_lock = threading.Lock()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
-        self._server = None
-        self._ref_count = 0
-
-    def register_route(self, path: str, service: "RelayService"):
-        with self._routes_lock:
-            self._routes[path] = service
-            self._ref_count += 1
-        if not self._thread or not self._thread.is_alive():
-            self._start()
-
-    def unregister_route(self, path: str):
-        with self._routes_lock:
-            self._routes.pop(path, None)
-            self._ref_count = max(0, self._ref_count - 1)
-        # Cleanup temp cert files
-        for attr in ("_cert_file", "_key_file"):
-            f = getattr(self, attr, None)
-            if f and hasattr(f, "name"):
-                try:
-                    os.unlink(f.name)
-                except OSError:
-                    pass
-
-    def _start(self):
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._run, daemon=True,
-            name=f"fs-ws-listener-{self._port}",
-        )
-        self._thread.start()
-        # Wait for server to be ready
-        for _ in range(50):
-            if self._server:
-                break
-            time.sleep(0.1)
-
-    def _run(self):
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._serve())
-
-    def _create_ssl_context(self):
-        """Generate ephemeral self-signed cert for TLS."""
-        import ssl
-        import tempfile
-        try:
-            from cryptography import x509
-            from cryptography.x509.oid import NameOID
-            from cryptography.hazmat.primitives import hashes, serialization
-            from cryptography.hazmat.primitives.asymmetric import rsa
-            import datetime as _dt
-
-            key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-            subject = issuer = x509.Name([
-                x509.NameAttribute(NameOID.COMMON_NAME, "pawflow-relay"),
-            ])
-            cert = (
-                x509.CertificateBuilder()
-                .subject_name(subject)
-                .issuer_name(issuer)
-                .public_key(key.public_key())
-                .serial_number(x509.random_serial_number())
-                .not_valid_before(_dt.datetime.now(_dt.timezone.utc))
-                .not_valid_after(_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=1))
-                .sign(key, hashes.SHA256())
-            )
-            # Write to temp files
-            self._cert_file = tempfile.NamedTemporaryFile(suffix=".pem", delete=False)
-            self._cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
-            self._cert_file.close()
-            self._key_file = tempfile.NamedTemporaryFile(suffix=".pem", delete=False)
-            self._key_file.write(key.private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.TraditionalOpenSSL,
-                serialization.NoEncryption(),
-            ))
-            self._key_file.close()
-
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(self._cert_file.name, self._key_file.name)
-            logger.info("TLS enabled for filesystem listener (ephemeral cert)")
-            return ctx
-        except ImportError:
-            logger.warning("cryptography package not installed — TLS disabled for filesystem relay")
-            return None
-
-    async def _serve(self):
-        ssl_ctx = self._create_ssl_context()
-        self._server = await asyncio.start_server(
-            self._handle_connection, "0.0.0.0", self._port,
-            ssl=ssl_ctx, reuse_address=True,
-        )
-        proto = "wss" if ssl_ctx else "ws"
-        logger.info("Filesystem WS listener started on port %d (%s)", self._port, proto)
-        async with self._server:
-            await self._server.serve_forever()
-
-    async def _handle_connection(self, reader: asyncio.StreamReader,
-                                  writer: asyncio.StreamWriter):
-        """Handle incoming relay connection — WS upgrade + command loop."""
-        addr = writer.get_extra_info("peername")
-        tag = f"{addr[0]}:{addr[1]}" if addr else "?"
-
-        try:
-            # Read HTTP upgrade request
-            request = b""
-            while b"\r\n\r\n" not in request:
-                chunk = await asyncio.wait_for(reader.read(4096), timeout=10)
-                if not chunk:
-                    return
-                request += chunk
-
-            # Parse request path
-            first_line = request.split(b"\r\n")[0].decode("latin-1", errors="replace")
-            parts = first_line.split()
-            req_path = parts[1] if len(parts) >= 2 else "/"
-
-            # Find service for this path
-            with self._routes_lock:
-                service = self._routes.get(req_path)
-            if not service:
-                writer.write(b"HTTP/1.1 404 Not Found\r\n\r\n")
-                await writer.drain()
-                writer.close()
-                return
-
-            # WS upgrade response
-            ws_key = b""
-            for line in request.split(b"\r\n"):
-                if line.lower().startswith(b"sec-websocket-key:"):
-                    ws_key = line.split(b":", 1)[1].strip()
-            accept = base64.b64encode(
-                hashlib.sha1(ws_key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest()
-            ).decode()
-            writer.write(
-                f"HTTP/1.1 101 Switching Protocols\r\n"
-                f"Upgrade: websocket\r\n"
-                f"Connection: Upgrade\r\n"
-                f"Sec-WebSocket-Accept: {accept}\r\n"
-                f"\r\n".encode("latin-1")
-            )
-            await writer.drain()
-
-            # Read first message (registration)
-            opcode, payload = await self._ws_recv(reader)
-            if opcode != 0x01:
-                writer.close()
-                return
-            reg = json.loads(payload.decode("utf-8"))
-            if reg.get("type") != "register":
-                writer.close()
-                return
-
-            # Validate token
-            relay_token = reg.get("token", "")
-            if not relay_token or relay_token != service.config.get("token", ""):
-                await self._ws_send(writer, json.dumps(
-                    {"type": "error", "message": "Token mismatch"}
-                ).encode())
-                writer.close()
-                return
-
-            relay_id = reg.get("relay_id", "")
-            _reg_info = reg.get("info", {})
-            logger.info("Relay connected: %s (path=%s, addr=%s)", relay_id, req_path, tag)
-
-            # Store relay metadata (shells, platform, containerized, etc.)
-            if _reg_info.get("shells") and hasattr(service, '_relay_shells'):
-                service._relay_shells = _reg_info["shells"]
-            if service and _reg_info:
-                service._relay_info = _reg_info
-            # Store relay IP for direct connections (code-server proxy, etc.)
-            if addr and service:
-                service._relay_addr = addr[0]
-
-            # Confirm registration
-            await self._ws_send(writer, json.dumps({
-                "type": "registered", "relay_id": relay_id,
-            }).encode())
-
-            # Tool relay vs filesystem relay
-            if hasattr(service, 'handle_tool_request'):
-                _user_id = reg.get("user_id", "")
-                _conv_id = reg.get("conversation_id", "")
-                _agent_name = reg.get("agent_name", "")
-                logger.info("Tool relay connected: user=%s conv=%s agent=%s addr=%s",
-                             _user_id, _conv_id, _agent_name, tag)
-                _KEEPALIVE_INTERVAL = 120  # seconds between pings if no data
-                while True:
-                    try:
-                        opcode, payload = await asyncio.wait_for(
-                            self._ws_recv(reader), timeout=_KEEPALIVE_INTERVAL)
-                    except asyncio.TimeoutError:
-                        await self._ws_send(writer, json.dumps({"type": "ping"}).encode())
-                        continue
-                    if opcode == 0x08:
-                        break
-                    if opcode == 0x09:
-                        await self._ws_send(writer, payload, opcode=0x0A)
-                        continue
-                    if opcode != 0x01:
-                        continue
-                    msg = json.loads(payload.decode("utf-8"))
-                    if msg.get("type") == "ping":
-                        await self._ws_send(writer, json.dumps({"type": "pong"}).encode())
-                        continue
-                    if msg.get("type") != "request":
-                        continue
-                    import threading as _th
-                    def _exec(m=msg):
-                        try:
-                            resp = service.handle_tool_request(
-                                m, _user_id, _conv_id, _agent_name)
-                        except Exception as e:
-                            resp = {"type": "error",
-                                    "request_id": m.get("request_id", ""),
-                                    "error": str(e)}
-                        asyncio.run_coroutine_threadsafe(
-                            self._ws_send(writer, json.dumps(resp).encode("utf-8")),
-                            self._loop)
-                    _th.Thread(target=_exec, daemon=True,
-                               name=f"tool-relay-{msg.get('method', '?')}").start()
-
-            # Filesystem relay
-            service._set_relay(reader, writer, self._loop)
-
-            # Auto-fetch project context + sync relay scripts in background
-            try:
-                import threading as _th
-                def _fetch_ctx_and_sync():
-                    try:
-                        ctx = service._request("project_context", ".")
-                        service._project_context = ctx
-                        logger.info("Project context loaded for '%s': %s",
-                                     relay_id, ctx.get("project_types", []))
-                    except Exception as e:
-                        logger.debug("Failed to load project context: %s", e)
-                    # Sync relay scripts if containerized
-                    try:
-                        _sync_relay_scripts(service, _reg_info)
-                    except Exception as e:
-                        logger.debug("Relay script sync failed: %s", e)
-                _th.Thread(target=_fetch_ctx_and_sync, daemon=True).start()
-            except Exception:
-                pass
-
-            # Main loop: read results from relay
-            _KEEPALIVE_INTERVAL = 120  # seconds between pings if no data
-            while True:
-                try:
-                    opcode, payload = await asyncio.wait_for(
-                        self._ws_recv(reader), timeout=_KEEPALIVE_INTERVAL)
-                except asyncio.TimeoutError:
-                    await self._ws_send(writer, json.dumps({"type": "ping"}).encode())
-                    continue
-
-                if opcode == 0x08:  # close
-                    break
-                if opcode == 0x09:  # ping
-                    await self._ws_send(writer, payload, opcode=0x0A)
-                    continue
-                if opcode != 0x01:  # text
-                    continue
-
-                msg = json.loads(payload.decode("utf-8"))
-                if msg.get("type") == "result" or msg.get("type") == "error":
-                    service._resolve_pending(msg)
-                elif msg.get("type") == "progress":
-                    # Intermediate progress from long-running commands
-                    service._dispatch_progress(msg)
-                elif msg.get("type") == "exec_output":
-                    service._dispatch_exec_output(msg)
-                elif msg.get("type") == "http_response":
-                    service._dispatch_http_response(msg)
-                elif msg.get("type") == "terminal_data":
-                    try:
-                        from services.terminal_proxy import dispatch_terminal_data
-                        dispatch_terminal_data(
-                            msg.get("session_id", ""),
-                            msg.get("data", ""),
-                        )
-                    except Exception:
-                        pass
-                elif msg.get("type") == "terminal_exit":
-                    try:
-                        from services.terminal_proxy import dispatch_terminal_exit
-                        dispatch_terminal_exit(msg.get("session_id", ""))
-                    except Exception:
-                        pass
-                elif msg.get("type") == "cs_ws_data":
-                    logger.debug("[WS] cs_ws_data received: session=%s len=%d",
-                                msg.get("session_id", ""), len(msg.get("data", "")))
-                    try:
-                        from services.code_server_proxy import dispatch_cs_ws_data
-                        dispatch_cs_ws_data(
-                            service._service_id,
-                            msg.get("session_id", ""),
-                            msg.get("data", ""),
-                            msg.get("opcode", 1),
-                        )
-                    except Exception:
-                        pass
-                elif msg.get("type") == "cs_ws_close":
-                    try:
-                        from services.code_server_proxy import dispatch_cs_ws_close
-                        dispatch_cs_ws_close(
-                            service._service_id,
-                            msg.get("session_id", ""),
-                        )
-                    except Exception:
-                        pass
-                elif msg.get("type") == "ping":
-                    await self._ws_send(writer, json.dumps({"type": "pong"}).encode())
-
-        except Exception as e:
-            _err_str = str(e)
-            if "0 bytes read" in _err_str:
-                logger.info("Relay disconnected: %s (connection closed by peer)", tag)
-            else:
-                logger.error("Relay connection error (%s): %s", tag, e)
-        finally:
-            if service:
-                service._clear_relay(reader=reader)
-            try:
-                writer.close()
-            except Exception:
-                pass
-            logger.info("Relay disconnected: %s", tag)
-
-    # ── WS frame helpers (minimal, no deps) ──
-
-    async def _ws_recv(self, reader: asyncio.StreamReader):
-        hdr = await reader.readexactly(2)
-        opcode = hdr[0] & 0x0F
-        masked = bool(hdr[1] & 0x80)
-        length = hdr[1] & 0x7F
-        if length == 126:
-            length = struct.unpack("!H", await reader.readexactly(2))[0]
-        elif length == 127:
-            length = struct.unpack("!Q", await reader.readexactly(8))[0]
-        if masked:
-            mask = await reader.readexactly(4)
-            data = await reader.readexactly(length)
-            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-        else:
-            payload = await reader.readexactly(length)
-        return opcode, payload
-
-    async def _ws_send(self, writer: asyncio.StreamWriter, data: bytes, opcode=0x01):
-        await self._ws_send_raw(writer, data, opcode)
-
-    @staticmethod
-    async def _ws_send_raw(writer: asyncio.StreamWriter, data: bytes, opcode=0x01):
-        frame = bytes([0x80 | opcode])
-        length = len(data)
-        if length < 126:
-            frame += bytes([length])
-        elif length < 65536:
-            frame += bytes([126]) + struct.pack("!H", length)
-        else:
-            frame += bytes([127]) + struct.pack("!Q", length)
-        frame += data
-        writer.write(frame)
-        await writer.drain()
-
+# Filesystem Service
 
 # ── Filesystem Service ────────────────────────────────────────────
 
@@ -562,24 +197,173 @@ class RelayService(BaseService):
         return "\n".join(lines)
 
     def connect(self):
-        """Register route on the shared listener."""
-        path = self.config.get("path", "/ws/relay")
-        listener = WSListener.get_or_create(self._port)
-        listener.register_route(path, self)
+        from services.http_listener_service import HTTPListenerService
+        instances = getattr(HTTPListenerService, '_instances', {}) or {}
+        if not instances:
+            logger.warning('RelayService %s: no HTTPListenerService running yet, route not registered',
+                           self._service_id)
+            self._initialized = True
+            return
+        listener = next(iter(instances.values()))
+        route = f'/ws/relay/{self._service_id}'
+        self._route_path = route
+        listener.register_route('GET', route, self._service_id, callback=None, ws_handler=self._handle_ws)
         self._connection = listener
         self._initialized = True
-        logger.info("RelayService '%s' listening on port %d path %s",
-                     self._service_id, self._port, path)
+        logger.info('RelayService %s registered on main listener path %s', self._service_id, route)
 
     def is_connected(self) -> bool:
-        """A relay service is connected when a relay client is in the pool."""
         with self._relay_pool_lock:
             return len(self._relay_pool) > 0
 
     def disconnect(self):
-        if self._connection:
-            self._connection.unregister_route(self.config.get("path", "/ws/relay"))
+        if self._connection and getattr(self, '_route_path', ''):
+            try:
+                self._connection.unregister_routes(self._service_id)
+            except Exception as e:
+                logger.error('Failed to unregister relay route %s: %s', self._route_path, e, exc_info=True)
             self._connection = None
+
+    def _handle_ws(self, sock, path_params, meta):
+        import asyncio
+        remote = meta.get('remote_addr', '?')
+        try:
+            sock.setblocking(False)
+            loop = asyncio.new_event_loop()
+            try:
+                reader = asyncio.StreamReader(loop=loop)
+                protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
+                transport, _ = loop.run_until_complete(
+                    loop.connect_accepted_socket(lambda: protocol, sock))
+                writer = asyncio.StreamWriter(transport, protocol, reader, loop)
+                loop.run_until_complete(
+                    self._serve_relay_session(reader, writer, loop, remote))
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.error('Relay WS handler error (%s): %s', remote, e, exc_info=True)
+
+    async def _serve_relay_session(self, reader, writer, loop, remote):
+        import asyncio
+        service = self
+        try:
+            opcode, payload = await _ws_recv_frame(reader)
+            if opcode != 0x01:
+                return
+            reg = json.loads(payload.decode('utf-8'))
+            if reg.get('type') != 'register':
+                return
+            relay_token = reg.get('token', '')
+            if not relay_token or relay_token != service.config.get('token', ''):
+                await _ws_send_frame(writer, json.dumps(
+                    {'type': 'error', 'message': 'Token mismatch'}).encode())
+                return
+            relay_id = reg.get('relay_id', '')
+            reg_info = reg.get('info', {})
+            logger.info('Relay connected: %s (addr=%s)', relay_id, remote)
+            if reg_info.get('shells'):
+                service._relay_shells = reg_info['shells']
+            if reg_info:
+                service._relay_info = reg_info
+            service._relay_addr = remote
+            await _ws_send_frame(writer, json.dumps({
+                'type': 'registered', 'relay_id': relay_id}).encode())
+            service._set_relay(reader, writer, loop)
+            self._spawn_ctx_sync(reg_info, relay_id)
+            await self._relay_main_loop(reader, writer, service)
+        except Exception as e:
+            _err_str = str(e)
+            if '0 bytes read' in _err_str:
+                logger.info('Relay disconnected: %s (closed by peer)', remote)
+            else:
+                logger.error('Relay connection error (%s): %s', remote, e, exc_info=True)
+        finally:
+            try:
+                service._clear_relay(reader=reader)
+            except Exception as e:
+                logger.debug('_clear_relay failed: %s', e, exc_info=True)
+            try:
+                writer.close()
+            except Exception as e:
+                logger.debug('writer.close failed: %s', e, exc_info=True)
+            logger.info('Relay disconnected: %s', remote)
+
+    def _spawn_ctx_sync(self, reg_info, relay_id):
+        service = self
+        def _fetch_ctx_and_sync():
+            try:
+                ctx = service._request('project_context', '.')
+                service._project_context = ctx
+                logger.info('Project context loaded for %s: %s',
+                             relay_id, ctx.get('project_types', []))
+            except Exception as e:
+                logger.debug('Failed to load project context: %s', e, exc_info=True)
+            try:
+                _sync_relay_scripts(service, reg_info)
+            except Exception as e:
+                logger.debug('Relay script sync failed: %s', e, exc_info=True)
+        threading.Thread(target=_fetch_ctx_and_sync, daemon=True,
+                         name=f'relay-ctx-{relay_id}').start()
+
+    async def _relay_main_loop(self, reader, writer, service):
+        import asyncio
+        KEEPALIVE = 120
+        while True:
+            try:
+                opcode, payload = await asyncio.wait_for(
+                    _ws_recv_frame(reader), timeout=KEEPALIVE)
+            except asyncio.TimeoutError:
+                await _ws_send_frame(writer, json.dumps({'type': 'ping'}).encode())
+                continue
+            if opcode == 0x08:
+                break
+            if opcode == 0x09:
+                await _ws_send_frame(writer, payload, opcode=0x0A)
+                continue
+            if opcode != 0x01:
+                continue
+            msg = json.loads(payload.decode('utf-8'))
+            await self._dispatch_relay_msg(msg, writer, service)
+
+    async def _dispatch_relay_msg(self, msg, writer, service):
+        mtype = msg.get('type')
+        if mtype in ('result', 'error'):
+            service._resolve_pending(msg)
+        elif mtype == 'progress':
+            service._dispatch_progress(msg)
+        elif mtype == 'exec_output':
+            service._dispatch_exec_output(msg)
+        elif mtype == 'http_response':
+            service._dispatch_http_response(msg)
+        elif mtype == 'terminal_data':
+            try:
+                from services.terminal_proxy import dispatch_terminal_data
+                dispatch_terminal_data(msg.get('session_id', ''), msg.get('data', ''))
+            except Exception as e:
+                logger.debug('terminal_data dispatch failed: %s', e, exc_info=True)
+        elif mtype == 'terminal_exit':
+            try:
+                from services.terminal_proxy import dispatch_terminal_exit
+                dispatch_terminal_exit(msg.get('session_id', ''))
+            except Exception as e:
+                logger.debug('terminal_exit dispatch failed: %s', e, exc_info=True)
+        elif mtype == 'cs_ws_data':
+            try:
+                from services.code_server_proxy import dispatch_cs_ws_data
+                dispatch_cs_ws_data(service._service_id,
+                                     msg.get('session_id', ''),
+                                     msg.get('data', ''),
+                                     msg.get('opcode', 1))
+            except Exception as e:
+                logger.debug('cs_ws_data dispatch failed: %s', e, exc_info=True)
+        elif mtype == 'cs_ws_close':
+            try:
+                from services.code_server_proxy import dispatch_cs_ws_close
+                dispatch_cs_ws_close(service._service_id, msg.get('session_id', ''))
+            except Exception as e:
+                logger.debug('cs_ws_close dispatch failed: %s', e, exc_info=True)
+        elif mtype == 'ping':
+            await _ws_send_frame(writer, json.dumps({'type': 'pong'}).encode())
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
@@ -722,7 +506,7 @@ class RelayService(BaseService):
             raise Exception(
                 f"Relay not connected to '{self._service_id}'. "
                 f"Start: python tools/pawflow_relay.py "
-                f"--server ws://<host>:{self._port}{self.config.get('path', '/ws/relay')} "
+                f"--server wss://<server_host>:<server_port>/ws/relay/{self._service_id} "
                 f"--relay-id {self._service_id} --token <token> --dir <path>"
             )
 

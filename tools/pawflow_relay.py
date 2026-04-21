@@ -1667,15 +1667,20 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 pass  # not available on all platforms
             if use_ssl:
                 ctx = ssl.create_default_context()
-                # Accept self-signed ephemeral certs from the PawFlow service
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
+                if os.environ.get('PAWFLOW_RELAY_INSECURE') == '1':
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
                 sock = ctx.wrap_socket(sock, server_hostname=host)
 
             ws_key = b64.b64encode(os.urandom(16)).decode()
-            _extra_hdrs = ""
+            _cookies = []
             if _gateway_cookie:
-                _extra_hdrs = f"Cookie: _pf_gw={_gateway_cookie}\r\n"
+                _cookies.append(f'_pf_gw={_gateway_cookie}')
+            if _session_token:
+                _cookies.append(f'pawflow_token={_session_token}')
+            _extra_hdrs = ''
+            if _cookies:
+                _extra_hdrs = 'Cookie: ' + '; '.join(_cookies) + '\r\n'
             handshake = (
                 f"GET {path} HTTP/1.1\r\n"
                 f"Host: {host}:{port}\r\n"
@@ -2086,8 +2091,9 @@ def _acquire_gateway_cookie(api_url, gateway_key):
     if use_ssl:
         import ssl
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        if os.environ.get('PAWFLOW_RELAY_INSECURE') == '1':
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
         conn = http.client.HTTPSConnection(host, port, context=ctx)
     else:
         conn = http.client.HTTPConnection(host, port)
@@ -2117,8 +2123,9 @@ def _acquire_gateway_cookie(api_url, gateway_key):
     return cookie_val
 
 
-# Module-level gateway cookie — set once in main(), used by _api_call and _ws_connect
+# Module-level gateway cookie + session token — set once in main(), used by _api_call and _ws_connect
 _gateway_cookie = ""
+_session_token = ""
 
 
 def _api_call(api_url, method, path, body=None, session_id=""):
@@ -2134,8 +2141,9 @@ def _api_call(api_url, method, path, body=None, session_id=""):
     if use_ssl:
         import ssl
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        if os.environ.get('PAWFLOW_RELAY_INSECURE') == '1':
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
         conn = http.client.HTTPSConnection(host, port, context=ctx)
     else:
         conn = http.client.HTTPConnection(host, port)
@@ -2270,26 +2278,25 @@ def _auto_register(args):
         args.relay_id = generate_relay_id(username, root_dir)
         sys.stderr.write(f"[FSRelay] Auto-generated relay ID: {args.relay_id}\n")
 
-    # Find port for WS listener
-    port = args.port or _find_free_port()
-    relay_path = args.relay_path
     ws_token = _secrets.token_urlsafe(32)
 
     # Delete existing service if any
     sys.stderr.write(f"[FSRelay] Cleaning up previous service '{args.relay_id}' ...\n")
     _delete_service(login_url, session_id, args.relay_id)
 
-    # Create new service
-    sys.stderr.write(f"[FSRelay] Creating service '{args.relay_id}' on port {port} ...\n")
-    _create_service(login_url, session_id, args.relay_id, port, relay_path, ws_token)
+    # Create new service (port kept for legacy config schema; server ignores it)
+    sys.stderr.write(f"[FSRelay] Creating service '{args.relay_id}' ...\n")
+    _create_service(login_url, session_id, args.relay_id, 0, args.relay_path, ws_token)
     sys.stderr.write(f"[FSRelay] Service created.\n")
 
-    # Build WS URL (default to wss since FilesystemWSListener uses TLS when cryptography is installed)
-    scheme = "ws" if args.no_tls else "wss"
-    ws_url = f"{scheme}://{args.host}:{port}{relay_path}"
-
-    # Wait for the service WS listener to start
-    time.sleep(1.5)
+    # Build WS URL from the main listener URL (login_url). The route is
+    # registered server-side on HTTPListenerService at /ws/relay/<service_id>.
+    from urllib.parse import urlparse as _up
+    _parsed = _up(login_url)
+    _scheme = 'wss' if _parsed.scheme == 'https' else 'ws'
+    _host = _parsed.hostname or args.host
+    _port = _parsed.port or (443 if _parsed.scheme == 'https' else 80)
+    ws_url = f"{_scheme}://{_host}:{_port}/ws/relay/{args.relay_id}"
 
     return ws_url, ws_token, session_id, login_url
 
@@ -2342,6 +2349,10 @@ def main():
                         help="Memory limit for Docker containers (default: 4g, env: PAWFLOW_RELAY_MEMORY)")
     parser.add_argument("--gateway-key", default=os.environ.get("PAWFLOW_GATEWAY_KEY", ""),
                         help="Private gateway access key (env: PAWFLOW_GATEWAY_KEY)")
+    parser.add_argument("--gateway-cookie", default=os.environ.get("PAWFLOW_GATEWAY_COOKIE", ""),
+                        help="Pre-acquired _pf_gw cookie value (env: PAWFLOW_GATEWAY_COOKIE)")
+    parser.add_argument("--session-token", default=os.environ.get("PAWFLOW_SESSION_TOKEN", ""),
+                        help="User session token / pawflow_token cookie (env: PAWFLOW_SESSION_TOKEN)")
     args = parser.parse_args()
     # Apply env var defaults that argparse store_true can't handle natively
     if _env_allow_exec:
@@ -2386,18 +2397,22 @@ def main():
         f"  Gateway:   {'key provided' if args.gateway_key else 'none'}\n\n"
     )
 
-    # Acquire gateway cookie if key provided
-    global _gateway_cookie
-    if args.gateway_key:
-        # Determine the HTTP URL for the gateway POST
+    # Acquire / set gateway cookie and session token
+    global _gateway_cookie, _session_token
+    if args.gateway_cookie:
+        _gateway_cookie = args.gateway_cookie
+    elif args.gateway_key:
         _gw_url = login_url or args.login_url.rstrip("/")
         if not _gw_url:
-            # Derive from WS URL
             from urllib.parse import urlparse as _gw_parse
             _gw_parsed = _gw_parse(ws_url)
             _gw_scheme = "https" if _gw_parsed.scheme in ("wss", "https") else "http"
             _gw_url = f"{_gw_scheme}://{_gw_parsed.hostname}:{_gw_parsed.port or 80}"
         _gateway_cookie = _acquire_gateway_cookie(_gw_url, args.gateway_key)
+    if args.session_token:
+        _session_token = args.session_token
+    elif session_id:
+        _session_token = session_id
 
     # Cleanup on exit (auto-registration only)
     def _cleanup():
@@ -2443,6 +2458,13 @@ def main():
             _src = os.path.join(_tools_dir, _relay_file)
             if os.path.exists(_src):
                 docker_run_args.extend(["-v", f"{_translate_path(_to_host_path(_src))}:/opt/pawflow/{_relay_file}:ro"])
+        # Propagate auth cookies to the container via env (not argv, to stay out of `ps`)
+        if _gateway_cookie:
+            docker_run_args += ["-e", f"PAWFLOW_GATEWAY_COOKIE={_gateway_cookie}"]
+        if _session_token:
+            docker_run_args += ["-e", f"PAWFLOW_SESSION_TOKEN={_session_token}"]
+        if os.environ.get('PAWFLOW_RELAY_INSECURE') == '1':
+            docker_run_args += ["-e", "PAWFLOW_RELAY_INSECURE=1"]
         docker_run_args += [
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", args.docker_cpus,

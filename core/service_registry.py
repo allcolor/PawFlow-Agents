@@ -64,9 +64,7 @@ _HEARTBEAT_TYPES = frozenset({"relay"})
 _UNIQUE_RESOURCE_KEYS: Dict[str, tuple] = {
     # OS-level port bind — two listeners on the same port = EADDRINUSE
     "httpListener":  ("port",),
-    # WebSocket listener port+path — same shared-port scheme
-    "relay":         ("port", "path"),
-    "toolRelay":     ("port", "path"),
+    # relay / toolRelay: routes on main HTTP listener, path includes service_id — uniqueness is implicit
     # Bot tokens open a single persistent connection (WS or long-poll)
     "discordBot":    ("bot_token",),
     "slackBot":      ("bot_token",),
@@ -88,8 +86,6 @@ _UNIQUE_RESOURCE_KEYS: Dict[str, tuple] = {
 # them, _resource_key() returns None and the service will fail at connect.
 _UNIQUE_RESOURCE_DEFAULTS: Dict[str, Dict[str, str]] = {
     "httpListener":        {"port": "9090"},
-    "relay":               {"port": "9091", "path": "/ws/relay"},
-    "toolRelay":           {"port": "9091", "path": "/ws/tools"},
 
     "distributedMapCache": {"redis_url": "redis://localhost:6379/0", "key_prefix": "pawflow:"},
     "fileTracking":        {"storage_path": "file_tracking.json"},

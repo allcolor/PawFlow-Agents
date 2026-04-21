@@ -1015,8 +1015,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             }).encode("utf-8")
 
             async def _send_spawn():
-                from services.filesystem_service import WSListener
-                await WSListener._ws_send_raw(_writer, _spawn_msg)
+                from services.filesystem_service import _ws_send_frame
+                await _ws_send_frame(_writer, _spawn_msg)
 
             asyncio.run_coroutine_threadsafe(_send_spawn(), _loop).result(timeout=5)
 
@@ -1081,8 +1081,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         }).encode("utf-8")
 
                         async def _send_stop():
-                            from services.filesystem_service import WSListener
-                            await WSListener._ws_send_raw(_writer, _stop_msg)
+                            from services.filesystem_service import _ws_send_frame
+                            await _ws_send_frame(_writer, _stop_msg)
 
                         asyncio.run_coroutine_threadsafe(_send_stop(), _loop).result(timeout=5)
                     except Exception:

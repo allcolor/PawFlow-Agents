@@ -691,22 +691,8 @@ class TestResourceConflict:
                                 config={"bot_token": "tok_b"})
         assert sdef.service_id == "bot2"
 
-    def test_relay_port_path_conflict(self):
-        """Same port+path for relay = conflict."""
-        from core.service_registry import ResourceConflictError
-        self.reg.install(self.SCOPE_GLOBAL, "", "r1", "relay",
-                         config={"port": "9091", "path": "/ws/relay", "token": "a"})
-        with pytest.raises(ResourceConflictError):
-            self.reg.install(self.SCOPE_USER, "alice", "r2", "relay",
-                             config={"port": "9091", "path": "/ws/relay", "token": "b"})
-
-    def test_relay_different_path_allowed(self):
-        """Same port, different path = fine."""
-        self.reg.install(self.SCOPE_GLOBAL, "", "r1", "relay",
-                         config={"port": "9091", "path": "/ws/relay", "token": "a"})
-        sdef = self.reg.install(self.SCOPE_USER, "alice", "r2", "relay",
-                                config={"port": "9091", "path": "/ws/relay2", "token": "b"})
-        assert sdef.service_id == "r2"
+    # Relay / toolRelay no longer have port+path uniqueness: each service_id
+    # gets its own /ws/relay/<service_id> route on the main HTTP listener.
 
     def test_update_config_conflict(self):
         """Changing port to conflict with existing = blocked."""

@@ -221,8 +221,15 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         _prepare_agent_context (which may compact) runs in the background
         thread, NOT here. This method returns in < 1s.
         """
+        import time as _t_stream
+        _stream_t0 = _t_stream.monotonic()
+        def _stream_mark(label):
+            _dt = (_t_stream.monotonic() - _stream_t0) * 1000
+            if _dt > 200:
+                logger.info("[stream-timing] %s: +%.0fms", label, _dt)
         from core.conversation_event_bus import ConversationEventBus
         from core.conversation_store import ConversationStore
+        _stream_mark("imports")
 
         # Parse body for conversation_id and user text (lightweight, no LLM)
         raw = flowfile.get_content().decode("utf-8", errors="replace")
@@ -242,12 +249,15 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             flowfile.set_attribute("_user_msg_id", _user_msg_id)
         bus = ConversationEventBus.instance()
 
+        _stream_mark("body_parsed")
+
         # If agent thread already running FOR THIS AGENT, preempt or queue
         _agent_key = f"{conversation_id}:{_target}" if _target else conversation_id
         _thread_name = f"agent-stream-{_agent_key}"
         _already_active = any(
             t.is_alive() and t.name == _thread_name
             for t in threading.enumerate())
+        _stream_mark("active_check")
         # Safety: if thread is "active" but no context entry, it's a zombie.
         # Kill its CC process + release pool slot before starting a new loop.
         if _already_active:
@@ -293,6 +303,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     ConversationWriter.for_conversation(conversation_id).enqueue_message(
                         dict(_stamped_user), agent_name=_target or "",
                         user_id=_uid)
+                    _stream_mark("pre_persist")
                 except Exception as _pe:
                     logger.warning(
                         "[agent:%s] pre-persist user message failed: %s",
@@ -435,10 +446,12 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
             self._streaming_agent_loop(ctx, conversation_id, bus)
 
+        _stream_mark("before_thread_start")
         thread = threading.Thread(
             target=_bg_streaming, daemon=True,
             name=_thread_name)
         thread.start()
+        _stream_mark("thread_started")
         logger.info("[agent:%s] bg thread started: %s", conversation_id[:8], _thread_name)
 
         # Start poller if configured
@@ -452,6 +465,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
         ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
                           "message_count": ConversationStore.instance().message_count(conversation_id)})
+        _stream_mark("ack_built")
         flowfile.set_content(ack.encode("utf-8"))
         flowfile.set_attribute("agent.conversation_id", conversation_id)
         flowfile.set_attribute("agent.streaming", "true")

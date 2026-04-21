@@ -1,20 +1,18 @@
 #!/bin/bash
-# Build the Claude Code container image
-# Run from the PyFi2 root: bash docker/claude-code/build.sh
+# Build the Claude Code container image.
+#
+# mcp_bridge.py and pawflow_sdk/pawflow.py are NOT copied into the
+# image — they are dev-mounted onto /opt/pawflow/*.py at container run
+# time by core/claude_code_pool.py. This build only provisions
+# the Claude Code binary and system deps, so iterating on the bridge
+# does not require rebuilding the image.
+#
+# Run from the PawFlow root: bash docker/claude-code/build.sh
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Copy MCP bridge + SDK to build context
-cp "$ROOT_DIR/tools/mcp_bridge.py" "$SCRIPT_DIR/mcp_bridge.py"
-cp "$ROOT_DIR/docker/pawflow_sdk/pawflow.py" "$SCRIPT_DIR/pawflow.py"
-
-# Build
 docker build -t pawflow-claude-code:latest "$SCRIPT_DIR"
-
-# Cleanup
-rm -f "$SCRIPT_DIR/mcp_bridge.py" "$SCRIPT_DIR/pawflow.py"
 
 echo "Built pawflow-claude-code:latest"

@@ -32,7 +32,8 @@ class RelayThread:
                  gateway_key: str = "",
                  docker_cpus: str = "", docker_memory: str = "",
                  allow_local: bool = False,
-                 on_token_refresh=None):
+                 on_token_refresh=None,
+                 log_file: str = ""):
         self.server_url = server_url
         self.session_token = session_token
         self.username = username
@@ -40,6 +41,7 @@ class RelayThread:
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
         self.gateway_key = gateway_key
+        self.log_file = log_file
         self.docker_cpus = docker_cpus or os.environ.get("PAWFLOW_RELAY_CPUS", "2")
         self.docker_memory = docker_memory or os.environ.get("PAWFLOW_RELAY_MEMORY", "4g")
         self.allow_local = allow_local
@@ -51,6 +53,45 @@ class RelayThread:
         self._registered = False
         self._docker_container = None
         self._on_token_refresh = on_token_refresh
+        # Lazily-opened log file handle for [Relay] lines when log_file
+        # was configured. Writing to a file keeps pawflow_cli's UI clean
+        # while still preserving the full relay log for diagnostics.
+        self._log_fh = None
+
+    def _log_out(self):
+        """Return the writable sink for [Relay] diagnostics.
+
+        Prefers the configured log_file (opened lazily, line-buffered).
+        Falls back to sys.__stderr__ (unpatched — pawflow_cli's
+        [FSRelay]-filter would otherwise eat the output).
+        """
+        if self.log_file:
+            if self._log_fh is None:
+                try:
+                    _log_dir = os.path.dirname(self.log_file)
+                    if _log_dir:
+                        os.makedirs(_log_dir, exist_ok=True)
+                    self._log_fh = open(self.log_file, "a",
+                                        encoding="utf-8", buffering=1)
+                except Exception:
+                    # One-shot: stop trying, fall through to stderr.
+                    self.log_file = ""
+                    self._log_fh = None
+            if self._log_fh is not None:
+                return self._log_fh
+        return getattr(sys, "__stderr__", None) or sys.stderr
+
+    def _log(self, msg: str):
+        """Write a single diagnostic line (already prefixed or not)."""
+        try:
+            out = self._log_out()
+            out.write(msg if msg.endswith("\n") else msg + "\n")
+            try:
+                out.flush()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _api(self, method, path, body=None):
         """Convenience wrapper for api_call with this relay's credentials."""
@@ -77,10 +118,9 @@ class RelayThread:
                 last_err = e
                 if i == attempts - 1:
                     break
-                sys.stderr.write(
+                self._log(
                     f"[Relay] {method} {path} failed (attempt {i+1}/{attempts}): "
-                    f"{e} -- retrying in {delay:.1f}s\n"
-                )
+                    f"{e} -- retrying in {delay:.1f}s")
                 time.sleep(delay)
                 delay = min(delay * 2, 8.0)
         raise last_err
@@ -185,7 +225,7 @@ class RelayThread:
             try:
                 _sp.run(docker_cmd() + ["rm", "-f", self._docker_container],
                         capture_output=True, timeout=10)
-                sys.stderr.write(f"[Relay] Killed container: {self._docker_container}\n")
+                self._log(f"[Relay] Killed container: {self._docker_container}")
             except Exception:
                 pass
             self._docker_container = None
@@ -204,7 +244,7 @@ class RelayThread:
             from core.docker_utils import kill_containers
             _killed = kill_containers(self.relay_id)
             if _killed:
-                sys.stderr.write(f"[Relay] Cleaned {_killed} orphan container(s)\n")
+                self._log(f"[Relay] Cleaned {_killed} orphan container(s)")
         except Exception:
             pass
 
@@ -254,10 +294,10 @@ class RelayThread:
             #     a browser from inside Docker, which has no display.
             # Better to stop the loop loud than to burn restart budget.
             if not self.ws_token:
-                sys.stderr.write(
+                self._log(
                     "[Relay] FATAL: ws_token is empty at restart — "
                     "RelayThread.start() must run before _run_docker_relay. "
-                    "Stopping restart loop.\n")
+                    "Stopping restart loop.")
                 break
             self._docker_container = make_container_name(self.relay_id, "relay")
             from urllib.parse import urlparse as _up
@@ -285,11 +325,11 @@ class RelayThread:
             if _resolved_ip and _resolved_ip.startswith("127."):
                 _host_ip = get_host_ip()
                 _ws_host_override = f"{_server_host}:{_host_ip}"
-                sys.stderr.write(
+                self._log(
                     f"[Relay] '{_server_host}' → {_resolved_ip} "
                     f"(loopback); adding --add-host "
                     f"{_server_host}:{_host_ip} so the container reaches "
-                    f"the host without breaking TLS cert validation\n")
+                    f"the host without breaking TLS cert validation")
             elif not _resolved_ip and _server_host in ('localhost', '127.0.0.1'):
                 _host_ip = get_host_ip()
                 _ws_host_override = f"{_server_host}:{_host_ip}"
@@ -297,24 +337,36 @@ class RelayThread:
             self._desktop_host_port = find_free_port()
             self._audio_host_port = find_free_port()
             _tok_masked = (self.ws_token[:4] + "****") if len(self.ws_token) > 4 else "****"
-            sys.stderr.write(
+            self._log(
                 f"[Relay] Docker launch: token={_tok_masked} "
                 f"(len={len(self.ws_token)}), "
                 f"session_token={'set' if self.session_token else 'EMPTY'}, "
                 f"gateway_cookie={'set' if self.gateway_cookie else 'EMPTY'}, "
-                f"ws_url={ws_url}\n")
-            # Dev-mount the relay scripts from the host so iterating on
-            # them doesn't require rebuilding the Docker image every time.
-            # The baked /opt/pawflow/*.py inside the image is overlaid by
-            # these read-only binds when the source exists on disk.
-            _tools_dir = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "tools")
+                f"ws_url={ws_url}")
+            # Dev-mount the relay scripts from the host so /opt/pawflow
+            # inside the container always reflects the current tree on
+            # disk. Nothing is baked into the image anymore — the
+            # Dockerfile only prepares the system deps.
+            _project_root = os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__)))
+            _tools_dir = os.path.join(_project_root, "tools")
+            _sdk_dir = os.path.join(_project_root, "docker", "pawflow_sdk")
             _relay_script_mounts = []
             _mount_report = []
-            for _rf in ("pawflow_relay.py", "fs_actions.py", "fs_exec.py",
-                        "fs_screen.py", "fs_mcp.py"):
-                _src = os.path.join(_tools_dir, _rf)
+            # (source_dir, filename) pairs — all mount onto /opt/pawflow/.
+            _src_files = [
+                (_tools_dir, "pawflow_relay.py"),
+                (_tools_dir, "fs_actions.py"),
+                (_tools_dir, "fs_exec.py"),
+                (_tools_dir, "fs_screen.py"),
+                (_tools_dir, "fs_mcp.py"),
+                (_tools_dir, "fs_common.py"),
+                (_tools_dir, "fs_http.py"),
+                (_tools_dir, "audio_capture.py"),
+                (_sdk_dir, "pawflow.py"),
+            ]
+            for _src_dir, _rf in _src_files:
+                _src = os.path.join(_src_dir, _rf)
                 if os.path.exists(_src):
                     _translated = translate_path(to_host_path(_src))
                     _relay_script_mounts += [
@@ -322,10 +374,8 @@ class RelayThread:
                     _mount_report.append(f"{_rf}→{_translated}")
                 else:
                     _mount_report.append(f"{_rf}:MISSING({_src})")
-            sys.stderr.write(
-                f"[Relay] dev-mount scripts ({_tools_dir}): "
-                f"{'; '.join(_mount_report)}\n")
-            sys.stderr.flush()
+            self._log(
+                f"[Relay] dev-mount scripts: {'; '.join(_mount_report)}")
 
             _extra_add_host = (
                 ["--add-host", _ws_host_override] if _ws_host_override else [])
@@ -409,10 +459,9 @@ class RelayThread:
             # the relay-script dev-mount lands on /opt/pawflow/*.py.
             _v_args = [a for i, a in enumerate(docker_run_cmd)
                        if i > 0 and docker_run_cmd[i - 1] == "-v"]
-            sys.stderr.write(
+            self._log(
                 f"[Relay] docker run -v flags ({len(_v_args)}): "
-                f"{' | '.join(_v_args)}\n")
-            sys.stderr.flush()
+                f"{' | '.join(_v_args)}")
             _start_time = time.time()
             try:
                 # Merge stdout into stderr so we capture *everything* the
@@ -424,17 +473,18 @@ class RelayThread:
                     stdout=_sp.PIPE, stderr=_sp.STDOUT)
 
                 def _read_relay_logs():
-                    # Write to the unpatched stderr so pawflow_cli's
-                    # [FSRelay]-suppression filter (app.py) doesn't eat
-                    # our diagnostics.
-                    _out = getattr(sys, "__stderr__", None) or sys.stderr
+                    # Use the same sink as _log() — a file if log_file
+                    # is configured (keeps pawflow_cli UI clean), else
+                    # the unpatched stderr (so pawflow_cli's [FSRelay]-
+                    # filter doesn't eat diagnostics).
                     try:
                         for line in self._docker_proc.stdout:
                             msg = line.decode("utf-8", errors="replace").rstrip()
                             if msg:
-                                _out.write(f"[Relay] {msg}\n")
+                                out = self._log_out()
+                                out.write(f"[Relay] {msg}\n")
                                 try:
-                                    _out.flush()
+                                    out.flush()
                                 except Exception:
                                     pass
                     except Exception:
@@ -459,19 +509,19 @@ class RelayThread:
                             _consecutive_fails = 0
                         else:
                             _consecutive_fails += 1
-                            sys.stderr.write(
+                            self._log(
                                 f"[Relay] Health: relay not connected "
-                                f"({_consecutive_fails} consecutive)\n")
+                                f"({_consecutive_fails} consecutive)")
                             if _consecutive_fails == 3:
                                 # Re-register the service so the relay can reconnect
-                                sys.stderr.write("[Relay] Re-registering relay service\n")
+                                self._log("[Relay] Re-registering relay service")
                                 try:
                                     self._reregister_service()
                                 except Exception as _rr_err:
-                                    sys.stderr.write(f"[Relay] Re-register failed: {_rr_err}\n")
+                                    self._log(f"[Relay] Re-register failed: {_rr_err}")
                             elif _consecutive_fails >= 6:
                                 # Relay still not back after re-register + 90s — kill container
-                                sys.stderr.write("[Relay] Relay stuck, killing container\n")
+                                self._log("[Relay] Relay stuck, killing container")
                                 try:
                                     self._docker_proc.kill()
                                 except Exception:
@@ -488,13 +538,13 @@ class RelayThread:
                         stderr = self._docker_proc.stderr.read().decode("utf-8", errors="replace")
                     except Exception:
                         pass
-                    sys.stderr.write(f"[Relay] Docker relay exited (code {rc}), restarting in {restart_delay}s\n")
+                    self._log(f"[Relay] Docker relay exited (code {rc}), restarting in {restart_delay}s")
                     if stderr:
-                        sys.stderr.write(f"[Relay] {stderr[:500]}\n")
+                        self._log(f"[Relay] {stderr[:500]}")
                 else:
-                    sys.stderr.write(f"[Relay] Docker relay exited (code 0), restarting in {restart_delay}s\n")
+                    self._log(f"[Relay] Docker relay exited (code 0), restarting in {restart_delay}s")
             except Exception as e:
-                sys.stderr.write(f"[Relay] Docker error: {e}, retrying in {restart_delay}s\n")
+                self._log(f"[Relay] Docker error: {e}, retrying in {restart_delay}s")
             finally:
                 if hasattr(self, '_docker_proc') and self._docker_proc:
                     try:
@@ -510,7 +560,7 @@ class RelayThread:
                 break
             restart_delay = min(restart_delay * 2, max_restart_delay)
             self._kill_docker()
-            sys.stderr.write(f"[Relay] Restarting Docker relay container...\n")
+            self._log("[Relay] Restarting Docker relay container...")
 
     # ── Host helper (TCP server for Docker-to-host commands) ──────────
 
@@ -521,7 +571,7 @@ class RelayThread:
         srv.bind(("0.0.0.0", port))
         srv.listen(5)
         srv.settimeout(2)
-        sys.stderr.write(f"[Relay] Host helper listening on port {port}\n")
+        self._log(f"[Relay] Host helper listening on port {port}")
 
         while not self._stop_event.is_set():
             try:
@@ -542,7 +592,7 @@ class RelayThread:
         try:
             _close_conn = self._handle_host_helper_conn(conn)
         except Exception as e:
-            sys.stderr.write(f"[Relay] Host helper error: {e}\n")
+            self._log(f"[Relay] Host helper error: {e}")
         finally:
             if _close_conn is not False:
                 try:
@@ -763,7 +813,7 @@ class RelayThread:
                 try: p.wait(timeout=5)
                 except Exception: p.kill()
             self._local_desktop_procs = None
-            sys.stderr.write("[Relay] Local desktop stopped\n")
+            self._log("[Relay] Local desktop stopped")
             return {"ok": True}
         return {"was_running": False}
 
@@ -881,7 +931,7 @@ class RelayThread:
             # Stream terminal_data as progress messages on this TCP connection.
             # The relay's _forward_to_host_helper reads these and forwards
             # them to the server WS → dispatch_terminal_data → browser.
-            sys.stderr.write(f"[Relay] Local terminal {session_id} opened ({shell})\n")
+            self._log(f"[Relay] Local terminal {session_id} opened ({shell})")
             try:
                 while True:
                     try:
@@ -921,7 +971,7 @@ class RelayThread:
                     conn.close()
                 except Exception:
                     pass
-                sys.stderr.write(f"[Relay] Local terminal {session_id} closed\n")
+                self._log(f"[Relay] Local terminal {session_id} closed")
 
         except Exception as e:
             resp = json.dumps({"type": "error", "error": f"Failed: {e}"}) + "\n"

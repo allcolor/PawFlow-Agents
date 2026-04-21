@@ -233,16 +233,12 @@ RUN update-desktop-database /usr/share/applications 2>/dev/null || true
 RUN mkdir -p /workspace && chown pawflow:pawflow /workspace \
     && (groupadd -f docker; usermod -aG docker pawflow) 2>/dev/null || true
 
-# ── PawFlow relay + SDK (LAST — changes often, don't bust cache) ──
-COPY pawflow_relay.py /opt/pawflow/pawflow_relay.py
-COPY fs_common.py /opt/pawflow/fs_common.py
-COPY fs_actions.py /opt/pawflow/fs_actions.py
-COPY fs_exec.py /opt/pawflow/fs_exec.py
-COPY fs_screen.py /opt/pawflow/fs_screen.py
-COPY fs_mcp.py /opt/pawflow/fs_mcp.py
-COPY fs_http.py /opt/pawflow/fs_http.py
-COPY pawflow.py /opt/pawflow/pawflow.py
-COPY audio_capture.py /opt/pawflow/audio_capture.py
+# ── PawFlow relay + SDK ────────────────────────────────────────────
+# Scripts are no longer baked into the image — pawflow_relay/thread.py
+# dev-mounts the current tree from the host onto /opt/pawflow/*.py at
+# container start, so iteration is instant (no rebuild needed). We just
+# prep the target directory so the binds land somewhere.
+RUN mkdir -p /opt/pawflow
 # /workspace/.pylib is the host-mounted vendored deps dir — putting it on
 # PYTHONPATH means any python invocation inside the container (including
 # the relay itself and user scripts) sees the pinned/vendored packages

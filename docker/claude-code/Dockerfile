@@ -42,9 +42,11 @@ RUN mkdir -p /usr/local/share/applications && \
 # Python deps for MCP bridge
 RUN pip3 install --break-system-packages --no-cache-dir json-repair
 
-# MCP bridge + PawFlow SDK (LAST — changes often, don't bust cache)
-COPY mcp_bridge.py /opt/pawflow/mcp_bridge.py
-COPY pawflow.py /opt/pawflow/pawflow.py
+# MCP bridge + PawFlow SDK are NOT baked — the CC pool spawn in
+# core/claude_code_pool.py dev-mounts them onto /opt/pawflow/*.py from
+# the host tree, so iterating on the bridge is rebuild-free. We just
+# pre-create the directory so the binds have a target.
+RUN mkdir -p /opt/pawflow
 ENV PYTHONPATH="/opt/pawflow"
 
 USER pawflow

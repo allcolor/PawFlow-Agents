@@ -813,6 +813,13 @@ class PawCode:
         self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
 
         # Start relay
+        # Route relay logs to ~/.pawflow/logs/relay.log so the interactive
+        # UI stays clean. Path printed once so users know where to tail
+        # when they need to debug.
+        from pawflow_cli.config import CONFIG_DIR as _CLI_CONFIG_DIR
+        _relay_log = str(_CLI_CONFIG_DIR / "logs" / "relay.log")
+        self.renderer.print_system(
+            f"Relay logs → {_relay_log} (tail -f for live output).")
         self.relay = RelayThread(
             self.server_url, self.session_token, self.username,
             self.directory,
@@ -822,6 +829,7 @@ class PawCode:
             docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
             allow_local=self.allow_local,
             on_token_refresh=self._on_relay_token_refresh,
+            log_file=_relay_log,
         )
         self.relay.start()
 
@@ -935,6 +943,8 @@ class PawCode:
             self.renderer.print_system(f"Stopping current relay ({self.relay.directory})...")
             self.relay.stop()
         self.renderer.print_system(f"Mounting {directory} as filesystem relay...")
+        from pawflow_cli.config import CONFIG_DIR as _CLI_CONFIG_DIR
+        _relay_log = str(_CLI_CONFIG_DIR / "logs" / "relay.log")
         self.relay = RelayThread(
             self.server_url, self.session_token, self.username,
             directory,
@@ -944,6 +954,7 @@ class PawCode:
             docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
             allow_local=self.allow_local,
             on_token_refresh=self._on_relay_token_refresh,
+            log_file=_relay_log,
         )
         self.relay.start()
         _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""

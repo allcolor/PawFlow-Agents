@@ -311,6 +311,26 @@ class ClaudeCodePool:
         import core.paths as _paths
         _paths.CLAUDE_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
+        # Dev-mount the MCP bridge + PawFlow SDK straight from the host
+        # tree so that changes take effect on the next container spawn
+        # without any rebuild. The image itself ships no bridge code —
+        # these binds are the only source of /opt/pawflow/*.py.
+        from core.docker_utils import translate_path, to_host_path
+        _project_root = os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))
+        _bridge_src_files = [
+            (os.path.join(_project_root, "tools"), "mcp_bridge.py"),
+            (os.path.join(_project_root, "docker", "pawflow_sdk"),
+             "pawflow.py"),
+        ]
+        _bridge_mounts = []
+        for _src_dir, _rf in _bridge_src_files:
+            _src = os.path.join(_src_dir, _rf)
+            if os.path.exists(_src):
+                _translated = translate_path(to_host_path(_src))
+                _bridge_mounts += [
+                    "-v", f"{_translated}:/opt/pawflow/{_rf}:ro"]
+
         run_args = [
             "-d",  # detached
             "--rm",  # auto-remove on exit — prevents dead-container pileup
@@ -319,6 +339,7 @@ class ClaudeCodePool:
             "--memory", self.memory_limit,
             # Mount sessions volume (all sessions, shared across all execs)
             "-v", f"{self._sessions_host_path}:/cc_sessions",
+            *_bridge_mounts,
             # Network: allow MCP bridge to reach host tool relay
             "--add-host", "host.docker.internal:host-gateway",
             # Run as non-root (Claude Code requirement)

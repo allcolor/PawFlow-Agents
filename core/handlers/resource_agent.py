@@ -824,7 +824,7 @@ class SpawnAgentsHandler(ToolHandler):
             "content": message,
             "msg_id": _msg_id,
             "source": _src,
-        }, conversation_id)
+        }, conv_id)
         # Publish a live SSE event AFTER the message lands on disk so
         # the webchat renders the delegate block in real time without
         # ever racing ahead of persisted state (visible => persisted).

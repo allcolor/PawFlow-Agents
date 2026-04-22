@@ -1227,6 +1227,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             _turn_text_parts = []
             _turn_tool_calls = []
             _turn_thinking = ""
+            # Mark this as the most recent turn flush. The sentinel-
+            # session poker in _stall_watchdog uses this to decide
+            # when to send a stdin nudge.
+            _hb_state["last_turn_flush_ts"] = time.monotonic()
             if (text or tc) and turn_callback:
                 logger.info("[claude-code] flush turn %d: text=%d chars, tc=%d, callback=%s",
                             _turn_count, len(text), len(tc), bool(turn_callback))
@@ -1354,7 +1358,23 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             "last_dispatched_tc": "",   # last tool_use dispatched (id + name)
             "last_tool_result_id": "",  # last tool_result received
             "stream_line_count": 0,     # total lines read from CC stdout
+            "last_turn_flush_ts": 0.0,  # monotonic of last _flush_turn
+            "last_poke_ts": 0.0,        # monotonic of last stdin poke
         }
+        # Sentinel sessions (_compact, _memory_extract, …) have a
+        # tendency to stall mid-stream — CC sometimes sits idle after
+        # a tool_result waiting for input that will never come. When
+        # that happens, proc.stdout goes quiet and the only way out is
+        # the stall watchdog firing at _STALL_TIMEOUT. Tens of seconds
+        # to minutes of wasted wait on an already-healthy session.
+        #
+        # Workaround: if we're on a sentinel AND no turn has flushed
+        # for _SENTINEL_POKE_INTERVAL seconds, send a short "Continue."
+        # user message on stdin. Pokes the session without derailing
+        # (CC integrates any stray user message as a nudge). Rate-
+        # limited via last_poke_ts so we don't spam.
+        _is_sentinel_conv = bool(conv_id) and conv_id.startswith("_")
+        _SENTINEL_POKE_INTERVAL = 10.0  # seconds
 
         def _stall_watchdog():
             pass  # _stall_killed is on self
@@ -1403,6 +1423,45 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         except OSError:
                             pass
                         return
+                # Sentinel-session stdin poke: when a _compact /
+                # _memory_extract session's stream has gone quiet for
+                # _SENTINEL_POKE_INTERVAL and we have nothing pending
+                # for it, inject a "Continue." user message on stdin.
+                # CC often sits idle after a tool_result as if waiting
+                # for prompting; the poke wakes it up far earlier than
+                # the 300s stall watchdog would.
+                if (_is_sentinel_conv
+                        and _hb_state["last_turn_flush_ts"]
+                        and not _pending_tool_ids):
+                    _now = time.monotonic()
+                    _since_turn = _now - _hb_state["last_turn_flush_ts"]
+                    _since_poke = (_now - _hb_state["last_poke_ts"]
+                                    if _hb_state["last_poke_ts"] else 1e9)
+                    if (_since_turn >= _SENTINEL_POKE_INTERVAL
+                            and _since_poke >= _SENTINEL_POKE_INTERVAL):
+                        try:
+                            if proc.stdin and proc.poll() is None:
+                                _msg = json.dumps({
+                                    "type": "user",
+                                    "message": {
+                                        "role": "user",
+                                        "content": "Continue.",
+                                    },
+                                })
+                                proc.stdin.write(_msg + "\n")
+                                proc.stdin.flush()
+                                _hb_state["last_poke_ts"] = _now
+                                logger.info(
+                                    "[claude-code] stdin poke: sentinel "
+                                    "'%s' idle %.0fs since last turn — "
+                                    "sent 'Continue.' nudge",
+                                    conv_id, _since_turn)
+                        except (BrokenPipeError, OSError) as _poke_err:
+                            logger.debug(
+                                "[claude-code] stdin poke failed "
+                                "(process probably dying): %s",
+                                _poke_err)
+
                 # INFO-level heartbeat every 30s so "blocked" is visible
                 # in default-log-level deployments. Covers the general
                 # "what's the stream actually doing right now" gap —

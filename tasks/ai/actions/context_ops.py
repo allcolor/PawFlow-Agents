@@ -142,6 +142,7 @@ def _load_cc_session_context(conv_id: str, agent_name: str, store,
                 if isinstance(content_blocks, list):
                     parts = []
                     tool_calls = []
+                    _had_tool_result = False
                     for block in content_blocks:
                         btype = block.get("type", "")
                         if btype == "text":
@@ -155,6 +156,7 @@ def _load_cc_session_context(conv_id: str, agent_name: str, store,
                                 "arguments": block.get("input", {}),
                             })
                         elif btype == "tool_result":
+                            _had_tool_result = True
                             _tr_content = block.get("content", "")
                             if isinstance(_tr_content, list):
                                 _tr_content = " ".join(
@@ -162,7 +164,20 @@ def _load_cc_session_context(conv_id: str, agent_name: str, store,
                                     if isinstance(b, dict))
                             parts.append(f"[tool_result: {str(_tr_content)[:200]}]")
                     content = "\n".join(parts) if parts else ""
-                    msg_entry = {"role": role, "content": content}
+                    # Anthropic's wire protocol wraps tool_result replies
+                    # as role=user. For the Context Editor that is a pure
+                    # noise source — CC-heavy conversations produce
+                    # hundreds of "user" rows whose only content is
+                    # `[tool_result: ...]`, drowning the actual user-typed
+                    # messages in the list. This function is display-only
+                    # (see callers: get_context action), NOT used to
+                    # synthesize the LLM payload, so relabel these rows as
+                    # role=tool. The user's real messages remain role=user
+                    # and stand out.
+                    _display_role = "tool" if (_had_tool_result and not any(
+                        p and not p.startswith("[tool_result:") for p in parts
+                    )) else role
+                    msg_entry = {"role": _display_role, "content": content}
                     if tool_calls:
                         msg_entry["tool_calls"] = tool_calls
                 elif isinstance(content_blocks, str):

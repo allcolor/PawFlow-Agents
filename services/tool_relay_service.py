@@ -193,9 +193,26 @@ class ToolRelayService(BaseService):
                         resp = {'type': 'error',
                                 'request_id': m.get('request_id', ''),
                                 'error': str(e)}
-                    asyncio.run_coroutine_threadsafe(
-                        _ws_send_frame(writer, json.dumps(resp).encode('utf-8')),
-                        loop)
+                    # Shutdown race: the worker thread may still be
+                    # running handle_tool_request when the server tears
+                    # down and closes `loop`. Build the coroutine only
+                    # if the loop is still alive; otherwise close it so
+                    # asyncio doesn't warn about an un-awaited coroutine.
+                    if loop.is_closed():
+                        logger.debug(
+                            "[tool-relay] skipping response for %s — "
+                            "loop closed (server shutdown)",
+                            m.get('method', '?'))
+                        return
+                    _coro = _ws_send_frame(
+                        writer, json.dumps(resp).encode('utf-8'))
+                    try:
+                        asyncio.run_coroutine_threadsafe(_coro, loop)
+                    except RuntimeError as _re:
+                        _coro.close()
+                        logger.debug(
+                            "[tool-relay] response dropped for %s: %s",
+                            m.get('method', '?'), _re)
                 threading.Thread(target=_exec, daemon=True,
                                   name=f'tool-relay-{msg.get("method", "?")}').start()
         except Exception as e:

@@ -1115,6 +1115,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _turn_tool_calls: list = []
         _turn_thinking: str = ""
         _tool_results: dict = {}  # tool_use_id → result text
+        # Persistent tool_call_id → unwrapped tool name map. _turn_tool_calls
+        # is cleared on every _flush_turn, so by the time a tool_result for
+        # tool T arrives (potentially several turns after the tool_use that
+        # issued it), the per-turn list can't resolve the name and we'd
+        # fall back to the raw tc_id. Keep a stream-scoped map so the
+        # tool_result handler can always recover the name — critical for
+        # the compact_result short-circuit kill.
+        _stream_tc_names: Dict[str, str] = {}
         _current_msg_id: str = ""  # track message ID to detect incremental updates
         # Latest usage observed on an assistant event — used to publish
         # a fresh context-fill % to the webchat. The `result` event's
@@ -1565,6 +1573,21 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             else:
                                 _turn_tool_calls.append(_block_entry)
                             _pending_tool_ids.add(_block_id)
+                            # Remember the unwrapped tool name for this
+                            # id across the whole stream, not just the
+                            # current turn. Used when tool_result comes
+                            # back after the tool_use's turn has been
+                            # flushed (common when CC emits many tool
+                            # calls in quick succession).
+                            try:
+                                from core.llm_client import unwrap_mcp_tool
+                                _persist_name, _ = unwrap_mcp_tool(
+                                    block.get("name", ""),
+                                    block.get("input", {}) or {})
+                                if _block_id and _persist_name:
+                                    _stream_tc_names[_block_id] = _persist_name
+                            except Exception:
+                                pass
                             # Unwrap MCP wrapper for display:
                             # mcp__pawflow__use_tool(tool_name=X, arguments={...})
                             # → X({...})  (with alias resolution: shell→bash etc.)
@@ -1661,14 +1684,21 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 _pending_tool_ids.discard(tc_id)
                                 if not _pending_tool_ids:
                                     _last_tool_result_time = time.monotonic()
-                            # Resolve tool name from turn_tool_calls
-                            _tr_name = tc_id
-                            for _tc in _turn_tool_calls:
-                                if _tc.get("id") == tc_id:
-                                    from core.llm_client import unwrap_mcp_tool
-                                    _tr_name, _ = unwrap_mcp_tool(
-                                        _tc.get("name", tc_id), _tc.get("arguments", {}))
-                                    break
+                            # Resolve tool name. Try the stream-scoped
+                            # map first (survives turn flushes), fall
+                            # back to _turn_tool_calls for robustness.
+                            # Without this, the compact_result short-
+                            # circuit would miss whenever the tool_use
+                            # was in a flushed earlier turn.
+                            _tr_name = _stream_tc_names.get(tc_id, "")
+                            if not _tr_name:
+                                _tr_name = tc_id
+                                for _tc in _turn_tool_calls:
+                                    if _tc.get("id") == tc_id:
+                                        from core.llm_client import unwrap_mcp_tool
+                                        _tr_name, _ = unwrap_mcp_tool(
+                                            _tc.get("name", tc_id), _tc.get("arguments", {}))
+                                        break
                             # Skip meta tool results from SSE
                             if _tr_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
                                 continue

@@ -1633,14 +1633,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         _ctx_used_live = (_u.get("input_tokens", 0)
                                           + _u.get("cache_creation_input_tokens", 0)
                                           + _u.get("cache_read_input_tokens", 0))
-                        # Prefer CC's own contextWindow (cached from the
-                        # previous result.modelUsage). Falls back to the
-                        # service config only until the first result event
-                        # lands — after that the cached value tracks
-                        # CC's real budget (200k vs 1M beta, overrides, …).
-                        _ctx_max_live = int(getattr(self, '_cc_context_window', 0)
-                                            or getattr(self, '_max_context_size', 0)
-                                            or 200000)
+                        # Only CC's own contextWindow (cached from the
+                        # previous result.modelUsage) — no service-config
+                        # or 200k default. Until the first result event
+                        # lands, _ctx_max_live stays 0 and the UI skips
+                        # the gauge (truth over pretend number).
+                        _ctx_max_live = int(getattr(self, '_cc_context_window', 0) or 0)
                         _ctx_pct_live = (_ctx_used_live / _ctx_max_live
                                          if _ctx_max_live > 0 else 0.0)
                         _pub("message_meta", {
@@ -2050,11 +2048,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         _ctx_max = int(_cc_ctx_window
                                        or getattr(self, '_cc_context_window', 0)
                                        or 0)
-                        if _ctx_max <= 0:
-                            # First turn, result arrived with no modelUsage:
-                            # keep the service config as last-resort fallback
-                            # (gauge won't be accurate yet, next turn fixes it).
-                            _ctx_max = int(getattr(self, '_max_context_size', 0) or 200000)
+                        # No 200k default. If CC didn't report
+                        # contextWindow on this result, emit ctx_max=0 and
+                        # let the UI skip the gauge — better than a
+                        # fictional budget.
                         _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
                         _pub("message_meta", {
                             "msg_id": _last_msg_id,

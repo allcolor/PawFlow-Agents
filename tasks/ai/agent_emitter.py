@@ -182,7 +182,15 @@ class StreamEmitter(AgentEmitter):
         _ctx_used = (int(result.tokens_in or 0)
                      + int(getattr(result, 'cache_creation_tokens', 0) or 0)
                      + int(getattr(result, 'cache_read_tokens', 0) or 0))
-        _ctx_max = int(self.ctx.get("max_context_size", 0) or 200000)
+        # Real context window: provider's self-reported value first
+        # (claude-code caches CC's result.modelUsage[model].contextWindow
+        # as client._cc_context_window), then the user's
+        # max_context_size service config. No hardcoded fallback —
+        # unknown means 0, UI skips the gauge.
+        _client = self.ctx.get("client")
+        _ctx_max = int((getattr(_client, '_cc_context_window', 0) if _client else 0)
+                       or self.ctx.get("max_context_size", 0)
+                       or 0)
         _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
         self._emit("done", {
             "response": result.response_content,

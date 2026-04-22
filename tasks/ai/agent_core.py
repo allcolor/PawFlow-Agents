@@ -245,14 +245,16 @@ class AgentCoreMixin:
             # context_max comes from PawFlow config (service/agent/task cascade).
             _ctx_used = int(tok_in) + int(tok_cache_creation) + int(tok_cache_read)
             if _ctx_used > 0:
-                # Prefer the provider's self-reported real context window
-                # (claude-code caches CC's result.modelUsage[model].
-                # contextWindow as client._cc_context_window). The service-
-                # config max_context_size stays as a last-resort fallback
-                # for providers that don't publish a real number.
+                # Real context window: first the provider's self-reported
+                # value (claude-code caches CC's
+                # result.modelUsage[model].contextWindow as
+                # client._cc_context_window), then the user's
+                # max_context_size service config. NO hardcoded fallback
+                # — unknown means 0, UI skips the gauge rather than
+                # display a fictional budget.
                 _ctx_max = int(getattr(client, '_cc_context_window', 0) or
                                getattr(client, '_max_context_size', 0) or
-                               ctx.get("max_context_size", 200000) or 200000)
+                               ctx.get("max_context_size", 0) or 0)
                 src["context_used"] = _ctx_used
                 src["context_max"] = _ctx_max
                 src["context_pct"] = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0

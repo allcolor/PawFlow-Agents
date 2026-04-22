@@ -263,7 +263,8 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
 # ── WS Reverse client ─────────────────────────────────────────────
 
 def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,
-                allow_automation=False, allow_local_screen=False, allow_local=False):
+                allow_automation=False, allow_local_screen=False, allow_local=False,
+                gateway_cookie="", session_token=""):
     """Connect to the PawFlow server via WebSocket and process filesystem commands."""
     import ssl
     import base64 as b64
@@ -1345,10 +1346,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
             ws_key = b64.b64encode(os.urandom(16)).decode()
             _cookies = []
-            if _gateway_cookie:
-                _cookies.append(f'_pf_gw={_gateway_cookie}')
-            if _session_token:
-                _cookies.append(f'pawflow_token={_session_token}')
+            if gateway_cookie:
+                _cookies.append(f'_pf_gw={gateway_cookie}')
+            if session_token:
+                _cookies.append(f'pawflow_token={session_token}')
             _extra_hdrs = ''
             if _cookies:
                 _extra_hdrs = 'Cookie: ' + '; '.join(_cookies) + '\r\n'
@@ -1742,19 +1743,5 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         reconnect_delay = min(reconnect_delay * 2, 60)
 
 
-# HTTP + OAuth auto-registration helpers live in the package.
-from pawflow_relay.register import (
-    acquire_gateway_cookie as _acquire_gateway_cookie,
-    agent_api_call as _agent_api_call,
-    create_service as _create_service,
-    delete_service as _delete_service,
-    auto_register as _auto_register_impl,
-)
-from pawflow_relay.utils import api_call as _api_call_impl
-
-# Module-level gateway cookie + session token, set once in main() and
-# threaded through _api_call / _ws_connect.
-_gateway_cookie = ""
-_session_token = ""
 
 

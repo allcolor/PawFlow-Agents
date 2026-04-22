@@ -8,15 +8,20 @@ from tasks.ai.agent_emitter import AgentResult, StreamEmitter
 
 class TestOnDoneContextFields(unittest.TestCase):
 
-    def _make_emitter(self, max_ctx=200000):
+    def _make_emitter(self, max_ctx=200000, cc_window=0):
         bus = MagicMock()
+        # _cc_context_window defaults to 0 — explicit on the mock so
+        # getattr doesn't return a truthy auto-generated Mock.
+        client = MagicMock(
+            provider="anthropic", base_url="", default_model="x",
+            _cc_context_window=cc_window)
         ctx = {
             "active_agent_name": "test",
             "active_llm_service": "svc",
             "user_id": "u",
             "max_context_size": max_ctx,
             "_event_cid": "cid1",
-            "client": MagicMock(provider="anthropic", base_url="", default_model="x"),
+            "client": client,
         }
         em = StreamEmitter(
             conversation_id="cid1", bus=bus, ctx=ctx,
@@ -43,9 +48,11 @@ class TestOnDoneContextFields(unittest.TestCase):
         res = AgentResult(tokens_in=1000, all_msg_ids=["m"])
         em.on_done(res)
         (_, _, data), _ = bus.publish_event.call_args
-        # Fallback to 200000 when max_context_size is 0/missing
-        self.assertEqual(data["context_max"], 200000)
-        self.assertAlmostEqual(data["context_pct"], 0.005, places=4)
+        # Unknown budget: no fictional 200k default. ctx_max stays 0
+        # and pct stays 0 — UI skips the gauge rather than display a
+        # fake budget.
+        self.assertEqual(data["context_max"], 0)
+        self.assertEqual(data["context_pct"], 0.0)
 
     def test_on_done_no_tokens(self):
         em, bus = self._make_emitter(max_ctx=128000)

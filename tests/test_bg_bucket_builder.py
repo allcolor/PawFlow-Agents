@@ -132,7 +132,7 @@ class _FakeBuilder(BgBucketBuilder):
                                             client, ctx_max):
                 break
             built += 1
-            self._maybe_rollup(store, client, user_id, ctx_max)
+            self._maybe_rollup(store, client, user_id, ctx_max, cid)
         if built:
             self._publish_built(cid, built, store)
 
@@ -162,7 +162,7 @@ class _FakeBuilder(BgBucketBuilder):
                                                 client, ctx_max):
                     break
                 buckets_built += 1
-                if self._maybe_rollup(store, client, user_id, ctx_max):
+                if self._maybe_rollup(store, client, user_id, ctx_max, cid):
                     rollups_fired += 1
         finally:
             with self._pending_lock:

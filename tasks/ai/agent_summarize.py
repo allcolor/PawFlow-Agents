@@ -211,13 +211,15 @@ class AgentSummarizeMixin:
         # data/runtime/compact_cache/<cid>/ keyed by sha256(chunk).
         # On crash / retry, unchanged chunks hit the cache and skip
         # re-summarization. Cleared at the end of the final pass.
+        # Every compact runs in a conversation — the cache_dir helper
+        # raises if conversation_id is empty (impossible-state bug).
         cache_dir = self._compact_chunk_cache_dir(conversation_id)
         resumed = 0
 
         chunk_summaries: List[str] = []
         for i, chunk in enumerate(chunks, 1):
             cache_path = self._compact_chunk_cache_path(cache_dir, chunk)
-            if cache_path is not None and cache_path.exists():
+            if cache_path.exists():
                 try:
                     _cached = cache_path.read_text(encoding="utf-8")
                     if _cached and len(_cached.strip()) >= 20:
@@ -253,10 +255,9 @@ class AgentSummarizeMixin:
                 final=False,
             )
             # Persist immediately so a crash on chunk N+1 doesn't cost
-            # us chunks 1..N. Best-effort — a write failure only costs
-            # the resume benefit, not correctness.
-            if (cache_path is not None and summary
-                    and len(summary.strip()) >= 20):
+            # us chunks 1..N. Best-effort on the WRITE only — a disk
+            # failure costs the resume benefit, not correctness.
+            if summary and len(summary.strip()) >= 20:
                 try:
                     cache_path.parent.mkdir(parents=True, exist_ok=True)
                     cache_path.write_text(summary, encoding="utf-8")
@@ -301,11 +302,10 @@ class AgentSummarizeMixin:
         # Wipe the chunk cache only after the FINAL pass succeeded.
         # Intermediate chunked calls (final=False) are nested — leave
         # the cache to the outer caller to wipe.
-        if final and result and cache_dir is not None:
+        if final and result and cache_dir.is_dir():
             try:
                 import shutil as _sh
-                if cache_dir.is_dir():
-                    _sh.rmtree(cache_dir, ignore_errors=True)
+                _sh.rmtree(cache_dir, ignore_errors=True)
             except Exception:
                 logger.debug(
                     "[compact] chunk cache cleanup failed", exc_info=True)
@@ -314,28 +314,34 @@ class AgentSummarizeMixin:
     @staticmethod
     def _compact_chunk_cache_dir(conversation_id: str):
         """Directory for persisting intermediate chunk summaries.
-        Returns None when we can't derive a stable path — caller then
-        degrades gracefully to no-cache mode."""
+
+        Every compact runs inside a conversation — there is no such
+        thing as a summary without a cid. Raises if the caller passed
+        an empty value so the bug surfaces where it belongs instead
+        of silently disabling resume.
+        """
         if not conversation_id:
-            return None
+            raise ValueError(
+                "_compact_chunk_cache_dir requires a non-empty "
+                "conversation_id — every compact runs inside a conv, "
+                "and a missing cid is a caller bug")
         import core.paths as _paths
         from pathlib import Path as _Path
         safe = "".join(c for c in conversation_id if c.isalnum()
                         or c in "-_@")
         if not safe:
-            return None
-        try:
-            return _Path(_paths.RUNTIME_DIR) / "compact_cache" / safe
-        except Exception:
-            return None
+            raise ValueError(
+                f"conversation_id {conversation_id!r} has no path-safe "
+                "characters — caller should pass a real cid")
+        return _Path(_paths.RUNTIME_DIR) / "compact_cache" / safe
 
     @staticmethod
     def _compact_chunk_cache_path(cache_dir, chunk: str):
         """On-disk path for this chunk's summary cache entry.
         Keyed by sha256(chunk) so identical chunks hit the same slot
         across crash / retry cycles."""
-        if cache_dir is None or not chunk:
-            return None
+        if not chunk:
+            raise ValueError("chunk must be non-empty")
         import hashlib as _hl
         h = _hl.sha256(chunk.encode("utf-8", errors="replace")).hexdigest()[:16]
         return cache_dir / f"chunk_{h}.txt"

@@ -126,21 +126,16 @@ def test_cache_path_is_content_addressed():
     assert path_a != path_c
 
 
-def test_no_conversation_id_disables_cache():
+def test_empty_conversation_id_raises():
+    """A compact without cid is an impossible state — raise at the
+    cache-dir boundary so the caller bug surfaces immediately instead
+    of silently losing resume capability."""
     harness = _Harness()
     text = _make_big_text(n_chunks=3, chunk_len=500)
-    # Empty cid → cache_dir is None → no cache lookup, no cache write
-    result = harness._summarize_chunked(
-        client=None, text=text, chunk_char_limit=500,
-        target_tokens=100, conversation_id="", final=True)
-    assert "FINAL MERGED" in result
-    # All chunks LLM-called on both runs
-    harness2 = _Harness()
-    harness2._summarize_chunked(
-        client=None, text=text, chunk_char_limit=500,
-        target_tokens=100, conversation_id="", final=True)
-    # Without caching, second run re-processes every chunk
-    assert harness2._successful_calls == harness._successful_calls
+    with pytest.raises(ValueError, match="conversation_id"):
+        harness._summarize_chunked(
+            client=None, text=text, chunk_char_limit=500,
+            target_tokens=100, conversation_id="", final=True)
 
 
 def test_intermediate_pass_keeps_cache_for_outer():

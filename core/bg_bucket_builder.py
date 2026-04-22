@@ -327,7 +327,7 @@ class BgBucketBuilder:
                     "bucket_msg_count": len(chunk),
                 })
 
-                if self._maybe_rollup(store, client, user_id, ctx_max):
+                if self._maybe_rollup(store, client, user_id, ctx_max, cid):
                     rollups_fired += 1
                     self._publish_progress(cid, "rollup_merging", {
                         "rollups_fired": rollups_fired,
@@ -498,7 +498,7 @@ class BgBucketBuilder:
                     cid, user_id, store, chunk, client, ctx_max):
                 break
             built += 1
-            self._maybe_rollup(store, client, user_id, ctx_max)
+            self._maybe_rollup(store, client, user_id, ctx_max, cid)
 
         if built:
             self._publish_built(cid, built, store)
@@ -693,7 +693,7 @@ class BgBucketBuilder:
         return True
 
     def _maybe_rollup(self, store: BucketStore, client: Any,
-                       user_id: str, ctx_max: int) -> bool:
+                       user_id: str, ctx_max: int, cid: str) -> bool:
         """Fire rollup_all_except_last when header exceeds budget OR
         object_count exceeds trigger count. Return True if a rollup or
         collapse actually fired."""
@@ -714,7 +714,7 @@ class BgBucketBuilder:
             merged_trace = merge_traces(d.get("tool_trace") for d in inputs
                                           if d.get("tool_trace"))
             combined = self._consolidate_via_summarize(
-                inputs, client, user_id, ctx_max)
+                inputs, client, user_id, ctx_max, cid)
             if combined and len(combined.strip()) >= 20:
                 try:
                     model = getattr(client, "default_model", "") or ""
@@ -732,7 +732,7 @@ class BgBucketBuilder:
         merged_trace = merge_traces(d.get("tool_trace") for d in inputs
                                       if d.get("tool_trace"))
         consolidated = self._consolidate_via_summarize(
-            inputs, client, user_id, ctx_max)
+            inputs, client, user_id, ctx_max, cid)
         if consolidated and len(consolidated.strip()) >= 20:
             try:
                 model = getattr(client, "default_model", "") or ""
@@ -746,7 +746,7 @@ class BgBucketBuilder:
 
     def _consolidate_via_summarize(self, bucket_docs: List[Dict],
                                      client: Any, user_id: str,
-                                     ctx_max: int) -> str:
+                                     ctx_max: int, cid: str) -> str:
         """Merge N bucket summaries into one via the injected summarize
         pipeline. Inputs stay as text (each phase is one synthetic
         LLMMessage carrying the previous bucket's summary). The
@@ -760,7 +760,6 @@ class BgBucketBuilder:
             return ""
         from core.llm_client import LLMMessage
         llm_msgs: List[LLMMessage] = []
-        _cid = "_bucket_rollup"
         for d in bucket_docs:
             bid = d.get("bucket_id", "?")
             fs = d.get("first_seq", 0)
@@ -768,13 +767,13 @@ class BgBucketBuilder:
             summary = d.get("summary", "") or ""
             content = f"=== Phase {bid} (seq {fs}..{ls}) ===\n{summary}"
             llm_msgs.append(LLMMessage(
-                role="user", content=content, conversation_id=_cid))
+                role="user", content=content, conversation_id=cid))
         try:
             result = self._summarize_fn(
                 llm_msgs, client,
                 max_tokens=ctx_max or 0,
                 target_tokens=BUCKET_OUTPUT_TARGET,
-                conversation_id=_cid,
+                conversation_id=cid,
                 agent_name="",
                 compact_instructions=_ROLLUP_COMPACT_INSTRUCTIONS,
                 user_id=user_id,

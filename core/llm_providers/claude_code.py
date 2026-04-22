@@ -1453,10 +1453,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 "[claude-code] EOF nudge failed: %s",
                                 _eof_err)
 
-                # INFO-level heartbeat every 30s so "blocked" is visible
-                # in default-log-level deployments. Covers the general
-                # "what's the stream actually doing right now" gap —
-                # between event flushes we otherwise log nothing.
+                # DEBUG heartbeat every 30s. Kept at debug so default
+                # deployments don't log every half-minute on every
+                # healthy stream; enable when chasing a specific hang
+                # via the usual logger config. The stall watchdog's
+                # kill log still fires at WARNING with the same state
+                # snapshot for the worst case.
                 if not hasattr(_stall_watchdog, '_dbg_count'):
                     _stall_watchdog._dbg_count = 0
                 _stall_watchdog._dbg_count += 1
@@ -1466,7 +1468,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                    if _hb_state["last_event_ts"] else -1)
                     _since_tr = (_now - _last_tool_result_time
                                   if _last_tool_result_time else -1)
-                    logger.info(
+                    logger.debug(
                         "[claude-code] hb: lines_read=%d last_event=%s (%.0fs ago) "
                         "last_tc=%s last_tr=%s pending=%s got_asst=%s since_tr=%.0fs",
                         _hb_state["stream_line_count"],

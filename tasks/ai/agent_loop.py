@@ -964,18 +964,16 @@ class AgentLoopTask(
                     target_fraction=0.25, conversation_id=conversation_id)
 
 
-                def _on_token(text):
-                    bus.publish_event(conversation_id, "token", {
-                        "text": text,
-                        "msg_id": _synth_msg_id,
-                        "agent_name": agent_name or "",
-                        "source": {"type": "agent", "name": agent_name or ""},
-                    })
-
+                # IMMUTABLE RULE: no stream → SSE for message content.
+                # We still request streaming (to get progressive wire
+                # activity / cancel hooks) but DO NOT publish `token`
+                # SSE per chunk. The final assistant message is
+                # persisted below via ConversationWriter, which emits
+                # `new_message` + `done` post-write.
                 resp = client.complete_stream(
                     messages=compact_msgs,
                     max_tokens=500,
-                    tools=None, callback=_on_token)
+                    tools=None, callback=None)
 
                 # Save to both transcript and agent context.
                 # `done` SSE fires AFTER the last block hits disk.

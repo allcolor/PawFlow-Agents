@@ -314,6 +314,22 @@ class ToolRelayService(BaseService):
                         logger.info("[tool-relay] backgrounded tc_id=%s (request_id=%s)",
                                     tc_id, _rid)
                         return True
+                    elif bg_evt and bg_evt.is_set():
+                        logger.info(
+                            "[tool-relay] tc_id=%s already backgrounded (request_id=%s)",
+                            tc_id, _rid)
+                        return True
+            # No match — report the available cc_tc_ids so we can see whether
+            # the in-flight request registered a different id, or none at all.
+            _inflight_snap = [
+                (_rid, (info or {}).get("cc_tc_id", ""),
+                 (info or {}).get("tool_name", ""))
+                for _rid, info in cls._inflight.items()
+                if isinstance(info, dict)
+            ]
+        logger.info(
+            "[tool-relay] bg MISS tc_id=%s — in-flight=%s",
+            tc_id, _inflight_snap)
         return False
 
     @classmethod
@@ -832,9 +848,18 @@ class ToolRelayService(BaseService):
         cc_tc_id = ""
         try:
             from core.background_tool import pop_cc_tc, _args_hash
+            _ah = _args_hash(arguments)
             cc_tc_id = pop_cc_tc(
-                conversation_id, agent_name, tool_name,
-                _args_hash(arguments))
+                conversation_id, agent_name, tool_name, _ah)
+            if not cc_tc_id:
+                logger.info(
+                    "[tool-relay] cc_tc MISS conv=%s agent=%s tool=%s "
+                    "args_hash=%s — background/kill won't find this request",
+                    conversation_id[:8], agent_name, tool_name, _ah)
+            else:
+                logger.debug(
+                    "[tool-relay] cc_tc matched tc_id=%s (tool=%s)",
+                    cc_tc_id, tool_name)
         except Exception as _me:
             logger.debug("[tool-relay] cc_tc match skipped: %s", _me)
 

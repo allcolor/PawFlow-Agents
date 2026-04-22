@@ -214,7 +214,10 @@ function addMsg(role, text, extra) {
     _inner.className = 'delegate-message msg-inner-' + role;
     if (role === 'tool_call' || role === 'tool') {
       const toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
-      const toolArgs = (extra && extra.tool_args) || (extra && extra.arguments) || {};
+      // Prefer `arguments` (full dict) over `tool_args` (500-char JSON
+      // string — invalid parse on long commands → `Bash()`). Same fix
+      // as the non-delegate branch below.
+      const toolArgs = (extra && extra.arguments) || (extra && extra.tool_args) || {};
       let args = toolArgs;
       if (typeof args === 'string') { try { args = JSON.parse(args); } catch(e) {} }
       const tcId = (extra && extra.tc_id) || '';
@@ -275,7 +278,11 @@ function addMsg(role, text, extra) {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool_call' || role === 'tool') {
     const toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
-    const toolArgs = (extra && extra.tool_args) || (extra && extra.arguments) || {};
+    // Prefer `arguments` (untouched dict from classify) over `tool_args`
+    // (JSON string truncated to 500 chars — invalid on long bash commands,
+    // JSON.parse throws, summary shows `Bash()`). Fall back to the string
+    // form only when `arguments` is missing.
+    const toolArgs = (extra && extra.arguments) || (extra && extra.tool_args) || {};
     let args = toolArgs;
     if (typeof args === 'string') { try { args = JSON.parse(args); } catch(e) {} }
     const tcId = (extra && extra.tc_id) || '';

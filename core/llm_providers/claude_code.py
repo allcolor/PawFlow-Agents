@@ -1005,7 +1005,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         data["tool"] = _u_name
                         if event_type == "tool_call":
                             data["arguments"] = _u_args
-                        logger.warning("[claude-code] _pub safety-net unwrapped %s → %s", _t, _u_name)
+                        # Only log when the unwrap actually produced a
+                        # different name — "X → X" is noise from the
+                        # no-op branch where raw_args had no usable
+                        # tool_name to peel.
+                        if _u_name != _t:
+                            logger.warning(
+                                "[claude-code] _pub safety-net unwrapped %s → %s",
+                                _t, _u_name)
                     except Exception as _unwrap_err:
                         logger.warning(
                             "[claude-code] _pub safety-net unwrap failed "

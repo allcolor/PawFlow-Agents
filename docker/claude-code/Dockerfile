@@ -1,13 +1,8 @@
 FROM node:22-slim
 
 # System deps for Claude Code + Python for MCP bridge + display for auth login
-# bsdextrautils: provides `script(1)`. We wrap claude-code with
-# `script -qfc` to allocate an in-container pty; Node.js detects TTY
-# on its stdout and switches to synchronous line-buffered writes,
-# avoiding the 5-minute block-buffered stalls we get with a pipe.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip git ca-certificates curl chrony \
-    bsdextrautils \
     xvfb x11vnc novnc websockify chromium dbus-x11 xterm \
     && rm -rf /var/lib/apt/lists/*
 

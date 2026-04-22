@@ -207,8 +207,31 @@ class AgentSummarizeMixin:
             "per-chunk target=%d tokens, final target=%d tokens",
             len(text), n, chunk_char_limit, per_chunk_target, target_tokens)
 
+        # Intermediate chunk summaries are persisted under
+        # data/runtime/compact_cache/<cid>/ keyed by sha256(chunk).
+        # On crash / retry, unchanged chunks hit the cache and skip
+        # re-summarization. Cleared at the end of the final pass.
+        cache_dir = self._compact_chunk_cache_dir(conversation_id)
+        resumed = 0
+
         chunk_summaries: List[str] = []
         for i, chunk in enumerate(chunks, 1):
+            cache_path = self._compact_chunk_cache_path(cache_dir, chunk)
+            if cache_path is not None and cache_path.exists():
+                try:
+                    _cached = cache_path.read_text(encoding="utf-8")
+                    if _cached and len(_cached.strip()) >= 20:
+                        resumed += 1
+                        logger.info(
+                            "[compact] chunk %d/%d cached (%d chars) — "
+                            "skipping LLM call",
+                            i, n, len(_cached))
+                        chunk_summaries.append(
+                            f"=== Chunk {i}/{n} notes ===\n{_cached}")
+                        continue
+                except OSError:
+                    pass  # fall through to recompute
+
             logger.info("[compact] chunk %d/%d: %d chars", i, n, len(chunk))
             _instr = (
                 f"This is chunk {i}/{n} of a larger conversation. "
@@ -229,8 +252,25 @@ class AgentSummarizeMixin:
                 compact_instructions=_instr,
                 final=False,
             )
+            # Persist immediately so a crash on chunk N+1 doesn't cost
+            # us chunks 1..N. Best-effort — a write failure only costs
+            # the resume benefit, not correctness.
+            if (cache_path is not None and summary
+                    and len(summary.strip()) >= 20):
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    cache_path.write_text(summary, encoding="utf-8")
+                except OSError as _cache_err:
+                    logger.debug(
+                        "[compact] chunk cache write failed (%s): %s",
+                        cache_path, _cache_err)
             chunk_summaries.append(
                 f"=== Chunk {i}/{n} notes ===\n{summary}")
+
+        if resumed:
+            logger.info(
+                "[compact] resumed %d/%d chunk(s) from cache",
+                resumed, n)
 
         joined = "\n\n".join(chunk_summaries)
         logger.info("[compact] chunked: joined summaries = %d chars, "
@@ -249,7 +289,7 @@ class AgentSummarizeMixin:
         # when n was very large), this re-chunks one more level — same
         # rule applies: intermediate stays free-form, final builds the
         # 7-section structure.
-        return self._call_summarize(
+        result = self._call_summarize(
             client, joined,
             target_tokens=target_tokens,
             user_id=user_id, agent_name=agent_name,
@@ -258,6 +298,47 @@ class AgentSummarizeMixin:
             compact_instructions=_final_instr,
             final=final,
         )
+        # Wipe the chunk cache only after the FINAL pass succeeded.
+        # Intermediate chunked calls (final=False) are nested — leave
+        # the cache to the outer caller to wipe.
+        if final and result and cache_dir is not None:
+            try:
+                import shutil as _sh
+                if cache_dir.is_dir():
+                    _sh.rmtree(cache_dir, ignore_errors=True)
+            except Exception:
+                logger.debug(
+                    "[compact] chunk cache cleanup failed", exc_info=True)
+        return result
+
+    @staticmethod
+    def _compact_chunk_cache_dir(conversation_id: str):
+        """Directory for persisting intermediate chunk summaries.
+        Returns None when we can't derive a stable path — caller then
+        degrades gracefully to no-cache mode."""
+        if not conversation_id:
+            return None
+        import core.paths as _paths
+        from pathlib import Path as _Path
+        safe = "".join(c for c in conversation_id if c.isalnum()
+                        or c in "-_@")
+        if not safe:
+            return None
+        try:
+            return _Path(_paths.RUNTIME_DIR) / "compact_cache" / safe
+        except Exception:
+            return None
+
+    @staticmethod
+    def _compact_chunk_cache_path(cache_dir, chunk: str):
+        """On-disk path for this chunk's summary cache entry.
+        Keyed by sha256(chunk) so identical chunks hit the same slot
+        across crash / retry cycles."""
+        if cache_dir is None or not chunk:
+            return None
+        import hashlib as _hl
+        h = _hl.sha256(chunk.encode("utf-8", errors="replace")).hexdigest()[:16]
+        return cache_dir / f"chunk_{h}.txt"
 
     def _call_summarize(self, client: LLMClient, text: str,
                         target_tokens: int = 0,

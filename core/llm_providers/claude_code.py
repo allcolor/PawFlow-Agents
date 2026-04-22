@@ -1227,6 +1227,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             _turn_text_parts = []
             _turn_tool_calls = []
             _turn_thinking = ""
+            # Mark the most recent turn flush — the sentinel-session
+            # EOF nudger in _stall_watchdog uses this as its silence
+            # threshold anchor.
+            _hb_state["last_turn_flush_ts"] = time.monotonic()
             if (text or tc) and turn_callback:
                 logger.info("[claude-code] flush turn %d: text=%d chars, tc=%d, callback=%s",
                             _turn_count, len(text), len(tc), bool(turn_callback))
@@ -1354,7 +1358,20 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             "last_dispatched_tc": "",   # last tool_use dispatched (id + name)
             "last_tool_result_id": "",  # last tool_result received
             "stream_line_count": 0,     # total lines read from CC stdout
+            "last_turn_flush_ts": 0.0,  # monotonic of last _flush_turn
+            "stdin_closed": False,      # True once we sent EOF on stdin
         }
+        # Sentinel-session EOF nudge: after _SENTINEL_EOF_INTERVAL
+        # seconds of silence on a _compact/_memory_extract session,
+        # close proc.stdin to signal EOF to CC. CC interprets this as
+        # "no more user input" and finalises its current turn (LLM
+        # reply included), which in practice flushes the buffered
+        # JSON events to stdout so our reader sees them. Does NOT
+        # kill CC (the process keeps running until it decides to
+        # exit on its own). The 300s stall watchdog remains as a
+        # hard fallback if EOF doesn't suffice.
+        _is_sentinel_conv = bool(conv_id) and conv_id.startswith("_")
+        _SENTINEL_EOF_INTERVAL = 10.0
 
         def _stall_watchdog():
             pass  # _stall_killed is on self
@@ -1403,6 +1420,39 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         except OSError:
                             pass
                         return
+                # Sentinel-session EOF nudge: when a _compact /
+                # _memory_extract session goes silent for
+                # _SENTINEL_EOF_INTERVAL AND we're not waiting on a
+                # pending tool, close proc.stdin. CC sees EOF on its
+                # stdin (stream-json input is done) and finalises its
+                # current turn — LLM reply, any pending tool_use,
+                # compact_result — then exits cleanly. This replicates
+                # what the stall watchdog's proc.kill() incidentally
+                # achieves (pipe close on our side → Python unblocks
+                # from readline), but WITHOUT killing CC. One-shot per
+                # stream: once stdin is closed we can't re-open it, so
+                # stdin_closed flag guards re-entry.
+                if (_is_sentinel_conv
+                        and not _hb_state["stdin_closed"]
+                        and _hb_state["last_turn_flush_ts"]
+                        and not _pending_tool_ids):
+                    _since_turn = (time.monotonic()
+                                    - _hb_state["last_turn_flush_ts"])
+                    if _since_turn >= _SENTINEL_EOF_INTERVAL:
+                        try:
+                            if proc.stdin and not proc.stdin.closed:
+                                proc.stdin.close()
+                                _hb_state["stdin_closed"] = True
+                                logger.info(
+                                    "[claude-code] sentinel '%s' idle "
+                                    "%.0fs since last turn — closed "
+                                    "stdin (EOF nudge, NOT a kill)",
+                                    conv_id, _since_turn)
+                        except (OSError, BrokenPipeError) as _eof_err:
+                            logger.debug(
+                                "[claude-code] EOF nudge failed: %s",
+                                _eof_err)
+
                 # INFO-level heartbeat every 30s so "blocked" is visible
                 # in default-log-level deployments. Covers the general
                 # "what's the stream actually doing right now" gap —

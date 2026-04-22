@@ -268,6 +268,24 @@ class ConversationStore:
                         ctx = entry / "context.jsonl"
                         if ctx.exists():
                             files.append(f"{entry.name}/context.jsonl")
+                # Shared pyramid (bg bucket builder output). Must be
+                # tracked so that:
+                #   - rollback restores the bucket state matching the
+                #     transcript state (otherwise stale summaries drift
+                #     from the conversation they're supposed to summarise).
+                #   - branches carry their own pyramid (switching branches
+                #     without this would leak the source branch's buckets
+                #     into the target).
+                #   - fork inherits pre-computed buckets (git clone
+                #     replicates committed state only — untracked files
+                #     are dropped, which meant a forked conv had to
+                #     rebuild the whole pyramid from scratch).
+                _shared_pyramid = conv_dir / "summaries" / "_shared"
+                if _shared_pyramid.is_dir():
+                    for item in _shared_pyramid.iterdir():
+                        if item.is_file() and item.suffix == ".json":
+                            files.append(
+                                f"summaries/_shared/{item.name}")
                 existing = [f for f in files if (conv_dir / f).exists()]
                 if not existing:
                     return
@@ -319,6 +337,11 @@ class ConversationStore:
                 self._cache.pop(cid, None)
             self._invalidate_ctx_cache(cid)
             self._reload_cache(cid)
+            # Shared pyramid files on disk have been restored, but the
+            # bg worker's in-memory seq caches still hold post-rollback
+            # values. Drop them so the next maybe_trigger re-reads disk
+            # (via _seed_seq_caches / _read_last_seq).
+            self._invalidate_pyramid_cache(cid)
             # Commit the rollback as a new snapshot
             self.git_snapshot(cid, f"rollback to {commit_hash[:8]}")
             logger.info("[convstore] rolled back %s to %s", cid[:8], commit_hash[:8])
@@ -326,6 +349,22 @@ class ConversationStore:
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
             logger.warning("[convstore] rollback failed for %s: %s", cid[:8], e)
             return False
+
+    @staticmethod
+    def _invalidate_pyramid_cache(cid: str) -> None:
+        """Drop the bg bucket builder's in-memory seq caches for a cid.
+        Called whenever the on-disk pyramid state shifts non-
+        monotonically (rollback, branch switch, shared edits) so the
+        caches don't report stale seqs on the next maybe_trigger."""
+        try:
+            from core.bg_bucket_builder import BgBucketBuilder
+            _bb = BgBucketBuilder.instance()
+            with _bb._seq_cache_lock:
+                _bb._shared_seq_cache.pop(cid, None)
+                _bb._pyramid_seq_cache.pop(cid, None)
+        except Exception:
+            logger.debug("pyramid cache invalidation failed for %s",
+                          cid[:8], exc_info=True)
 
     def git_diff(self, cid: str, commit_a: str = "HEAD~1", commit_b: str = "HEAD") -> str:
         """Get diff between two commits."""
@@ -411,6 +450,10 @@ class ConversationStore:
             self._invalidate_ctx_cache(cid)
             self._reload_cache(cid)
             self.invalidate_claude_sessions(cid)
+            # Pyramid state on disk changed — the branch we switched to
+            # has its own summaries/_shared/. Drop the bg seq caches
+            # so the next trigger re-reads the branch's state.
+            self._invalidate_pyramid_cache(cid)
             logger.info("[convstore] switched %s → %s", cid[:8], branch_name)
             return True
         except (subprocess.CalledProcessError, FileNotFoundError,

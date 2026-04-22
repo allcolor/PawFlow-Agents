@@ -697,12 +697,31 @@ class AgentSummarizeMixin:
                     pass
 
                 # No summary delivered. If complete_stream raised, the
-                # stream exception is the real story — log + decide retry.
+                # stream exception is the real story — but only if it's
+                # a real infra error (auth, network). Exit code 1 after
+                # our own kill of CC following a REJECTED compact_result
+                # tool call (empty summary, wrong key, etc.) is a CC
+                # misbehaviour case — retry is legitimate but logging
+                # "Claude CLI stream exited with code 1" hides the real
+                # cause. Relabel those so operators see what actually
+                # happened.
                 if _stream_exc is not None:
-                    logger.error("[compact-cc] attempt %d failed: %s",
-                                  attempt, _stream_exc)
-                    _is_auth = ("auth" in str(_stream_exc).lower()
-                                 or "401" in str(_stream_exc))
+                    _exc_str = str(_stream_exc)
+                    _is_our_kill_exit = (
+                        "exited with code 1" in _exc_str
+                        or "exited with code 137" in _exc_str)
+                    if _is_our_kill_exit:
+                        logger.warning(
+                            "[compact-cc] attempt %d: CC called "
+                            "compact_result but handler rejected it "
+                            "(empty summary or wrong key) — retrying",
+                            attempt)
+                    else:
+                        logger.error(
+                            "[compact-cc] attempt %d failed: %s",
+                            attempt, _stream_exc)
+                    _is_auth = ("auth" in _exc_str.lower()
+                                 or "401" in _exc_str)
                     if _is_auth or attempt == max_retries:
                         raise _stream_exc
                     continue

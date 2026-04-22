@@ -978,6 +978,19 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             if conversation_id:
                 try:
                     from core.conversation_event_bus import ConversationEventBus
+                    from core.conversation_store import ConversationStore
+                    # Total messages in the conversation — what the
+                    # user actually thinks of as "the conversation
+                    # size". `before` / `_original_count` is the
+                    # PER-AGENT context size, which starts much
+                    # smaller and is meaningless to display without
+                    # the total as a reference.
+                    _conv_total = 0
+                    try:
+                        _conv_total = int(ConversationStore.instance()
+                            .message_count(conversation_id))
+                    except Exception:
+                        pass
                     ConversationEventBus.instance().publish_event(
                         conversation_id, "compact_progress", {
                             "stage": "done",
@@ -986,6 +999,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                             "after": len(compacted),
                             "tokens_before": _original_tokens,
                             "tokens_after": new_estimate,
+                            "conv_total_messages": _conv_total,
                         })
                 except Exception:
                     logger.debug("compact SSE publish failed", exc_info=True)

@@ -14,7 +14,7 @@ import re
 import subprocess
 import threading
 import time
-from typing import List
+from typing import Dict, List
 
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin, _get_sessions_base
 

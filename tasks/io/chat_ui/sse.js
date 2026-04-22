@@ -870,10 +870,16 @@ function connectSSE(cid, onReady, opts) {
     } else if (data.stage === 'done') {
       hideContextOp();
       const agent = data.agent || 'shared';
-      const before = data.before !== undefined ? data.before : '?';
+      // Show TOTAL conversation msg count as the reference (what the
+      // user thinks of as "the conversation size"). `before` is the
+      // per-agent context pre-compact — meaningless to display
+      // without the total, which is what they see in the history panel.
+      const total = data.conv_total_messages !== undefined
+        ? data.conv_total_messages
+        : (data.before !== undefined ? data.before : '?');
       const after = data.after !== undefined ? data.after : '?';
       const tokAfter = data.tokens_after !== undefined ? data.tokens_after : '?';
-      addMsg('system', agent + ': ' + before + ' messages \u2192 ' + after + ' messages (~' + tokAfter + ' tokens)');
+      addMsg('system', agent + ': ' + total + ' messages \u2192 ' + after + ' messages (~' + tokAfter + ' tokens)');
     } else if (data.stage === 'error') {
       hideContextOp();
       addMsg('error', 'Context operation failed: ' + data.error);

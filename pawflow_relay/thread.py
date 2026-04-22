@@ -262,10 +262,7 @@ class RelayThread:
 
     def _run_native_relay(self, tools_dir):
         """Run the relay worker natively (no Docker)."""
-        import pawflow_relay as _relay_mod  # noqa: this is tools/pawflow_relay.py via sys.path
-        # The native relay is just _ws_connect from the worker module
-        # For now, defer to the existing import mechanism
-        # TODO: when tools/pawflow_relay.py is cleaned up, call _ws_connect directly
+        from pawflow_relay.worker import _ws_connect  # noqa: F401 — future direct invocation
 
     def _run_docker_relay(self, tools_dir):
         """Run the relay inside a Docker container with auto-restart."""
@@ -356,7 +353,7 @@ class RelayThread:
             _mount_report = []
             # (source_dir, filename) pairs — all mount onto /opt/pawflow/.
             _src_files = [
-                (_tools_dir, "pawflow_relay.py"),
+                (_tools_dir, "pawflow_relay_launcher.py"),
                 (_tools_dir, "fs_actions.py"),
                 (_tools_dir, "fs_exec.py"),
                 (_tools_dir, "fs_screen.py"),
@@ -460,7 +457,7 @@ class RelayThread:
                 "-e", "USER=pawflow",
                 "-e", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 self.docker_image,
-                "python3", "/opt/pawflow/pawflow_relay.py",
+                "python3", "/opt/pawflow/pawflow_relay_launcher.py",
                 "--server", ws_url,
                 "--token", self.ws_token,
                 "--relay-id", self.relay_id,

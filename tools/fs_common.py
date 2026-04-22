@@ -13,54 +13,15 @@ from typing import Dict
 MAX_EXEC_OUTPUT = 10 * 1024 * 1024  # 10 MB for stdout/stderr
 
 
-def _docker_cmd():
-    if os.name == "nt":
-        return ["wsl", "docker"]
-    return ["docker"]
-
-
-def _translate_path(p):
-    if os.name != "nt":
-        return p
-    p = p.replace("\\", "/")
-    if len(p) >= 2 and p[1] == ":":
-        return f"/mnt/{p[0].lower()}{p[2:]}"
-    return p
-
-
-def _get_host_ip():
-    """IP that a container can use to reach the host.
-
-    On Windows the Docker-backed WSL distro doesn't always resolve
-    host.docker.internal to the LAN IP, so probe via a UDP connect."""
-    if os.name == "nt":
-        import socket as _s
-        try:
-            s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception:
-            pass
-    return "host.docker.internal"
-
-
-def _to_host_path(container_path):
-    """Translate container path to host path for DinD volume mounts."""
-    host_workdir = os.environ.get("PAWFLOW_HOST_WORKDIR")
-    if not host_workdir:
-        return container_path
-    container_workdir = os.environ.get("PAWFLOW_WORKDIR", "/workspace")
-    try:
-        rel = os.path.relpath(container_path, container_workdir)
-        if rel.startswith(".."):
-            return container_path
-        if rel == ".":
-            return host_workdir
-        return os.path.join(host_workdir, rel).replace("\\", "/")
-    except ValueError:
-        return container_path
+# Docker / path / host-IP helpers canonicalized in pawflow_relay.utils.
+# Re-exported here under the underscore aliases that fs_actions, fs_exec,
+# tools/pawflow_relay.py have always used, so downstream imports stay put.
+from pawflow_relay.utils import (
+    docker_cmd as _docker_cmd,
+    translate_path as _translate_path,
+    to_host_path as _to_host_path,
+    get_host_ip as _get_host_ip,
+)
 
 
 def detect_available_shells() -> Dict[str, str]:

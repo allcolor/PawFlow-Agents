@@ -148,7 +148,7 @@ class ServerRelayManager:
         # tools/ is mounted as /opt/pawflow/ — same location as in the image.
         # This means relay changes are live without rebuilding the image.
         _TOOLS_IN_CONTAINER = "/opt/pawflow"
-        _SCRIPT_IN_CONTAINER = f"{_TOOLS_IN_CONTAINER}/pawflow_relay.py"
+        _SCRIPT_IN_CONTAINER = f"{_TOOLS_IN_CONTAINER}/pawflow_relay_launcher.py"
 
         # Also mount pawflow_relay/ (the package) inside /opt/pawflow so the
         # worker script can `from pawflow_relay.* import ...` as code moves

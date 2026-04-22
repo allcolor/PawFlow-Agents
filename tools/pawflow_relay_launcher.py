@@ -42,7 +42,18 @@ if _repo_root not in sys.path:
 if _script_dir not in sys.path:
     sys.path.insert(1, _script_dir)
 
-from pawflow_relay.cli import worker_main
-
+# Import + call kept INSIDE the __main__ guard on purpose.
+#
+# Other files in tools/ (fs_common, fs_actions, fs_exec) do
+# `from pawflow_relay.utils import ...`. If tools/ is in sys.path and the
+# package dir sits elsewhere (test environment), Python's finder may walk
+# sys.path and pick THIS file as the `pawflow_relay` module first. Running
+# its top-level import of pawflow_relay.cli would then re-enter THIS file
+# (now being imported, not executed) and fail because a single-file module
+# has no submodule `.cli`.
+#
+# When actually executed as a script, __name__ is "__main__", never
+# "pawflow_relay", so the re-entry path is unreachable.
 if __name__ == "__main__":
+    from pawflow_relay.cli import worker_main
     worker_main()

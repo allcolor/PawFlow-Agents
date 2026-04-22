@@ -197,7 +197,7 @@ def worker_main():
         _tools_dir = os.path.dirname(os.path.abspath(__file__))
         _pkg_src = _tools_dir
         _tools_src = os.path.normpath(os.path.join(_tools_dir, os.pardir, "tools"))
-        for _relay_file in ["pawflow_relay.py", "fs_actions.py", "fs_exec.py",
+        for _relay_file in ["pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
                             "fs_screen.py", "fs_mcp.py", "fs_common.py"]:
             _src = os.path.join(_tools_src, _relay_file)
             if os.path.exists(_src):
@@ -221,7 +221,7 @@ def worker_main():
             "--memory", args.docker_memory,
             "--security-opt", "no-new-privileges",
             args.docker_image,
-            "python3", "/opt/pawflow/pawflow_relay.py",
+            "python3", "/opt/pawflow/pawflow_relay_launcher.py",
             "--server", ws_url.replace("localhost", get_host_ip()).replace("127.0.0.1", get_host_ip()),
             "--token", token,
             "--relay-id", args.relay_id,

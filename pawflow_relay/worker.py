@@ -1243,7 +1243,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             # Return hash of current relay scripts for version check
             _script_dir = os.path.dirname(os.path.abspath(__file__))
             _h = hashlib.sha256()
-            for _sf in ["pawflow_relay.py", "fs_actions.py", "fs_exec.py", "fs_screen.py", "fs_mcp.py"]:
+            for _sf in ["pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py", "fs_screen.py", "fs_mcp.py"]:
                 _sp = os.path.join(_script_dir, _sf)
                 if os.path.exists(_sp):
                     with open(_sp, "rb") as _f:
@@ -1259,7 +1259,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _script_dir = os.path.dirname(os.path.abspath(__file__))
             _updated = []
             for _fname, _content_b64 in _scripts.items():
-                if _fname not in ("pawflow_relay.py", "fs_actions.py", "fs_exec.py",
+                if _fname not in ("pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
                                   "fs_screen.py", "fs_mcp.py"):
                     continue  # Only accept known relay files
                 _dst = os.path.join(_script_dir, _fname)
@@ -1275,7 +1275,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         importlib.reload(sys.modules[_mod_name])
                     except Exception as _e:
                         sys.stderr.write(f"[FSRelay] Failed to reload {_mod_name}: {_e}\n")
-            _needs_restart = "pawflow_relay.py" in _updated
+            _needs_restart = "pawflow_relay_launcher.py" in _updated
             sys.stderr.write(f"[FSRelay] Scripts updated: {_updated} hash={_new_hash}"
                              f"{' (restart needed)' if _needs_restart else ''}\n")
             return {"ok": True, "data": {"updated": _updated, "needs_restart": _needs_restart}}

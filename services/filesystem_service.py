@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Relay script files to sync (relative to tools/ directory)
 _RELAY_SCRIPT_FILES = [
-    "pawflow_relay.py", "fs_actions.py", "fs_exec.py",
+    "pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
     "fs_screen.py", "fs_mcp.py",
 ]
 

@@ -86,18 +86,19 @@ class PendingQueue:
     def enqueue(self, message: Dict, source: str = "") -> bool:
         """Append a stamped message to the queue.
 
-        message must already have msg_id + ts + seq (stamp_message or
-        LLMMessage.__post_init__ guarantees this at the producer).
+        message must already have msg_id + ts (stamp_message or
+        LLMMessage.__post_init__ guarantees this at the producer). seq
+        is NOT required — it's the on-disk line index assigned by
+        ConversationStore._stamp_line at write time, not at creation.
         source is a free-form tag for debugging ("http", "delegate",
         "bg_tool", "cross_agent", "telegram", …).
         """
         if not isinstance(message, dict):
             raise TypeError("PendingQueue.enqueue: message must be a dict")
-        if not message.get("msg_id") or not (message.get("ts") or message.get("timestamp")) \
-                or not message.get("seq"):
+        if not message.get("msg_id") or not (message.get("ts") or message.get("timestamp")):
             raise ValueError(
                 f"PendingQueue.enqueue: message must be stamped "
-                f"(msg_id+ts+seq). Got keys: {list(message.keys())}")
+                f"(msg_id+ts). Got keys: {list(message.keys())}")
 
         if self._path is None:
             self._path = self._resolve_path()

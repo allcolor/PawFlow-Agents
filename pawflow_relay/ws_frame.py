@@ -1,7 +1,7 @@
 """Stdlib-only WebSocket frame helpers for relay clients.
 
 All client frames are masked per RFC 6455. Server frames MAY be unmasked.
-Used by pawflow_relay.py, pawflow_executor_relay.py, mcp_bridge.py.
+Used by pawflow_relay/worker.py + tools/pawflow_relay.py launcher + mcp_bridge.py.
 """
 
 import os

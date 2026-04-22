@@ -52,11 +52,16 @@ def test_enqueue_drain_roundtrip(fake_store):
 
 def test_unstamped_message_rejected(fake_store):
     q = PendingQueue.for_agent("c1", "claude")
+    # Missing msg_id → rejected
     with pytest.raises(ValueError, match="must be stamped"):
         q.enqueue({"role": "user", "content": "no id"})
+    # Missing ts → rejected
     with pytest.raises(ValueError, match="must be stamped"):
-        q.enqueue({"role": "user", "content": "no seq",
-                   "msg_id": "x", "ts": 1.0})
+        q.enqueue({"role": "user", "content": "no ts",
+                   "msg_id": "x"})
+    # seq absent is fine — it's assigned by _stamp_line at write time
+    q.enqueue({"role": "user", "content": "no seq required",
+               "msg_id": "y", "ts": 1.0})
 
 
 def test_restart_recovery(fake_store):

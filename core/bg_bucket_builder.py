@@ -119,6 +119,11 @@ class BgBucketBuilder:
         self._shared_seq_cache: Dict[str, int] = {}
         self._pyramid_seq_cache: Dict[str, int] = {}
         self._seq_cache_lock = threading.Lock()
+        # Diagnostic: throttle maybe_trigger log spam. Track last
+        # (reason, state) logged per cid so we only log when the
+        # decision changes — otherwise every shared write prints a
+        # line.
+        self._last_trigger_log: Dict[str, str] = {}
 
     def set_summarizer_resolver(
             self, resolver: Callable[[str], Tuple]) -> None:
@@ -201,7 +206,18 @@ class BgBucketBuilder:
         """
         if not cid or not user_id:
             return
+
+        def _log_once(state: str):
+            """Log state transitions once per cid — silent otherwise."""
+            prev = self._last_trigger_log.get(cid)
+            if prev == state:
+                return
+            self._last_trigger_log[cid] = state
+            logger.info("[bg-bucket] maybe_trigger cid=%s: %s",
+                         cid[:8], state)
+
         if self._summarizer_resolver is None:
+            _log_once("resolver=None (AgentLoopTask.initialize not run?)")
             return
 
         with self._seq_cache_lock:
@@ -213,6 +229,9 @@ class BgBucketBuilder:
         # Fast path: both caches warm, simple arithmetic.
         if shared_seq is not None and pyramid_seq is not None:
             if shared_seq - pyramid_seq < threshold:
+                _log_once(
+                    f"gap too small ({shared_seq - pyramid_seq} < "
+                    f"{threshold}): shared={shared_seq} pyramid={pyramid_seq}")
                 return
         else:
             # Cold path (first access per cid): seed caches from disk.
@@ -221,26 +240,34 @@ class BgBucketBuilder:
             try:
                 self._seed_seq_caches(cid)
             except Exception:
-                logger.debug("[bg-bucket] seq cache seed failed",
-                              exc_info=True)
+                logger.warning("[bg-bucket] seq cache seed failed cid=%s",
+                                cid[:8], exc_info=True)
                 return
             with self._seq_cache_lock:
                 shared_seq = self._shared_seq_cache.get(cid, 0)
                 pyramid_seq = self._pyramid_seq_cache.get(cid, 0)
             if shared_seq - pyramid_seq < threshold:
+                _log_once(
+                    f"gap too small after seed ({shared_seq - pyramid_seq} < "
+                    f"{threshold}): shared={shared_seq} pyramid={pyramid_seq}")
                 return
 
         with self._pending_lock:
             if cid in self._pending:
+                _log_once("job already in flight, skipping")
                 return
             self._pending.add(cid)
 
         try:
             self._executor.submit(self._run_job, cid, user_id)
-        except RuntimeError:
+            _log_once(
+                f"submitted job: shared={shared_seq} pyramid={pyramid_seq} "
+                f"gap={shared_seq - pyramid_seq}")
+        except RuntimeError as _e:
             # Executor has been shutdown (e.g. test teardown)
             with self._pending_lock:
                 self._pending.discard(cid)
+            _log_once(f"submit failed: {_e}")
 
     def flush(self, timeout: float = 60.0) -> None:
         """Block until every in-flight job for this process completes.
@@ -475,7 +502,16 @@ class BgBucketBuilder:
         conv_dir = cs._conv_dir(cid)
         store = BucketStore.get(conv_dir)
 
+        logger.info(
+            "[bg-bucket] job start cid=%s user=%s pyramid_last_seq=%d "
+            "objects=%d",
+            cid[:8], user_id, store.last_seq, store.object_count)
+
         if self._summarizer_resolver is None or self._summarize_fn is None:
+            logger.warning(
+                "[bg-bucket] job abort cid=%s: resolver=%s summarize_fn=%s",
+                cid[:8], self._summarizer_resolver is not None,
+                self._summarize_fn is not None)
             return
         client, ctx_max, _svc_id = self._summarizer_resolver(user_id)
         if not client:

@@ -678,7 +678,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         system_msg = messages[0] if messages and messages[0].role == "system" else None
         start_idx = 1 if system_msg else 0
 
-        from core.llm_client import _next_msg_seq
+        from core.llm_client import _peek_persisted_seq
         import time as _t_compact
 
         def _collect_recent_files(msgs: List[LLMMessage], limit: int = 5) -> List[Dict]:
@@ -761,7 +761,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     _frs = min(m.seq for m in saved)
                 else:
                     _frt = _t_compact.time()
-                    _frs = _next_msg_seq(conversation_id) + 2
+                    _frs = _peek_persisted_seq(conversation_id) + 2
                 _postamble = (
                     "\nThe recent messages below are the current state. "
                     "Do NOT restart or re-propose completed work. If you need "
@@ -1127,12 +1127,13 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 break
         # Position the digest chronologically BETWEEN the last digested
         # message and the first kept message. Without this, LLMMessage's
-        # __post_init__ stamps ts=time.time() and seq from _next_msg_seq,
-        # which makes the digest NEWER than everything in the tail — UI
-        # renders it AFTER the most recent message, which makes no
-        # semantic sense (it summarises OLDER content). Picking
-        # (first_kept.ts - 1ms, first_kept.seq - 1) puts it exactly where
-        # it belongs: right before the kept slice.
+        # __post_init__ stamps ts=time.time(), which makes the digest
+        # NEWER than everything in the tail — UI renders it AFTER the
+        # most recent message, which makes no semantic sense (it
+        # summarises OLDER content). Picking first_kept.ts - 1ms puts
+        # it exactly where it belongs: right before the kept slice.
+        # seq stays at first_kept.seq - 1 for in-memory ordering (the
+        # on-disk seq is reassigned by _stamp_line at write time).
         _first_kept = kept[0] if kept else None
         if _first_kept and _first_kept.timestamp:
             _digest_ts = float(_first_kept.timestamp) - 0.001

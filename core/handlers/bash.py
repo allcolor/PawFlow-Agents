@@ -114,6 +114,7 @@ class BashHandler(BaseFsHandler):
                 "relay": {"type": "string", "description": "Relay service name. Omit for default."},
                 "source": {"type": "string", "description": "Alias for relay."},
                 "filesystem": {"type": "string", "description": "Alias for relay."},
+                "service": {"type": "string", "description": "Alias for relay."},
             },
             "required": ["command"],
         }
@@ -160,7 +161,8 @@ class BashHandler(BaseFsHandler):
         if arguments.get("run_in_background"):
             return self._run_background(command, arguments)
 
-        relay = arguments.get("relay", "") or arguments.get("source", "") or arguments.get("filesystem", "")
+        relay = (arguments.get("relay", "") or arguments.get("source", "")
+                 or arguments.get("filesystem", "") or arguments.get("service", ""))
         svc, workdir = self._resolve(relay)
 
         # Workdir fallback (Claude Code container — exec local)
@@ -211,7 +213,8 @@ class BashHandler(BaseFsHandler):
         """Run command in background thread, store output to temp file."""
         import threading, tempfile, os, time, uuid
         bg_id = f"bg_{uuid.uuid4().hex[:8]}"
-        relay = arguments.get("relay", "")
+        relay = (arguments.get("relay", "") or arguments.get("source", "")
+                 or arguments.get("filesystem", "") or arguments.get("service", ""))
         svc, workdir = self._resolve(relay)
 
         # Output file in workdir or temp

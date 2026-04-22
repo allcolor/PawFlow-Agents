@@ -163,9 +163,12 @@ class LLMMessage:
         # is therefore required at every construction — no exception,
         # no "legacy path", no reconstructed-from-disk shortcut (the
         # caller that reads a jsonl knows the cid from the folder name
-        # and must pass it). (msg_id, timestamp, seq) are all stamped
-        # here so the three-invariant triplet is always complete once
-        # the object exists.
+        # and must pass it). msg_id + timestamp are minted here so the
+        # object is identifiable and time-ordered from the moment it
+        # exists. seq is NOT stamped at creation — it is the on-disk
+        # line index, assigned at write time by
+        # ConversationStore._stamp_line under the conv lock. When a
+        # message is loaded from disk, seq comes in with the line.
         if not self.conversation_id:
             raise ValueError(
                 f"LLMMessage(role={self.role!r}) requires "
@@ -178,8 +181,6 @@ class LLMMessage:
         if not self.timestamp:
             import time
             self.timestamp = time.time()
-        if not self.seq:
-            self.seq = _next_msg_seq(self.conversation_id)
 
     @property
     def text_content(self) -> str:
@@ -193,45 +194,25 @@ class LLMMessage:
         return ""
 
 
-# Per-conversation monotonic seq state.
+# Per-conversation on-disk seq counter.
 #
-# Two distinct values are tracked per conv:
-#
-# - _msg_seq_state[cid]     : last seq handed out by the counter.
-#                             Advances on every _next_msg_seq() call
-#                             (i.e. at LLMMessage creation time).
-# - _msg_seq_persisted[cid] : last seq actually written to disk for
-#                             this conv. Advances on every successful
-#                             _stamp_line() call.
-#
-# ConversationStore._stamp_line rejects a record whose seq is <=
-# _msg_seq_persisted[cid] (someone is re-using an already-written
-# seq). Comparing against _msg_seq_state would be wrong — the counter
-# hands out a value BEFORE the record is persisted, so issued == last
-# is the nominal case for the very record currently being written.
+# seq is the on-disk line index — assigned at WRITE time by
+# ConversationStore._stamp_line, which reads+advances this counter
+# under the per-conv lock. One counter per cid, bootstrapped from the
+# transcript on first access so monotony survives process restarts.
 import threading as _threading
-_msg_seq_state: Dict[str, int] = {}       # cid -> last seq handed out
-_msg_seq_persisted: Dict[str, int] = {}   # cid -> last seq actually written
+_msg_seq_persisted: Dict[str, int] = {}   # cid -> last seq written to disk
 _msg_seq_lock = _threading.Lock()
 
 
 def _bootstrap_seq_for(conversation_id: str) -> int:
     """Return the max seq already persisted for ``conversation_id``.
 
-    Scans the whole transcript for the maximum seq. This is a one-time
-    cost per conv per process (next call comes from the in-memory
-    counter) so an O(file) pass is acceptable — what matters is
-    *correctness*, not saving milliseconds.
-
-    Why full scan and not just the tail: side records (``msg_patch``,
-    ``meta``, ``trace_update``) have no seq, and a pathological bug can
-    pollute the real tail with tiny seqs (older code bootstrapped from
-    0 after finding a seq-less tail line, then handed out seq=1,2,3…
-    which survived on disk interleaved with legit high seqs — the
-    compact pre-filter "seq > bucket.last_seq" then dropped the
-    low-seq recent messages as "already bucketed"). A full scan picks
-    up the true historical peak and lets subsequent writes continue
-    strictly above everything already persisted.
+    Full-scan of the transcript on first access — one-time cost per
+    conv per process. Correctness over milliseconds: side records
+    (msg_patch, trace_update, meta) mix into the same file, and we
+    must pick the true historical peak so the next write lands strictly
+    above everything already on disk.
     """
     if not conversation_id:
         return 0
@@ -264,52 +245,12 @@ def _bootstrap_seq_for(conversation_id: str) -> int:
         return 0
 
 
-def _next_msg_seq(conversation_id: str) -> int:
-    """Return the next seq for ``conversation_id``.
-
-    First call for a conv bootstraps the counter from disk (one-time
-    scan of that conv's transcript for the historical max seq). Empty
-    ``conversation_id`` is rejected — a message has no existence
-    outside a conversation.
-    """
-    if not conversation_id:
-        raise ValueError(
-            "_next_msg_seq requires a non-empty conversation_id — "
-            "a message exists only inside a conversation; thread the "
-            "cid from the call site.")
-    with _msg_seq_lock:
-        cur = _msg_seq_state.get(conversation_id)
-        if cur is None:
-            cur = _bootstrap_seq_for(conversation_id)
-        cur += 1
-        _msg_seq_state[conversation_id] = cur
-        return cur
-
-
-def _observe_msg_seq(conversation_id: str, seq: int) -> None:
-    """Bump the ISSUED-counter state if ``seq`` is greater than current.
-
-    Called when a caller produced its own seq (e.g. an LLMMessage built
-    with conv_id at creation, which stamped its seq via _next_msg_seq
-    then carried it through enqueue). Keeps the issued counter in sync
-    so the next _next_msg_seq call doesn't collide.
-    """
-    if not conversation_id or not isinstance(seq, int):
-        return
-    with _msg_seq_lock:
-        cur = _msg_seq_state.get(conversation_id)
-        if cur is None:
-            cur = _bootstrap_seq_for(conversation_id)
-        if seq > cur:
-            _msg_seq_state[conversation_id] = seq
-
-
 def _peek_persisted_seq(conversation_id: str) -> int:
-    """Return the highest seq actually written to disk for this conv.
+    """Return the highest seq already written to disk for this conv.
 
-    Used by ConversationStore._stamp_line to enforce "strictly greater
-    than every prior record ON DISK". Bootstraps from the transcript
-    on first access so monotony holds across process restarts.
+    _stamp_line uses ``_peek + 1`` as the next line's seq, then calls
+    _record_persisted_seq to advance the counter. Bootstraps from the
+    transcript on first access so monotony holds across restarts.
     """
     if not conversation_id:
         return 0
@@ -322,12 +263,7 @@ def _peek_persisted_seq(conversation_id: str) -> int:
 
 
 def _record_persisted_seq(conversation_id: str, seq: int) -> None:
-    """Mark ``seq`` as the latest seq actually written to disk.
-
-    Called from _stamp_line once a record has been accepted. The next
-    write must strictly exceed this value; the counter can still hand
-    out the same value in the meantime (issued ≥ persisted always).
-    """
+    """Mark ``seq`` as the latest seq written to disk for this conv."""
     if not conversation_id or not isinstance(seq, int):
         return
     with _msg_seq_lock:
@@ -340,29 +276,29 @@ def _record_persisted_seq(conversation_id: str, seq: int) -> None:
 
 def stamp_message(msg: Dict[str, Any],
                    conversation_id: str) -> Dict[str, Any]:
-    """Set ts + seq + msg_id on a message dict at CREATION time.
+    """Set ts + msg_id on a message dict at CREATION time.
 
     ``conversation_id`` is required: a message only exists inside a
-    conversation, and seq is drawn from that conv's counter.
+    conversation.
 
-    Every message MUST have ts + seq + msg_id. A message missing even
-    one is treated as freshly-created and gets fresh values for all
-    three atomically — no "partial" / "already stamped once" state.
+    Every non-system message MUST have ts + msg_id by the time it
+    reaches the writer. seq is NOT stamped here — it is the on-disk
+    line index, assigned at write time by
+    ConversationStore._stamp_line under the conv lock.
 
-    Producer rule: stamp at the moment the message is conceptually
-    created, NOT at enqueue. Otherwise (ts, seq) ordering on disk
-    diverges from the real creation order.
+    Producer rule: stamp msg_id + ts at the moment the message is
+    conceptually created, NOT at enqueue. The creation timestamp is
+    what drives sort order on disk (seq breaks ts ties).
     """
     if not conversation_id:
         raise ValueError(
             "stamp_message requires a non-empty conversation_id")
     import time as _time
     import uuid as _uuid
-    if not (msg.get("ts") or msg.get("timestamp")) or not msg.get("seq") \
-            or not msg.get("msg_id"):
-        msg["ts"] = msg.get("ts") or msg.get("timestamp") or _time.time()
-        msg["seq"] = msg.get("seq") or _next_msg_seq(conversation_id)
-        msg["msg_id"] = msg.get("msg_id") or _uuid.uuid4().hex[:12]
+    if not (msg.get("ts") or msg.get("timestamp")):
+        msg["ts"] = _time.time()
+    if not msg.get("msg_id"):
+        msg["msg_id"] = _uuid.uuid4().hex[:12]
     return msg
 
 

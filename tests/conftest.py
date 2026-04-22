@@ -117,26 +117,17 @@ def _isolate_data_dir(tmp_path_factory):
 
     _orig_validate = _cs_mod.ConversationStore._validate_message
 
-    from core.llm_client import _next_msg_seq
-
-    # Session-scoped monotonic seq counter for test message fill. Every
-    # call hands out a strictly-increasing integer, starting above any
-    # realistic cid's on-disk seq so it always passes the "> last
-    # persisted" check in _stamp_line (which consumes the incoming
-    # value rather than re-issuing). This replaces the old
-    # _next_msg_seq() call that broke when cid became mandatory.
-    import itertools as _test_itertools
-    _test_seq_counter = _test_itertools.count(10_000_000)
-
     @staticmethod
     def _validate_with_fill(m):
+        # Tests predate the mandatory msg_id + ts producer contract.
+        # Fill in defaults inside the session so test message dicts
+        # survive _validate_message. seq is NOT filled — it is the
+        # on-disk line index, assigned by _stamp_line at write time.
         if m.get("role") != "system":
             if not m.get("msg_id"):
                 m["msg_id"] = _uuid_fill.uuid4().hex[:12]
             if not m.get("ts") and not m.get("timestamp"):
                 m["ts"] = _time_fill.time()
-            if not m.get("seq"):
-                m["seq"] = next(_test_seq_counter)
         return _orig_validate(m)
 
     _cs_mod.ConversationStore._validate_message = _validate_with_fill
@@ -208,16 +199,13 @@ def _isolate_data_dir(tmp_path_factory):
 
 
 # Per-test reset of process-level seq state. tests/ redirects all paths
-# to tmpdir so disk state resets naturally — but _msg_seq_state and
-# _msg_seq_persisted are module-level caches in core.llm_client. Without
-# this reset, a test that reuses a cid ("c1", "test_conv") sees seq
-# counters accumulated from prior tests and can trip the strict-monotony
-# invariant against its own fresh-on-disk state.
+# to tmpdir so disk state resets naturally — but _msg_seq_persisted is
+# a module-level cache in core.llm_client. Without this reset, a test
+# that reuses a cid ("c1", "test_conv") sees a counter bootstrapped
+# from a prior test's transcript, which has been wiped.
 @pytest.fixture(autouse=True)
 def _reset_seq_state():
     from core import llm_client as _lc
-    _lc._msg_seq_state.clear()
     _lc._msg_seq_persisted.clear()
     yield
-    _lc._msg_seq_state.clear()
     _lc._msg_seq_persisted.clear()

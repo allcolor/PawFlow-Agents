@@ -320,6 +320,7 @@ class ClaudeCodePool:
             os.path.dirname(os.path.abspath(__file__)))
         _bridge_src_files = [
             (os.path.join(_project_root, "tools"), "mcp_bridge.py"),
+            (os.path.join(_project_root, "tools"), "ws_frame.py"),
             (os.path.join(_project_root, "docker", "pawflow_sdk"),
              "pawflow.py"),
         ]

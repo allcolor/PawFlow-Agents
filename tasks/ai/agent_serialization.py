@@ -92,19 +92,23 @@ class AgentSerializationMixin:
                     )
                     for tc in (entry["tool_calls"] or [])
                 ]
-            # seq + ts are mandatory on disk for every non-system message.
-            # A missing field = corrupt entry from a buggy producer; fail
-            # loud. System prompts are ephemeral (rebuilt from the agent
-            # definition at every load) and exempt, matching the store's
-            # _validate_message exemption.
+            # ts is mandatory on disk for every non-system message — set
+            # by the producer at creation. seq is the on-disk line index
+            # (stamped by ConversationStore._stamp_line at write time) and
+            # is read through but not required here: a freshly-built
+            # message that hasn't hit disk yet has no seq. System prompts
+            # are ephemeral (rebuilt from the agent definition at every
+            # load) and exempt from the ts requirement, matching the
+            # store's _validate_message exemption.
             _role = entry.get("role")
             _ts = entry.get("ts") or entry.get("timestamp")
             _seq = entry.get("seq")
-            if _role != "system" and (not _ts or not _seq):
+            if _role != "system" and not _ts:
                 raise ValueError(
-                    f"Message missing ts/seq on disk "
+                    f"Message missing ts on disk "
                     f"(msg_id={entry.get('msg_id')}, role={_role}) — "
-                    f"producer bug, both fields must be set at creation")
+                    f"producer bug, creation timestamp must be set at "
+                    f"message creation.")
             messages.append(LLMMessage(
                 role=entry["role"],
                 content=entry.get("content", ""),

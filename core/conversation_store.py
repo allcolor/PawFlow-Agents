@@ -83,56 +83,28 @@ class ConversationStore:
             return self._conv_locks[cid]
 
     def _stamp_line(self, cid: str, line: Dict[str, Any]) -> Dict[str, Any]:
-        """Enforce the five-field invariant on every persisted record:
+        """Stamp the five-field invariant on every persisted record:
         ``(msg_id, ts, seq, conversation_id, user_id)``.
 
-        A message has no existence outside a conversation, and a
-        conversation belongs to a user — so every jsonl line must carry
-        its own identity (msg_id), its creation instant (ts), its
-        per-conv monotonic ordering (seq), its parent conversation
-        (conversation_id) and the owning user (user_id). Records that
-        reference another line (msg_patch → msg, trace_update → trace)
-        use a dedicated linkage field (target_msg_id, trace_id), never
-        by squatting another line's msg_id.
-
-        Fields already present on the record are preserved; missing
-        ones are minted. Passing cid="" is rejected — producers that
-        build a line without a cid have a bug at their call site; fix
-        there, not here.
+        Seq is the on-disk line index: assigned at WRITE time as
+        ``last_persisted + 1``. Any pre-stamped seq on the incoming
+        line is overwritten — producers cannot reserve a seq in
+        advance because disk order is the sole source of truth.
+        Callers MUST hold the per-conv lock while invoking this method
+        and performing the subsequent write; the lock is what
+        serializes mint + write into an atomic step per conv.
         """
         if not cid:
             raise ValueError(
                 "_stamp_line requires a non-empty conversation_id — "
                 "every persisted record lives inside a conversation")
         from core.llm_client import (
-            _next_msg_seq, _peek_persisted_seq, _record_persisted_seq,
-            _observe_msg_seq)
+            _peek_persisted_seq, _record_persisted_seq)
         if not line.get("msg_id"):
             line["msg_id"] = uuid.uuid4().hex[:12]
         if "ts" not in line and "timestamp" not in line:
             line["ts"] = time.time()
-        incoming_seq = line.get("seq")
-        if isinstance(incoming_seq, int):
-            # Caller pre-stamped seq (e.g. LLMMessage that knew its
-            # conv_id at creation). Enforce monotony against what is
-            # ACTUALLY on disk for this conv — a LOWER seq is a bug
-            # (out-of-order write / stale counter). Equal is allowed
-            # because append_message routes one logical msg into
-            # multiple files (transcript + shared + agent ctx), each
-            # write calling _stamp_line with the SAME (seq, msg_id)
-            # pair. _record_persisted_seq is idempotent on equal, so
-            # the post-state is unchanged.
-            last_written = _peek_persisted_seq(cid)
-            if incoming_seq < last_written:
-                raise ValueError(
-                    f"seq invariant violated on conversation {cid}: "
-                    f"incoming seq={incoming_seq} but last persisted "
-                    f"was {last_written}. Seq must not be less than "
-                    f"prior records on disk — the caller stamped it "
-                    f"from the wrong counter or reused an old value.")
-            _observe_msg_seq(cid, incoming_seq)
-        else:
-            line["seq"] = _next_msg_seq(cid)
+        line["seq"] = _peek_persisted_seq(cid) + 1
         _record_persisted_seq(cid, line["seq"])
         if not line.get("conversation_id"):
             line["conversation_id"] = cid
@@ -1029,13 +1001,13 @@ class ConversationStore:
 
     @staticmethod
     def _validate_message(m: Dict):
-        """Every message MUST have msg_id, timestamp, and seq. No exceptions.
+        """Every message MUST have msg_id and timestamp at CREATION.
 
-        msg_id, ts, and seq are minted at message CREATION
-        (LLMMessage.__post_init__ or stamp_message helper). Any code path
-        that builds a raw message dict and tries to persist it without
-        these fields is a bug — fail loudly here rather than letting
-        the writer invent fallback values that corrupt creation order.
+        msg_id and ts are minted at message CREATION (producer side —
+        stable through transit, timestamp reflects the moment the
+        message existed). seq is the on-disk line index, assigned at
+        WRITE time by _stamp_line under the conv lock — producers must
+        NOT stamp it in advance (disk order is the sole source of truth).
         """
         role = m.get("role", "")
         if role in ("system",):
@@ -1047,10 +1019,6 @@ class ConversationStore:
         if not m.get("ts") and not m.get("timestamp"):
             raise ValueError(
                 f"BUG: message without timestamp — role={role}, "
-                f"msg_id={m.get('msg_id')}")
-        if not m.get("seq"):
-            raise ValueError(
-                f"BUG: message without seq — role={role}, "
                 f"msg_id={m.get('msg_id')}")
 
     # ══════════════════════════════════════════════════════════════════
@@ -1885,12 +1853,12 @@ class ConversationStore:
         if not msg_id or not fields:
             return
         lock = self._get_conv_lock(cid)
-        line = self._stamp_line(cid, {
-            "t": "msg_patch",
-            "target_msg_id": msg_id,
-            **fields,
-        })
         with lock:
+            line = self._stamp_line(cid, {
+                "t": "msg_patch",
+                "target_msg_id": msg_id,
+                **fields,
+            })
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
@@ -2326,12 +2294,12 @@ class ConversationStore:
         lock = self._get_conv_lock(cid)
         # msg_id is required for the context editor's delete path
         # (selection sends msg_ids; without one the row is not deletable).
-        line = self._stamp_line(cid, {
-            "t": "msg", "role": "sub_agent_trace", "display_only": True,
-            "trace_id": trace_id, "source": source, "content": "",
-            "trace": [],
-        })
         with lock:
+            line = self._stamp_line(cid, {
+                "t": "msg", "role": "sub_agent_trace", "display_only": True,
+                "trace_id": trace_id, "source": source, "content": "",
+                "trace": [],
+            })
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
         return True
@@ -2340,13 +2308,13 @@ class ConversationStore:
                              entry_data: Dict, content_update: str = "") -> bool:
         entry_data.setdefault("ts", time.time())
         lock = self._get_conv_lock(cid)
-        line = self._stamp_line(cid, {
-            "t": "trace_update",
-            "trace_id": trace_id,
-            "entry": entry_data,
-            "content_update": content_update,
-        })
         with lock:
+            line = self._stamp_line(cid, {
+                "t": "trace_update",
+                "trace_id": trace_id,
+                "entry": entry_data,
+                "content_update": content_update,
+            })
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
         return True

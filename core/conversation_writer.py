@@ -21,24 +21,20 @@ _IDLE_TIMEOUT = 300  # 5 minutes idle → writer thread exits
 
 
 def _require_ts_seq(m: Dict) -> None:
-    """Hard invariant: every persisted message MUST carry creation `ts`
-    AND `seq`, set at the moment the message was minted (LLMMessage.
-    __post_init__ or equivalent producer code path). The writer is
-    forbidden to invent these — defaulting them here would silently
-    cover a producer bug and corrupt the (ts, seq) ordering on disk.
-    Same rule as msg_id: minted once at creation, never substituted.
+    """Hard invariant: every persisted message MUST carry creation `ts`,
+    set at the moment the message was minted (LLMMessage.__post_init__
+    or equivalent producer code path). The writer is forbidden to
+    invent `ts` — defaulting here would silently cover a producer bug
+    and corrupt (ts, seq) ordering on disk. Same rule as msg_id:
+    minted once at creation, never substituted. `seq` is NOT required
+    here — it is the on-disk line index, assigned at write time by
+    ConversationStore._stamp_line under the conv lock.
     """
     if not m.get("ts") and not m.get("timestamp"):
         raise ValueError(
             f"ConversationWriter: missing 'ts' on message — every "
             f"message must have a CREATION timestamp set by its "
             f"producer (no enqueue-time fallback). msg_id="
-            f"{m.get('msg_id')!r}, role={m.get('role')!r}")
-    if not m.get("seq"):
-        raise ValueError(
-            f"ConversationWriter: missing 'seq' on message — every "
-            f"message must have a CREATION seq set by its producer "
-            f"(no enqueue-time fallback). msg_id="
             f"{m.get('msg_id')!r}, role={m.get('role')!r}")
 
 

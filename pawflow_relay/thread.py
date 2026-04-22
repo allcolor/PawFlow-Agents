@@ -356,6 +356,7 @@ class RelayThread:
             # (source_dir, filename) pairs — all mount onto /opt/pawflow/.
             _src_files = [
                 (_tools_dir, "pawflow_relay.py"),
+                (_tools_dir, "ws_frame.py"),
                 (_tools_dir, "fs_actions.py"),
                 (_tools_dir, "fs_exec.py"),
                 (_tools_dir, "fs_screen.py"),

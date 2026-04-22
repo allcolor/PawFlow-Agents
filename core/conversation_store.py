@@ -879,7 +879,7 @@ class ConversationStore:
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
             except Exception:
-                logger.debug("swallowed exception at core/conversation_store.py:~744", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
         return {}
 
     def _write_extras(self, cid: str, data: dict):
@@ -1461,7 +1461,36 @@ class ConversationStore:
             if agent_name:
                 self._write_ctx_file(self._agent_ctx_path(cid, agent_name), clean)
             else:
+                # Shared context full-rewrite: user-driven edit / delete
+                # via the context editor (agent="shared"). Compare the
+                # new state against what's on disk to find the earliest
+                # seq whose content diverges, then wipe all pyramid
+                # buckets that covered that range — they now point at
+                # stale content. Wiping is deliberately coarse (any
+                # bucket with last_seq >= min_changed_seq goes); the
+                # bg worker will rebuild from the new shared state on
+                # the next maybe_trigger.
+                _old_shared = self._read_ctx_file(self._shared_ctx_path(cid))
                 self._write_ctx_file(self._shared_ctx_path(cid), clean)
+                try:
+                    _min_changed = self._compute_min_changed_seq(
+                        _old_shared, clean)
+                    if _min_changed is not None:
+                        from core.bucket_store import BucketStore
+                        _bs = BucketStore.get(self._conv_dir(cid))
+                        _wiped = _bs.invalidate_from_seq(_min_changed)
+                        if _wiped:
+                            logger.info(
+                                "[convstore] shared edit at seq %d "
+                                "invalidated %d pyramid bucket(s) "
+                                "for cid=%s",
+                                _min_changed, _wiped, cid[:8])
+                            self._invalidate_pyramid_cache(cid)
+                except Exception:
+                    logger.warning(
+                        "[convstore] pyramid invalidation on shared "
+                        "edit failed for cid=%s", cid[:8],
+                        exc_info=True)
         self._invalidate_ctx_cache(cid, agent_name)
         # Refresh the main cache's `agents` set. Without this, writing
         # the first context for a new agent (e.g. /compact on an agent
@@ -1473,6 +1502,49 @@ class ConversationStore:
                 self._cache.pop(cid, None)
             self._reload_cache(cid)
         return True
+
+    @staticmethod
+    def _compute_min_changed_seq(old: List[Dict],
+                                   new: List[Dict]) -> Optional[int]:
+        """Find the smallest seq whose presence or content differs
+        between old and new shared state. Returns None if identical.
+
+        A seq is considered "changed" if:
+          - it was in old but is missing from new (deleted)
+          - it was added in new but not in old (inserted)
+          - same msg_id is in both but content or role differ (edited)
+
+        The msg_id is the identity — compare by that, not by index, so
+        reorderings in the list without content changes don't trigger
+        unnecessary invalidation.
+        """
+        _old_by_id: Dict[str, Dict] = {
+            m.get("msg_id"): m for m in old if m.get("msg_id")}
+        _new_by_id: Dict[str, Dict] = {
+            m.get("msg_id"): m for m in new if m.get("msg_id")}
+        _changed_seqs: List[int] = []
+
+        for mid, oldm in _old_by_id.items():
+            newm = _new_by_id.get(mid)
+            if newm is None:
+                _s = oldm.get("seq") or 0
+                if _s:
+                    _changed_seqs.append(int(_s))
+            elif (newm.get("content") != oldm.get("content")
+                    or newm.get("role") != oldm.get("role")):
+                _s = oldm.get("seq") or 0
+                if _s:
+                    _changed_seqs.append(int(_s))
+
+        for mid, newm in _new_by_id.items():
+            if mid not in _old_by_id:
+                _s = newm.get("seq") or 0
+                if _s:
+                    _changed_seqs.append(int(_s))
+
+        if not _changed_seqs:
+            return None
+        return min(_changed_seqs)
 
     def append_to_agent_context(self, cid: str, agent_name: str,
                                 new_messages: List[Dict]) -> bool:
@@ -2063,7 +2135,7 @@ class ConversationStore:
             from core.file_store import FileStore
             FileStore.instance().delete_by(conversation_id=cid)
         except Exception:
-            logger.debug("swallowed exception at core/conversation_store.py:~1832", exc_info=True)
+            logger.debug("exception suppressed", exc_info=True)
         # Drop edit-guard state for every agent in this conv — otherwise
         # the read-hashes / failed-edit counters leak until size eviction.
         try:
@@ -2071,7 +2143,7 @@ class ConversationStore:
                 from core.handlers._edit_guard import clear_conversation as _eg_clear
                 _eg_clear(_owner, cid)
         except Exception:
-            logger.debug("swallowed exception at core/conversation_store.py:~1840", exc_info=True)
+            logger.debug("exception suppressed", exc_info=True)
         # Clean up Claude Code session workdir (sessions/claude/<user>/<cid>/).
         # Without this, per-task session dirs accumulate forever since
         # task sub-convs are deleted on completion but their CC session
@@ -2160,7 +2232,7 @@ class ConversationStore:
                         if line.get("msg_id") in ids or _tid in ids:
                             trace_ids_to_drop.add(_tid)
             except Exception:
-                logger.debug("swallowed exception at core/conversation_store.py:~1929", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
 
             tmp = path.with_suffix(".tmp")
             with open(path, "r", encoding="utf-8") as src, \
@@ -2378,7 +2450,7 @@ class ConversationStore:
                             removed += self._prune_stale_cc_sessions(
                                 sess_dir, _recovered_cid)
                         except Exception:
-                            logger.debug("swallowed exception at core/conversation_store.py:~2142", exc_info=True)
+                            logger.debug("exception suppressed", exc_info=True)
                         continue
                 try:
                     shutil.rmtree(sess_dir, ignore_errors=True)
@@ -2442,7 +2514,7 @@ class ConversationStore:
                 if companion.is_dir():
                     shutil.rmtree(companion, ignore_errors=True)
             except Exception:
-                logger.debug("swallowed exception at core/conversation_store.py:~2206", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
         if removed:
             logger.info("Pruned %d stale CC session jsonl(s) in %s",
                         removed, sess_dir.name)

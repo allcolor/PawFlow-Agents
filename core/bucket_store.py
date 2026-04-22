@@ -442,6 +442,66 @@ class BucketStore:
                     logger.debug("tool_trace render failed", exc_info=True)
         return "".join(parts)
 
+    def invalidate_from_seq(self, min_seq: int) -> int:
+        """Wipe every bucket whose range overlaps with [min_seq, ∞).
+
+        Fires when shared.jsonl is edited/deleted: the buckets whose
+        summaries covered a modified seq now point to content that
+        no longer matches reality. Rather than attempting partial-
+        bucket patching, we wipe them wholesale and let the bg worker
+        rebuild from the new shared state on the next trigger.
+
+        Cascading SB invalidation is automatic via the shared rule
+        "last_seq >= min_seq": an SB's last_seq is the max of its
+        sources, so if any source is wiped the SB's last_seq (which
+        also >= min_seq) ensures the SB itself is wiped.
+
+        Returns the count of wiped buckets. Does NOT reset
+        _next_b_num / _next_sb_num — the counters stay monotonic so
+        future bucket ids never collide with the ones that survived.
+        """
+        with self._lock:
+            ids = list(self._meta.get("objects", []))
+            to_keep: List[str] = []
+            to_wipe: List[str] = []
+            for bid in ids:
+                d = self._read_bucket(bid)
+                if not d:
+                    continue
+                if int(d.get("last_seq", 0) or 0) >= min_seq:
+                    to_wipe.append(bid)
+                else:
+                    to_keep.append(bid)
+            if not to_wipe:
+                return 0
+            for bid in to_wipe:
+                p = self._bucket_path(bid)
+                try:
+                    if p.exists():
+                        p.unlink()
+                except Exception as e:
+                    logger.warning(
+                        "[bucket-store] failed to delete %s: %s", bid, e)
+            self._meta["objects"] = to_keep
+            # Recompute last_seq / last_ts from survivors
+            _max_seq = 0
+            _max_ts = 0.0
+            for bid in to_keep:
+                d = self._read_bucket(bid)
+                if d:
+                    _max_seq = max(_max_seq,
+                                    int(d.get("last_seq", 0) or 0))
+                    _max_ts = max(_max_ts,
+                                   float(d.get("last_ts", 0.0) or 0.0))
+            self._meta["last_seq"] = _max_seq
+            self._meta["last_ts"] = _max_ts
+            self._save_meta()
+            logger.info(
+                "[bucket-store] invalidated %d bucket(s) from seq %d "
+                "(kept %d, new last_seq=%d)",
+                len(to_wipe), min_seq, len(to_keep), _max_seq)
+            return len(to_wipe)
+
     def wipe(self):
         """Delete all objects - used by /compact --rebuild."""
         with self._lock:

@@ -238,6 +238,66 @@ def test_estimated_header_chars_sums_summaries(tmp_path):
     assert s.estimated_header_chars() == 300
 
 
+def test_invalidate_from_seq_wipes_overlapping_buckets(tmp_path):
+    """invalidate_from_seq(N) wipes every bucket with last_seq >= N and
+    recomputes meta.last_seq from survivors. Used when shared.jsonl is
+    edited and the pyramid needs to be rebuilt from the change point."""
+    s = _fresh_store(tmp_path)
+    # Seed 5 L1 buckets covering non-overlapping seq ranges
+    for i in range(5):
+        s.add_bucket(i * 100 + 1, (i + 1) * 100,
+                      float(i), float(i) + 1, summary=f"b{i}")
+    assert s.object_count == 5
+    assert s.last_seq == 500
+
+    # Edit hits seq 250 — wipes buckets whose last_seq >= 250,
+    # i.e. B_00003 (201..300), B_00004 (301..400), B_00005 (401..500).
+    wiped = s.invalidate_from_seq(250)
+    assert wiped == 3
+    assert s.object_count == 2
+    # Survivors: B_00001 (1..100), B_00002 (101..200). last_seq = 200.
+    assert s.last_seq == 200
+    remaining = [d["bucket_id"] for d in s.get_all_summaries()]
+    assert remaining == ["B_00001", "B_00002"]
+
+    # Counters don't reset — next bucket gets B_00006, not B_00003.
+    new_bid = s.add_bucket(201, 300, 0.0, 1.0, summary="rebuilt")
+    assert new_bid == "B_00006"
+
+
+def test_invalidate_from_seq_cascades_through_sb(tmp_path):
+    """SB buckets are wiped automatically by the same "last_seq >= N"
+    rule — no explicit cascade needed, the rollup's consolidated seq
+    range guarantees it."""
+    s = _fresh_store(tmp_path)
+    for i in range(4):
+        s.add_bucket(i * 100 + 1, (i + 1) * 100,
+                      float(i), float(i) + 1, summary=f"b{i}")
+    # Rollup: [B_00001..B_00003] → SB_00001, keep B_00004
+    s.rollup_all_except_last("SB consolidated")
+    assert s.object_count == 2  # SB_00001 + B_00004
+    # SB_00001 covers seqs 1..300 → last_seq=300. B_00004 covers 301..400.
+    # Invalidate from seq 250 → both are wiped (SB.last_seq=300, B.last_seq=400).
+    wiped = s.invalidate_from_seq(250)
+    assert wiped == 2
+    assert s.object_count == 0
+    assert s.last_seq == 0
+
+
+def test_invalidate_from_seq_above_max_is_noop(tmp_path):
+    """Nothing to wipe when min_seq is past the highest bucket — the
+    pyramid is still valid, the caller just got a seq above everything
+    we've bucketed."""
+    s = _fresh_store(tmp_path)
+    for i in range(3):
+        s.add_bucket(i * 100 + 1, (i + 1) * 100,
+                      float(i), float(i) + 1, summary=f"b{i}")
+    wiped = s.invalidate_from_seq(10_000)
+    assert wiped == 0
+    assert s.object_count == 3
+    assert s.last_seq == 300
+
+
 def test_rollup_accepts_merged_tool_trace(tmp_path):
     s = _fresh_store(tmp_path)
     for i in range(4):

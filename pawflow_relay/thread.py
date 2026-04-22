@@ -351,6 +351,7 @@ class RelayThread:
                 os.path.dirname(os.path.abspath(__file__)))
             _tools_dir = os.path.join(_project_root, "tools")
             _sdk_dir = os.path.join(_project_root, "docker", "pawflow_sdk")
+            _pkg_dir = os.path.join(_project_root, "pawflow_relay")
             _relay_script_mounts = []
             _mount_report = []
             # (source_dir, filename) pairs — all mount onto /opt/pawflow/.
@@ -375,6 +376,19 @@ class RelayThread:
                     _mount_report.append(f"{_rf}→{_translated}")
                 else:
                     _mount_report.append(f"{_rf}:MISSING({_src})")
+            # Mount the pawflow_relay/ package itself next to the script, so
+            # the worker (stdlib-only today) can gradually migrate onto
+            # `from pawflow_relay.* import ...` without losing the dev-mount
+            # live-reload property. Python imports `pawflow_relay/` (package,
+            # with __init__.py) before `pawflow_relay.py` (single-file
+            # module) when both sit in the same directory.
+            if os.path.isdir(_pkg_dir):
+                _translated_pkg = translate_path(to_host_path(_pkg_dir))
+                _relay_script_mounts += [
+                    "-v", f"{_translated_pkg}:/opt/pawflow/pawflow_relay:ro"]
+                _mount_report.append(f"pawflow_relay/→{_translated_pkg}")
+            else:
+                _mount_report.append(f"pawflow_relay/:MISSING({_pkg_dir})")
             self._log(
                 f"[Relay] dev-mount scripts: {'; '.join(_mount_report)}")
 

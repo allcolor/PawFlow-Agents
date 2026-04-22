@@ -150,6 +150,14 @@ class ServerRelayManager:
         _TOOLS_IN_CONTAINER = "/opt/pawflow"
         _SCRIPT_IN_CONTAINER = f"{_TOOLS_IN_CONTAINER}/pawflow_relay.py"
 
+        # Also mount pawflow_relay/ (the package) inside /opt/pawflow so the
+        # worker script can `from pawflow_relay.* import ...` as code moves
+        # out of the monolithic tools/pawflow_relay.py. Python's file finder
+        # prefers a package dir over a single-file module with the same name.
+        _pkg_abs = _os.path.abspath(
+            _os.path.join(_os.path.dirname(tools_abs), "pawflow_relay"))
+        _pkg_host = to_host_path(_pkg_abs) if _os.path.isdir(_pkg_abs) else ""
+
         # Register the relay service on the server BEFORE spawning the container.
         # RelayService.connect() registers /ws/relay/<service_id> on the main
         # HTTPListenerService — no separate port or path to configure.
@@ -167,6 +175,8 @@ class ServerRelayManager:
             "--volume", f"{volume}:{relay_workspace}",
             "--volume", f"pawflow_home_{relay_id}:/home/pawflow",
             "--volume", f"{tools_host}:{_TOOLS_IN_CONTAINER}:ro",
+            *(["--volume", f"{_pkg_host}:{_TOOLS_IN_CONTAINER}/pawflow_relay:ro"]
+              if _pkg_host else []),
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", relay_cpus,
             "--memory", relay_memory,

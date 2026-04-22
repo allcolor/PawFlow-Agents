@@ -107,8 +107,9 @@ def api_call(server_url, method, path, body=None, session_token="",
     if use_ssl:
         import ssl
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        if os.environ.get("PAWFLOW_RELAY_INSECURE") == "1":
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
         conn = http.client.HTTPSConnection(host, port, context=ctx, timeout=30)
     else:
         conn = http.client.HTTPConnection(host, port, timeout=30)
@@ -137,8 +138,9 @@ def api_call(server_url, method, path, body=None, session_token="",
             if _rssl:
                 import ssl as _ssl2
                 _ctx2 = _ssl2.create_default_context()
-                _ctx2.check_hostname = False
-                _ctx2.verify_mode = _ssl2.CERT_NONE
+                if os.environ.get("PAWFLOW_RELAY_INSECURE") == "1":
+                    _ctx2.check_hostname = False
+                    _ctx2.verify_mode = _ssl2.CERT_NONE
                 conn = http.client.HTTPSConnection(_rhost, _rport, context=_ctx2, timeout=30)
             else:
                 conn = http.client.HTTPConnection(_rhost, _rport, timeout=30)

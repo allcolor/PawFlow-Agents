@@ -1625,8 +1625,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         _ctx_used_live = (_u.get("input_tokens", 0)
                                           + _u.get("cache_creation_input_tokens", 0)
                                           + _u.get("cache_read_input_tokens", 0))
-                        _ctx_max_live = int(getattr(self, '_max_context_size',
-                                                    0) or 200000)
+                        # Prefer CC's own contextWindow (cached from the
+                        # previous result.modelUsage). Falls back to the
+                        # service config only until the first result event
+                        # lands — after that the cached value tracks
+                        # CC's real budget (200k vs 1M beta, overrides, …).
+                        _ctx_max_live = int(getattr(self, '_cc_context_window', 0)
+                                            or getattr(self, '_max_context_size', 0)
+                                            or 200000)
                         _ctx_pct_live = (_ctx_used_live / _ctx_max_live
                                          if _ctx_max_live > 0 else 0.0)
                         _pub("message_meta", {
@@ -2001,12 +2007,46 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         except Exception:
                             logger.debug("exception suppressed", exc_info=True)
                         # Context-fill: exact value from CC stream's last
-                        # assistant.message.usage (prompt size at that point),
-                        # compared against PawFlow's configured max_context_size.
+                        # assistant.message.usage (prompt size at that point).
+                        # Budget comes from CC itself: result.modelUsage[model]
+                        # .contextWindow is CC's authoritative value
+                        # (src/utils/context.ts::getContextWindowForModel) —
+                        # accounts for 200k default, [1m] suffix beta,
+                        # CLAUDE_CODE_MAX_CONTEXT_TOKENS overrides, etc.
+                        # Using it here keeps PawFlow's gauge aligned with
+                        # what CC itself sees as "context full", so the
+                        # percentage where CC auto-compacts (≈98% of the
+                        # effective window, cf. AUTOCOMPACT_BUFFER_TOKENS
+                        # in src/services/compact/autoCompact.ts) matches
+                        # what the user reads on screen. No hardcoded
+                        # model → budget map on our side.
                         _ctx_used = (_latest_usage.get("input_tokens", 0)
                                      + _latest_usage.get("cache_creation_input_tokens", 0)
                                      + _latest_usage.get("cache_read_input_tokens", 0))
-                        _ctx_max = int(getattr(self, '_max_context_size', 0) or 200000)
+                        _cc_mu = _model_usage.get(_result_model) if _model_usage else None
+                        _cc_ctx_window = 0
+                        if isinstance(_cc_mu, dict):
+                            _cc_ctx_window = int(_cc_mu.get("contextWindow")
+                                                  or _cc_mu.get("context_window")
+                                                  or 0)
+                        if _cc_ctx_window <= 0 and _model_usage:
+                            for _mu in _model_usage.values():
+                                _w = int((_mu or {}).get("contextWindow")
+                                         or (_mu or {}).get("context_window")
+                                         or 0)
+                                if _w > 0:
+                                    _cc_ctx_window = _w
+                                    break
+                        if _cc_ctx_window > 0:
+                            self._cc_context_window = _cc_ctx_window
+                        _ctx_max = int(_cc_ctx_window
+                                       or getattr(self, '_cc_context_window', 0)
+                                       or 0)
+                        if _ctx_max <= 0:
+                            # First turn, result arrived with no modelUsage:
+                            # keep the service config as last-resort fallback
+                            # (gauge won't be accurate yet, next turn fixes it).
+                            _ctx_max = int(getattr(self, '_max_context_size', 0) or 200000)
                         _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
                         _pub("message_meta", {
                             "msg_id": _last_msg_id,

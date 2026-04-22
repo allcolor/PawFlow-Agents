@@ -51,17 +51,7 @@ from pathlib import Path
 from fs_common import (
     _docker_cmd, _get_host_ip, _translate_path, _to_host_path,
 )
-
-
-def generate_relay_id(username: str, directory: str) -> str:
-    """Generate a stable relay ID from username + directory.
-
-    Format: fs_{username}_{sha256(username:normalized_dir)[:8]}
-    Consistent across PawCode CLI, VSCode extension, and this standalone relay.
-    """
-    normalized = str(Path(directory).resolve())
-    h = hashlib.sha256(f"{username}:{normalized}".encode()).hexdigest()[:8]
-    return f"fs_{username}_{h}"
+from pawflow_relay.utils import generate_relay_id
 
 
 # ── Actions that require write access ─────────────────────────────
@@ -1998,227 +1988,44 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         reconnect_delay = min(reconnect_delay * 2, 60)
 
 
-def _acquire_gateway_cookie(api_url, gateway_key):
-    """POST /_gateway with the access key, return the _pf_gw cookie value or empty string."""
-    import http.client
-    from urllib.parse import urlparse, urlencode
+# HTTP + OAuth auto-registration helpers live in the package.
+from pawflow_relay.register import (
+    acquire_gateway_cookie as _acquire_gateway_cookie,
+    agent_api_call as _agent_api_call,
+    create_service as _create_service,
+    delete_service as _delete_service,
+    auto_register as _auto_register_impl,
+)
+from pawflow_relay.utils import api_call as _api_call_impl
 
-    parsed = urlparse(api_url)
-    use_ssl = parsed.scheme == "https"
-    host = parsed.hostname or "localhost"
-    port = parsed.port or (443 if use_ssl else 80)
-
-    if use_ssl:
-        import ssl
-        ctx = ssl.create_default_context()
-        if os.environ.get('PAWFLOW_RELAY_INSECURE') == '1':
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-        conn = http.client.HTTPSConnection(host, port, context=ctx)
-    else:
-        conn = http.client.HTTPConnection(host, port)
-
-    body = urlencode({"secret": gateway_key, "next": "/"})
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    conn.request("POST", "/_gateway", body=body, headers=headers)
-    resp = conn.getresponse()
-    resp.read()  # drain
-
-    # Extract _pf_gw from Set-Cookie header
-    cookie_val = ""
-    for hdr in resp.msg.get_all("Set-Cookie") or []:
-        for part in hdr.split(";"):
-            part = part.strip()
-            if part.startswith("_pf_gw="):
-                cookie_val = part[len("_pf_gw="):]
-                break
-        if cookie_val:
-            break
-
-    conn.close()
-    if cookie_val:
-        sys.stderr.write(f"[FSRelay] Gateway cookie acquired.\n")
-    else:
-        sys.stderr.write(f"[FSRelay] Warning: gateway POST returned no _pf_gw cookie.\n")
-    return cookie_val
-
-
-# Module-level gateway cookie + session token — set once in main(), used by _api_call and _ws_connect
+# Module-level gateway cookie + session token, set once in main() and
+# threaded through _api_call / _ws_connect.
 _gateway_cookie = ""
 _session_token = ""
 
 
 def _api_call(api_url, method, path, body=None, session_id=""):
-    """Make an HTTP request to the PawFlow API (stdlib only)."""
-    import http.client
-    from urllib.parse import urlparse
+    """Thin wrapper that threads the module-level gateway cookie.
 
-    parsed = urlparse(api_url)
-    use_ssl = parsed.scheme == "https"
-    host = parsed.hostname or "localhost"
-    port = parsed.port or (443 if use_ssl else 80)
-
-    if use_ssl:
-        import ssl
-        ctx = ssl.create_default_context()
-        if os.environ.get('PAWFLOW_RELAY_INSECURE') == '1':
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-        conn = http.client.HTTPSConnection(host, port, context=ctx)
-    else:
-        conn = http.client.HTTPConnection(host, port)
-
-    headers = {"Content-Type": "application/json"}
-    if session_id:
-        headers["Authorization"] = f"Bearer {session_id}"
-    if _gateway_cookie:
-        headers["Cookie"] = f"_pf_gw={_gateway_cookie}"
-
-    payload = json.dumps(body).encode("utf-8") if body else None
-    conn.request(method, path, body=payload, headers=headers)
-    resp = conn.getresponse()
-    data = resp.read().decode("utf-8")
-    conn.close()
-
-    if resp.status >= 400:
-        raise Exception(f"API {method} {path} → {resp.status}: {data}")
-    return json.loads(data) if data else {}
-
-
-def _agent_api_call(login_url, session_id, action_body):
-    """Call the UI action endpoint with an action payload.
-
-    UI actions (service_install, service_uninstall, relay_list_available, …)
-    are dispatched via agentActions on /api/ui — not the agent pipeline at
-    /api/agent, which is reserved for real user↔agent messages.
+    Keeps the legacy (api_url, method, path, body=, session_id=) call shape
+    used throughout this script while delegating to pawflow_relay.utils.
     """
-    return _api_call(login_url, "POST", "/api/ui",
-                     body=action_body, session_id=session_id)
-
-
-def _create_service(login_url, session_id, service_id, port, relay_path, token):
-    """Create a user filesystem service via the agent API."""
-    config_str = f"port={port},path={relay_path},token={token},mode=readwrite"
-    return _agent_api_call(login_url, session_id, {
-        "action": "service_install",
-        "service_type": "relay",
-        "service_name": service_id,
-        "config_str": config_str,
-    })
-
-
-def _delete_service(login_url, session_id, service_id):
-    """Delete a user filesystem service via the agent API."""
-    try:
-        _agent_api_call(login_url, session_id, {
-            "action": "service_uninstall",
-            "service_id": service_id,
-        })
-    except Exception:
-        pass  # May not exist, that's OK
-
-
-def _start_callback_server():
-    """Start a tiny HTTP server to receive the OAuth callback token."""
-    from http.server import HTTPServer as _HTTPServer, BaseHTTPRequestHandler
-    import threading
-    from urllib.parse import urlparse, parse_qs
-
-    result = {"token": None, "username": None}
-    ready = threading.Event()
-
-    class CallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            parsed = urlparse(self.path)
-            params = parse_qs(parsed.query)
-            result["token"] = params.get("token", [None])[0]
-            result["username"] = params.get("username", [None])[0]
-
-            # Serve a simple "you can close this" page
-            html = (
-                '<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;'
-                'padding:60px;background:#1a1a2e;color:#e0e0e0">'
-                '<h2>&#10004; Relay authenticated</h2>'
-                '<p>You can close this window. The relay is now connected.</p>'
-                '</body></html>'
-            )
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            self.wfile.write(html.encode())
-            ready.set()
-
-        def log_message(self, *args):
-            pass  # suppress logs
-
-    server = _HTTPServer(("127.0.0.1", 0), CallbackHandler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.handle_request, daemon=True)
-    thread.start()
-    return port, result, ready, server
+    return _api_call_impl(api_url, method, path, body=body,
+                          session_token=session_id,
+                          gateway_cookie=_gateway_cookie)
 
 
 def _auto_register(args):
-    """Auto-register: browser login, create service, return (ws_url, token, session_id, api_url)."""
-    import secrets as _secrets
-    import webbrowser
-    from urllib.parse import quote
+    """Argparse-bridge for pawflow_relay.register.auto_register."""
+    ws_url, ws_token, session_token, resolved_id, login_url = _auto_register_impl(
+        login_url=args.login_url,
+        directory=args.dir,
+        relay_id=args.relay_id,
+        relay_path=args.relay_path,
+    )
+    args.relay_id = resolved_id
+    return ws_url, ws_token, session_token, login_url
 
-    login_url = args.login_url.rstrip("/")
-
-    # Start callback server
-    cb_port, cb_result, cb_ready, cb_server = _start_callback_server()
-    callback_url = f"http://127.0.0.1:{cb_port}/callback"
-
-    # Open browser to login page with relay_callback
-    auth_url = f"{login_url}/auth/login?relay_callback={quote(callback_url)}"
-    sys.stderr.write(f"[FSRelay] Opening browser for login: {auth_url}\n")
-    sys.stderr.write(f"[FSRelay] Waiting for authentication...\n")
-    webbrowser.open(auth_url)
-
-    # Wait for callback (timeout 120s)
-    if not cb_ready.wait(timeout=120):
-        cb_server.server_close()
-        sys.stderr.write("[FSRelay] Error: authentication timed out (120s)\n")
-        sys.exit(1)
-
-    cb_server.server_close()
-    session_id = cb_result.get("token")
-    username = cb_result.get("username", "?")
-
-    if not session_id:
-        sys.stderr.write("[FSRelay] Error: no token received from login\n")
-        sys.exit(1)
-
-    sys.stderr.write(f"[FSRelay] Authenticated as '{username}'.\n")
-
-    # Auto-generate relay_id if not provided
-    root_dir = str(Path(args.dir).resolve())
-    if not args.relay_id:
-        args.relay_id = generate_relay_id(username, root_dir)
-        sys.stderr.write(f"[FSRelay] Auto-generated relay ID: {args.relay_id}\n")
-
-    ws_token = _secrets.token_urlsafe(32)
-
-    # Delete existing service if any
-    sys.stderr.write(f"[FSRelay] Cleaning up previous service '{args.relay_id}' ...\n")
-    _delete_service(login_url, session_id, args.relay_id)
-
-    # Create new service (port kept for legacy config schema; server ignores it)
-    sys.stderr.write(f"[FSRelay] Creating service '{args.relay_id}' ...\n")
-    _create_service(login_url, session_id, args.relay_id, 0, args.relay_path, ws_token)
-    sys.stderr.write(f"[FSRelay] Service created.\n")
-
-    # Build WS URL from the main listener URL (login_url). The route is
-    # registered server-side on HTTPListenerService at /ws/relay/<service_id>.
-    from urllib.parse import urlparse as _up
-    _parsed = _up(login_url)
-    _scheme = 'wss' if _parsed.scheme == 'https' else 'ws'
-    _host = _parsed.hostname or args.host
-    _port = _parsed.port or (443 if _parsed.scheme == 'https' else 80)
-    ws_url = f"{_scheme}://{_host}:{_port}/ws/relay/{args.relay_id}"
-
-    return ws_url, ws_token, session_id, login_url
 
 
 def main():

@@ -130,14 +130,20 @@ function addMsg(role, text, extra) {
   }
   // Background-tool results are written to transcript as role=user (that
   // is what CC's wire protocol requires for tool_result replies), but in
-  // the chat UI they should render as `tool`, not as the user's own
-  // voice. The payload sent to the LLM stays role=user; this is a
-  // display-only relabel. Source tag `{type:'system', name:'background'}`
-  // is set by core.background_tool.py:_write_cc_result.
+  // the chat UI they should render as a collapsible tool_result block,
+  // not as the user's own voice. The payload sent to the LLM stays
+  // role=user; this is a display-only relabel. Source tag
+  // `{type:'system', name:'background'}` is set by
+  // core.background_tool.py:_write_cc_result.
+  //
+  // role='tool_result' (not 'tool') so the renderer at the tool_result
+  // branch below produces <details>…</details> — otherwise we fall
+  // into the tool_call compact-header branch and the long output is
+  // rendered as a single wall of text without any collapse.
   if (role === 'user' && extra && extra.source
       && extra.source.type === 'system'
       && extra.source.name === 'background') {
-    role = 'tool';
+    role = 'tool_result';
   }
   const el = document.createElement('div');
   // Map roles to CSS classes

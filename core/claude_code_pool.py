@@ -210,6 +210,17 @@ class ClaudeCodePool:
         # before exec'ing claude — Claude Code refuses to run as root.
         exec_args = [
             "-i",
+            # `-t` allocates a pseudo-TTY for the container process.
+            # Required because claude-code is a Node.js binary and
+            # Node block-buffers process.stdout when it's a pipe (non-
+            # TTY) — our stdout reader would see nothing for minutes
+            # while events pile up in Node's internal 8KB buffer.
+            # With a TTY, Node's isTTY detection fires and it switches
+            # to synchronous line-buffered writes, so every JSON event
+            # reaches us within ms of emission. stdbuf/LD_PRELOAD does
+            # NOT work here because Node uses libuv and bypasses libc
+            # stdio — only a real TTY forces line-buffered flushes.
+            "-t",
             "--user", "root",
             "-e", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "-e", "HOME=/workspace",
@@ -250,25 +261,31 @@ class ClaudeCodePool:
         # original goal of 0e22927 without the bash-quirk footgun.
         import shlex
         _claude_quoted = " ".join(shlex.quote(str(a)) for a in claude_args)
-        # stdbuf -oL forces line buffering on stdout. Without it, Node.js
-        # (which claude-code is built on) block-buffers its stdout pipe
-        # by default — it only flushes on buffer-full OR process exit.
-        # Observed symptom: whole turns of JSON events (assistant + tool_use
-        # + tool_result) sit in Node's internal buffer for 5+ minutes,
-        # our `for line in proc.stdout` sees nothing, stall watchdog fires,
-        # kill triggers exit → flush → all the buffered turns appear
-        # simultaneously at kill time. Line-buffering flushes after every
-        # `\n` so each JSON event reaches us within milliseconds of being
-        # emitted by CC. (Note: Node uses libuv for fd I/O, not libc, so
-        # stdbuf's LD_PRELOAD trick isn't guaranteed to take effect — if
-        # this doesn't unblock, fall back to a pty / `script` wrapper.)
+        # With `-t` in exec_args the container process gets a PTY on
+        # fd 0/1/2. Node detects TTY and switches to line-buffered
+        # synchronous stdout writes — the whole reason we need the
+        # PTY (see exec_args comment above).
+        #
+        # Default PTY modes we MUST override:
+        #   - echo: TTY echoes input (our JSON pokes on stdin) back
+        #     to stdout. Our parser would see the echo as garbage.
+        #   - icanon: canonical input mode buffers stdin line-by-line
+        #     with editing; CC's stream-json wants raw line reads.
+        #   - onlcr: TTY translates \n → \r\n on output. Python's text
+        #     mode handles either but disabling keeps output clean.
+        #
+        # stty is applied to fd 0 (the PTY) before exec'ing claude.
+        # `|| true` guards against stty refusing if the controlling
+        # terminal setup is unusual; in that case we lose the mode
+        # override but TTY detection still works.
         _shell_script = (
+            f"stty -echo -icanon -onlcr 2>/dev/null || true; "
             f"mkdir -p /workspace && "
             f"mount --bind {shlex.quote(session_dir)} /workspace && "
             f"cd /workspace && "
             f'printf "__PF_CLAUDE_PID=%s\\n" "$$" 1>&2 && '
             f"exec setpriv --reuid=1000 --regid=1000 --clear-groups "
-            f"-- stdbuf -oL -eL claude {_claude_quoted}"
+            f"-- claude {_claude_quoted}"
         )
         exec_args.extend([
             container_name,

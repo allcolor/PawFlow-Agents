@@ -509,7 +509,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     "agent": _compact_agent_name or "shared",
                     "focus": _compact_instructions or None}
 
-        return self._run_bg_context_op(conv_id, "compact", _do_compact, flowfile)
+        # Scope the compact lock to the target agent: /compact claude
+        # must NOT block other agents on the same conv. Only a
+        # whole-conv /compact (agent_name=="" or "ALL"/"shared") uses
+        # the sentinel that blocks everyone.
+        _compact_lock_agent = (
+            "" if _ctx_agent in ("", "ALL", "shared") else _ctx_agent)
+        return self._run_bg_context_op(
+            conv_id, "compact", _do_compact, flowfile,
+            agent_name=_compact_lock_agent)
 
     if action == "rebuild":
         conv_id = body.get("conversation_id", "")
@@ -581,7 +589,11 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     "tokens_after": estimated,
                     "agent": _rb_agent or "shared"}
 
-        return self._run_bg_context_op(conv_id, "rebuild", _do_rebuild, flowfile)
+        _rebuild_lock_agent = (
+            "" if _rb_agent in ("", "ALL", "shared") else _rb_agent)
+        return self._run_bg_context_op(
+            conv_id, "rebuild", _do_rebuild, flowfile,
+            agent_name=_rebuild_lock_agent)
 
     if action == "get_context":
         conv_id = body.get("conversation_id", "")
@@ -1003,7 +1015,11 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return {"kept_messages": len(new_context) - len(system_msgs),
                     "agent": _rf_agent or "shared"}
 
-        return self._run_bg_context_op(conv_id, "restart_from", _do_restart, flowfile)
+        _rf_lock_agent = (
+            "" if _rf_agent in ("", "ALL", "shared") else _rf_agent)
+        return self._run_bg_context_op(
+            conv_id, "restart_from", _do_restart, flowfile,
+            agent_name=_rf_lock_agent)
 
     if action == "delete_message":
         conv_id = body.get("conversation_id", "")

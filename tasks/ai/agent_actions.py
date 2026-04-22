@@ -460,22 +460,32 @@ class AgentActionsMixin:
             logger.warning("_clear_claude_session failed for %s/%s: %s",
                            conv_id[:8], agent_name, _e)
 
-    def _run_bg_context_op(self, conv_id: str, op_name: str, fn, flowfile):
+    def _run_bg_context_op(self, conv_id: str, op_name: str, fn, flowfile,
+                            agent_name: str = ""):
         """Run a context operation in background with lock + SSE progress.
 
+        Lock scope:
+          - agent_name="" → whole-conv lock (blocks every agent in conv).
+            Used by manual /compact without agent target, /clear, and
+            other ops that touch shared state (shared.jsonl, extras).
+          - agent_name="X" → agent-scoped lock (blocks only agent X in
+            this conv). Other agents in the same conv continue to
+            respond freely.
+
         Returns immediately with an ack. The background thread:
-        1. Cancels the active agent
-        2. Acquires the context op lock (blocks FlowFiles)
-        3. Runs fn() which returns a result dict
-        4. Publishes SSE done/error event
+        1. Cancels the specific agent (or all agents if whole-conv)
+        2. Acquires the context op lock (scoped)
+        3. Runs fn()
+        4. Publishes SSE done/error
         5. Releases the lock
         """
         from core.conversation_event_bus import ConversationEventBus
         bus = ConversationEventBus.instance()
 
         def _bg():
-            self.cancel_agent(conv_id, silent=True)
-            if not self._acquire_context_op(conv_id, timeout=60.0):
+            self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
+            if not self._acquire_context_op(conv_id, agent_name,
+                                             timeout=60.0):
                 bus.publish_event(conv_id, "compact_progress", {
                     "stage": "error",
                     "error": f"Timeout waiting for active agent ({op_name})",
@@ -484,20 +494,15 @@ class AgentActionsMixin:
             try:
                 bus.publish_event(conv_id, "compact_progress", {
                     "stage": "start", "detail": op_name,
+                    "agent": agent_name or "",
                 })
                 result = fn()
-                # Clear Claude Code session so next call starts fresh
-                # with the new context (rebuilt/compacted/summarized)
-                _agent = result.get("agent", "")
-                if _agent:
+                _agent = result.get("agent", "") or agent_name
+                if _agent and _agent != "shared":
                     self._clear_claude_session(conv_id, _agent)
                 else:
                     # Shared context changed — clear all agent sessions
                     self._clear_claude_session(conv_id, "")
-                # Compact has its own compact_progress:done event fired
-                # inside _compact() with bucket-filter-accurate counts.
-                # Don't re-emit from here — that second emission used the
-                # full-transcript len() (35049 …) and confused the UI.
                 if op_name != "compact":
                     bus.publish_event(conv_id, "compact_progress", {
                         "stage": "done", **result,
@@ -508,49 +513,76 @@ class AgentActionsMixin:
                 })
                 logger.error("%s failed: %s", op_name, e, exc_info=True)
             finally:
-                self._release_context_op(conv_id)
+                self._release_context_op(conv_id, agent_name)
 
-        thread = threading.Thread(target=_bg, daemon=True,
-                                  name=f"{op_name}-{conv_id[:8]}")
+        thread = threading.Thread(
+            target=_bg, daemon=True,
+            name=f"{op_name}-{conv_id[:8]}-{agent_name or 'shared'}")
         thread.start()
         flowfile.set_content(json.dumps({
             "status": "accepted", "action": op_name,
         }).encode())
         return [flowfile]
 
+    # ═════════════════════════════════════════════════════════════════
+    #  Context-op lock — per (conv, agent)
+    # ═════════════════════════════════════════════════════════════════
+    # Keyed by (conversation_id, agent_name). agent_name="" represents
+    # the "whole conv" sentinel: when held, it blocks EVERY agent of
+    # that conv. Agent-specific locks (agent_name != "") block only
+    # that agent; other agents on the same conv continue.
+    #
+    # _is_context_op_free(conv, agent):
+    #   - False if (conv, "") is held — whole-conv op in progress.
+    #   - False if (conv, agent) is held and agent != "".
+    #   - True otherwise.
 
-    def _get_context_op_event(self, conversation_id: str) -> threading.Event:
-        """Get or create a per-conversation context-op Event (set = free)."""
+    def _get_context_op_event(self, conversation_id: str,
+                                agent_name: str = "") -> threading.Event:
+        """Get or create the context-op Event for (conv, agent)."""
+        key = (conversation_id, agent_name or "")
         with self._context_op_lock:
-            evt = self._context_op_events.get(conversation_id)
+            evt = self._context_op_events.get(key)
             if evt is None:
                 evt = threading.Event()
                 evt.set()  # initially free
-                self._context_op_events[conversation_id] = evt
+                self._context_op_events[key] = evt
             return evt
 
-
-    def _acquire_context_op(self, conversation_id: str, timeout: float = 30.0) -> bool:
-        """Acquire exclusive context-op lock.  Returns True if acquired."""
-        evt = self._get_context_op_event(conversation_id)
+    def _acquire_context_op(self, conversation_id: str,
+                              agent_name: str = "",
+                              timeout: float = 30.0) -> bool:
+        """Acquire exclusive context-op lock for (conv, agent).
+        Returns True if acquired."""
+        evt = self._get_context_op_event(conversation_id, agent_name)
         if not evt.wait(timeout=timeout):
             return False
         evt.clear()
         return True
 
-    def _release_context_op(self, conversation_id: str):
-        """Release the context-op lock."""
-        evt = self._get_context_op_event(conversation_id)
+    def _release_context_op(self, conversation_id: str,
+                              agent_name: str = ""):
+        """Release the context-op lock for (conv, agent)."""
+        evt = self._get_context_op_event(conversation_id, agent_name)
         evt.set()
 
-
-    def _is_context_op_free(self, conversation_id: str) -> bool:
-        """Non-blocking check: True if no context op is running."""
+    def _is_context_op_free(self, conversation_id: str,
+                              agent_name: str = "") -> bool:
+        """True if neither the agent-specific lock NOR the whole-conv
+        sentinel is held. Callers pass the agent_name this FlowFile
+        targets; empty agent_name checks only the sentinel."""
         with self._context_op_lock:
-            evt = self._context_op_events.get(conversation_id)
-            if evt is None:
-                return True
-            return evt.is_set()
+            # Whole-conv sentinel blocks everyone
+            sentinel = self._context_op_events.get((conversation_id, ""))
+            if sentinel is not None and not sentinel.is_set():
+                return False
+            # Agent-specific lock blocks only that agent
+            if agent_name:
+                evt = self._context_op_events.get(
+                    (conversation_id, agent_name))
+                if evt is not None and not evt.is_set():
+                    return False
+            return True
 
     # All context ops manage their own lock in background threads
     _CONTEXT_OPS = frozenset()

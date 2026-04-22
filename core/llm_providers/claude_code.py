@@ -1291,6 +1291,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _last_tool_result_time = 0.0  # monotonic time of last tool_result with no pending tools
         _pending_tool_ids = set()     # tool_use ids awaiting results
         _emitted_sse_tcs = set()      # tool_use ids for which we sent a SSE tool_call
+        _compact_result_done = False  # flip when compact_result tool delivers
 
         # Phantom tool call detector: if CC emits too many empty/phantom
         # tool calls in a short window, it likely lost context after a bad
@@ -1695,6 +1696,33 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             if _parent_tc_id:
                                 _tr_event["parent_tc_id"] = _parent_tc_id
                             _pub("tool_result", _tr_event)
+                            # compact_result is terminal: once CC has
+                            # delivered the summary, everything it emits
+                            # afterwards is post-summary fluff we don't
+                            # ingest (and CC often just stalls waiting
+                            # for more input until the 180s watchdog
+                            # fires). Treat it like compact_boundary —
+                            # flush the current turn and kill CC now so
+                            # the caller (_summarize_via_cc) wakes up
+                            # immediately instead of after a 3-minute
+                            # stall timeout.
+                            if _tr_name == "compact_result":
+                                logger.info(
+                                    "[claude-code] compact_result "
+                                    "delivered — flushing + killing CC "
+                                    "to end stream")
+                                try:
+                                    _flush_turn()
+                                except Exception as _fe:
+                                    logger.error(
+                                        "[claude-code] pre-compact_result "
+                                        "flush failed: %s",
+                                        _fe, exc_info=True)
+                                self._kill_cc_hard(proc)
+                                _compact_result_done = True
+                                break
+                    if _compact_result_done:
+                        break
 
                 elif etype == "content_block_delta":
                     delta = event.get("delta", {})

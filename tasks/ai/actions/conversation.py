@@ -163,7 +163,11 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                     "messages_summarized": len(_rs_msgs),
                     "agent": _rs_agent or "shared"}
 
-        return self._run_bg_context_op(conv_id, "summary", _do_resume, flowfile)
+        _rs_lock_agent = (
+            "" if _rs_agent in ("", "ALL", "shared") else _rs_agent)
+        return self._run_bg_context_op(
+            conv_id, "summary", _do_resume, flowfile,
+            agent_name=_rs_lock_agent)
 
     if action == "ping":
         # Keep-alive: session renewal happens in validateSessionAuth upstream

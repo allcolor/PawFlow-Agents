@@ -766,19 +766,29 @@ class ConversationStore:
         gap is too small — cheap O(1) call either way.
         """
         path = self._shared_ctx_path(cid)
+        _max_seq = 0
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
                 xf = self._stamp_line(cid, self._transform_for_shared(m))
                 f.write(json.dumps(xf, ensure_ascii=False) + "\n")
+                _s = int(xf.get("seq") or 0)
+                if _s > _max_seq:
+                    _max_seq = _s
 
-        # Trigger bg pyramid build if applicable. Non-blocking, safe to
-        # fail silently — the bg builder owns its own error logging.
+        # Trigger bg pyramid build if applicable. Strictly non-blocking:
+        # maybe_trigger now does an O(1) cache check (no disk I/O) so
+        # holding the conv lock here costs nothing. note_shared_seq
+        # keeps the cache in sync with what we just wrote so the next
+        # trigger's arithmetic is correct.
         try:
             from core.bg_bucket_builder import BgBucketBuilder
+            _bb = BgBucketBuilder.instance()
+            if _max_seq:
+                _bb.note_shared_seq(cid, _max_seq)
             _uid = self._cid_user.get(cid, "") or ""
             if _uid:
-                BgBucketBuilder.instance().maybe_trigger(cid, _uid)
+                _bb.maybe_trigger(cid, _uid)
         except Exception:
             logger.debug("bg bucket trigger failed", exc_info=True)
 
@@ -1410,6 +1420,15 @@ class ConversationStore:
             else:
                 self._write_ctx_file(self._shared_ctx_path(cid), clean)
         self._invalidate_ctx_cache(cid, agent_name)
+        # Refresh the main cache's `agents` set. Without this, writing
+        # the first context for a new agent (e.g. /compact on an agent
+        # that had no ctx yet) leaves cache["agents"] stale — the UI
+        # context-editor reads from list_agent_contexts → cache and
+        # wouldn't see the newly created agent until a server restart.
+        if agent_name:
+            with self._cache_lock:
+                self._cache.pop(cid, None)
+            self._reload_cache(cid)
         return True
 
     def append_to_agent_context(self, cid: str, agent_name: str,

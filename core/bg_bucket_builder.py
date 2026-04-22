@@ -110,6 +110,15 @@ class BgBucketBuilder:
         # Summarize function (delegates internal chunking to the
         # existing AgentSummarizeMixin._summarize_messages pipeline).
         self._summarize_fn: Optional[Callable] = None
+        # O(1) seq caches for maybe_trigger. Populated by note_shared_seq
+        # (from ConversationStore._append_shared_ctx) and note_pyramid_seq
+        # (from _build_one_bucket / build_now_sync after add_bucket).
+        # Lets maybe_trigger decide "fire a job?" without opening
+        # shared.jsonl — critical because maybe_trigger runs under
+        # ConversationStore._get_conv_lock and must never do disk I/O.
+        self._shared_seq_cache: Dict[str, int] = {}
+        self._pyramid_seq_cache: Dict[str, int] = {}
+        self._seq_cache_lock = threading.Lock()
 
     def set_summarizer_resolver(
             self, resolver: Callable[[str], Tuple]) -> None:
@@ -129,32 +138,97 @@ class BgBucketBuilder:
         """
         self._summarize_fn = fn
 
+    def note_shared_seq(self, cid: str, seq: int) -> None:
+        """O(1) hint that shared.jsonl now has a record at this seq.
+
+        Called from ConversationStore._append_shared_ctx after writes
+        complete — the whole point is to keep maybe_trigger off the
+        disk while the conv lock is held. seq values are monotonic
+        per conv (enforced by _stamp_line) so we only need max.
+        """
+        if not cid or not isinstance(seq, int):
+            return
+        with self._seq_cache_lock:
+            cur = self._shared_seq_cache.get(cid, 0)
+            if seq > cur:
+                self._shared_seq_cache[cid] = seq
+
+    def note_pyramid_seq(self, cid: str, seq: int) -> None:
+        """O(1) hint that the pyramid now covers up to this seq.
+
+        Called from _build_one_bucket after add_bucket persists.
+        Mirrors BucketStore.last_seq for maybe_trigger's gap math
+        without forcing it to instantiate a BucketStore (which reads
+        meta.json and ends up on disk).
+        """
+        if not cid or not isinstance(seq, int):
+            return
+        with self._seq_cache_lock:
+            cur = self._pyramid_seq_cache.get(cid, 0)
+            if seq > cur:
+                self._pyramid_seq_cache[cid] = seq
+
     # ── Public trigger API ────────────────────────────────────────
 
     def maybe_trigger(self, cid: str, user_id: str) -> None:
         """Fast O(1) check + async enqueue. Called from
-        ConversationStore._append_shared_ctx after each shared write.
+        ConversationStore._append_shared_ctx after each shared write,
+        WHILE THE CONV LOCK IS HELD.
+
+        CRITICAL: this method must NEVER touch disk. The caller holds
+        ConversationStore._get_conv_lock(cid) and any file I/O here
+        would stall every other write on that conv. The gap check
+        uses two in-memory caches:
+
+          _shared_seq_cache[cid]  — latest seq appended to shared
+                                    (updated by note_shared_seq from
+                                    _append_shared_ctx).
+          _pyramid_seq_cache[cid] — latest seq covered by the pyramid
+                                    (updated by note_pyramid_seq from
+                                    _build_one_bucket).
+
+        On process start neither cache is populated. The first few
+        writes see cache=0, which would naively false-trigger. We
+        guard with a one-time disk fallback per cid: if we're about
+        to enqueue AND haven't populated the cache yet, walk shared
+        once to seed both caches (on the caller's thread — still
+        under conv lock, but only happens once per cid per process).
 
         No-op if:
-          - resolver not injected (no summarizer available);
+          - resolver not injected (no summarizer);
           - a job for this cid is already in flight;
-          - gap since last bucket < L1_TRIGGER_MSGS + TAIL_RESERVE
-            (async is allow_partial=False, so we need at least one
-            full L1-sized chunk to bucket while preserving TAIL_RESERVE
-            msgs as tail; below that threshold, _pick_chunk would
-            return [] and the job would be a no-op).
+          - shared_seq - pyramid_seq < L1_TRIGGER + TAIL_RESERVE.
         """
         if not cid or not user_id:
             return
         if self._summarizer_resolver is None:
             return
-        try:
-            gap = self._shared_gap(cid)
-            if gap < L1_TRIGGER_MSGS + TAIL_RESERVE:
+
+        with self._seq_cache_lock:
+            shared_seq = self._shared_seq_cache.get(cid)
+            pyramid_seq = self._pyramid_seq_cache.get(cid)
+
+        threshold = L1_TRIGGER_MSGS + TAIL_RESERVE
+
+        # Fast path: both caches warm, simple arithmetic.
+        if shared_seq is not None and pyramid_seq is not None:
+            if shared_seq - pyramid_seq < threshold:
                 return
-        except Exception:
-            logger.debug("[bg-bucket] trigger check failed", exc_info=True)
-            return
+        else:
+            # Cold path (first access per cid): seed caches from disk.
+            # Costs one small file read for meta.json + one scan of
+            # shared.jsonl. After this, all subsequent calls are O(1).
+            try:
+                self._seed_seq_caches(cid)
+            except Exception:
+                logger.debug("[bg-bucket] seq cache seed failed",
+                              exc_info=True)
+                return
+            with self._seq_cache_lock:
+                shared_seq = self._shared_seq_cache.get(cid, 0)
+                pyramid_seq = self._pyramid_seq_cache.get(cid, 0)
+            if shared_seq - pyramid_seq < threshold:
+                return
 
         with self._pending_lock:
             if cid in self._pending:
@@ -276,6 +350,82 @@ class BgBucketBuilder:
         return result
 
     # ── Internals ─────────────────────────────────────────────────
+
+    def _seed_seq_caches(self, cid: str) -> None:
+        """One-shot O(1) seed of _shared_seq_cache and _pyramid_seq_cache
+        for a cid on first access per process. Subsequent writes feed
+        the caches via note_shared_seq / note_pyramid_seq — so this
+        runs AT MOST once per cid per process.
+
+        Both reads are O(1):
+          - pyramid last_seq comes from meta.json (small JSON).
+          - shared max seq comes from reading the LAST line of
+            shared.jsonl. Seqs are strictly monotonic per conv
+            (_stamp_line invariant), so the final line carries the max
+            — no full scan needed, regardless of file size.
+        """
+        from core.conversation_store import ConversationStore
+        cs = ConversationStore.instance()
+        conv_dir = cs._conv_dir(cid)
+
+        # Pyramid seed: meta.json read (one small file).
+        store = BucketStore.get(conv_dir)
+        pyramid_seq = store.last_seq
+
+        # Shared seed: last-line read. Open the file in binary, seek to
+        # end, step backwards in small chunks until we find a newline
+        # that bounds the final record, parse JSON, done. O(1) in file
+        # size — touches maybe 4-8 KB regardless of how big shared is.
+        shared_seq = self._read_last_seq(cs._shared_ctx_path(cid))
+
+        with self._seq_cache_lock:
+            # Don't clobber if another thread populated via note_* already
+            self._shared_seq_cache.setdefault(cid, shared_seq)
+            self._pyramid_seq_cache.setdefault(cid, pyramid_seq)
+
+    @staticmethod
+    def _read_last_seq(path) -> int:
+        """Read the seq of the last JSONL record in `path`, O(1) in
+        file size. Returns 0 if the file is missing or empty."""
+        import json as _json
+        import os as _os
+        if not path.exists():
+            return 0
+        try:
+            with open(path, "rb") as f:
+                f.seek(0, _os.SEEK_END)
+                file_size = f.tell()
+                if file_size == 0:
+                    return 0
+                # Walk backwards in 4 KB chunks until we have a line.
+                chunk = 4096
+                data = b""
+                pos = file_size
+                while pos > 0:
+                    read_size = min(chunk, pos)
+                    pos -= read_size
+                    f.seek(pos)
+                    data = f.read(read_size) + data
+                    # Strip trailing newlines to find the real last line
+                    stripped = data.rstrip(b"\n\r")
+                    nl = stripped.rfind(b"\n")
+                    if nl >= 0:
+                        last_line = stripped[nl + 1:]
+                        try:
+                            row = _json.loads(last_line.decode(
+                                "utf-8", errors="replace"))
+                            return int(row.get("seq") or 0)
+                        except (ValueError, _json.JSONDecodeError):
+                            return 0
+                # File had only one line (no internal newline before it)
+                last_line = data.strip()
+                if not last_line:
+                    return 0
+                row = _json.loads(last_line.decode(
+                    "utf-8", errors="replace"))
+                return int(row.get("seq") or 0)
+        except (OSError, ValueError, _json.JSONDecodeError):
+            return 0
 
     def _shared_gap(self, cid: str) -> int:
         """Count shared msgs with seq > pyramid.last_seq."""
@@ -517,6 +667,9 @@ class BgBucketBuilder:
             msg_count=len(chunk),
             model=model, tool_trace=trace,
         )
+        # Keep the O(1) cache in sync so subsequent maybe_trigger calls
+        # reflect the new pyramid coverage without re-reading meta.json.
+        self.note_pyramid_seq(cid, last_seq)
         logger.info(
             "[bg-bucket] built bucket cid=%s seq %d..%d (%d msgs, "
             "summary=%d chars)",

@@ -105,7 +105,10 @@ class AgentLoopTask(
     _active_contexts: Dict[str, dict] = {}
     _active_contexts_lock = threading.Lock()
     _active_claude_client: Dict[str, Any] = {}          # conv_id:agent -> CC client
-    _context_op_events: Dict[str, threading.Event] = {}
+    # Keyed by (conv_id, agent_name). agent_name="" = whole-conv sentinel
+    # that blocks every agent; agent_name="X" blocks only X. See
+    # AgentActionsMixin._is_context_op_free for the full semantics.
+    _context_op_events: Dict[tuple, threading.Event] = {}
     _context_op_lock = threading.Lock()
     _calibrated_cpt: Dict[str, float] = {}               # service_id -> chars_per_token
     _calibrated_cpt_lock = threading.Lock()
@@ -365,8 +368,10 @@ class AgentLoopTask(
 
 
     @classmethod
-    def _detect_context_op(cls, ff) -> Optional[str]:
-        """If the FlowFile is a context-mutating action, return the conversation_id."""
+    def _detect_context_op(cls, ff):
+        """If the FlowFile is a context-mutating action, return
+        (conversation_id, agent_name). agent_name="" for whole-conv
+        ops. Returns None if the FF isn't a context op."""
         raw = ff.get_content().decode("utf-8", errors="replace")
         if not raw.strip().startswith("{"):
             return None
@@ -376,10 +381,50 @@ class AgentLoopTask(
             return None
         if not isinstance(body, dict):
             return None
-        if body.get("action") in cls._CONTEXT_OPS:
-            return body.get("conversation_id") or None
-        return None
+        if body.get("action") not in cls._CONTEXT_OPS:
+            return None
+        cid = body.get("conversation_id") or ""
+        if not cid:
+            return None
+        # agent_name="ALL" (/compact --all, /rebuild --all) → whole-conv
+        _agent = body.get("agent_name") or ""
+        if _agent in ("ALL", "shared"):
+            _agent = ""
+        return (cid, _agent)
 
+
+    @staticmethod
+    def _extract_target_agent(ff) -> str:
+        """Return the agent_name a FlowFile targets, or "" if unknown
+        or whole-conv. Used by is_context_op_free to decide if a FF
+        should pass through the gate when an agent-scoped op is in
+        progress for a DIFFERENT agent on the same conv.
+
+        Resolution order:
+          - body.agent_name (action FlowFiles: /compact claude, etc).
+          - body.target_agent (user msgs with /agent msg override).
+          - otherwise "" → treat as whole-conv (blocked by sentinel).
+
+        The conv's current active agent is NOT consulted here: resolving
+        it requires ConversationStore.get_extra which hits disk, and
+        this check runs on the hot path of the FlowFile peek loop.
+        When unknown, "" is safe because it only blocks against the
+        whole-conv sentinel — never triggers an unnecessary agent-scoped
+        skip.
+        """
+        try:
+            raw = ff.get_content().decode("utf-8", errors="replace")
+            if not raw.strip().startswith("{"):
+                return ""
+            body = json.loads(raw)
+            if not isinstance(body, dict):
+                return ""
+            _a = body.get("agent_name") or body.get("target_agent") or ""
+            if _a in ("ALL", "shared"):
+                return ""
+            return str(_a)
+        except Exception:
+            return ""
 
     @staticmethod
     def _is_action_flowfile(ff) -> bool:
@@ -444,7 +489,8 @@ class AgentLoopTask(
             for ff in conn.peek_all():
                 if self._is_action_flowfile(ff):
                     conv_id = self._extract_conversation_id(ff)
-                    if conv_id and not self._is_context_op_free(conv_id):
+                    _agent = self._extract_target_agent(ff) if conv_id else ""
+                    if conv_id and not self._is_context_op_free(conv_id, _agent):
                         continue
                     return ff, conn
 
@@ -452,7 +498,8 @@ class AgentLoopTask(
         for conn in connections:
             for ff in conn.peek_all():
                 conv_id = self._extract_conversation_id(ff)
-                if conv_id and not self._is_context_op_free(conv_id):
+                _agent = self._extract_target_agent(ff) if conv_id else ""
+                if conv_id and not self._is_context_op_free(conv_id, _agent):
                     continue
                 svc = self._get_service_for_flowfile(ff)
                 if svc is None or svc.has_capacity():
@@ -549,10 +596,13 @@ class AgentLoopTask(
         use_conv_store = self.config.get("conversation_store", False)
         if use_conv_store:
             # Detect context-mutating operations and pause FlowFile processing
-            _ctx_op_conv_id = self._detect_context_op(flowfile)
-            if _ctx_op_conv_id:
-                self.cancel_agent(_ctx_op_conv_id, silent=True)
-                if not self._acquire_context_op(_ctx_op_conv_id, timeout=30.0):
+            _ctx_op_detect = self._detect_context_op(flowfile)
+            if _ctx_op_detect:
+                _ctx_op_conv_id, _ctx_op_agent = _ctx_op_detect
+                self.cancel_agent(_ctx_op_conv_id,
+                                    agent_name=_ctx_op_agent, silent=True)
+                if not self._acquire_context_op(
+                        _ctx_op_conv_id, _ctx_op_agent, timeout=30.0):
                     flowfile.set_content(json.dumps({
                         "error": "Timeout waiting for active agent to finish",
                     }).encode())
@@ -561,7 +611,8 @@ class AgentLoopTask(
                 try:
                     action_result = self._handle_action(flowfile)
                 finally:
-                    self._release_context_op(_ctx_op_conv_id)
+                    self._release_context_op(
+                        _ctx_op_conv_id, _ctx_op_agent)
             else:
                 action_result = self._handle_action(flowfile)
             logger.debug("[agent_loop] _handle_action returned %s",

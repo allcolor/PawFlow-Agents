@@ -329,6 +329,81 @@ def test_tail_reserve_invariant_across_iterations(fake_builder):
     assert store.last_seq == 800 - TAIL_RESERVE
 
 
+def test_per_agent_context_op_lock_isolation():
+    """Agent-scoped context op lock must not block other agents on the
+    same conversation, and must not block any agent on OTHER convs."""
+    import threading
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    task = AgentLoopTask.__new__(AgentLoopTask)
+    # Clear any state from prior tests
+    AgentLoopTask._context_op_events.clear()
+
+    # Conv "c1", acquire lock on agent "claude"
+    assert task._acquire_context_op("c1", "claude", timeout=1.0)
+
+    # claude on c1 is blocked
+    assert not task._is_context_op_free("c1", "claude")
+    # qwen on c1 is FREE — different agent
+    assert task._is_context_op_free("c1", "qwen")
+    # claude on c2 is FREE — different conv
+    assert task._is_context_op_free("c2", "claude")
+    # "" (whole-conv) on c1 is FREE (no whole-conv op in progress)
+    assert task._is_context_op_free("c1", "")
+
+    task._release_context_op("c1", "claude")
+    assert task._is_context_op_free("c1", "claude")
+
+    # Whole-conv op blocks everyone on that conv
+    assert task._acquire_context_op("c1", "", timeout=1.0)
+    assert not task._is_context_op_free("c1", "claude")
+    assert not task._is_context_op_free("c1", "qwen")
+    assert not task._is_context_op_free("c1", "")
+    # But other convs are untouched
+    assert task._is_context_op_free("c2", "claude")
+    task._release_context_op("c1", "")
+
+
+def test_maybe_trigger_is_o1_no_full_scan(fake_builder, monkeypatch):
+    """maybe_trigger must not scan shared.jsonl on the hot path.
+    Cache is populated at first access (using tail-read for seq) then
+    subsequent calls are O(1) dict lookups."""
+    # Simulate shared.jsonl with 10k msgs via the fake builder's shared_path
+    import json as _json
+    with open(fake_builder._shared_path, "w", encoding="utf-8") as f:
+        for i in range(1, 10001):
+            f.write(_json.dumps(_shared_msg(i)) + "\n")
+
+    _wire(fake_builder)
+
+    # Track calls to _read_last_seq — should happen AT MOST once per cid
+    read_calls = []
+    orig = fake_builder.__class__._read_last_seq
+
+    def _counted(path):
+        read_calls.append(path)
+        return orig(path)
+
+    monkeypatch.setattr(
+        fake_builder.__class__, "_read_last_seq", staticmethod(_counted))
+
+    # Simulate what ConversationStore._append_shared_ctx does — caller
+    # hints the latest seq before invoking maybe_trigger.
+    # First call: cold cache → seed (one last-line read).
+    fake_builder.note_shared_seq("cid_test", 10000)
+    fake_builder.maybe_trigger("cid_test", "user_test")
+    # Second, third, fourth call: warm cache, zero disk I/O.
+    fake_builder.note_shared_seq("cid_test", 10001)
+    fake_builder.maybe_trigger("cid_test", "user_test")
+    fake_builder.note_shared_seq("cid_test", 10002)
+    fake_builder.maybe_trigger("cid_test", "user_test")
+
+    # With note_shared_seq populating the cache, _read_last_seq should
+    # NEVER have been called — maybe_trigger never hits the seeding
+    # fallback because the cache was already populated.
+    assert read_calls == []
+
+
 def test_agent_compact_does_not_write_buckets(fake_builder, monkeypatch):
     """Simulate a hot-path compact and assert add_bucket isn't invoked."""
     add_bucket_calls = []

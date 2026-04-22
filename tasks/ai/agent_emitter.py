@@ -257,81 +257,44 @@ class StreamEmitter(AgentEmitter):
 
     # ── LLM interaction ───────────────────────────────────────────────
 
+    # ── Token / thinking callbacks ────────────────────────────────────
+    # The HTTP providers (openai/anthropic) stream tokens/thinking from
+    # the wire, same as CC, but we deliberately DO NOT emit per-chunk
+    # `token` / `thinking_content` SSE events to the UI. CC's UX (which
+    # surfaces whole assistant blocks via turn_callback, never per-char
+    # tokens) is the single canonical experience; HTTP providers now
+    # behave identically.
+    #
+    # The callbacks still exist — the provider hands them every
+    # incoming chunk so we can:
+    #   1. raise AgentCancelled as soon as the generation is stale,
+    #      aborting the streaming HTTP request mid-flight;
+    #   2. bump `_last_token_time` so the heartbeat loop knows the
+    #      stream is alive and doesn't log a stall.
+    # No bus.publish_event here: the final block-level events
+    # (message_meta, tool_call, tool_result, done) carry everything the
+    # UI needs.
+
     def get_token_callback(self, poll_silent: bool) -> Optional[Callable]:
-        cid = self.event_cid
-        bus = self.bus
-        agent_name = self._agent_name
-        source = self._agent_source()
-        # Override source when this turn is a delegate reply so the UI
-        # routes the live stream into the private delegate block.
-        _tm = (self.ctx.get("_turn_mode") or {}) if isinstance(self.ctx, dict) else {}
-        if (_tm.get("type") == "delegate_reply"
-                and _tm.get("source_agent")):
-            source = {
-                "type": "agent_delegate",
-                "from": agent_name or "",
-                "to": _tm["source_agent"],
-            }
         gen_key = self.gen_key
         generation = self.generation
         agent = self.agent
-        _tid = self._task_id
-
-        _emitter = self  # capture for closure
-        _ctx = self.ctx
+        _emitter = self
 
         def on_token(text: str):
             if not agent._is_current_generation(gen_key, generation):
                 raise AgentCancelled()
             _emitter._last_token_time = time.time()
-            if not poll_silent:
-                evt = {
-                    "text": text,
-                    "msg_id": _emitter._current_msg_id,
-                    "agent_name": agent_name or "",
-                    "source": source,
-                }
-                if _tid:
-                    evt["task_id"] = _tid
-                    evt["task_iteration"] = _ctx.get("_task_iteration", 0)
-                bus.publish_event(cid, "token", evt)
         return on_token
 
     def get_thinking_callback(self, poll_silent: bool) -> Optional[Callable]:
-        cid = self.event_cid
-        bus = self.bus
-        agent_name = self._agent_name
         gen_key = self.gen_key
         generation = self.generation
         agent = self.agent
-        _tid = self._task_id
-        _ctx = self.ctx
-        # Tag thinking events with agent_delegate source in delegate_reply
-        # turns so the UI groups them under the private delegate frame.
-        _tm = (_ctx.get("_turn_mode") or {}) if isinstance(_ctx, dict) else {}
-        _delegate_src = None
-        if (_tm.get("type") == "delegate_reply"
-                and _tm.get("source_agent")):
-            _delegate_src = {
-                "type": "agent_delegate",
-                "from": agent_name or "",
-                "to": _tm["source_agent"],
-            }
 
         def on_thinking(text: str):
             if not agent._is_current_generation(gen_key, generation):
                 raise AgentCancelled()
-            if not poll_silent:
-                evt = {
-                    "text": text,
-                    "agent_name": agent_name or "",
-                }
-                if _delegate_src:
-                    evt["source"] = _delegate_src
-                if _tid:
-                    evt["task_id"] = _tid
-                    evt["task_iteration"] = _ctx.get("_task_iteration", 0)
-                bus.publish_event(cid, "thinking_content", evt)
         return on_thinking
 
     def start_heartbeat(self, poll_silent: bool) -> Any:

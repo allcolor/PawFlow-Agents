@@ -801,8 +801,6 @@ class ConversationStore:
             _bb = BgBucketBuilder.instance()
             if _max_seq:
                 _bb.note_shared_seq(cid, _max_seq)
-            if messages:
-                _bb.note_shared_rows_added(cid, len(messages))
             _uid = self._cid_user.get(cid, "") or ""
             if _uid:
                 _bb.maybe_trigger(cid, _uid)

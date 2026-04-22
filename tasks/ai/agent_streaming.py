@@ -563,12 +563,23 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             _had_error = getattr(result, "finish_reason", "") == "error"
 
             # If messages arrived during the last turn, re-trigger a new loop
-            if ctx.get("_retrigger_after_done") and not _had_error:
+            _retrig_flag = ctx.get("_retrigger_after_done")
+            logger.info(
+                "[agent:%s] post-loop retrigger-check: flag=%s had_error=%s "
+                "finish_reason=%r",
+                conversation_id[:8], bool(_retrig_flag), _had_error,
+                getattr(result, "finish_reason", ""))
+            if _retrig_flag and not _had_error:
                 ctx.pop("_retrigger_after_done", None)
                 logger.info("[agent:%s] re-triggering loop for queued messages",
                             conversation_id[:8])
                 result = self._run_agent_loop(ctx, emitter)
                 _had_error = getattr(result, "finish_reason", "") == "error"
+                logger.info(
+                    "[agent:%s] retrigger loop returned: had_error=%s "
+                    "finish_reason=%r",
+                    conversation_id[:8], _had_error,
+                    getattr(result, "finish_reason", ""))
 
             # Set idle status
 

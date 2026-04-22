@@ -1540,11 +1540,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 etype = event.get("type", "")
                 _hb_state["last_event_kind"] = etype
                 _parent_tc_id = event.get("parent_tool_use_id") or ""
-                # Raw event dump — too chatty for INFO (every assistant
-                # delta, every tool_use block, every rate_limit_event…).
-                # Stays at debug so anyone diagnosing CC behavior can
-                # re-enable it via log level.
-                logger.debug("[claude-code] %s %.200s", etype, json.dumps(event))
+                # DIAG: raw event logging at INFO (full, truncated 500
+                # chars) so we can see what shape CC really sends for
+                # thinking on this build. Revert to debug once the
+                # protocol is confirmed.
+                logger.info("[cc-raw] %s %.500s", etype, json.dumps(event))
 
                 if etype == "system":
                     # Capture AND persist session_id from init event immediately.

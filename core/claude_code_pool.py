@@ -320,7 +320,6 @@ class ClaudeCodePool:
             os.path.dirname(os.path.abspath(__file__)))
         _bridge_src_files = [
             (os.path.join(_project_root, "tools"), "mcp_bridge.py"),
-            (os.path.join(_project_root, "tools"), "ws_frame.py"),
             (os.path.join(_project_root, "docker", "pawflow_sdk"),
              "pawflow.py"),
         ]
@@ -331,6 +330,15 @@ class ClaudeCodePool:
                 _translated = translate_path(to_host_path(_src))
                 _bridge_mounts += [
                     "-v", f"{_translated}:/opt/pawflow/{_rf}:ro"]
+        # Mount the pawflow_relay/ package so the bridge can
+        # `from pawflow_relay.ws_frame import ...`. Same pattern as
+        # pawflow_relay/thread.py:384: live-reload against the host tree,
+        # Python resolves the package via __init__.py.
+        _pkg_dir = os.path.join(_project_root, "pawflow_relay")
+        if os.path.isdir(_pkg_dir):
+            _translated_pkg = translate_path(to_host_path(_pkg_dir))
+            _bridge_mounts += [
+                "-v", f"{_translated_pkg}:/opt/pawflow/pawflow_relay:ro"]
 
         logger.info(
             "[pool] bridge dev-mounts (%d): %s",

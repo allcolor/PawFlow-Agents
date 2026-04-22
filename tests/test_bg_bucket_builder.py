@@ -221,7 +221,9 @@ def test_pick_chunk_returns_empty_when_gap_too_small(fake_builder):
 
 
 def test_pick_chunk_normal_returns_l1_trigger_msgs(fake_builder):
-    msgs = [_shared_msg(i) for i in range(1, 301)]
+    # Need ≥ L1_TRIGGER + TAIL_RESERVE msgs for a normal L1 bucket
+    # (last L1_TRIGGER always reserved as tail).
+    msgs = [_shared_msg(i) for i in range(1, 2 * L1_TRIGGER_MSGS + 10 + 1)]
     chunk = fake_builder._pick_chunk(msgs, 0, allow_partial=False)
     assert len(chunk) == L1_TRIGGER_MSGS
 
@@ -232,7 +234,7 @@ def test_pick_chunk_bulk_mode_when_pyramid_empty_and_large_gap(fake_builder):
     msgs = [_shared_msg(i) for i in range(1, n + 1)]
     chunk = fake_builder._pick_chunk(msgs, current_object_count=0,
                                        allow_partial=False)
-    # Bulk absorbs everything except the last L1_TRIGGER_MSGS msgs
+    # Bulk absorbs everything except the last L1_TRIGGER_MSGS msgs (tail reserve)
     assert len(chunk) == n - L1_TRIGGER_MSGS
     # ... which is way more than a normal L1 chunk
     assert len(chunk) > L1_TRIGGER_MSGS * 2
@@ -248,26 +250,35 @@ def test_pick_chunk_bulk_not_fired_when_pyramid_not_empty(fake_builder):
 
 
 def test_pick_chunk_partial_when_allowed(fake_builder):
-    # Gap = 80 msgs, below L1_TRIGGER (150) but above _PARTIAL_MIN (37)
-    msgs = [_shared_msg(i) for i in range(1, 81)]
+    # Need gap > TAIL_RESERVE for anything to be bucketable.
+    # Gap = 200: available = 50 → in partial range (>=37, <150).
+    msgs = [_shared_msg(i) for i in range(1, 201)]
     chunk = fake_builder._pick_chunk(msgs, current_object_count=3,
                                        allow_partial=True)
-    assert len(chunk) == 80
+    assert len(chunk) == 50  # = 200 - TAIL_RESERVE(150)
 
 
 def test_pick_chunk_partial_blocked_when_too_small(fake_builder):
-    # Gap = 30 msgs, below _PARTIAL_MIN
-    msgs = [_shared_msg(i) for i in range(1, 31)]
+    # Gap = 180: available = 30 (< _PARTIAL_MIN=37) → return []
+    msgs = [_shared_msg(i) for i in range(1, 181)]
     chunk = fake_builder._pick_chunk(msgs, current_object_count=3,
                                        allow_partial=True)
     assert chunk == []
 
 
 def test_pick_chunk_partial_not_allowed_async(fake_builder):
-    # Same 80 msgs but allow_partial=False → no chunk
-    msgs = [_shared_msg(i) for i in range(1, 81)]
+    # Same 200 msgs but allow_partial=False → no chunk (available=50 < L1)
+    msgs = [_shared_msg(i) for i in range(1, 201)]
     chunk = fake_builder._pick_chunk(msgs, current_object_count=3,
                                        allow_partial=False)
+    assert chunk == []
+
+
+def test_pick_chunk_tail_only_returns_empty(fake_builder):
+    # gap <= TAIL_RESERVE → no bucketable content, tail-only
+    msgs = [_shared_msg(i) for i in range(1, L1_TRIGGER_MSGS + 1)]
+    chunk = fake_builder._pick_chunk(msgs, current_object_count=0,
+                                       allow_partial=True)
     assert chunk == []
 
 
@@ -286,7 +297,8 @@ def _make_summarize_fn(output: str = "## Narrative\nok\n\n## Files & operations\
 
 
 def test_build_now_sync_builds_normal_l1_bucket(fake_builder):
-    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS)
+    # Need gap ≥ L1 + TAIL_RESERVE for a normal L1 bucket (tail reserved)
+    _write_shared(fake_builder._shared_path, 2 * L1_TRIGGER_MSGS)
     summarize_fn, calls = _make_summarize_fn()
     fake_builder.set_summarizer_resolver(
         lambda uid: (_fake_client(), 128000, "svc-test"))
@@ -298,12 +310,17 @@ def test_build_now_sync_builds_normal_l1_bucket(fake_builder):
     assert result["final_object_count"] == 1
     assert len(calls) == 1
     assert calls[0]["n_msgs"] == L1_TRIGGER_MSGS
+    # Last TAIL_RESERVE msgs stay un-bucketed
+    store = BucketStore.get(fake_builder._conv_dir)
+    assert store.last_seq == L1_TRIGGER_MSGS  # only first chunk bucketed
 
 
-def test_build_now_sync_bulk_catchup_yields_two_objects(fake_builder):
-    # 50k msgs simulated at small scale: 1000 msgs total → bulk absorbs
-    # 850, then 1 normal L1 of 150 → 2 buckets
-    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS * 7)
+def test_build_now_sync_bulk_catchup_preserves_tail(fake_builder):
+    # Large gap (7×L1) with empty pyramid → bulk absorbs n - TAIL_RESERVE
+    # in one bucket; the last TAIL_RESERVE msgs stay as tail (no second
+    # bucket created in the same sync pass).
+    n = L1_TRIGGER_MSGS * 7
+    _write_shared(fake_builder._shared_path, n)
     summarize_fn, calls = _make_summarize_fn()
     fake_builder.set_summarizer_resolver(
         lambda uid: (_fake_client(), 128000, "svc-test"))
@@ -311,20 +328,20 @@ def test_build_now_sync_bulk_catchup_yields_two_objects(fake_builder):
 
     result = fake_builder.build_now_sync("cid_test", "user_test",
                                            allow_partial=False)
-    # Bulk (n - 150) + normal L1 (150) = 2 buckets
-    assert result["buckets_built"] == 2
-    # First call summarized the BULK portion
-    assert calls[0]["n_msgs"] == L1_TRIGGER_MSGS * 7 - L1_TRIGGER_MSGS
-    # Second call summarized the recent L1_TRIGGER_MSGS window
-    assert calls[1]["n_msgs"] == L1_TRIGGER_MSGS
+    assert result["buckets_built"] == 1  # only the bulk bucket
+    assert calls[0]["n_msgs"] == n - L1_TRIGGER_MSGS  # all but tail reserve
+    # last TAIL_RESERVE msgs NOT in pyramid
+    store = BucketStore.get(fake_builder._conv_dir)
+    assert store.last_seq == n - L1_TRIGGER_MSGS
 
 
-def test_build_now_sync_partial_flush_when_allowed(fake_builder):
-    # Gap = 80 msgs — below L1 trigger, above _PARTIAL_MIN.
-    # Pre-seed the store with one bucket so we're NOT in bulk mode.
+def test_build_now_sync_partial_flush_preserves_tail(fake_builder):
+    # Gap 200 with existing pyramid + allow_partial: available = 50
+    # (between _PARTIAL_MIN=37 and L1_TRIGGER=150) → partial bucket
+    # flushes 50 msgs; last 150 stay as tail.
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="pre-existing")
-    _write_shared(fake_builder._shared_path, 80, start_seq=101)
+    _write_shared(fake_builder._shared_path, 200, start_seq=101)
 
     summarize_fn, calls = _make_summarize_fn()
     fake_builder.set_summarizer_resolver(
@@ -333,15 +350,15 @@ def test_build_now_sync_partial_flush_when_allowed(fake_builder):
 
     result = fake_builder.build_now_sync("cid_test", "user_test",
                                            allow_partial=True)
-    # The 80-msg partial bucket is flushed
     assert result["buckets_built"] == 1
-    assert calls[0]["n_msgs"] == 80
+    assert calls[0]["n_msgs"] == 50  # 200 - TAIL_RESERVE(150)
 
 
 def test_build_now_sync_no_partial_when_forbidden(fake_builder):
+    # Gap 200, allow_partial=False: available = 50 < L1_TRIGGER → 0 bucket
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="pre-existing")
-    _write_shared(fake_builder._shared_path, 80, start_seq=101)
+    _write_shared(fake_builder._shared_path, 200, start_seq=101)
 
     summarize_fn, calls = _make_summarize_fn()
     fake_builder.set_summarizer_resolver(
@@ -350,7 +367,6 @@ def test_build_now_sync_no_partial_when_forbidden(fake_builder):
 
     result = fake_builder.build_now_sync("cid_test", "user_test",
                                            allow_partial=False)
-    # No bucket built — gap below L1 trigger and partial not allowed
     assert result["buckets_built"] == 0
     assert calls == []
 
@@ -382,8 +398,8 @@ def test_build_now_sync_empty_summary_breaks_loop(fake_builder):
 
 
 def test_build_persists_tool_trace_on_bucket(fake_builder):
-    # Seed shared + transcript so trace extraction finds something
-    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS)
+    # Need ≥ L1 + TAIL_RESERVE msgs to build a bucket
+    _write_shared(fake_builder._shared_path, 2 * L1_TRIGGER_MSGS)
     # Minimal transcript with one tool_call in-range
     with open(fake_builder._transcript_path, "w", encoding="utf-8") as f:
         f.write(json.dumps({
@@ -411,7 +427,8 @@ def test_build_persists_tool_trace_on_bucket(fake_builder):
 
 
 def test_maybe_trigger_dedupes_in_flight_jobs(fake_builder):
-    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS * 2)
+    # Need ≥ L1 + TAIL_RESERVE = 2×L1 msgs for maybe_trigger to consider firing
+    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS * 3)
     fake_builder.set_summarizer_resolver(
         lambda uid: (_fake_client(), 128000, "svc-test"))
 

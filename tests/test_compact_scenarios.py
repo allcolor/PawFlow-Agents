@@ -72,84 +72,86 @@ def test_young_conv_no_bucket_no_pyramid(fake_builder):
 # ── C. /compact on huge empty-pyramid conv (bulk mode) ─────────────
 
 
-def test_bulk_catchup_absorbs_bulk_plus_tail_l1(fake_builder):
-    """pyramid empty + gap >> L1 → 1 bulk bucket + 1 L1 tail bucket."""
+def test_bulk_catchup_absorbs_bulk_and_preserves_tail(fake_builder):
+    """pyramid empty + gap >> L1: bulk absorbs all pre-tail, last
+    TAIL_RESERVE msgs stay un-bucketed as the recent window."""
     n = L1_TRIGGER_MSGS * 7  # 1050 msgs, well past bulk_threshold (750)
     _write_shared(fake_builder._shared_path, n)
     fn, calls = _wire(fake_builder)
 
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=False)
-    assert result["buckets_built"] == 2
-    assert calls[0]["n_msgs"] == n - L1_TRIGGER_MSGS  # bulk absorbs all but last 150
-    assert calls[1]["n_msgs"] == L1_TRIGGER_MSGS       # tail L1
+    assert result["buckets_built"] == 1  # only the bulk bucket
+    assert calls[0]["n_msgs"] == n - L1_TRIGGER_MSGS  # all but tail reserve
 
     store = BucketStore.get(fake_builder._conv_dir)
-    assert store.object_count == 2
-    # Pyramid covers the entire shared stream
-    assert store.last_seq == n
+    assert store.object_count == 1
+    # Last TAIL_RESERVE msgs stay uncovered — they are the tail
+    assert store.last_seq == n - L1_TRIGGER_MSGS
 
 
 def test_bulk_not_fired_with_preexisting_pyramid(fake_builder):
-    """Mid-conv compact shouldn't bulk — pyramid already seeded."""
+    """Mid-conv compact shouldn't bulk — pyramid already seeded.
+    450 new msgs → available = 300 → 2 × L1 chunks, then tail reserve."""
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="seed")
 
-    n_new = L1_TRIGGER_MSGS * 3  # 450 new msgs (would be bulk if pyramid empty)
+    n_new = L1_TRIGGER_MSGS * 3  # 450 new msgs
     _write_shared(fake_builder._shared_path, n_new, start_seq=101)
     fn, calls = _wire(fake_builder)
 
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=False)
-    # With existing pyramid, chunks are L1_TRIGGER_MSGS each — no bulk
+    # available = 450 - TAIL_RESERVE(150) = 300 → 2 L1 chunks
     for c in calls:
         assert c["n_msgs"] == L1_TRIGGER_MSGS
-    assert result["buckets_built"] == 3
+    assert result["buckets_built"] == 2
 
 
 # ── D. Partial flush (force=True with small gap) ────────────────────
 
 
 def test_partial_flush_when_allowed_and_above_min(fake_builder):
-    """gap in [PARTIAL_MIN..L1_TRIGGER) + allow_partial → partial bucket."""
+    """gap=200, pyramid non-empty → available=50 (in [PARTIAL_MIN, L1))
+    → one partial bucket of 50 msgs; tail = last 150."""
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="seed")
-    _write_shared(fake_builder._shared_path, 80, start_seq=101)
+    _write_shared(fake_builder._shared_path, 200, start_seq=101)
 
     fn, calls = _wire(fake_builder)
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=True)
     assert result["buckets_built"] == 1
-    assert calls[0]["n_msgs"] == 80
+    assert calls[0]["n_msgs"] == 50  # 200 - TAIL_RESERVE(150)
 
 
-# ── F. Gap < PARTIAL_MIN → no bucket even with allow_partial ───────
+# ── F. Gap ≤ TAIL_RESERVE → no bucket (everything is tail) ─────────
 
 
-def test_partial_below_min_leaves_gap_untouched(fake_builder):
-    """gap < PARTIAL_MIN (37) → no bucket built, even with allow_partial=True."""
+def test_gap_below_tail_reserve_leaves_all_uncovered(fake_builder):
+    """gap ≤ TAIL_RESERVE → available ≤ 0 → no bucket, everything is tail."""
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="seed")
-    _write_shared(fake_builder._shared_path, 20, start_seq=101)
+    _write_shared(fake_builder._shared_path, 100, start_seq=101)
 
     fn, calls = _wire(fake_builder)
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=True)
     assert result["buckets_built"] == 0
     assert calls == []
-    # Gap stays uncovered: downstream hot path sees them in saved_recent
     store = BucketStore.get(fake_builder._conv_dir)
     assert store.last_seq == 100  # unchanged
 
 
-# ── E. Mid-conv /compact with ≥ L1 msgs ────────────────────────────
+# ── E. Mid-conv /compact with gap > 2×L1 ───────────────────────────
 
 
 def test_midconv_compact_chunks_l1_sized(fake_builder):
-    """Normal mid-conv /compact builds L1-sized chunks."""
+    """Normal mid-conv /compact builds L1-sized chunks + preserves tail.
+    Gap=470: available=320 → 2 L1 chunks + 20 leftover < PARTIAL_MIN
+    stays uncovered (absorbed into tail along with reserved 150)."""
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="seed")
-    _write_shared(fake_builder._shared_path, 320, start_seq=101)
+    _write_shared(fake_builder._shared_path, 470, start_seq=101)
 
     fn, calls = _wire(fake_builder)
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=True)
-    # 320 / 150 = 2 L1 chunks + 20 leftover; 20 < PARTIAL_MIN so it stays uncovered
     assert result["buckets_built"] == 2
     for c in calls:
         assert c["n_msgs"] == L1_TRIGGER_MSGS
@@ -165,8 +167,9 @@ def test_rollup_fires_on_object_count_threshold(fake_builder):
     for i in range(ROLLUP_TRIGGER_COUNT):
         store.add_bucket(i * 10 + 1, (i + 1) * 10,
                           float(i), float(i) + 1,
-                          summary=f"phase {i} " * 10)  # small but non-empty
-    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS,
+                          summary=f"phase {i} " * 10)
+    # Need gap ≥ L1 + TAIL_RESERVE to trigger one new L1 bucket
+    _write_shared(fake_builder._shared_path, 2 * L1_TRIGGER_MSGS,
                    start_seq=ROLLUP_TRIGGER_COUNT * 10 + 1)
 
     fn, calls = _wire(fake_builder)
@@ -176,8 +179,7 @@ def test_rollup_fires_on_object_count_threshold(fake_builder):
     assert result["buckets_built"] == 1
     assert result["rollups_fired"] >= 1
     store = BucketStore.get(fake_builder._conv_dir)
-    # Should collapse the 30 old + new = 31 down; rollup keeps last, so 2
-    assert store.object_count <= 2 + 1  # allow slight slack, but much less than 31
+    assert store.object_count <= 2 + 1
 
 
 # ── H. Memory extractor fires on each bucket ───────────────────────
@@ -198,7 +200,8 @@ def test_memory_extractor_called_per_bucket(fake_builder, monkeypatch):
     monkeypatch.setattr("core.memory_auto_extract.auto_extract_memories",
                          _fake_extract)
 
-    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS * 2)
+    # Gap ≥ 3×L1 to have 2 L1 chunks to bucket (plus tail reserve)
+    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS * 3)
     fn, _ = _wire(fake_builder, summarize_output="detailed summary " * 10)
     fake_builder.build_now_sync("cid", "uid", allow_partial=False)
 
@@ -214,7 +217,8 @@ def test_memory_extractor_called_per_bucket(fake_builder, monkeypatch):
 
 def test_bucket_doc_carries_tool_trace(fake_builder):
     """Shared-scan + transcript extract populates tool_trace on the bucket."""
-    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS)
+    # Need gap ≥ L1 + TAIL_RESERVE = 2×L1 for a bucket to be built
+    _write_shared(fake_builder._shared_path, 2 * L1_TRIGGER_MSGS)
     # Inject an edit tool_call on a transcript msg in-range
     with open(fake_builder._transcript_path, "w", encoding="utf-8") as f:
         f.write(json.dumps({
@@ -282,6 +286,47 @@ def test_pyramid_path_is_shared_not_per_agent(fake_builder):
 
 
 # ── invariant: bg writer is the only API surface for mutation ──────
+
+
+def test_tail_reserve_invariant_after_sync_build(fake_builder):
+    """Core invariant: after build_now_sync on any gap size, the last
+    TAIL_RESERVE shared msgs stay un-bucketed — they form the recent
+    window every post-compact output carries."""
+    from core.bucket_store import TAIL_RESERVE
+
+    # Large backlog
+    n = 50_000
+    _write_shared(fake_builder._shared_path, n)
+    fn, _ = _wire(fake_builder)
+    fake_builder.build_now_sync("cid", "uid", allow_partial=True)
+
+    store = BucketStore.get(fake_builder._conv_dir)
+    # Last TAIL_RESERVE msgs NOT in pyramid → their seqs > pyramid.last_seq
+    assert store.last_seq == n - TAIL_RESERVE
+    # Which means a downstream pre-filter (m.seq > last_seq) keeps
+    # exactly the last TAIL_RESERVE msgs as tail.
+    tail_msgs = [s for s in range(n - TAIL_RESERVE + 1, n + 1)]
+    assert len(tail_msgs) == TAIL_RESERVE
+
+
+def test_tail_reserve_invariant_across_iterations(fake_builder):
+    """After multiple build_now_sync iterations on accumulating
+    shared, the tail reserve invariant holds every time."""
+    from core.bucket_store import TAIL_RESERVE
+
+    fn, _ = _wire(fake_builder)
+
+    # First batch: 500 msgs
+    _write_shared(fake_builder._shared_path, 500)
+    fake_builder.build_now_sync("cid", "uid", allow_partial=True)
+    store = BucketStore.get(fake_builder._conv_dir)
+    assert store.last_seq == 500 - TAIL_RESERVE  # tail reserved
+
+    # Add 300 more. Total = 800.
+    _write_shared(fake_builder._shared_path, 300, start_seq=501)
+    fake_builder.build_now_sync("cid", "uid", allow_partial=True)
+    store = BucketStore.get(fake_builder._conv_dir)
+    assert store.last_seq == 800 - TAIL_RESERVE
 
 
 def test_agent_compact_does_not_write_buckets(fake_builder, monkeypatch):

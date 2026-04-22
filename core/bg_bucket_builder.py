@@ -33,7 +33,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from core.bucket_store import (
     BUCKET_OUTPUT_TARGET, HEADER_BUDGET, L1_TRIGGER_MSGS,
-    ROLLUP_TRIGGER_COUNT, BucketStore,
+    ROLLUP_TRIGGER_COUNT, TAIL_RESERVE, BucketStore,
 )
 from core.tool_activity_digest import (
     extract_tool_activity, format_activity_digest, is_empty, merge_traces,
@@ -138,7 +138,11 @@ class BgBucketBuilder:
         No-op if:
           - resolver not injected (no summarizer available);
           - a job for this cid is already in flight;
-          - shared seq gap since last bucket < L1_TRIGGER_MSGS.
+          - gap since last bucket < L1_TRIGGER_MSGS + TAIL_RESERVE
+            (async is allow_partial=False, so we need at least one
+            full L1-sized chunk to bucket while preserving TAIL_RESERVE
+            msgs as tail; below that threshold, _pick_chunk would
+            return [] and the job would be a no-op).
         """
         if not cid or not user_id:
             return
@@ -146,7 +150,7 @@ class BgBucketBuilder:
             return
         try:
             gap = self._shared_gap(cid)
-            if gap < L1_TRIGGER_MSGS:
+            if gap < L1_TRIGGER_MSGS + TAIL_RESERVE:
                 return
         except Exception:
             logger.debug("[bg-bucket] trigger check failed", exc_info=True)
@@ -387,25 +391,33 @@ class BgBucketBuilder:
                      allow_partial: bool = False) -> List[Dict]:
         """Choose the next chunk of shared msgs for a single bucket.
 
-        - Normal case: L1_TRIGGER_MSGS msgs.
-        - Bulk catchup: pyramid is empty AND we have
-          >= L1_TRIGGER_MSGS × _BULK_CATCHUP_MULTIPLIER msgs waiting →
-          absorb everything except the last L1_TRIGGER_MSGS into one
-          bucket. The summarize pipeline's internal chunker handles
-          oversize input — no manual chunking here.
-        - Partial (sync only): gap < L1_TRIGGER_MSGS and allow_partial
-          → build a smaller bucket with whatever remains. Floor at
-          _PARTIAL_MIN to avoid paying an LLM call for a tiny chunk.
+        CORE INVARIANT: the last TAIL_RESERVE msgs are NEVER bucketed.
+        They form the "recent window" that every post-compact output
+        carries. Every branch here subtracts TAIL_RESERVE from `n`
+        before deciding — `available` is what's legitimately
+        bucketable in this call.
+
+        - Bulk catchup: pyramid empty AND total gap ≥ L1_TRIGGER ×
+          _BULK_CATCHUP_MULTIPLIER → one big bucket absorbs all
+          pre-tail msgs (available). Internal chunker in
+          _summarize_messages handles oversize input.
+        - Normal L1: available ≥ L1_TRIGGER_MSGS → 150-msg chunk.
+        - Partial (sync only): available in [_PARTIAL_MIN, L1_TRIGGER)
+          and allow_partial=True → flush what's bucketable (still
+          preserving TAIL_RESERVE).
+        - Tail-only: available ≤ 0 → return [], nothing to do.
         """
         n = len(shared_msgs)
+        available = n - TAIL_RESERVE
+        if available <= 0:
+            return []
         bulk_threshold = L1_TRIGGER_MSGS * self._BULK_CATCHUP_MULTIPLIER
         if current_object_count == 0 and n >= bulk_threshold:
-            bulk_size = n - L1_TRIGGER_MSGS
-            return shared_msgs[:bulk_size]
-        if n >= L1_TRIGGER_MSGS:
+            return shared_msgs[:available]
+        if available >= L1_TRIGGER_MSGS:
             return shared_msgs[:L1_TRIGGER_MSGS]
-        if allow_partial and n >= self._PARTIAL_MIN:
-            return shared_msgs[:n]
+        if allow_partial and available >= self._PARTIAL_MIN:
+            return shared_msgs[:available]
         return []
 
     def _build_one_bucket(self, cid: str, user_id: str,

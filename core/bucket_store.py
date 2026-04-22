@@ -51,6 +51,17 @@ BUCKET_OUTPUT_TARGET = 2000
 HEADER_BUDGET = 30000
 ROLLUP_TRIGGER_COUNT = 30
 
+# The last TAIL_RESERVE shared msgs are NEVER bucketed — they stay as
+# the "recent window" that every post-compact context carries. The
+# only way they shrink below this count is force_fit (step 2d), when
+# the assembled output still busts cap even after tool-truncate +
+# private digest + header compression.
+#
+# Set equal to L1_TRIGGER_MSGS so the bg trigger cadence (ping when
+# L1_TRIGGER new msgs exist past the pyramid) matches exactly one
+# bucket's worth of work while keeping one L1's worth as tail.
+TAIL_RESERVE = L1_TRIGGER_MSGS
+
 
 class BucketStore:
     """Per-conversation pyramidal summary cache (single _shared pyramid).

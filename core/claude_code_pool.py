@@ -210,17 +210,13 @@ class ClaudeCodePool:
         # before exec'ing claude — Claude Code refuses to run as root.
         exec_args = [
             "-i",
-            # `-t` allocates a pseudo-TTY for the container process.
-            # Required because claude-code is a Node.js binary and
-            # Node block-buffers process.stdout when it's a pipe (non-
-            # TTY) — our stdout reader would see nothing for minutes
-            # while events pile up in Node's internal 8KB buffer.
-            # With a TTY, Node's isTTY detection fires and it switches
-            # to synchronous line-buffered writes, so every JSON event
-            # reaches us within ms of emission. stdbuf/LD_PRELOAD does
-            # NOT work here because Node uses libuv and bypasses libc
-            # stdio — only a real TTY forces line-buffered flushes.
-            "-t",
+            # NOTE: `-t` was tried here but docker CLI refuses because
+            # our Popen stdin is a pipe, not a TTY ("the input device
+            # is not a TTY"). Instead we wrap the claude binary inside
+            # the container with `script -qfc` which creates an
+            # in-container pty — Node's isTTY detection fires on the
+            # pty slave, forcing synchronous line-buffered stdout.
+            # See the _shell_script below.
             "--user", "root",
             "-e", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "-e", "HOME=/workspace",
@@ -261,31 +257,40 @@ class ClaudeCodePool:
         # original goal of 0e22927 without the bash-quirk footgun.
         import shlex
         _claude_quoted = " ".join(shlex.quote(str(a)) for a in claude_args)
-        # With `-t` in exec_args the container process gets a PTY on
-        # fd 0/1/2. Node detects TTY and switches to line-buffered
-        # synchronous stdout writes — the whole reason we need the
-        # PTY (see exec_args comment above).
+        # claude-code is a Node.js binary; Node block-buffers stdout
+        # when it's a pipe (non-TTY). This caused 5-minute stalls in
+        # the compact flow — whole turns of JSON events accumulated
+        # in Node's internal 8KB buffer and only flushed on process
+        # exit (kill). Using `docker exec -t` didn't work because our
+        # Popen stdin is already a pipe, so docker CLI refused
+        # ("the input device is not a TTY").
         #
-        # Default PTY modes we MUST override:
-        #   - echo: TTY echoes input (our JSON pokes on stdin) back
-        #     to stdout. Our parser would see the echo as garbage.
-        #   - icanon: canonical input mode buffers stdin line-by-line
-        #     with editing; CC's stream-json wants raw line reads.
-        #   - onlcr: TTY translates \n → \r\n on output. Python's text
-        #     mode handles either but disabling keeps output clean.
+        # Fix: create a PTY INSIDE the container with `script -qfc`.
+        # script(1) allocates a pty, runs claude attached to it, and
+        # forwards the pty's output back to its own stdout. Node now
+        # sees a TTY on fd 1 (the pty slave) and switches to
+        # synchronous line-buffered writes — every JSON event reaches
+        # us within milliseconds of emission.
+        #   -q        : silent (no "Script started" banner)
+        #   -f        : flush typescript after each write — critical
+        #               for our live parse of stdout
+        #   -c CMD    : command to run inside the pty
+        #   /dev/null : discard the typescript file (we only need the
+        #               live stdout, not a recording).
         #
-        # stty is applied to fd 0 (the PTY) before exec'ing claude.
-        # `|| true` guards against stty refusing if the controlling
-        # terminal setup is unusual; in that case we lose the mode
-        # override but TTY detection still works.
+        # Wrapping via `setpriv` drops privileges to uid 1000 before
+        # execing script, so both script and claude run unprivileged.
+        # setpriv → exec script → fork claude — claude becomes a
+        # descendant of the setpriv-set uid, which is what CC needs
+        # (Claude Code refuses to run as root).
+        _inner = f"claude {_claude_quoted}"
         _shell_script = (
-            f"stty -echo -icanon -onlcr 2>/dev/null || true; "
             f"mkdir -p /workspace && "
             f"mount --bind {shlex.quote(session_dir)} /workspace && "
             f"cd /workspace && "
             f'printf "__PF_CLAUDE_PID=%s\\n" "$$" 1>&2 && '
             f"exec setpriv --reuid=1000 --regid=1000 --clear-groups "
-            f"-- claude {_claude_quoted}"
+            f"-- script -qfc {shlex.quote(_inner)} /dev/null"
         )
         exec_args.extend([
             container_name,

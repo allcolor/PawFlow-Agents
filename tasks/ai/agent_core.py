@@ -431,12 +431,21 @@ class AgentCoreMixin:
                             # on disk BEFORE the SSE fires so a reload
                             # after crash shows the same gauge value the
                             # user just saw (visible = persisted).
+                            #
+                            # But ONLY when we have a real context_max.
+                            # When the provider hasn't self-reported its
+                            # window yet (first-turn CC before the first
+                            # result event lands) the cascade yields
+                            # context_max=0. Persisting that clobbers the
+                            # previous turn's real max=1M with max=0 and
+                            # the UI drops the gauge. Keep the persisted
+                            # map sticky: only write when we have truth.
                             try:
                                 from core.conversation_store import ConversationStore as _CS
                                 _store = _CS.instance()
                                 _pcid = ctx.get("_event_cid", conversation_id)
                                 _agent_for_persist = _src.get("name", "")
-                                if _agent_for_persist:
+                                if _agent_for_persist and int(_src.get("context_max", 0)) > 0:
                                     _cu_map = _store.get_extra(_pcid, "context_usage") or {}
                                     _cu_map[_agent_for_persist] = {
                                         "used": _src["context_used"],

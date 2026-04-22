@@ -250,13 +250,25 @@ class ClaudeCodePool:
         # original goal of 0e22927 without the bash-quirk footgun.
         import shlex
         _claude_quoted = " ".join(shlex.quote(str(a)) for a in claude_args)
+        # stdbuf -oL forces line buffering on stdout. Without it, Node.js
+        # (which claude-code is built on) block-buffers its stdout pipe
+        # by default — it only flushes on buffer-full OR process exit.
+        # Observed symptom: whole turns of JSON events (assistant + tool_use
+        # + tool_result) sit in Node's internal buffer for 5+ minutes,
+        # our `for line in proc.stdout` sees nothing, stall watchdog fires,
+        # kill triggers exit → flush → all the buffered turns appear
+        # simultaneously at kill time. Line-buffering flushes after every
+        # `\n` so each JSON event reaches us within milliseconds of being
+        # emitted by CC. (Note: Node uses libuv for fd I/O, not libc, so
+        # stdbuf's LD_PRELOAD trick isn't guaranteed to take effect — if
+        # this doesn't unblock, fall back to a pty / `script` wrapper.)
         _shell_script = (
             f"mkdir -p /workspace && "
             f"mount --bind {shlex.quote(session_dir)} /workspace && "
             f"cd /workspace && "
             f'printf "__PF_CLAUDE_PID=%s\\n" "$$" 1>&2 && '
             f"exec setpriv --reuid=1000 --regid=1000 --clear-groups "
-            f"-- claude {_claude_quoted}"
+            f"-- stdbuf -oL -eL claude {_claude_quoted}"
         )
         exec_args.extend([
             container_name,

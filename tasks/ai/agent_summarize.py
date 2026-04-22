@@ -664,6 +664,7 @@ class AgentSummarizeMixin:
                     )
                     set_compact_key(compact_key)
                 _stream_response = None
+                _stream_exc = None
                 try:
                     _stream_response = client.complete_stream(
                         messages=[LLMMessage(role="user", content=prompt,
@@ -671,20 +672,43 @@ class AgentSummarizeMixin:
                         max_tokens=min(target_tokens * 3, 8000),
                     )
                 except Exception as e:
-                    logger.error("[compact-cc] attempt %d failed: %s", attempt, e)
-                    _is_auth = "auth" in str(e).lower() or "401" in str(e)
-                    if _is_auth or attempt == max_retries:
-                        raise
-                    continue
+                    # Don't treat this as fatal YET. We deliberately kill
+                    # CC the moment compact_result delivers (see
+                    # _stream_claude_code), which makes CC exit non-zero
+                    # and complete_stream raise. If the summary is
+                    # already on the event, the attempt actually
+                    # SUCCEEDED — poll the event before reporting.
+                    _stream_exc = e
 
+                # Primary success path: the compact_result handler set
+                # the event. timeout=0 means non-blocking peek if
+                # already delivered; small timeout lets a racy tool
+                # dispatch land if it fired right before the kill.
                 try:
-                    summary = wait_for_compact_result(compact_key, timeout=10)
+                    summary = wait_for_compact_result(compact_key, timeout=2)
                     if summary:
-                        logger.info("[compact-cc] got %d chars summary (attempt %d)",
-                                    len(summary), attempt)
+                        logger.info("[compact-cc] got %d chars summary "
+                                     "(attempt %d%s)",
+                                     len(summary), attempt,
+                                     " — CC exit was from our kill, ignored"
+                                     if _stream_exc else "")
                         return _strip_analysis_wrapper(summary)
                 except TimeoutError:
-                    logger.warning("[compact-cc] attempt %d: compact_result not called", attempt)
+                    pass
+
+                # No summary delivered. If complete_stream raised, the
+                # stream exception is the real story — log + decide retry.
+                if _stream_exc is not None:
+                    logger.error("[compact-cc] attempt %d failed: %s",
+                                  attempt, _stream_exc)
+                    _is_auth = ("auth" in str(_stream_exc).lower()
+                                 or "401" in str(_stream_exc))
+                    if _is_auth or attempt == max_retries:
+                        raise _stream_exc
+                    continue
+
+                logger.warning("[compact-cc] attempt %d: compact_result "
+                                "not called", attempt)
 
                 # Fallback: CC under context pressure sometimes emits the
                 # summary as plain text instead of calling compact_result.

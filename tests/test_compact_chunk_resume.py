@@ -138,6 +138,56 @@ def test_empty_conversation_id_raises():
             target_tokens=100, conversation_id="", final=True)
 
 
+def test_summarize_via_cc_kill_on_delivery_not_treated_as_failure(monkeypatch):
+    """_summarize_via_cc deliberately kills CC the moment compact_result
+    delivers (see _stream_claude_code). CC exits non-zero → complete_stream
+    raises. But the summary IS delivered. The caller must poll the event
+    BEFORE treating the exception as a fatal attempt failure, otherwise
+    it retries an already-successful compact and eventually gives up."""
+    from core.handlers import compact_result as _cr
+    from tasks.ai.agent_summarize import AgentSummarizeMixin
+
+    class _Host(AgentSummarizeMixin):
+        pass
+
+    host = _Host()
+    # Synthetic CC-like client that simulates the kill scenario:
+    # registers the summary on the event (as compact_result handler would
+    # on a real tool call), then raises to mimic the non-zero CC exit.
+    class _FakeCC:
+        def __init__(self):
+            self._client = self
+            self._conversation_id = ""
+            self._agent_name = ""
+            self._user_id = ""
+            self._event_cid = ""
+        def complete_stream(self, messages, max_tokens):
+            # Simulate the compact_result handler firing mid-stream,
+            # then the CC kill producing a non-zero exit.
+            _cr._pending["CK_test"]["summary"] = "VALID SUMMARY " * 20
+            _cr._pending["CK_test"]["event"].set()
+            raise RuntimeError(
+                "LLMClientError: Claude CLI stream exited with code 1")
+
+    _cr.set_compact_key("CK_test")
+    calls = {"count": 0}
+
+    def _fake_pub(msg):
+        calls["count"] += 1
+
+    result = host._summarize_via_cc(
+        _FakeCC(), prompt="summarize this", file_id="fid",
+        compact_key="CK_test", target_tokens=500,
+        max_retries=3, _pub=_fake_pub,
+        conversation_id="cid_kill_test", user_id="uid")
+    assert "VALID SUMMARY" in result
+    # Only ONE attempt because the summary was already delivered — the
+    # kill-caused exception MUST NOT trigger a retry.
+    assert calls["count"] == 1, (
+        "retry fired on a successful compact — kill after compact_result "
+        "should be recognised as success, not as an attempt failure")
+
+
 def test_intermediate_pass_keeps_cache_for_outer():
     """When called with final=False (nested chunked call), the cache
     is NOT wiped — the outer caller will wipe it."""

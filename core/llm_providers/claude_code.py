@@ -1133,6 +1133,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         self._had_preempts_this_turn = False
         self._result_emitted = False  # set True when CC emits final result
         self._compacting = False  # set True when CC compact_boundary fires
+        # CC's authoritative context window for the model in use, lifted
+        # from result.modelUsage[model].contextWindow on each result event.
+        # Stays stable across turns within a session (model-invariant).
+        # Initialised once per stream from the previous session's cache
+        # (resumed sessions keep their value) — 0 means "not yet observed,
+        # fall back to service config".
+        if not hasattr(self, '_cc_context_window'):
+            self._cc_context_window = 0
         # Track text of every preempt sent via stdin during this stream so
         # we can locate it in CC's session jsonl by content match. Used by
         # _check_preempt_in_jsonl to determine whether CC has already

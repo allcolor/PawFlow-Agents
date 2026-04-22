@@ -1121,6 +1121,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _turn_text_parts: List[str] = []
         _turn_tool_calls: list = []
         _turn_thinking: str = ""
+        # Redacted thinking tracking. CC/Anthropic return extended-thinking
+        # blocks with thinking="" + signature="..." — the content is
+        # encrypted at the API level. We can't show the reasoning but we
+        # CAN surface "Thought for Xs" so the user sees the agent did
+        # reason, and the chat bubble stays visually aligned with the
+        # pre-redaction UX.
+        _turn_thinking_redacted: bool = False
+        _turn_thinking_start: float = 0.0
+        _turn_thinking_end: float = 0.0
         _tool_results: dict = {}  # tool_use_id → result text
         # Persistent tool_call_id → unwrapped tool name map. _turn_tool_calls
         # is cleared on every _flush_turn, so by the time a tool_result for
@@ -1185,6 +1194,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         def _flush_turn():
             """Emit the accumulated turn via turn_callback."""
             nonlocal _turn_text_parts, _turn_tool_calls, _turn_thinking, content_parts
+            nonlocal _turn_thinking_redacted, _turn_thinking_start, _turn_thinking_end
             text = "".join(_turn_text_parts).strip()
             # Drop phantom tool calls: empty inner args + no result (never executed)
             # For MCP wrapped calls, check the inner arguments, not the wrapper
@@ -1232,6 +1242,18 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 logger.warning("[CC-DROPPED] %d phantom tool call(s): %s", _dropped,
                              json.dumps(_dropped_tcs, default=str, ensure_ascii=False)[:3000])
             turn_thinking = _turn_thinking
+            # Redacted thinking synthesis: if CC sent thinking blocks with
+            # signature but no content (Anthropic API policy — reasoning
+            # is encrypted at the API level), synthesize a user-visible
+            # placeholder so the UI still renders a "Thought for Xs"
+            # bubble instead of silently dropping the signal.
+            if (not turn_thinking) and _turn_thinking_redacted:
+                _dur_s = max(0.0, _turn_thinking_end - _turn_thinking_start)
+                turn_thinking = (
+                    f"[Thought for {_dur_s:.1f}s — reasoning content "
+                    f"redacted by the Anthropic API; the signature is "
+                    f"preserved in the session so the chain of thought "
+                    f"is carried forward on resume.]")
             # Attach results to tool calls
             for t in tc:
                 t["result"] = _tool_results.pop(t.get("id", ""), None)
@@ -1247,6 +1269,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             _turn_text_parts = []
             _turn_tool_calls = []
             _turn_thinking = ""
+            _turn_thinking_redacted = False
+            _turn_thinking_start = 0.0
+            _turn_thinking_end = 0.0
             # Mark the most recent turn flush — the sentinel-session
             # EOF nudger in _stall_watchdog uses this as its silence
             # threshold anchor.
@@ -1540,11 +1565,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 etype = event.get("type", "")
                 _hb_state["last_event_kind"] = etype
                 _parent_tc_id = event.get("parent_tool_use_id") or ""
-                # DIAG: raw event logging at INFO (full, truncated 500
-                # chars) so we can see what shape CC really sends for
-                # thinking on this build. Revert to debug once the
-                # protocol is confirmed.
-                logger.info("[cc-raw] %s %.500s", etype, json.dumps(event))
+                # Raw event dump at DEBUG. Confirmed CC 1.0+ sends
+                # complete `assistant` events (no content_block_delta)
+                # with thinking blocks redacted (thinking="" + signature).
+                logger.debug("[cc-raw] %s %.500s", etype, json.dumps(event))
 
                 if etype == "system":
                     # Capture AND persist session_id from init event immediately.
@@ -1799,16 +1823,26 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                     _ee)
                         elif btype == "thinking":
                             thinking = block.get("thinking", "")
+                            _has_sig = bool(block.get("signature"))
                             logger.info(
-                                "[cc-stream] thinking block: len=%d preview=%r",
-                                len(thinking), thinking[:120])
+                                "[cc-stream] thinking block: len=%d sig=%s preview=%r",
+                                len(thinking), _has_sig, thinking[:120])
                             if thinking:
+                                # Raw reasoning text exposed (rare now;
+                                # Anthropic redacts by default). Persist
+                                # verbatim.
                                 _turn_thinking = thinking
-                                # IMMUTABLE RULE: no stream-time SSE for
-                                # message-level content. thinking_content
-                                # is emitted by _append → writer when the
-                                # LLMMessage carrying .thinking is
-                                # persisted at turn boundary.
+                            elif _has_sig:
+                                # Redacted thinking: signature without
+                                # content. Mark the turn so _flush_turn
+                                # can synthesize a "Thought for Xs"
+                                # placeholder — user gets a visual cue
+                                # that reasoning happened even though
+                                # the API strips the text.
+                                _turn_thinking_redacted = True
+                                if _turn_thinking_start == 0.0:
+                                    _turn_thinking_start = time.time()
+                                _turn_thinking_end = time.time()
                     # Update turn count on status
                     _pub("heartbeat", {
                         "agent_name": agent_name,
@@ -1917,13 +1951,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 elif etype == "content_block_delta":
                     delta = event.get("delta", {})
                     _delta_type = delta.get("type", "")
-                    # DIAG: log each delta's shape once so we verify CC
-                    # actually sends thinking_delta in the expected
-                    # format. Remove after the thinking pipeline is
-                    # confirmed working live.
-                    logger.info(
-                        "[cc-stream] delta type=%r keys=%s",
-                        _delta_type, list(delta.keys()))
                     # Extended thinking is streamed as a sequence of
                     # content_block_delta events carrying `thinking_delta`
                     # (with `delta.thinking` = chunk) and a trailing

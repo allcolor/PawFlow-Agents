@@ -335,18 +335,34 @@ class AgentCoreMixin:
                             {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                             for tc in msg.tool_calls
                         ]
-                    # Build SSE events to publish AFTER write
+                    # Build SSE events to publish AFTER write.
+                    # IMMUTABLE RULE: stream block → LLMMessage → writer →
+                    # transcript/shared/ctx → SSE (emitted post-write by the
+                    # writer via sse_events). Applies to ALL providers —
+                    # claude-code AND LLM-API (openai/anthropic). No
+                    # provider is allowed to publish SSE for message-level
+                    # content (tool_call, tool_result, new_message,
+                    # thinking_content) out-of-band.
                     _sse = []
                     _agent = (msg.source or {}).get("name", "") if msg.source else ""
                     if not _agent:
                         _agent = ctx.get("active_agent_name", "")
                     _svc = (msg.source or {}).get("llm_service", "") if msg.source else ""
-                    # Assistant text → `new_message` so the UI renders it
-                    # live. Applies to BOTH CC (no per-token stream, only
-                    # block callbacks) and HTTP providers (per-token stream
-                    # neutralized by Phase 2 Option B / commit 3b8415d).
-                    # Without this the text only appears after F5 reload
-                    # when _recoverConversation pulls it from transcript.
+                    # Thinking: assistant block may carry a `thinking`
+                    # payload (Anthropic extended thinking, CC thinking
+                    # block). Emit as a separate thinking_content SSE so
+                    # the UI shows the reasoning bubble alongside the
+                    # message. Persisted as msg.thinking in the same
+                    # store_msg (_store_msg["thinking"] above).
+                    _think_text = getattr(msg, "thinking", "") or ""
+                    if msg.role == "assistant" and _think_text:
+                        _sse.append({"type": "thinking_content", "data": {
+                            "text": _think_text,
+                            "msg_id": getattr(msg, "msg_id", ""),
+                            "agent_name": _agent,
+                            "source": msg.source,
+                        }})
+                    # Assistant text → `new_message` so the UI renders it.
                     if (msg.role == "assistant"
                             and isinstance(msg.content, str)
                             and msg.content.strip()):
@@ -356,38 +372,43 @@ class AgentCoreMixin:
                             "msg_id": getattr(msg, "msg_id", ""),
                             "source": msg.source,
                         }})
-                    # tool_call / tool_result events: CC publishes them in
-                    # real-time from claude_code.py (blocks arrive before
-                    # we land here), so skip for CC.
-                    if not ctx.get("_is_claude_code"):
-                        if msg.role == "assistant" and msg.tool_calls:
-                            from core.llm_client import unwrap_mcp_tool
-                            for tc in msg.tool_calls:
-                                _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
-                                if _tc_name == "get_tool_schema":
-                                    continue
-                                _sse.append({"type": "tool_call", "data": {
-                                    "tool": _tc_name, "arguments": _tc_args,
-                                    "tc_id": tc.id,
-                                    "agent_name": _agent, "llm_service": _svc,
-                                }})
-                        if msg.role == "tool":
-                            _raw_tool_name = getattr(msg, '_tool_name', '')
-                            if _raw_tool_name not in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
-                                _preview = (msg.content[:2000] if isinstance(msg.content, str)
-                                            else str(msg.content)[:2000])
-                                if isinstance(_preview, str) and _preview.startswith("[TOOL OUTPUT"):
-                                    _nl = _preview.find("\n")
-                                    if _nl >= 0:
-                                        _preview = _preview[_nl + 1:]
-                                    if _preview.endswith("[/TOOL OUTPUT]"):
-                                        _preview = _preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
-                                _sse.append({"type": "tool_result", "data": {
-                                    "tool": _raw_tool_name,
-                                    "result": _preview,
-                                    "tc_id": getattr(msg, 'tool_call_id', ''),
-                                    "agent_name": _agent, "llm_service": _svc,
-                                }})
+                    # Assistant tool_calls → one tool_call SSE per tc.
+                    if msg.role == "assistant" and msg.tool_calls:
+                        from core.llm_client import unwrap_mcp_tool
+                        for tc in msg.tool_calls:
+                            _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
+                            if _tc_name in ("get_tool_schema",
+                                            "mcp__pawflow__get_tool_schema"):
+                                continue
+                            _sse.append({"type": "tool_call", "data": {
+                                "tool": _tc_name, "arguments": _tc_args,
+                                "tc_id": tc.id,
+                                "agent_name": _agent, "llm_service": _svc,
+                                "msg_id": getattr(msg, "msg_id", ""),
+                                "source": msg.source,
+                            }})
+                    # role=tool → tool_result SSE. The `_tool_name` attr
+                    # is stamped by the dispatching side (CC turn_callback
+                    # or HTTP tools_exec) so the UI can label the result.
+                    if msg.role == "tool":
+                        _raw_tool_name = getattr(msg, '_tool_name', '')
+                        if _raw_tool_name not in (
+                                "get_tool_schema",
+                                "mcp__pawflow__get_tool_schema"):
+                            _preview = (msg.content[:2000] if isinstance(msg.content, str)
+                                        else str(msg.content)[:2000])
+                            if isinstance(_preview, str) and _preview.startswith("[TOOL OUTPUT"):
+                                _nl = _preview.find("\n")
+                                if _nl >= 0:
+                                    _preview = _preview[_nl + 1:]
+                                if _preview.endswith("[/TOOL OUTPUT]"):
+                                    _preview = _preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
+                            _sse.append({"type": "tool_result", "data": {
+                                "tool": _raw_tool_name,
+                                "result": _preview,
+                                "tc_id": getattr(msg, 'tool_call_id', ''),
+                                "agent_name": _agent, "llm_service": _svc,
+                            }})
                     _agent_for_route = ctx.get("active_agent_name", "") or ""
                     ConversationWriter.for_conversation(conversation_id).enqueue_message(
                         _store_msg, agent_name=_agent_for_route,
@@ -714,19 +735,26 @@ class AgentCoreMixin:
 
                     _cc_turn_count = [0]
 
-                    def _claude_code_turn_callback(text, tool_calls):
+                    def _claude_code_turn_callback(text, tool_calls, turn_thinking=""):
                         """Called by claude-code at each internal turn boundary.
 
-                        Persists everything the user sees in the transcript:
-                        - Assistant text → real message (in context)
-                        - Tool calls → display_only (visible but not in LLM context)
-                        - Tool results → display_only, truncated to 300 chars
-                        - Thinking → display_only
+                        IMMUTABLE RULE: stream block → LLMMessage → writer →
+                        transcript + shared + contexts → SSE (post-write).
+                        This callback is where the rule lands for CC: every
+                        block flushed by _flush_turn becomes an LLMMessage
+                        and goes through _append, which enqueues the message
+                        on ConversationWriter with the matching sse_events
+                        (new_message / tool_call / tool_result /
+                        thinking_content). Nothing in claude_code.py's stream
+                        loop is allowed to publish SSE for message-level
+                        content anymore — only status events (heartbeat,
+                        turn_complete, message_meta) still fire live.
 
-                        SSE events (tool_call, tool_result, thinking_content) are
-                        published in real-time by claude_code.py as they arrive from
-                        the stream. This callback only persists + publishes
-                        turn_complete to finalize the streaming element.
+                        Signature: (text, tool_calls[, turn_thinking]). The
+                        3rd arg is present so that thinking emitted on a
+                        text-only turn (no tool_use blocks) still reaches
+                        the writer; _flush_turn handles the back-compat
+                        inspection for any legacy 2-arg callback.
                         """
                         nonlocal tools_called
                         from core.llm_client import LLMToolCall
@@ -760,11 +788,35 @@ class AgentCoreMixin:
                                 _raw_len, _post_len, _raw_len - _post_len,
                                 "DROPPED-ENTIRELY" if _post_len == 0 else "prefix-trimmed")
 
+                        # Thinking is carried on the tool_call message's
+                        # `thinking` field when tool_calls exist
+                        # (_flush_turn attaches it to tc[0]). When the turn
+                        # is text-only, attach thinking to the assistant
+                        # text message so it still reaches transcript +
+                        # context and the thinking_content SSE fires from
+                        # _append.
+                        _text_thinking = turn_thinking if (not tool_calls) else ""
                         if text:
                             msg = LLMMessage(
-                                role="assistant", content=text, source=_src,
+                                role="assistant", content=text,
+                                thinking=_text_thinking,
+                                source=_src,
                                 conversation_id=conversation_id)
-                            _append(msg)  # persists immediately + publishes new_message
+                            _append(msg)  # persists immediately + publishes new_message (+ thinking_content)
+                            turn_msgs.append(msg)
+                            client._last_turn_msg_id = getattr(msg, "msg_id", "")
+                        elif _text_thinking:
+                            # Thinking without text and without tool_calls —
+                            # rare but valid (CC emits a thinking block
+                            # then yields). Persist a standalone assistant
+                            # message whose only payload is thinking so
+                            # the reasoning survives reload + context.
+                            msg = LLMMessage(
+                                role="assistant", content="",
+                                thinking=_text_thinking,
+                                source=_src,
+                                conversation_id=conversation_id)
+                            _append(msg)
                             turn_msgs.append(msg)
                             client._last_turn_msg_id = getattr(msg, "msg_id", "")
 

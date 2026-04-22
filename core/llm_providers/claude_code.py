@@ -1231,14 +1231,19 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 _dropped_tcs = [t for t in _turn_tool_calls if not _has_real_args(t)]
                 logger.warning("[CC-DROPPED] %d phantom tool call(s): %s", _dropped,
                              json.dumps(_dropped_tcs, default=str, ensure_ascii=False)[:3000])
-            thinking = _turn_thinking
+            turn_thinking = _turn_thinking
             # Attach results to tool calls
             for t in tc:
                 t["result"] = _tool_results.pop(t.get("id", ""), None)
-            # Attach thinking
+            # Attach thinking to first tool_call (legacy tc_msg carrier)
+            # AND pass it through as a 3rd positional to turn_callback so
+            # text-only turns (no tool_calls) can still persist it on the
+            # assistant text message. Without the 3rd positional, thinking
+            # is lost whenever the LLM's reply is pure text.
+            _tc_thinking = turn_thinking
             for t in tc:
-                t["thinking"] = thinking
-                thinking = ""  # only first tc gets thinking
+                t["thinking"] = _tc_thinking
+                _tc_thinking = ""  # only first tc gets thinking
             _turn_text_parts = []
             _turn_tool_calls = []
             _turn_thinking = ""
@@ -1246,11 +1251,22 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # EOF nudger in _stall_watchdog uses this as its silence
             # threshold anchor.
             _hb_state["last_turn_flush_ts"] = time.monotonic()
-            if (text or tc) and turn_callback:
-                logger.info("[claude-code] flush turn %d: text=%d chars, tc=%d, callback=%s",
-                            _turn_count, len(text), len(tc), bool(turn_callback))
+            if (text or tc or turn_thinking) and turn_callback:
+                logger.info("[claude-code] flush turn %d: text=%d chars, tc=%d, thinking=%d, callback=%s",
+                            _turn_count, len(text), len(tc), len(turn_thinking), bool(turn_callback))
                 try:
-                    turn_callback(text, tc)
+                    # Back-compat: old callbacks accept (text, tc). New
+                    # callbacks accept (text, tc, thinking). Introspect
+                    # once so we don't break the surface for anyone.
+                    import inspect as _insp
+                    try:
+                        _nparams = len(_insp.signature(turn_callback).parameters)
+                    except (TypeError, ValueError):
+                        _nparams = 2
+                    if _nparams >= 3:
+                        turn_callback(text, tc, turn_thinking)
+                    else:
+                        turn_callback(text, tc)
                 except Exception as e:
                     logger.error("[claude-code] turn_callback error: %s", e,
                                  exc_info=True)
@@ -1755,7 +1771,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             }
                             if _parent_tc_id:
                                 _tc_event["parent_tc_id"] = _parent_tc_id
-                            _pub("tool_call", _tc_event)
+                            # IMMUTABLE RULE: no stream-time SSE for
+                            # message-level content. tool_call goes
+                            # through _append → writer → sse_events at
+                            # turn_callback time. Keep tracking _block_id
+                            # so the tool_relay matcher (_pop_cc_tc) and
+                            # phantom-suppression logic still work.
                             _emitted_sse_tcs.add(_block_id)
                             # Register the CC tool_use id so tool_relay_service
                             # can match it when the MCP bridge forwards the
@@ -1780,10 +1801,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             thinking = block.get("thinking", "")
                             if thinking:
                                 _turn_thinking = thinking
-                                _pub("thinking_content", {
-                                    "text": thinking,
-                                    "agent_name": agent_name,
-                                })
+                                # IMMUTABLE RULE: no stream-time SSE for
+                                # message-level content. thinking_content
+                                # is emitted by _append → writer when the
+                                # LLMMessage carrying .thinking is
+                                # persisted at turn boundary.
                     # Update turn count on status
                     _pub("heartbeat", {
                         "agent_name": agent_name,
@@ -1855,7 +1877,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             }
                             if _parent_tc_id:
                                 _tr_event["parent_tc_id"] = _parent_tc_id
-                            _pub("tool_result", _tr_event)
+                            # IMMUTABLE RULE: no stream-time SSE for
+                            # message-level content. tool_result is
+                            # emitted by _append → writer when the
+                            # role=tool LLMMessage (built by
+                            # _claude_code_turn_callback from
+                            # _tool_results) is persisted.
                             # compact_result is terminal: once CC has
                             # delivered the summary, everything it emits
                             # afterwards is post-summary fluff we don't

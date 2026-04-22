@@ -902,18 +902,47 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                         continue
                     break  # compression didn't help
                 else:
-                    # 2b: digest oldest part of tail into private compaction
+                    # 2b: digest oldest part of tail into private compaction.
+                    # Keep AS MANY recent messages as possible within the
+                    # remaining budget — preserving fidelity at the end of
+                    # the conversation is more important than compressing
+                    # it. Walk the tail from newest to oldest, accumulating
+                    # estimated tokens until the budget is exhausted; those
+                    # counted messages are kept, the rest get digested.
                     if len(saved_recent) < 10:
                         break
+                    # Budget reserved for the recent slice:
+                    #   cap - non-saved bytes (sys + bridge + any already-
+                    #   prepended digest from a previous iter) - reserve
+                    #   for the digest message we're about to insert.
+                    _non_saved_tokens = _estimate(
+                        [m for m in compacted if m not in saved_recent])
+                    _DIGEST_RESERVE_TOKENS = 3000
+                    _recent_budget = max(
+                        5000,
+                        cap - _non_saved_tokens - _DIGEST_RESERVE_TOKENS)
+                    _cum = 0
+                    _keep = 0
+                    for _m in reversed(saved_recent):
+                        _cost = _estimate([_m])
+                        if _cum + _cost > _recent_budget:
+                            break
+                        _cum += _cost
+                        _keep += 1
+                    # Floor: even if the budget is tiny, keep a handful of
+                    # the most recent turns so the agent isn't talking to
+                    # itself. Ceiling is the tail length (can't keep more
+                    # than we have).
+                    _keep = max(10, min(_keep, len(saved_recent)))
                     logger.info(
                         "[compact] step 2b digest-tail (iter=%d, "
-                        "tail_msgs=%d)",
-                        _iter, len(saved_recent))
+                        "tail_msgs=%d, keep=%d, recent_budget=%d tokens)",
+                        _iter, len(saved_recent), _keep, _recent_budget)
                     _digest_msg, _new_tail = self._digest_oldest_tail(
                         saved_recent, client, cap,
                         user_id=user_id,
                         conversation_id=conversation_id,
-                        keep=6)
+                        keep=_keep)
                     if _digest_msg is None:
                         break
                     # Inject digest at the FRONT of saved_recent so the
@@ -1082,6 +1111,24 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             if getattr(m, "msg_id", ""):
                 _last_id = m.msg_id
                 break
+        # Position the digest chronologically BETWEEN the last digested
+        # message and the first kept message. Without this, LLMMessage's
+        # __post_init__ stamps ts=time.time() and seq from _next_msg_seq,
+        # which makes the digest NEWER than everything in the tail — UI
+        # renders it AFTER the most recent message, which makes no
+        # semantic sense (it summarises OLDER content). Picking
+        # (first_kept.ts - 1ms, first_kept.seq - 1) puts it exactly where
+        # it belongs: right before the kept slice.
+        _first_kept = kept[0] if kept else None
+        if _first_kept and _first_kept.timestamp:
+            _digest_ts = float(_first_kept.timestamp) - 0.001
+        else:
+            import time as _t_now
+            _digest_ts = _t_now.time()
+        if _first_kept and isinstance(_first_kept.seq, int) and _first_kept.seq > 1:
+            _digest_seq = _first_kept.seq - 1
+        else:
+            _digest_seq = 0  # LLMMessage __post_init__ will mint one
         digest_msg = LLMMessage(
             role="user",
             content=(
@@ -1096,6 +1143,8 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 "covers_msg_ids": [_first_id, _last_id],
                 "regen_at_next_compact": True,
             },
+            timestamp=_digest_ts,
+            seq=_digest_seq,
             conversation_id=conversation_id,
         )
         return digest_msg, kept

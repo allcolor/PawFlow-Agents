@@ -1724,6 +1724,26 @@ class AgentCoreMixin:
             finally:
                 try:
                     result = _make_result()
+                    # IMMUTABLE RULE: SSE post-write. Flush the
+                    # ConversationWriter queue first so every message
+                    # produced during this turn (new_message, tool_call,
+                    # tool_result, thinking_content) lands on disk AND
+                    # fires its SSE BEFORE `done`. Without this flush
+                    # done arrives at the UI before the final assistant
+                    # text (writer queue is serial, each write ~2s), and
+                    # the UI's done handler treats the turn as finished
+                    # with an empty response (CC populates
+                    # response_content="" intentionally).
+                    if use_conv_store and conversation_id:
+                        try:
+                            from core.conversation_writer import ConversationWriter
+                            ConversationWriter.for_conversation(
+                                conversation_id).flush(timeout=30.0)
+                        except Exception as _fw_err:
+                            logger.error(
+                                "[agent:%s] writer flush before done "
+                                "failed: %s",
+                                conversation_id[:8], _fw_err, exc_info=True)
                     logger.info("[agent:%s] publishing done (agent=%s)",
                                 conversation_id[:8], ctx.get("active_agent_name", ""))
                     emitter.on_done(result)

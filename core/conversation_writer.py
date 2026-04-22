@@ -192,6 +192,12 @@ class ConversationWriter:
                             # SSE target cid may differ from writer cid
                             # (e.g. task sub-conv writes routed to parent).
                             _evt_cid = sse_evt.get("cid") or self._cid
+                            _sub_count = bus.subscriber_count(_evt_cid)
+                            logger.info(
+                                "[conv-writer:%s] publish %s → cid=%s "
+                                "subs=%d",
+                                self._cid[:8], sse_evt["type"],
+                                _evt_cid[:8], _sub_count)
                             bus.publish_event(
                                 _evt_cid, sse_evt["type"], sse_evt.get("data"))
                     except Exception as sse_err:

@@ -410,6 +410,16 @@ class AgentCoreMixin:
                                 "agent_name": _agent, "llm_service": _svc,
                             }})
                     _agent_for_route = ctx.get("active_agent_name", "") or ""
+                    logger.info(
+                        "[_append] role=%s msg_id=%s content_len=%d "
+                        "thinking_len=%d tool_calls=%d → sse_events=%s",
+                        msg.role,
+                        getattr(msg, "msg_id", "?"),
+                        len(msg.content) if isinstance(msg.content, str) else 0,
+                        len(_think_text),
+                        len(msg.tool_calls) if msg.tool_calls else 0,
+                        [s["type"] for s in _sse] if _sse else [],
+                    )
                     ConversationWriter.for_conversation(conversation_id).enqueue_message(
                         _store_msg, agent_name=_agent_for_route,
                         user_id=user_id, sse_events=_sse if _sse else None)

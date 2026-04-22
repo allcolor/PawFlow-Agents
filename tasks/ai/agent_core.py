@@ -395,14 +395,32 @@ class AgentCoreMixin:
                         if _raw_tool_name not in (
                                 "get_tool_schema",
                                 "mcp__pawflow__get_tool_schema"):
-                            _preview = (msg.content[:2000] if isinstance(msg.content, str)
-                                        else str(msg.content)[:2000])
-                            if isinstance(_preview, str) and _preview.startswith("[TOOL OUTPUT"):
+                            _preview = (msg.content if isinstance(msg.content, str)
+                                        else str(msg.content))
+                            # Strip anti-injection wrapper before showing
+                            # in chat. Two formats have existed:
+                            #   old: [TOOL OUTPUT — name]\n<body>\n[/TOOL OUTPUT]
+                            #   new: <tool_output tool="name">\n<body>\n</tool_output>\nNote: ...
+                            # Same approach as pawflow_cli/ui/renderer.py
+                            # and agent_serialization.py — strip the outer
+                            # wrapper only, keep inner <tool_output>
+                            # literals (grep hits, nested summaries).
+                            if _preview.startswith("[TOOL OUTPUT"):
                                 _nl = _preview.find("\n")
                                 if _nl >= 0:
                                     _preview = _preview[_nl + 1:]
                                 if _preview.endswith("[/TOOL OUTPUT]"):
                                     _preview = _preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
+                            elif _preview.startswith("<tool_output tool="):
+                                _nl = _preview.find("\n")
+                                if _nl >= 0:
+                                    _preview = _preview[_nl + 1:]
+                                _close = _preview.rfind("</tool_output>")
+                                if _close >= 0:
+                                    _preview = _preview[:_close].rstrip("\n")
+                            # Truncate AFTER strip so we keep the real
+                            # content, not the wrapper eating our budget.
+                            _preview = _preview[:2000]
                             _sse.append({"type": "tool_result", "data": {
                                 "tool": _raw_tool_name,
                                 "result": _preview,
@@ -746,6 +764,11 @@ class AgentCoreMixin:
                     _cc_turn_count = [0]
 
                     def _claude_code_turn_callback(text, tool_calls, turn_thinking=""):
+                        logger.info(
+                            "[cc-callback] IN text=%d tc=%d thinking=%d",
+                            len(text) if text else 0,
+                            len(tool_calls) if tool_calls else 0,
+                            len(turn_thinking) if turn_thinking else 0)
                         """Called by claude-code at each internal turn boundary.
 
                         IMMUTABLE RULE: stream block → LLMMessage → writer →

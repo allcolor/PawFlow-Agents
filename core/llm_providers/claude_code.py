@@ -1799,6 +1799,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                     _ee)
                         elif btype == "thinking":
                             thinking = block.get("thinking", "")
+                            logger.info(
+                                "[cc-stream] thinking block: len=%d preview=%r",
+                                len(thinking), thinking[:120])
                             if thinking:
                                 _turn_thinking = thinking
                                 # IMMUTABLE RULE: no stream-time SSE for

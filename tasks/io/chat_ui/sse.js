@@ -326,11 +326,20 @@ function connectSSE(cid, onReady, opts) {
       });
     }
     if (!data.msg_id) return;
-    // Register msg_id to prevent poll/replay duplicates
-    if (typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
-    // Find the element by data-msgid and update metadata (replace if exists)
+    // Find the element by data-msgid and update metadata (replace if exists).
+    // DO NOT preemptively add to _seenMsgIds here — message_meta arrives
+    // live, before the actual message SSE (e.g. new_message with the text
+    // content) gets a chance to create the DOM element. Adding to
+    // _seenMsgIds at this point would make addMsg reject the subsequent
+    // new_message payload (see addMsg dedup at messages.js:125). addMsg
+    // itself adds to _seenMsgIds on successful creation, which is the
+    // authoritative "we've rendered this" marker.
     const el = document.querySelector('#messages [data-msgid="' + data.msg_id + '"]');
     if (el) {
+      // DOM element exists — safe to mark as seen so poll/replay won't
+      // duplicate it. (addMsg would do this on creation; message_meta is
+      // the non-creation path.)
+      if (typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
       const meta = buildMetaLine(data);
       if (meta) {
         const existing = el.querySelector('.msg-meta');

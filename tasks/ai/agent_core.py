@@ -177,11 +177,14 @@ class AgentCoreMixin:
         client._agent_service = ctx.get("active_llm_service", "")
         client._event_cid = ctx.get("_event_cid", conversation_id)
         client._agent_ctx = ctx  # for SSE event enrichment (task_iteration etc)
-        # Config policy: used by providers to publish context-fill % via
-        # message_meta. Source is the PawFlow config (service/agent/task
-        # cascade resolved in agent_context.py); CC stream does not
-        # expose the model's real window.
-        client._max_context_size = int(ctx.get("max_context_size", 200000) or 200000)
+        # Config-side budget, used only as fallback when the provider
+        # doesn't self-report a context window. For CC the authoritative
+        # value comes from result.modelUsage[model].contextWindow and is
+        # cached as client._cc_context_window; the cascade in
+        # agent_emitter/claude_code always picks that first. Default 0
+        # means "unknown" — UI skips the gauge rather than display a
+        # fictional 200k budget for providers that haven't reported yet.
+        client._max_context_size = int(ctx.get("max_context_size", 0) or 0)
 
         # Register active claude-code client for preempt (stdin injection)
         _agent_name_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id

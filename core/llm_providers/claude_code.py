@@ -2000,8 +2000,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                           + _mu.get("cache_creation_input_tokens", 0))
                             _total_out += (_mu.get("outputTokens", 0)
                                            + _mu.get("output_tokens", 0))
-                    logger.info("[claude-code] result: usage=%s, modelUsage_keys=%s, tokens=%d/%d",
-                                _usage, list(_model_usage.keys()), _total_in, _total_out)
+                    logger.info("[claude-code] result: usage=%s, modelUsage=%s, tokens=%d/%d",
+                                _usage, _model_usage, _total_in, _total_out)
                     _result_model = (event.get("model")
                                      or (list(_model_usage.keys())[0] if _model_usage else "")
                                      or model)

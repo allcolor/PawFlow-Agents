@@ -129,22 +129,20 @@ class AgentSideChannelsMixin:
                 ), conversation_id=conversation_id),
             ]
 
-            # 3. Single LLM call, no tools, stream tokens via SSE
+            # 3. Single LLM call, no tools. No per-token SSE (IMMUTABLE
+            # RULE: stream block → LLMMessage → writer → SSE post-write).
+            # The final `btw_done` event below is published from the
+            # writer AFTER the assistant reply hits disk.
             bus.publish_event(conversation_id, "btw_thinking", {
                 "agent_name": agent_name,
             })
-
-            def on_btw_token(text):
-                bus.publish_event(conversation_id, "btw_token", {
-                    "agent_name": agent_name, "text": text,
-                })
 
             response = client.complete_stream(
                 messages=btw_messages,
                 tools=None,
                 temperature=0.5,
                 max_tokens=1024,
-                callback=on_btw_token,
+                callback=None,
             )
 
             # 3b. Cleanup transient CC session (like task cleanup)

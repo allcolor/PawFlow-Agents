@@ -77,9 +77,18 @@ class SSEWriter:
     def iterate(self, timeout: float = 1.0):
         """Yield encoded SSE bytes. Blocks until events or close.
 
+        Every `timeout` seconds without a real event we emit two signals:
+        a `: keepalive` comment (proxy/browser level) AND a typed
+        `sse_ping` event (JS level). The comment-only form does NOT
+        trigger any JS handler, so a silently half-open socket was
+        invisible to the client — the typed ping lets the UI run a
+        watchdog and force-reconnect when pings stop arriving.
+
         Args:
-            timeout: Max seconds to wait for each event (for keepalive).
+            timeout: Max seconds to wait for each event before emitting
+                     the ping/keepalive pair.
         """
+        import time as _time
         while True:
             try:
                 item = self._queue.get(timeout=timeout)
@@ -89,5 +98,6 @@ class SSEWriter:
             except queue.Empty:
                 if self._closed.is_set():
                     return
-                # Send keepalive comment to prevent proxy/browser timeout
                 yield b": keepalive\n\n"
+                yield SSEEvent(event="sse_ping",
+                               data={"ts": _time.time()}).encode()

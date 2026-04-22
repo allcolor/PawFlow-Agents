@@ -1454,16 +1454,48 @@ function connectSSE(cid, onReady, opts) {
     sseEverConnected = true;
     sseRetryCount = 0;
     sseHadError = false;
+    lastSSEActivity = Date.now();  // prime the watchdog
+    // Fallback disk poll always on — protects even if the conv was opened
+    // via a path that didn't arm it (direct URL, refresh on single-conv view).
+    startPollTimer();
     if (wasDisconnected) {
-      // We just reconnected (browser auto-retry or manual) — recover missed messages
       console.log('[SSE] recovering after reconnect...');
       _recoverConversation(cid);
-      // Force-sync active agents: SSE events (done/error_event) may have been
-      // lost during the disconnect, leaving ghost entries in activeInteractions.
       syncActiveFromServer();
     }
   };
+
+  // Server emits `sse_ping` alongside the comment keepalive every 2s.
+  // The comment form is invisible to JS (SSE spec), the typed ping lets
+  // us watchdog a silently half-open socket where EventSource never fires
+  // onerror (laptop sleep, NAT eviction, proxy idle-kill).
+  eventSource.addEventListener('sse_ping', () => {
+    lastSSEActivity = Date.now();
+  });
 }
+
+// SSE liveness watchdog. Pings arrive every ~2s; if we haven't seen one
+// in 30s the stream is silently dead even if readyState still says OPEN.
+// Close + reconnect forcefully so replay/_recoverConversation can catch
+// us up.
+var _sseWatchdogTimer = null;
+function _startSSEWatchdog() {
+  if (_sseWatchdogTimer) clearInterval(_sseWatchdogTimer);
+  _sseWatchdogTimer = setInterval(() => {
+    if (!eventSource || !conversationId) return;
+    if (!lastSSEActivity) return;  // not yet connected
+    const silentFor = Date.now() - lastSSEActivity;
+    if (silentFor > 30000) {
+      console.warn('[SSE] watchdog: no activity for', silentFor, 'ms — forcing reconnect');
+      try { eventSource.close(); } catch (_) {}
+      eventSource = null;
+      lastSSEActivity = 0;
+      if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+      connectSSE(conversationId);
+    }
+  }, 10000);
+}
+_startSSEWatchdog();
 
 // ── Command result dispatchers ──────────────────────────────────
 // Old _dispatchCommandResult and _renderLoadedHistory removed —

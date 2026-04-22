@@ -336,13 +336,30 @@ class AgentCoreMixin:
                             for tc in msg.tool_calls
                         ]
                     # Build SSE events to publish AFTER write
-                    # Skip for Claude Code — claude_code.py publishes SSE in real-time
                     _sse = []
+                    _agent = (msg.source or {}).get("name", "") if msg.source else ""
+                    if not _agent:
+                        _agent = ctx.get("active_agent_name", "")
+                    _svc = (msg.source or {}).get("llm_service", "") if msg.source else ""
+                    # Assistant text → `new_message` so the UI renders it
+                    # live. Applies to BOTH CC (no per-token stream, only
+                    # block callbacks) and HTTP providers (per-token stream
+                    # neutralized by Phase 2 Option B / commit 3b8415d).
+                    # Without this the text only appears after F5 reload
+                    # when _recoverConversation pulls it from transcript.
+                    if (msg.role == "assistant"
+                            and isinstance(msg.content, str)
+                            and msg.content.strip()):
+                        _sse.append({"type": "new_message", "data": {
+                            "role": "assistant",
+                            "content": msg.content,
+                            "msg_id": getattr(msg, "msg_id", ""),
+                            "source": msg.source,
+                        }})
+                    # tool_call / tool_result events: CC publishes them in
+                    # real-time from claude_code.py (blocks arrive before
+                    # we land here), so skip for CC.
                     if not ctx.get("_is_claude_code"):
-                        _agent = (msg.source or {}).get("name", "") if msg.source else ""
-                        if not _agent:
-                            _agent = ctx.get("active_agent_name", "")
-                        _svc = (msg.source or {}).get("llm_service", "") if msg.source else ""
                         if msg.role == "assistant" and msg.tool_calls:
                             from core.llm_client import unwrap_mcp_tool
                             for tc in msg.tool_calls:
@@ -747,7 +764,7 @@ class AgentCoreMixin:
                             msg = LLMMessage(
                                 role="assistant", content=text, source=_src,
                                 conversation_id=conversation_id)
-                            _append(msg)  # persists immediately
+                            _append(msg)  # persists immediately + publishes new_message
                             turn_msgs.append(msg)
                             client._last_turn_msg_id = getattr(msg, "msg_id", "")
 

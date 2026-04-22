@@ -470,7 +470,7 @@ class LLMClient(
             if _proxy:
                 return _proxy
         except Exception:
-            logger.debug("swallowed exception at core/llm_client.py:~386", exc_info=True)
+            logger.debug("exception suppressed", exc_info=True)
         return _raw
 
     @property
@@ -617,7 +617,7 @@ class LLMClient(
         try:
             self._on_tokens(tokens_in, tokens_out, response.model or self.default_model)
         except Exception:
-            logger.debug("swallowed exception at core/llm_client.py:~533", exc_info=True)
+            logger.debug("exception suppressed", exc_info=True)
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "LLMClient":

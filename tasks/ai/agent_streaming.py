@@ -126,7 +126,7 @@ def _track_narrator(resp, ctx):
             llm_service=ctx.get("narrator_service", "narrator"))
         TokenTracker.instance().flush()
     except Exception:
-        logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~114", exc_info=True)
+        logger.debug("exception suppressed", exc_info=True)
 
 
 def _call_narrator(svc_name: str, tool_calls, ctx, conversation_id: str = "") -> str:
@@ -341,7 +341,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             "source_agent": _ms.get("from", ""),
                         }
             except Exception:
-                logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~277", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
             with self._active_contexts_lock:
                 _active_client = self._active_claude_client.get(_agent_key)
                 _active_ctx = self._active_contexts.get(_agent_key) or {}
@@ -438,7 +438,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             conversation_id, "active_resources") or {}
                         _err_agent = _ares.get("agent", "")
                     except Exception:
-                        logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~402", exc_info=True)
+                        logger.debug("exception suppressed", exc_info=True)
                 bus.publish_event(conversation_id, "compact_progress", {
                     "stage": "error", "error": str(e),
                 })
@@ -502,7 +502,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     "agent_name": _crash_agent,
                 })
             except Exception:
-                logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~462", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
         finally:
             # Cancel any bg tasks still running for this conversation
             try:
@@ -516,7 +516,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 for t in _bg.list_tasks(conversation_id):
                     _bg.pop_completed(conversation_id, t["tc_id"])
             except Exception:
-                logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~476", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
             # Final safety net: wake if PendingQueue has anything before we exit
             _agent_n2 = ctx.get("active_agent_name", "") or ""
             try:
@@ -529,7 +529,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         user_id=ctx.get("user_id", ""),
                     )
             except Exception:
-                logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~489", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
             self._decrement_active(conversation_id, ctx)
 
     def _streaming_agent_loop_inner(self, ctx: Dict, conversation_id: str, bus) -> None:
@@ -612,7 +612,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         delay=1.0,
                     )
                 except Exception:
-                    logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~572", exc_info=True)
+                    logger.debug("exception suppressed", exc_info=True)
 
             # Auto-reschedule random thoughts
             _was_cancelled = not self._is_current_generation(gen_key, my_generation)
@@ -691,9 +691,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                                         "had_error": _had_error,
                                     })
                                 except Exception:
-                                    logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~651", exc_info=True)
+                                    logger.debug("exception suppressed", exc_info=True)
                         except Exception:
-                            logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~653", exc_info=True)
+                            logger.debug("exception suppressed", exc_info=True)
                     for _tid, _task in _all_tasks.items():
                         if not isinstance(_task, dict) or _task.get("agent") != _ag_name:
                             continue
@@ -773,7 +773,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             try:
                 _client, _, _ = self._get_summarizer_client(user_id)
             except Exception:
-                logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~733", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
             if not _client:
                 return
             self._auto_extract_memories(
@@ -853,7 +853,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             llm_service=title_svc_id)
                         TokenTracker.instance().flush()
                 except Exception:
-                    logger.debug("swallowed exception at tasks/ai/agent_streaming.py:~812", exc_info=True)
+                    logger.debug("exception suppressed", exc_info=True)
 
                 # Save title
                 from core.conversation_store import ConversationStore

@@ -53,7 +53,7 @@ class AgentToolExecMixin:
                 _all_env = resolve_secrets_env(user_id, _scid)
                 _secret_values, _secret_names = resolve_secret_values(user_id, _scid)
             except Exception:
-                logger.debug("swallowed exception at tasks/ai/agent_tool_exec.py:~55", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
 
         # Determine blocked tools
         blocked = set()
@@ -92,7 +92,7 @@ class AgentToolExecMixin:
                 _tperms = _TAG._get_permissions(_perm_cid, _agent_key)
                 _tool_perm = _tperms.get(tc.name, "")
             except Exception:
-                logger.debug("swallowed exception at tasks/ai/agent_tool_exec.py:~94", exc_info=True)
+                logger.debug("exception suppressed", exc_info=True)
             if _tool_perm == "deny":
                 return tc, f"Error: Tool '{tc.name}' is denied by permission settings."
             elif _tool_perm == "allow":

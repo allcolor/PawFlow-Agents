@@ -1516,24 +1516,6 @@ class ConversationStore:
             return None
         return min(_changed_seqs)
 
-    def append_to_agent_context(self, cid: str, agent_name: str,
-                                new_messages: List[Dict]) -> bool:
-        """Append messages to agent context file."""
-        if not self.exists(cid):
-            return False
-        agent_name = self._canon_agent(agent_name) if agent_name else ""
-        clean = [m for m in new_messages if not m.get("display_only")]
-        if not clean:
-            return True
-        lock = self._get_conv_lock(cid)
-        with lock:
-            if agent_name:
-                self._append_ctx_file(cid, agent_name, clean)
-            else:
-                self._append_shared_ctx(cid, clean)
-        self._invalidate_ctx_cache(cid, agent_name)
-        return True
-
     def delete_agent_context(self, cid: str, agent_name: str) -> bool:
         agent_name = self._canon_agent(agent_name) if agent_name else ""
         """Delete agent context file + directory."""

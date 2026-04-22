@@ -489,24 +489,6 @@ class TestConversationStoreContext(unittest.TestCase):
         loaded = store.load_context("c1")
         assert loaded == ctx
 
-    def test_append_to_context(self):
-        """Append to a diverged context."""
-        store = ConversationStore.instance()
-        store.save("c1", [{"role": "user", "content": "hi"}], user_id="test")
-        store.save_context("c1", [{"role": "system", "content": "summary"}])
-        new = [{"role": "user", "content": "hello"}]
-        assert store.append_to_agent_context("c1", "", new) is True
-        loaded = store.load_context("c1")
-        assert len(loaded) == 2
-        assert loaded[1]["content"] == "hello"
-
-    def test_append_to_context_creates_if_needed(self):
-        """Append creates context if it doesn't exist yet."""
-        store = ConversationStore.instance()
-        store.save("c1", [{"role": "user", "content": "hi"}], user_id="test")
-        result = store.append_to_agent_context("c1", "", [{"role": "user", "content": "x"}])
-        assert result is True
-
     def test_context_persists_to_disk(self):
         """Context survives singleton reset (disk reload)."""
         store = ConversationStore.instance()

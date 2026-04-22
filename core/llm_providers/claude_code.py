@@ -1916,8 +1916,38 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
                 elif etype == "content_block_delta":
                     delta = event.get("delta", {})
+                    _delta_type = delta.get("type", "")
+                    # DIAG: log each delta's shape once so we verify CC
+                    # actually sends thinking_delta in the expected
+                    # format. Remove after the thinking pipeline is
+                    # confirmed working live.
+                    logger.info(
+                        "[cc-stream] delta type=%r keys=%s",
+                        _delta_type, list(delta.keys()))
+                    # Extended thinking is streamed as a sequence of
+                    # content_block_delta events carrying `thinking_delta`
+                    # (with `delta.thinking` = chunk) and a trailing
+                    # `signature_delta` (with `delta.signature`). CC's
+                    # session.jsonl typically persists the final
+                    # `thinking` block with thinking="" + signature only
+                    # (redacted at rest), so the ONLY place the raw
+                    # reasoning text is visible is on the wire here.
+                    # Without this branch the pipeline sees
+                    # `turn_thinking=0` even when the model produced
+                    # real reasoning.
                     text = delta.get("text", "")
-                    if text:
+                    thinking_delta = delta.get("thinking", "")
+                    if thinking_delta or _delta_type == "thinking_delta":
+                        # Some server versions put the chunk in
+                        # `delta.thinking`, others use a nested shape;
+                        # cover both.
+                        _chunk = thinking_delta or delta.get("text", "")
+                        if _chunk:
+                            _turn_thinking += _chunk
+                            logger.debug(
+                                "[cc-stream] thinking_delta: +%d (total=%d)",
+                                len(_chunk), len(_turn_thinking))
+                    elif text:
                         _turn_text_parts.append(text)
                         content_parts.append(text)
                         if callback:

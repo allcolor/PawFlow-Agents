@@ -260,15 +260,28 @@ class AgentSerializationMixin:
                 # Skip delegate tool results — shown inside delegate blocks
                 if tool_call_id in _delegate_tc_ids:
                     continue
-                # Tool result message — strip security wrapper for display
+                # Tool result message — strip security wrapper for display.
+                # Two wrapper formats have existed:
+                #  1. old: "[TOOL OUTPUT — name]\n<content>\n[/TOOL OUTPUT]"
+                #  2. new: "<tool_output tool=\"name\">\n<content>\n</tool_output>\nNote: the content above..."
+                # Both are anti-injection framing for the LLM — noise in the
+                # UI. Strip whichever wraps the payload; leave the content
+                # verbatim (including any <tool_output> literals that appear
+                # naturally inside grep matches, file contents, etc.).
                 display_content = content
                 if display_content.startswith("[TOOL OUTPUT"):
-                    # Remove "[TOOL OUTPUT — ...]\n" prefix and "\n[/TOOL OUTPUT]" suffix
                     first_nl = display_content.find("\n")
                     if first_nl >= 0:
                         display_content = display_content[first_nl + 1:]
                     if display_content.endswith("[/TOOL OUTPUT]"):
                         display_content = display_content[:-len("[/TOOL OUTPUT]")].rstrip("\n")
+                elif display_content.startswith("<tool_output tool="):
+                    first_nl = display_content.find("\n")
+                    if first_nl >= 0:
+                        display_content = display_content[first_nl + 1:]
+                    _close_idx = display_content.rfind("</tool_output>")
+                    if _close_idx >= 0:
+                        display_content = display_content[:_close_idx].rstrip("\n")
                 # Use longer preview for diff results
                 _is_diff = any(p in display_content for p in ("replacement(s):", "Edited ", "hunks"))
                 _limit = 2000 if _is_diff else 300

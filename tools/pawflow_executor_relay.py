@@ -403,52 +403,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
 
     mock = MockHandler()
 
-    def _ws_frame_send(sock, data_bytes, opcode=0x01):
-        """Send a WebSocket frame (text=0x01, close=0x08, pong=0x0A)."""
-        length = len(data_bytes)
-        # Client frames must be masked
-        import secrets as _secrets
-        mask_key = _secrets.token_bytes(4)
-        masked = bytes(b ^ mask_key[i % 4] for i, b in enumerate(data_bytes))
-
-        frame = bytes([0x80 | opcode])
-        if length < 126:
-            frame += bytes([0x80 | length])
-        elif length < 65536:
-            frame += bytes([0x80 | 126]) + struct.pack("!H", length)
-        else:
-            frame += bytes([0x80 | 127]) + struct.pack("!Q", length)
-        frame += mask_key + masked
-        sock.sendall(frame)
-
-    def _ws_frame_recv(sock):
-        """Receive a WebSocket frame. Returns (opcode, payload_bytes)."""
-        def _recv_exact(n):
-            data = b""
-            while len(data) < n:
-                chunk = sock.recv(n - len(data))
-                if not chunk:
-                    raise ConnectionError("WS connection closed")
-                data += chunk
-            return data
-
-        hdr = _recv_exact(2)
-        opcode = hdr[0] & 0x0F
-        masked = bool(hdr[1] & 0x80)
-        length = hdr[1] & 0x7F
-
-        if length == 126:
-            length = struct.unpack("!H", _recv_exact(2))[0]
-        elif length == 127:
-            length = struct.unpack("!Q", _recv_exact(8))[0]
-
-        if masked:
-            mask = _recv_exact(4)
-            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(_recv_exact(length)))
-        else:
-            payload = _recv_exact(length)
-
-        return opcode, payload
+    from ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
 
     def _execute_command(msg, ws_sock=None):
         """Execute a command from the server."""

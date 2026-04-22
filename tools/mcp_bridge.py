@@ -190,63 +190,21 @@ class ToolRelayClient:
                 pass
             self._sock = None
 
-    # ── WS frame helpers ──
+    # ── WS frame helpers (thin wrappers around tools.ws_frame) ──
 
     def _ws_send(self, text: str):
-        data = text.encode("utf-8")
-        # Client frames MUST be masked
-        mask = os.urandom(4)
-        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-        length = len(data)
-        frame = bytes([0x81])  # FIN + text opcode
-        if length < 126:
-            frame += bytes([0x80 | length])
-        elif length < 65536:
-            frame += bytes([0x80 | 126]) + struct.pack("!H", length)
-        else:
-            frame += bytes([0x80 | 127]) + struct.pack("!Q", length)
-        frame += mask + masked
-        self._sock.sendall(frame)
+        from ws_frame import ws_send
+        ws_send(self._sock, text.encode("utf-8"), opcode=0x01)
 
     def _ws_recv(self) -> str:
-        hdr = self._recv_exact(2)
-        opcode = hdr[0] & 0x0F
-        length = hdr[1] & 0x7F
-        if length == 126:
-            length = struct.unpack("!H", self._recv_exact(2))[0]
-        elif length == 127:
-            length = struct.unpack("!Q", self._recv_exact(8))[0]
-        data = self._recv_exact(length)
-        if opcode == 0x09:  # ping
-            # Auto-pong
-            self._ws_send_raw(data, opcode=0x0A)
+        from ws_frame import ws_send, ws_recv
+        opcode, payload = ws_recv(self._sock)
+        if opcode == 0x09:  # ping → auto-pong, then read next frame
+            ws_send(self._sock, payload, opcode=0x0A)
             return self._ws_recv()
-        if opcode == 0x08:  # close
+        if opcode == 0x08:
             raise ConnectionError("Server closed WebSocket")
-        return data.decode("utf-8")
-
-    def _ws_send_raw(self, data: bytes, opcode: int):
-        mask = os.urandom(4)
-        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-        frame = bytes([0x80 | opcode])
-        length = len(data)
-        if length < 126:
-            frame += bytes([0x80 | length])
-        elif length < 65536:
-            frame += bytes([0x80 | 126]) + struct.pack("!H", length)
-        else:
-            frame += bytes([0x80 | 127]) + struct.pack("!Q", length)
-        frame += mask + masked
-        self._sock.sendall(frame)
-
-    def _recv_exact(self, n: int) -> bytes:
-        buf = b""
-        while len(buf) < n:
-            chunk = self._sock.recv(n - len(buf))
-            if not chunk:
-                raise ConnectionError("Server closed connection")
-            buf += chunk
-        return buf
+        return payload.decode("utf-8")
 
 
 # ── MCP stdio server ────────────────────────────────────────────

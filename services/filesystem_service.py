@@ -1,16 +1,15 @@
-"""Unified Filesystem Service — WS listener that relays connect to.
+"""Unified Filesystem Service — WS route on the main HTTPListenerService.
 
-Like HTTPListenerService: binds a port, accepts relay connections.
-Multiple services can share a port (different paths).
+On connect(), registers /ws/relay/<service_id> on the shared main listener;
+the relay client then reverse-connects to that URL and streams filesystem
+commands over the pool.
 
 Config:
-    port: int       — WS listener port (default: 9091)
-    path: str       — WS endpoint path (default: /ws/relay)
     token: str      — Shared token (relay must match to connect)
     mode: str       — "readwrite" | "readonly" (informational)
 
 Relay usage:
-    python tools/pawflow_relay.py --server ws://host:port/path
+    python tools/pawflow_relay.py --server wss://<host>:<main_port>/ws/relay/<service_id>
         --relay-id <service_id> --token <token> --dir /path
 """
 

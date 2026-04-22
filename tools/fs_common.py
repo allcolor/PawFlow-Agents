@@ -28,6 +28,24 @@ def _translate_path(p):
     return p
 
 
+def _get_host_ip():
+    """IP that a container can use to reach the host.
+
+    On Windows the Docker-backed WSL distro doesn't always resolve
+    host.docker.internal to the LAN IP, so probe via a UDP connect."""
+    if os.name == "nt":
+        import socket as _s
+        try:
+            s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            pass
+    return "host.docker.internal"
+
+
 def _to_host_path(container_path):
     """Translate container path to host path for DinD volume mounts."""
     host_workdir = os.environ.get("PAWFLOW_HOST_WORKDIR")

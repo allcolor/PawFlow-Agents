@@ -48,49 +48,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 
-def _docker_cmd():
-    if os.name == "nt":
-        return ["wsl", "docker"]
-    return ["docker"]
-
-
-def _get_host_ip():
-    if os.name == "nt":
-        import socket as _s
-        try:
-            s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception:
-            pass
-    return "host.docker.internal"
-
-def _translate_path(p):
-    if os.name != "nt":
-        return p
-    p = p.replace("\\", "/")
-    if len(p) >= 2 and p[1] == ":":
-        return f"/mnt/{p[0].lower()}{p[2:]}"
-    return p
-
-
-def _to_host_path(container_path):
-    """Translate container path to host path for DinD volume mounts."""
-    host_workdir = os.environ.get("PAWFLOW_HOST_WORKDIR")
-    if not host_workdir:
-        return container_path
-    container_workdir = os.environ.get("PAWFLOW_WORKDIR", "/workspace")
-    try:
-        rel = os.path.relpath(container_path, container_workdir)
-        if rel.startswith(".."):
-            return container_path
-        if rel == ".":
-            return host_workdir
-        return os.path.join(host_workdir, rel).replace("\\", "/")
-    except ValueError:
-        return container_path
+from fs_common import (
+    _docker_cmd, _get_host_ip, _translate_path, _to_host_path,
+)
 
 
 def generate_relay_id(username: str, directory: str) -> str:
@@ -625,45 +585,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     MockHandler.allow_local = allow_local
     mock = MockHandler()
 
-    def _ws_frame_send(sock, data_bytes, opcode=0x01):
-        import secrets as _secrets
-        mask_key = _secrets.token_bytes(4)
-        masked = bytes(b ^ mask_key[i % 4] for i, b in enumerate(data_bytes))
-        length = len(data_bytes)
-        frame = bytes([0x80 | opcode])
-        if length < 126:
-            frame += bytes([0x80 | length])
-        elif length < 65536:
-            frame += bytes([0x80 | 126]) + struct.pack("!H", length)
-        else:
-            frame += bytes([0x80 | 127]) + struct.pack("!Q", length)
-        frame += mask_key + masked
-        sock.sendall(frame)
-
-    def _ws_frame_recv(sock):
-        def _recv_exact(n):
-            data = b""
-            while len(data) < n:
-                chunk = sock.recv(n - len(data))
-                if not chunk:
-                    raise ConnectionError("WS connection closed")
-                data += chunk
-            return data
-
-        hdr = _recv_exact(2)
-        opcode = hdr[0] & 0x0F
-        masked = bool(hdr[1] & 0x80)
-        length = hdr[1] & 0x7F
-        if length == 126:
-            length = struct.unpack("!H", _recv_exact(2))[0]
-        elif length == 127:
-            length = struct.unpack("!Q", _recv_exact(8))[0]
-        if masked:
-            mask = _recv_exact(4)
-            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(_recv_exact(length)))
-        else:
-            payload = _recv_exact(length)
-        return opcode, payload
+    from ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
 
     def _execute_command(msg, on_output=None):
         action = msg.get("action", "")

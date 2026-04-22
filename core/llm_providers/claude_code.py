@@ -1501,6 +1501,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     event = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                # Defensive: event must be a dict. When the stream is
+                # wrapped in a PTY (script -qfc), extra terminal output
+                # like "Script started" banners or control sequences
+                # can produce parseable-but-non-dict JSON (e.g. a bare
+                # string literal). Log once and skip instead of
+                # exploding on .get().
+                if not isinstance(event, dict):
+                    logger.warning(
+                        "[claude-code] non-dict JSON ignored (%s): %r",
+                        type(event).__name__, str(event)[:200])
+                    continue
 
                 etype = event.get("type", "")
                 _hb_state["last_event_kind"] = etype

@@ -585,7 +585,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     MockHandler.allow_local = allow_local
     mock = MockHandler()
 
-    from ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
+    from pawflow_relay.ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
 
     def _execute_command(msg, on_output=None):
         action = msg.get("action", "")

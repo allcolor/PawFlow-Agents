@@ -193,11 +193,11 @@ class ToolRelayClient:
     # ── WS frame helpers (thin wrappers around tools.ws_frame) ──
 
     def _ws_send(self, text: str):
-        from ws_frame import ws_send
+        from pawflow_relay.ws_frame import ws_send
         ws_send(self._sock, text.encode("utf-8"), opcode=0x01)
 
     def _ws_recv(self) -> str:
-        from ws_frame import ws_send, ws_recv
+        from pawflow_relay.ws_frame import ws_send, ws_recv
         opcode, payload = ws_recv(self._sock)
         if opcode == 0x09:  # ping → auto-pong, then read next frame
             ws_send(self._sock, payload, opcode=0x0A)

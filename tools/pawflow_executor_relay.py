@@ -403,7 +403,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
 
     mock = MockHandler()
 
-    from ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
+    from pawflow_relay.ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
 
     def _execute_command(msg, ws_sock=None):
         """Execute a command from the server."""

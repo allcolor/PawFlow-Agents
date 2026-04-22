@@ -114,15 +114,18 @@ class BgBucketBuilder:
         # TRANSCRIPT ACTIVITY (not just shared content): every transcript
         # line — tool_use, tool_result, msg_patch, trace_update, etc. —
         # consumes a seq via _stamp_line. So seq_gap ≈ transcript rows
-        # since last bucket, which is what we want — heavy tool use is
-        # the dominant context pressure, and waiting for shared rows
-        # alone leaves tool-heavy convs un-bucketed for far too long.
-        # _pick_chunk still works in shared-row units (a bucket must
-        # summarise N shared msgs); the bg path passes allow_partial=True
-        # so shared-sparse triggers still produce smaller partial
-        # buckets instead of no-op-ing silently.
+        # since last bucket.
+        #
+        # But seq_gap alone isn't enough to DECIDE to submit: if shared
+        # has fewer than _PARTIAL_MIN + TAIL_RESERVE rows since the last
+        # bucket, _pick_chunk returns [] (not even a partial fits), the
+        # job no-ops, _pending discards, and the next transcript line
+        # re-fires the trigger — a submit-storm with no real work.
+        # _shared_unbucketed_rows_cache tracks the row count since the
+        # last bucket so maybe_trigger can skip hopeless submits.
         self._shared_seq_cache: Dict[str, int] = {}
         self._pyramid_seq_cache: Dict[str, int] = {}
+        self._shared_unbucketed_rows_cache: Dict[str, int] = {}
         self._seq_cache_lock = threading.Lock()
         # Diagnostic: throttle maybe_trigger log spam. Track last
         # (reason, state) logged per cid so we only log when the
@@ -163,6 +166,22 @@ class BgBucketBuilder:
             if seq > cur:
                 self._shared_seq_cache[cid] = seq
 
+    def note_shared_rows_appended(self, cid: str, n: int) -> None:
+        """O(1) hint that n new rows were appended to shared.jsonl.
+
+        Called from ConversationStore._append_shared_ctx alongside
+        note_shared_seq with the batch size. Accumulates into
+        _shared_unbucketed_rows_cache; the counter is subtracted
+        (not reset) by note_pyramid_rows_bucketed so in-flight appends
+        racing with a bucket build don't get lost.
+        """
+        if not cid or not isinstance(n, int) or n <= 0:
+            return
+        with self._seq_cache_lock:
+            if cid in self._shared_unbucketed_rows_cache:
+                self._shared_unbucketed_rows_cache[cid] += n
+            # Cold cache: _seed_seq_caches will populate it from disk.
+
     def note_pyramid_seq(self, cid: str, seq: int) -> None:
         """O(1) hint that the pyramid now covers up to this seq.
 
@@ -177,6 +196,20 @@ class BgBucketBuilder:
             cur = self._pyramid_seq_cache.get(cid, 0)
             if seq > cur:
                 self._pyramid_seq_cache[cid] = seq
+
+    def note_pyramid_rows_bucketed(self, cid: str, n: int) -> None:
+        """O(1) hint that n shared rows were just added to a bucket.
+
+        Called from _build_one_bucket with chunk length after
+        add_bucket. Decrements the unbucketed-rows counter so
+        maybe_trigger's "can we build?" check sees the catch-up.
+        """
+        if not cid or not isinstance(n, int) or n <= 0:
+            return
+        with self._seq_cache_lock:
+            if cid in self._shared_unbucketed_rows_cache:
+                self._shared_unbucketed_rows_cache[cid] = max(
+                    0, self._shared_unbucketed_rows_cache[cid] - n)
 
     # ── Public trigger API ────────────────────────────────────────
 
@@ -228,24 +261,16 @@ class BgBucketBuilder:
         with self._seq_cache_lock:
             shared_seq = self._shared_seq_cache.get(cid)
             pyramid_seq = self._pyramid_seq_cache.get(cid)
+            unbucketed_rows = self._shared_unbucketed_rows_cache.get(cid)
 
-        threshold = L1_TRIGGER_MSGS + TAIL_RESERVE
+        activity_threshold = L1_TRIGGER_MSGS + TAIL_RESERVE  # 300 seqs
+        # _pick_chunk needs at least _PARTIAL_MIN rows AFTER reserving
+        # TAIL_RESERVE. Any fewer → it returns [] and the job no-ops.
+        buildable_threshold = TAIL_RESERVE + self._PARTIAL_MIN  # 187 rows
 
-        # Fast path: both caches warm, simple arithmetic in SEQ units.
-        # Seq gap tracks transcript activity (every line — tools
-        # included — advances the counter). See _shared_seq_cache
-        # docstring.
-        if shared_seq is not None and pyramid_seq is not None:
-            if shared_seq - pyramid_seq < threshold:
-                _log_once(
-                    f"gap too small ({shared_seq - pyramid_seq} < "
-                    f"{threshold} seqs): shared_seq={shared_seq} "
-                    f"pyramid_seq={pyramid_seq}")
-                return
-        else:
-            # Cold path (first access per cid): seed caches from disk.
-            # Last-line of shared.jsonl + meta.json. After this, all
-            # subsequent calls are O(1).
+        # Cold path: seed all caches from disk on first access.
+        if (shared_seq is None or pyramid_seq is None
+                or unbucketed_rows is None):
             try:
                 self._seed_seq_caches(cid)
             except Exception:
@@ -255,12 +280,28 @@ class BgBucketBuilder:
             with self._seq_cache_lock:
                 shared_seq = self._shared_seq_cache.get(cid, 0)
                 pyramid_seq = self._pyramid_seq_cache.get(cid, 0)
-            if shared_seq - pyramid_seq < threshold:
-                _log_once(
-                    f"gap too small after seed "
-                    f"({shared_seq - pyramid_seq} < {threshold} seqs): "
-                    f"shared_seq={shared_seq} pyramid_seq={pyramid_seq}")
-                return
+                unbucketed_rows = self._shared_unbucketed_rows_cache.get(cid, 0)
+
+        seq_gap = shared_seq - pyramid_seq
+
+        # Gate 1: activity threshold (transcript seq gap). Below this,
+        # not enough has happened to bucket.
+        if seq_gap < activity_threshold:
+            _log_once(
+                f"gap too small ({seq_gap} < {activity_threshold} seqs): "
+                f"shared_seq={shared_seq} pyramid_seq={pyramid_seq}")
+            return
+
+        # Gate 2: buildable threshold (unbucketed shared rows). Above
+        # activity but below this → _pick_chunk would return [], job
+        # no-ops, submit-storm. Wait for shared to catch up.
+        if unbucketed_rows < buildable_threshold:
+            _log_once(
+                f"seq_gap={seq_gap} crossed activity threshold but only "
+                f"{unbucketed_rows} unbucketed shared rows < "
+                f"{buildable_threshold} needed — _pick_chunk would "
+                f"return []; waiting for shared catch-up")
+            return
 
         with self._pending_lock:
             if cid in self._pending:
@@ -272,8 +313,8 @@ class BgBucketBuilder:
             self._executor.submit(self._run_job, cid, user_id)
             _log_once(
                 f"submitted job: shared_seq={shared_seq} "
-                f"pyramid_seq={pyramid_seq} "
-                f"gap={shared_seq - pyramid_seq} seqs")
+                f"pyramid_seq={pyramid_seq} seq_gap={seq_gap} "
+                f"unbucketed_rows={unbucketed_rows}")
         except RuntimeError as _e:
             # Executor has been shutdown (e.g. test teardown)
             with self._pending_lock:
@@ -390,17 +431,15 @@ class BgBucketBuilder:
     # ── Internals ─────────────────────────────────────────────────
 
     def _seed_seq_caches(self, cid: str) -> None:
-        """One-shot O(1) seed of _shared_seq_cache and _pyramid_seq_cache
-        for a cid on first access per process. Subsequent writes feed
-        the caches via note_shared_seq / note_pyramid_seq — so this
-        runs AT MOST once per cid per process.
+        """One-shot seed of shared/pyramid caches for a cid on first
+        access per process. Subsequent writes feed the caches via
+        note_* — so this runs AT MOST once per cid per process.
 
-        Both reads are O(1):
-          - pyramid last_seq comes from meta.json (small JSON).
-          - shared max seq comes from reading the LAST line of
-            shared.jsonl. Seqs are strictly monotonic per conv
-            (_stamp_line invariant), so the final line carries the max
-            — no full scan needed, regardless of file size.
+        - Pyramid last_seq: meta.json read (one small file).
+        - Shared max seq: last-line read (O(1) in file size).
+        - Unbucketed shared rows: count of lines in shared.jsonl with
+          seq > pyramid last_seq. One scan, proportional to file size,
+          but runs at most once per cid per process.
         """
         from core.conversation_store import ConversationStore
         cs = ConversationStore.instance()
@@ -411,12 +450,40 @@ class BgBucketBuilder:
         pyramid_seq = store.last_seq
 
         # Shared seed: last-line read (O(1) in file size).
-        shared_seq = self._read_last_seq(cs._shared_ctx_path(cid))
+        shared_path = cs._shared_ctx_path(cid)
+        shared_seq = self._read_last_seq(shared_path)
+
+        # Unbucketed rows: count shared rows with seq > pyramid last_seq.
+        unbucketed = self._count_rows_since(shared_path, pyramid_seq)
 
         with self._seq_cache_lock:
             # Don't clobber if another thread populated via note_* already
             self._shared_seq_cache.setdefault(cid, shared_seq)
             self._pyramid_seq_cache.setdefault(cid, pyramid_seq)
+            self._shared_unbucketed_rows_cache.setdefault(cid, unbucketed)
+
+    @staticmethod
+    def _count_rows_since(path, after_seq: int) -> int:
+        """Count JSONL rows with seq > after_seq. 0 if file missing."""
+        if not path.exists():
+            return 0
+        import json as _json
+        n = 0
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        d = _json.loads(line)
+                    except _json.JSONDecodeError:
+                        continue
+                    if int(d.get("seq") or 0) > after_seq:
+                        n += 1
+        except Exception:
+            logger.debug("[bg-bucket] _count_rows_since failed", exc_info=True)
+        return n
 
     @staticmethod
     def _read_last_seq(path) -> int:
@@ -720,6 +787,7 @@ class BgBucketBuilder:
         # Keep the O(1) cache in sync so subsequent maybe_trigger calls
         # reflect the new pyramid coverage without re-reading meta.json.
         self.note_pyramid_seq(cid, last_seq)
+        self.note_pyramid_rows_bucketed(cid, len(chunk))
         logger.info(
             "[bg-bucket] built bucket cid=%s seq %d..%d (%d msgs, "
             "summary=%d chars)",

@@ -1345,6 +1345,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
         self._stall_killed = False  # set by watchdog — retry must be unconditional
 
+        # Heartbeat state for observability — updated by the main event
+        # loop so the watchdog (and anyone reading logs) can see WHERE
+        # we are when nothing moves for long stretches.
+        _hb_state = {
+            "last_event_ts": 0.0,       # time.monotonic() of last stdout line read
+            "last_event_kind": "",      # 'assistant', 'user', 'system', 'result', ...
+            "last_dispatched_tc": "",   # last tool_use dispatched (id + name)
+            "last_tool_result_id": "",  # last tool_result received
+            "stream_line_count": 0,     # total lines read from CC stdout
+        }
+
         def _stall_watchdog():
             pass  # _stall_killed is on self
             while not _watchdog_stop.is_set():
@@ -1353,8 +1364,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     if elapsed >= _STALL_TIMEOUT:
                         logger.warning(
                             "[claude-code] Stall detected (%.0fs with no assistant "
-                            "response, budget=%.0fs) — killing process for retry",
-                            elapsed, _STALL_TIMEOUT)
+                            "response, budget=%.0fs) — killing process for retry. "
+                            "hb: lines_read=%d last_event=%s@%.0fs last_tc=%s "
+                            "last_tr=%s pending=%s",
+                            elapsed, _STALL_TIMEOUT,
+                            _hb_state["stream_line_count"],
+                            _hb_state["last_event_kind"] or "(none)",
+                            time.monotonic() - _hb_state["last_event_ts"]
+                              if _hb_state["last_event_ts"] else -1,
+                            _hb_state["last_dispatched_tc"] or "(none)",
+                            _hb_state["last_tool_result_id"] or "(none)",
+                            sorted(_pending_tool_ids)[:5])
                         self._stall_killed = True
                         try:
                             proc.kill()
@@ -1368,23 +1388,44 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         logger.warning(
                             "[claude-code] Tool-result stall (%.0fs since last "
                             "tool_result, no pending tools, no assistant) "
-                            "— killing for retry", elapsed)
+                            "— killing for retry. hb: lines_read=%d "
+                            "last_event=%s@%.0fs last_tc=%s last_tr=%s",
+                            elapsed,
+                            _hb_state["stream_line_count"],
+                            _hb_state["last_event_kind"] or "(none)",
+                            time.monotonic() - _hb_state["last_event_ts"]
+                              if _hb_state["last_event_ts"] else -1,
+                            _hb_state["last_dispatched_tc"] or "(none)",
+                            _hb_state["last_tool_result_id"] or "(none)")
                         self._stall_killed = True
                         try:
                             proc.kill()
                         except OSError:
                             pass
                         return
-                # Debug: log watchdog state every 30s
+                # INFO-level heartbeat every 30s so "blocked" is visible
+                # in default-log-level deployments. Covers the general
+                # "what's the stream actually doing right now" gap —
+                # between event flushes we otherwise log nothing.
                 if not hasattr(_stall_watchdog, '_dbg_count'):
                     _stall_watchdog._dbg_count = 0
                 _stall_watchdog._dbg_count += 1
-                if _stall_watchdog._dbg_count % 6 == 0:  # every 30s (5s wake × 6)
-                    logger.debug(
-                        '[claude-code] watchdog state: stall_start=%.1f got_assistant=%s '
-                        'last_tr=%.1f pending=%s budget=%.0fs',
-                        _stall_start_time, _got_assistant,
-                        _last_tool_result_time, _pending_tool_ids, _STALL_TIMEOUT)
+                if _stall_watchdog._dbg_count % 6 == 0:  # every 30s
+                    _now = time.monotonic()
+                    _since_evt = (_now - _hb_state["last_event_ts"]
+                                   if _hb_state["last_event_ts"] else -1)
+                    _since_tr = (_now - _last_tool_result_time
+                                  if _last_tool_result_time else -1)
+                    logger.info(
+                        "[claude-code] hb: lines_read=%d last_event=%s (%.0fs ago) "
+                        "last_tc=%s last_tr=%s pending=%s got_asst=%s since_tr=%.0fs",
+                        _hb_state["stream_line_count"],
+                        _hb_state["last_event_kind"] or "(none)",
+                        _since_evt,
+                        _hb_state["last_dispatched_tc"] or "(none)",
+                        _hb_state["last_tool_result_id"] or "(none)",
+                        sorted(_pending_tool_ids)[:5],
+                        _got_assistant, _since_tr)
                 _watchdog_stop.wait(5)
 
         _watchdog_thread = threading.Thread(target=_stall_watchdog, daemon=True)
@@ -1392,6 +1433,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
         try:
             for line in proc.stdout:
+                _hb_state["stream_line_count"] += 1
+                _hb_state["last_event_ts"] = time.monotonic()
                 line = line.strip()
                 if not line:
                     continue
@@ -1401,6 +1444,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     continue
 
                 etype = event.get("type", "")
+                _hb_state["last_event_kind"] = etype
                 _parent_tc_id = event.get("parent_tool_use_id") or ""
                 # Raw event dump — too chatty for INFO (every assistant
                 # delta, every tool_use block, every rate_limit_event…).
@@ -1586,6 +1630,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                     block.get("input", {}) or {})
                                 if _block_id and _persist_name:
                                     _stream_tc_names[_block_id] = _persist_name
+                                    _hb_state["last_dispatched_tc"] = (
+                                        f"{_persist_name}({_block_id[:8]})")
                             except Exception:
                                 pass
                             # Unwrap MCP wrapper for display:
@@ -1682,6 +1728,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             if tc_id:
                                 _tool_results[tc_id] = result_str
                                 _pending_tool_ids.discard(tc_id)
+                                _hb_state["last_tool_result_id"] = (
+                                    f"{tc_id[:8]}={len(result_str)}c")
                                 if not _pending_tool_ids:
                                     _last_tool_result_time = time.monotonic()
                             # Resolve tool name. Try the stream-scoped

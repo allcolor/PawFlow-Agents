@@ -224,6 +224,11 @@ class RelayService(BaseService):
         # Inverse-direction handler: relay-initiated FS ops scoped to the
         # owner's CLAUDE_SESSIONS_DIR slot. Lazy because user_id arrives
         # after construction (set_user_id called by the registry).
+        # _user_id defaults to "" so _get_server_fs can test it safely
+        # before set_user_id fires — repro was AttributeError thrown
+        # against the relay's first relay_request frame when it landed
+        # before the registry wired up the owner.
+        self._user_id = ""
         self._server_fs = None
         self._server_fs_lock = threading.Lock()
 

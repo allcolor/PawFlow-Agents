@@ -952,24 +952,31 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         if (_line.startswith("setsid: child ")
                                 and "did not exit normally" in _line):
                             continue
+                        # __PF_CLAUDE_PID=<pid>\n is the shell wrapper's
+                        # spawn-time preamble. We capture it into
+                        # proc._pf_pid below, log it at INFO as "captured
+                        # container PID=<pid>", and that's the only value
+                        # it has. Keeping the raw line in _stderr_buffer
+                        # means every clean post-kill log surfaces as
+                        # "Claude CLI stderr: __PF_CLAUDE_PID=<pid>" at
+                        # ERROR level — misleading (no error, just a
+                        # leftover PID dump). Drop it after capture.
+                        if '__PF_CLAUDE_PID=' in _line:
+                            if not proc._pf_pid:
+                                try:
+                                    _pid_str = _line.split(
+                                        '__PF_CLAUDE_PID=', 1)[1].strip()
+                                    _pid_int = int(_pid_str)
+                                    proc._pf_pid = _pid_int
+                                    self._cc_container_pid = _pid_int
+                                    logger.info(
+                                        "[claude-code] captured container PID=%d "
+                                        "(container=%s)",
+                                        _pid_int, proc._pf_container)
+                                except Exception:
+                                    logger.debug("exception suppressed", exc_info=True)
+                            continue
                         self._stderr_buffer.append(_line)
-                        if (not proc._pf_pid
-                                and '__PF_CLAUDE_PID=' in _line):
-                            try:
-                                _pid_str = _line.split(
-                                    '__PF_CLAUDE_PID=', 1)[1].strip()
-                                _pid_int = int(_pid_str)
-                                proc._pf_pid = _pid_int
-                                # Mirror for legacy callers; will be
-                                # clobbered by a later stream's spawn but
-                                # proc._pf_pid remains authoritative.
-                                self._cc_container_pid = _pid_int
-                                logger.info(
-                                    "[claude-code] captured container PID=%d "
-                                    "(container=%s)",
-                                    _pid_int, proc._pf_container)
-                            except Exception:
-                                logger.debug("exception suppressed", exc_info=True)
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
             import threading as _th
@@ -2460,8 +2467,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     logger.debug("internal-auth revoke failed", exc_info=True)
 
         # Don't error on non-zero exit if we got a successful result
-        # (process was killed after break on result event — that's expected)
-        _got_result = bool(last_data.get("session_id") or last_data.get("result"))
+        # (process was killed after break on result event — that's expected).
+        # `_compact_result_done` counts: when the sentinel compact session
+        # delivers its payload via the compact_result tool, we
+        # intentionally SIGKILL CC before the final result event can
+        # fire (otherwise CC stalls waiting for another input). The
+        # payload IS the successful outcome; treat the 137 exit the
+        # same as a clean result-event break.
+        _got_result = (
+            bool(last_data.get("session_id") or last_data.get("result"))
+            or _compact_result_done)
         _was_compact_stall = (proc.returncode == -9 and _stall_start_time > 0 and not _got_assistant)
         # Tool-result / no-assistant stalls are PawFlow-watchdog kills. CC
         # produced work up to that point; the kill is our own recovery

@@ -293,6 +293,67 @@ class MemoryStore:
                 self._save_user(user_id)
             return before - after
 
+    def upsert_by_tag(self, user_id: str, dedup_tag: str, text: str,
+                      tags: List[str], *,
+                      source: str = "",
+                      embedding: Optional[List[float]] = None,
+                      agent: str = "", conversation_id: str = "",
+                      category: str = "") -> MemoryEntry:
+        """Insert or update a memory identified by a stable dedup tag.
+
+        Used by mirrors that own an external key (e.g. a file slug) which
+        stays constant across edits while the entry's text/embedding may
+        change. Text-based dedup (`remember`) can't see that two different
+        bodies describe the same source file.
+        """
+        key = (dedup_tag or "").lower().strip()
+        norm_tags = [t.lower().strip() for t in tags if t.strip()]
+        if key and key not in norm_tags:
+            norm_tags.append(key)
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            entries = self._memories.setdefault(user_id, [])
+            if key:
+                for e in entries:
+                    if key in e.tags:
+                        e.text = text
+                        e.tags = norm_tags
+                        e.updated_at = time.time()
+                        if source:
+                            e.source = source
+                        if embedding is not None:
+                            e.embedding = embedding
+                        if agent:
+                            e.agent = agent
+                        if conversation_id:
+                            e.conversation_id = conversation_id
+                        if category:
+                            e.category = category
+                        self._save_user(user_id)
+                        return e
+            entry = MemoryEntry(text=text, tags=norm_tags, source=source,
+                                embedding=embedding, agent=agent,
+                                conversation_id=conversation_id,
+                                category=category)
+            entries.append(entry)
+            self._save_user(user_id)
+            return entry
+
+    def forget_by_tag(self, user_id: str, dedup_tag: str) -> int:
+        """Delete every entry carrying the given tag. Returns count deleted."""
+        key = (dedup_tag or "").lower().strip()
+        if not key:
+            return 0
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            entries = self._memories.get(user_id, [])
+            before = len(entries)
+            self._memories[user_id] = [e for e in entries if key not in e.tags]
+            after = len(self._memories[user_id])
+            if before != after:
+                self._save_user(user_id)
+            return before - after
+
     def list_all(self, user_id: str) -> List[MemoryEntry]:
         """List all memories for a user."""
         with self._store_lock:

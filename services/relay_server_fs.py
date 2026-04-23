@@ -43,9 +43,10 @@ import os
 import stat as _stat
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from core.paths import CLAUDE_SESSIONS_DIR
+from services import cc_memory_mirror
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,10 @@ class RelayServerFs:
         self._root_resolved = self._root.resolve()
         self._fd_lock = threading.Lock()
         self._fds: Dict[int, int] = {}  # fh → real fd
+        # fh → (rel_path, dirty). We track the relay-supplied path so that
+        # post-release mirrors (cc_memory_mirror) can re-read the finished
+        # file without the relay having to re-send it.
+        self._open_meta: Dict[int, Tuple[str, bool]] = {}
         self._next_fh = 1
 
     # ------------------------------------------------------------------
@@ -138,6 +143,7 @@ class RelayServerFs:
         with self._fd_lock:
             fds = list(self._fds.values())
             self._fds.clear()
+            self._open_meta.clear()
         for fd in fds:
             try:
                 os.close(fd)
@@ -231,6 +237,7 @@ class RelayServerFs:
             fh = self._next_fh
             self._next_fh += 1
             self._fds[fh] = fd
+            self._open_meta[fh] = (args.get("path", ""), False)
         return {"data": {"fh": fh}}
 
     def _op_read(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -254,12 +261,17 @@ class RelayServerFs:
         fh = int(args.get("fh", -1))
         with self._fd_lock:
             fd = self._fds.pop(fh, None)
+            meta = self._open_meta.pop(fh, None)
         if fd is None:
             return _errno_response(errno.EBADF, f"unknown fh {fh}")
         try:
             os.close(fd)
         except OSError as e:
             return _errno_response(e.errno or errno.EIO, str(e))
+        if meta is not None:
+            rel_path, dirty = meta
+            if dirty:
+                self._maybe_mirror_write(rel_path)
         return {"data": {}}
 
     def _op_statfs(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -293,6 +305,7 @@ class RelayServerFs:
             fh = self._next_fh
             self._next_fh += 1
             self._fds[fh] = fd
+            self._open_meta[fh] = (args.get("path", ""), False)
         return {"data": {"fh": fh}}
 
     def _op_write(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -308,8 +321,13 @@ class RelayServerFs:
                                     f"write chunk {len(data)} exceeds {self.MAX_WRITE_CHUNK}")
         with self._fd_lock:
             fd = self._fds.get(fh)
-        if fd is None:
-            return _errno_response(errno.EBADF, f"unknown fh {fh}")
+            if fd is None:
+                return _errno_response(errno.EBADF, f"unknown fh {fh}")
+            # Mark the fh dirty while we still hold the fd lock so that a
+            # racing release can't pop the meta entry before we record it.
+            meta = self._open_meta.get(fh)
+            if meta is not None:
+                self._open_meta[fh] = (meta[0], True)
         os.lseek(fd, offset, os.SEEK_SET)
         n = os.write(fd, data)
         return {"data": {"bytes_written": n}}
@@ -321,17 +339,27 @@ class RelayServerFs:
             fh = int(args["fh"])
             with self._fd_lock:
                 fd = self._fds.get(fh)
-            if fd is None:
-                return _errno_response(errno.EBADF, f"unknown fh {fh}")
+                if fd is None:
+                    return _errno_response(errno.EBADF, f"unknown fh {fh}")
+                meta = self._open_meta.get(fh)
+                if meta is not None:
+                    self._open_meta[fh] = (meta[0], True)
             os.ftruncate(fd, length)
         else:
-            target = self._resolve(args.get("path", ""))
+            rel = args.get("path", "")
+            target = self._resolve(rel)
             os.truncate(target, length)
+            self._maybe_mirror_write(rel)
         return {"data": {}}
 
     def _op_unlink(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        target = self._resolve(args.get("path", ""))
+        rel = args.get("path", "")
+        target = self._resolve(rel)
         os.unlink(target)
+        try:
+            cc_memory_mirror.mirror_unlink(self._user_id, rel)
+        except Exception:
+            logger.exception("[server-fs] mirror_unlink hook failed")
         return {"data": {}}
 
     def _op_mkdir(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -348,9 +376,22 @@ class RelayServerFs:
     def _op_rename(self, args: Dict[str, Any]) -> Dict[str, Any]:
         # BOTH paths must resolve inside the slot — a rename can't be
         # used to escape the sandbox in either direction.
-        old = self._resolve(args.get("old", ""))
-        new = self._resolve(args.get("new", ""))
+        old_rel = args.get("old", "")
+        new_rel = args.get("new", "")
+        old = self._resolve(old_rel)
+        new = self._resolve(new_rel)
         os.rename(old, new)
+        new_data: Optional[bytes] = None
+        if cc_memory_mirror.match_memory_path(new_rel):
+            try:
+                new_data = new.read_bytes()
+            except OSError:
+                new_data = None
+        try:
+            cc_memory_mirror.mirror_rename(self._user_id, old_rel, new_rel,
+                                            new_data)
+        except Exception:
+            logger.exception("[server-fs] mirror_rename hook failed")
         return {"data": {}}
 
     def _op_chmod(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -370,3 +411,26 @@ class RelayServerFs:
         else:
             os.utime(target, (float(atime), float(mtime)))
         return {"data": {}}
+
+    # ------------------------------------------------------------------
+    # Mirror hooks
+    # ------------------------------------------------------------------
+
+    def _maybe_mirror_write(self, rel_path: str) -> None:
+        """If `rel_path` is a mirrorable CC memory file, re-read it from
+        disk and forward the bytes to the mirror. Best-effort — errors
+        are logged and swallowed so a failed mirror never breaks the FS
+        op that triggered it.
+        """
+        if not cc_memory_mirror.match_memory_path(rel_path):
+            return
+        try:
+            data = self._resolve(rel_path).read_bytes()
+        except OSError:
+            logger.debug("[server-fs] mirror read failed for %s", rel_path,
+                         exc_info=True)
+            return
+        try:
+            cc_memory_mirror.mirror_write(self._user_id, rel_path, data)
+        except Exception:
+            logger.exception("[server-fs] mirror_write hook failed")

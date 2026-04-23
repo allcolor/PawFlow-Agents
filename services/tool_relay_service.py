@@ -867,13 +867,21 @@ class ToolRelayService(BaseService):
         # emitted the tool_call SSE event). Matching lets background /
         # kill actions, keyed by UI-visible tc_id, reach this request.
         #
+        # Race: the MCP bridge (in-container) forwards the execute_tool
+        # request to us CONCURRENTLY with the claude-code provider's
+        # stdout reader processing the same `assistant` event and
+        # calling `enqueue_cc_tc`. The bridge often wins — pop fires
+        # before enqueue lands. Without a wait, every fast-dispatching
+        # tool (bash, grep, etc.) spuriously MISSes on a healthy loop.
+        # Short retry with timeout lets the enqueue catch up while
+        # still capping the blocking window so a genuine miss
+        # (sentinel conv, crashed provider) doesn't stall.
+        #
         # Sentinel conversations (_compact, _memory_extract, …) never
         # push cc_tc — they have no UI subscribers, tool_call SSE is a
         # no-op, and they can't be backgrounded or killed per-tool
         # anyway (the whole sentinel session is the unit of cancel).
-        # Skip the MISS log for them to stop flooding the log on every
-        # paginated `read` during a chunked compact (repro: 18 chunks ×
-        # ~10 reads each = 180 noise lines per compact).
+        # Skip BOTH the retry and the MISS log for them.
         cc_tc_id = ""
         _is_sentinel = bool(conversation_id) and conversation_id.startswith("_")
         try:
@@ -881,6 +889,19 @@ class ToolRelayService(BaseService):
             _ah = _args_hash(arguments)
             cc_tc_id = pop_cc_tc(
                 conversation_id, agent_name, tool_name, _ah)
+            if not cc_tc_id and not _is_sentinel:
+                # Retry with bounded wait (up to 500ms, polling every
+                # 50ms). The provider's enqueue runs on the CC stdout
+                # reader thread and typically catches up within 10-
+                # 100ms; 500ms is a generous upper bound.
+                import time as _t
+                _deadline = _t.monotonic() + 0.5
+                while _t.monotonic() < _deadline:
+                    _t.sleep(0.05)
+                    cc_tc_id = pop_cc_tc(
+                        conversation_id, agent_name, tool_name, _ah)
+                    if cc_tc_id:
+                        break
             if not cc_tc_id and not _is_sentinel:
                 logger.info(
                     "[tool-relay] cc_tc MISS conv=%s agent=%s tool=%s "

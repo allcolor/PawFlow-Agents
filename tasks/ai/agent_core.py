@@ -180,7 +180,8 @@ class AgentCoreMixin:
         # Config-side budget, used only as fallback when the provider
         # doesn't self-report a context window. For CC the authoritative
         # value comes from result.modelUsage[model].contextWindow and is
-        # cached as client._cc_context_window; the cascade in
+        # cached PER-STREAM as client._cc_context_window_by_stream
+        # (keyed by (conv_id, agent_name)); the cascade in
         # agent_emitter/claude_code always picks that first. Default 0
         # means "unknown" — UI skips the gauge rather than display a
         # fictional 200k budget for providers that haven't reported yet.
@@ -250,12 +251,17 @@ class AgentCoreMixin:
             if _ctx_used > 0:
                 # Real context window: first the provider's self-reported
                 # value (claude-code caches CC's
-                # result.modelUsage[model].contextWindow as
-                # client._cc_context_window), then the user's
+                # result.modelUsage[model].contextWindow per-stream in
+                # client._cc_context_window_by_stream keyed by
+                # (conv_id, agent_name) — the old singleton attr was
+                # clobbered across concurrent streams), then the user's
                 # max_context_size service config. NO hardcoded fallback
                 # — unknown means 0, UI skips the gauge rather than
                 # display a fictional budget.
-                _ctx_max = int(getattr(client, '_cc_context_window', 0) or
+                _cw_map = getattr(client, '_cc_context_window_by_stream', None) or {}
+                _cw_key = (conversation_id or "",
+                           ctx.get("active_agent_name", "") or "")
+                _ctx_max = int(_cw_map.get(_cw_key, 0) or
                                getattr(client, '_max_context_size', 0) or
                                ctx.get("max_context_size", 0) or 0)
                 src["context_used"] = _ctx_used

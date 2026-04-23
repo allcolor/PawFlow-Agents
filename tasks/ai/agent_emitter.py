@@ -184,11 +184,16 @@ class StreamEmitter(AgentEmitter):
                      + int(getattr(result, 'cache_read_tokens', 0) or 0))
         # Real context window: provider's self-reported value first
         # (claude-code caches CC's result.modelUsage[model].contextWindow
-        # as client._cc_context_window), then the user's
-        # max_context_size service config. No hardcoded fallback —
-        # unknown means 0, UI skips the gauge.
+        # per-stream in client._cc_context_window_by_stream keyed by
+        # (conv_id, agent_name) — the old singleton attr was clobbered
+        # across concurrent streams), then the user's max_context_size
+        # service config. No hardcoded fallback — unknown means 0,
+        # UI skips the gauge.
         _client = self.ctx.get("client")
-        _ctx_max = int((getattr(_client, '_cc_context_window', 0) if _client else 0)
+        _cw_map = (getattr(_client, '_cc_context_window_by_stream', None)
+                   if _client else None) or {}
+        _cw_key = (self.conversation_id or "", self._agent_name or "")
+        _ctx_max = int(_cw_map.get(_cw_key, 0)
                        or self.ctx.get("max_context_size", 0)
                        or 0)
         _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0

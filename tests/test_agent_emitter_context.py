@@ -10,11 +10,13 @@ class TestOnDoneContextFields(unittest.TestCase):
 
     def _make_emitter(self, max_ctx=200000, cc_window=0):
         bus = MagicMock()
-        # _cc_context_window defaults to 0 — explicit on the mock so
-        # getattr doesn't return a truthy auto-generated Mock.
+        # Per-stream context window cache replaces the old singleton
+        # _cc_context_window attr (which got clobbered across concurrent
+        # streams on the shared provider). Key by (conv_id, agent_name).
+        _cw_map = {("cid1", "test"): cc_window} if cc_window else {}
         client = MagicMock(
             provider="anthropic", base_url="", default_model="x",
-            _cc_context_window=cc_window)
+            _cc_context_window_by_stream=_cw_map)
         ctx = {
             "active_agent_name": "test",
             "active_llm_service": "svc",

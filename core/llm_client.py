@@ -727,6 +727,7 @@ class LLMClient(
         thinking_budget: int = 0,
         thinking_callback=None,
         turn_callback=None,
+        block_callback=None,
     ) -> LLMResponse:
         """Streaming completion — calls callback(token: str) for each token.
 
@@ -751,7 +752,8 @@ class LLMClient(
                                               thinking_callback=thinking_callback)
             elif self.provider == "claude-code":
                 result = self._stream_claude_code(messages, mdl, temperature, max_tokens, tools, callback,
-                                                  turn_callback=turn_callback)
+                                                  turn_callback=turn_callback,
+                                                  block_callback=block_callback)
             elif self.provider == "anthropic":
                 result = self._stream_anthropic(messages, mdl, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
             else:

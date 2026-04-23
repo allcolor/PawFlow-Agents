@@ -719,7 +719,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
     def _stream_claude_code(
         self, messages, model, temperature, max_tokens, tools, callback=None,
-        turn_callback=None, _is_auth_retry=False,
+        turn_callback=None, block_callback=None, _is_auth_retry=False,
     ):
         """Stream from claude CLI using bidirectional stream-json.
 
@@ -1149,14 +1149,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         self._had_preempts_this_turn = False
         self._result_emitted = False  # set True when CC emits final result
         self._compacting = False  # set True when CC compact_boundary fires
-        # CC's authoritative context window for the model in use, lifted
-        # from result.modelUsage[model].contextWindow on each result event.
-        # Stays stable across turns within a session (model-invariant).
-        # Initialised once per stream from the previous session's cache
-        # (resumed sessions keep their value) — 0 means "not yet observed,
-        # fall back to service config".
-        if not hasattr(self, '_cc_context_window'):
-            self._cc_context_window = 0
+        # CC's authoritative context window for the model in use is lifted
+        # from result.modelUsage[model].contextWindow on each result event
+        # and cached PER-STREAM in self._cc_context_window_by_stream
+        # (keyed by (conv_id, agent_name)). The old singleton scalar got
+        # clobbered across concurrent streams (memory_extract / _compact /
+        # multi-agent) on the shared provider — an opus turn would read
+        # back haiku's 200k after an unrelated stream had written it.
+        if not hasattr(self, '_cc_context_window_by_stream'):
+            self._cc_context_window_by_stream = {}
         # Track text of every preempt sent via stdin during this stream so
         # we can locate it in CC's session jsonl by content match. Used by
         # _check_preempt_in_jsonl to determine whether CC has already
@@ -1681,11 +1682,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                           + _u.get("cache_creation_input_tokens", 0)
                                           + _u.get("cache_read_input_tokens", 0))
                         # Only CC's own contextWindow (cached from the
-                        # previous result.modelUsage) — no service-config
-                        # or 200k default. Until the first result event
-                        # lands, _ctx_max_live stays 0 and the UI skips
-                        # the gauge (truth over pretend number).
-                        _ctx_max_live = int(getattr(self, '_cc_context_window', 0) or 0)
+                        # previous result.modelUsage), scoped per-stream
+                        # to avoid singleton pollution across concurrent
+                        # streams — no service-config or 200k default.
+                        # Until the first result event lands, _ctx_max_live
+                        # stays 0 and the UI skips the gauge (truth over
+                        # pretend number).
+                        _cw_map_live = getattr(self, '_cc_context_window_by_stream', None) or {}
+                        _ctx_max_live = int(_cw_map_live.get(
+                            (conv_id or "", agent_name or ""), 0) or 0)
                         _ctx_pct_live = (_ctx_used_live / _ctx_max_live
                                          if _ctx_max_live > 0 else 0.0)
                         _pub("message_meta", {
@@ -1795,13 +1800,35 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             }
                             if _parent_tc_id:
                                 _tc_event["parent_tc_id"] = _parent_tc_id
-                            # IMMUTABLE RULE: no stream-time SSE for
-                            # message-level content. tool_call goes
-                            # through _append → writer → sse_events at
-                            # turn_callback time. Keep tracking _block_id
-                            # so the tool_relay matcher (_pop_cc_tc) and
-                            # phantom-suppression logic still work.
+                            # IMMUTABLE RULE: stdout → LLMMessage → writer
+                            # → transcript/shared/ctx → SSE (post-write).
+                            # Flush THIS tool_use block now via
+                            # block_callback so the UI sees tool_call
+                            # live (lets the user click BG/Kill while
+                            # the tool is still running). Waiting for
+                            # the turn boundary would hide the tool_call
+                            # until AFTER tool_result landed — same
+                            # block of SSE, no way to interject.
                             _emitted_sse_tcs.add(_block_id)
+                            if block_callback:
+                                try:
+                                    _bc_payload = {
+                                        "id": _block_id,
+                                        "name": block.get("name", "") or _tc_name,
+                                        "arguments": block.get("input", _tc_args),
+                                        "thinking": _turn_thinking,
+                                    }
+                                    if _parent_tc_id:
+                                        _bc_payload["parent_tc_id"] = _parent_tc_id
+                                    block_callback("tool_use", _bc_payload)
+                                    # Thinking consumed by block_callback
+                                    # (attached to the tc_msg). Clear so
+                                    # end-of-turn flush doesn't re-emit.
+                                    _turn_thinking = ""
+                                except Exception as _bc_err:
+                                    logger.error(
+                                        "[claude-code] block_callback tool_use failed: %s",
+                                        _bc_err, exc_info=True)
                             # Register the CC tool_use id so tool_relay_service
                             # can match it when the MCP bridge forwards the
                             # same call (its request_id is a different uuid).
@@ -1914,12 +1941,35 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             }
                             if _parent_tc_id:
                                 _tr_event["parent_tc_id"] = _parent_tc_id
-                            # IMMUTABLE RULE: no stream-time SSE for
-                            # message-level content. tool_result is
-                            # emitted by _append → writer when the
-                            # role=tool LLMMessage (built by
-                            # _claude_code_turn_callback from
-                            # _tool_results) is persisted.
+                            # IMMUTABLE RULE: stdout → LLMMessage → writer
+                            # → transcript/shared/ctx → SSE (post-write).
+                            # Flush THIS tool_result block now via
+                            # block_callback. Paired with the live
+                            # tool_use flush above: the tc_msg landed
+                            # when CC emitted tool_use (UI saw it
+                            # live); the tr_msg lands here when the
+                            # result comes back. Together they replace
+                            # the previous end-of-turn bundle where
+                            # both landed together and the UI saw the
+                            # tool_call only AFTER the result was in.
+                            if block_callback:
+                                try:
+                                    _br_payload = {
+                                        "tc_id": tc_id,
+                                        "tool": _tr_name,
+                                        "result": result_str,
+                                    }
+                                    if _parent_tc_id:
+                                        _br_payload["parent_tc_id"] = _parent_tc_id
+                                    block_callback("tool_result", _br_payload)
+                                    # Consumed by block_callback: drop
+                                    # from _tool_results so end-of-turn
+                                    # flush doesn't double-persist.
+                                    _tool_results.pop(tc_id, None)
+                                except Exception as _br_err:
+                                    logger.error(
+                                        "[claude-code] block_callback tool_result failed: %s",
+                                        _br_err, exc_info=True)
                             # compact_result is terminal: once CC has
                             # delivered the summary, everything it emits
                             # afterwards is post-summary fluff we don't
@@ -2096,9 +2146,22 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                            + _mu.get("output_tokens", 0))
                     logger.info("[claude-code] result: usage=%s, modelUsage=%s, tokens=%d/%d",
                                 _usage, _model_usage, _total_in, _total_out)
-                    _result_model = (event.get("model")
-                                     or (list(_model_usage.keys())[0] if _model_usage else "")
-                                     or model)
+                    # Prefer event.get("model") (CC's authoritative
+                    # answer for this turn). When absent, prefer the
+                    # REQUESTED model if present in modelUsage — picking
+                    # the first dict key is non-deterministic and can
+                    # land on a side-task model (e.g. haiku used for
+                    # summarization while opus runs the turn), giving
+                    # the wrong contextWindow.
+                    _event_model = event.get("model") or ""
+                    if _event_model:
+                        _result_model = _event_model
+                    elif _model_usage and model in _model_usage:
+                        _result_model = model
+                    elif _model_usage:
+                        _result_model = list(_model_usage.keys())[0]
+                    else:
+                        _result_model = model
                     if _total_in or _total_out:
                         # Get the msg_id of the last assistant message (from turn_callback)
                         _last_msg_id = ""
@@ -2129,18 +2192,27 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             _cc_ctx_window = int(_cc_mu.get("contextWindow")
                                                   or _cc_mu.get("context_window")
                                                   or 0)
-                        if _cc_ctx_window <= 0 and _model_usage:
-                            for _mu in _model_usage.values():
-                                _w = int((_mu or {}).get("contextWindow")
-                                         or (_mu or {}).get("context_window")
-                                         or 0)
-                                if _w > 0:
-                                    _cc_ctx_window = _w
-                                    break
+                        # No iterate-and-pick-first fallback: that path
+                        # silently returned haiku's 200k when modelUsage
+                        # held both haiku (side-task) and opus (turn),
+                        # giving a wrong gauge. If _result_model has no
+                        # contextWindow, leave _cc_ctx_window=0 and skip
+                        # the gauge update for this event.
+                        # Per-stream cache keyed by (conv, agent) — the
+                        # singleton self._cc_context_window was clobbered
+                        # across concurrent streams (memory_extract /
+                        # _compact / multi-agent), so an opus turn read
+                        # back haiku's 200k after an unrelated stream had
+                        # written it.
+                        _cw_key = (conv_id or "", agent_name or "")
+                        _cw_map = getattr(self, '_cc_context_window_by_stream', None)
+                        if _cw_map is None:
+                            _cw_map = {}
+                            self._cc_context_window_by_stream = _cw_map
                         if _cc_ctx_window > 0:
-                            self._cc_context_window = _cc_ctx_window
+                            _cw_map[_cw_key] = _cc_ctx_window
                         _ctx_max = int(_cc_ctx_window
-                                       or getattr(self, '_cc_context_window', 0)
+                                       or _cw_map.get(_cw_key, 0)
                                        or 0)
                         # No 200k default. If CC didn't report
                         # contextWindow on this result, emit ctx_max=0 and
@@ -2270,7 +2342,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             logger.info("[claude-code] retrying after 401 token refresh")
             return self._stream_claude_code(
                 messages, model, temperature, max_tokens, tools, callback,
-                turn_callback=turn_callback, _is_auth_retry=True)
+                turn_callback=turn_callback, block_callback=block_callback,
+                _is_auth_retry=True)
         finally:
             # Stop compact stall watchdog
             _watchdog_stop.set()

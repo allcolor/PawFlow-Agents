@@ -845,18 +845,27 @@ class ToolRelayService(BaseService):
         # Match CC tool_use id (enqueued by claude_code provider when it
         # emitted the tool_call SSE event). Matching lets background /
         # kill actions, keyed by UI-visible tc_id, reach this request.
+        #
+        # Sentinel conversations (_compact, _memory_extract, …) never
+        # push cc_tc — they have no UI subscribers, tool_call SSE is a
+        # no-op, and they can't be backgrounded or killed per-tool
+        # anyway (the whole sentinel session is the unit of cancel).
+        # Skip the MISS log for them to stop flooding the log on every
+        # paginated `read` during a chunked compact (repro: 18 chunks ×
+        # ~10 reads each = 180 noise lines per compact).
         cc_tc_id = ""
+        _is_sentinel = bool(conversation_id) and conversation_id.startswith("_")
         try:
             from core.background_tool import pop_cc_tc, _args_hash
             _ah = _args_hash(arguments)
             cc_tc_id = pop_cc_tc(
                 conversation_id, agent_name, tool_name, _ah)
-            if not cc_tc_id:
+            if not cc_tc_id and not _is_sentinel:
                 logger.info(
                     "[tool-relay] cc_tc MISS conv=%s agent=%s tool=%s "
                     "args_hash=%s — background/kill won't find this request",
                     conversation_id[:8], agent_name, tool_name, _ah)
-            else:
+            elif cc_tc_id:
                 logger.debug(
                     "[tool-relay] cc_tc matched tc_id=%s (tool=%s)",
                     cc_tc_id, tool_name)

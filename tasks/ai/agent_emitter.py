@@ -223,6 +223,24 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_cancelled(self, result: AgentResult, ctx: dict) -> None:
+        # Flush the writer queue BEFORE publishing done. Cancel can fire
+        # mid-turn with multiple tool_call/tool_result messages still
+        # queued; if `done` overtakes them, the UI marks the turn as
+        # finished while the backlog publishes 5–10s later → ghost agent
+        # (messages land after "end of turn", frontend can't reconcile).
+        # Same IMMUTABLE RULE fix as 3bfbfaa (on_done) but on the cancel
+        # path. Repro: force-stop during a CC tool loop → done fires at
+        # T+0, tool_call publishes at T+3s, tool_result at T+8s; webchat
+        # kept the agent marked active until a second force-stop.
+        if self._use_conv_store and self.conversation_id:
+            try:
+                from core.conversation_writer import ConversationWriter
+                ConversationWriter.for_conversation(
+                    self.conversation_id).flush(timeout=30.0)
+            except Exception as _fw_err:
+                logger.warning(
+                    "[agent:%s] cancel writer flush failed: %s",
+                    self.conversation_id[:8], _fw_err)
         # Publish done so frontend closes pending tool calls + streaming elements
         self._emit("done", {
             "agent_name": self._agent_name or "",

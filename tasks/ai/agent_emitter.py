@@ -349,20 +349,9 @@ class StreamEmitter(AgentEmitter):
 
     def on_tool_calls(self, tool_calls, response_content, thinking,
                       poll_silent):
-        # tool_call SSE events are now published by ConversationWriter
-        # after the message is written to the store (single source of truth).
-        # Narration: ONLY if LLM said absolutely nothing
-        if not response_content and not thinking and tool_calls:
-            _nsvc = self.ctx.get("narrator_service", "")
-            if not _nsvc:
-                return  # no narrator configured → skip narration
-            logger.info(f"[narration] triggering narrator_service='{_nsvc}'")
-            from tasks.ai.agent_streaming import _narrate_tool_calls
-            _narrate_tool_calls(
-                tool_calls, self.ctx, self.bus, self.conversation_id,
-                self._agent_name or "", self._agent_source(),
-                msg_id=self._current_msg_id,
-            )
+        # tool_call SSE events are published by ConversationWriter after
+        # the message is written to the store (single source of truth).
+        pass
 
     def on_tool_result(self, tc, result_text, preview):
         # tool_result SSE events are now published by ConversationWriter

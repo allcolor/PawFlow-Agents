@@ -38,7 +38,7 @@ tasks/
     agent_loop.py           # AgentLoopTask — main composite task
     agent_context.py        # System prompt building, skill injection, MCP loading
     agent_core.py           # Unified execution loop (_run_agent_loop)
-    agent_streaming.py      # Thread spawning, SSE streaming, narration
+    agent_streaming.py      # Thread spawning, SSE streaming
     agent_compaction.py     # Context window management, summarization
     agent_poller.py         # Background poller for scheduled tasks/rechecks
     agent_tool_config.py    # Tool filtering, handler wiring
@@ -120,7 +120,7 @@ assign_task creates a recurring autonomous task:
 - Agent reports progress via complete_task tool
 
 ### SSE event flow
-Agent loop calls ConversationEventBus.publish_event(cid, type, data) which forwards to SSEWriter → HTTP SSE stream → webchat UI. Event types: thinking, token, tool_use, tool_result, message, narration, error, task_progress, etc.
+Agent loop calls ConversationEventBus.publish_event(cid, type, data) which forwards to SSEWriter → HTTP SSE stream → webchat UI. Event types: thinking, token, tool_use, tool_result, message, error, task_progress, etc.
 
 ### Relay system (Docker sandboxing)
 Tool execution (bash, file ops, screen) can run on the host or in Docker containers via relay:

@@ -349,31 +349,6 @@ function connectSSE(cid, onReady, opts) {
     }
   });
 
-  // Narration: separate from token stream — not persisted, ephemeral display
-  eventSource.addEventListener('narration', (e) => {
-    lastSSEActivity = Date.now();
-    const data = JSON.parse(e.data);
-    const agent = data.agent_name || '';
-    const src = data.source || {type: 'agent', name: agent};
-    const badge = sourceBadge(src);
-    const el = document.createElement('div');
-    el.className = 'msg narration';
-    el.dataset.finalizedAgent = agent.toLowerCase();
-    el.innerHTML = makeTimeHtml() + badge + '<em>' + escapeHtml(data.text || '') + '</em>';
-    // Route into task block if this is a task event
-    if (data.task_id) {
-      const tb = _getTaskBlock(data.task_id, data.task_iteration, agent);
-      if (tb) { tb.content.appendChild(el); scrollBottom(); }
-      else document.getElementById('messages').appendChild(el);
-    } else {
-      const _narContainer = document.getElementById('messages');
-      const _narTyping = document.getElementById('typing');
-      if (_narTyping) _narContainer.insertBefore(el, _narTyping);
-      else _narContainer.appendChild(el);
-    }
-    scrollBottom();
-  });
-
   eventSource.addEventListener('iteration_status', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
@@ -1149,11 +1124,6 @@ function connectSSE(cid, onReady, opts) {
     for (const id of allIds) {
       if (id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(id);
     }
-    // Clean up narrations
-    const agentLower = doneAgent.toLowerCase();
-    document.querySelectorAll('#messages .narration').forEach(el => {
-      if (el.dataset.finalizedAgent === agentLower) el.remove();
-    });
     // Finalize active streaming element (remove streaming class)
     if (s.el && s.el.parentNode) {
       s.el.classList.remove('streaming');
@@ -1240,15 +1210,9 @@ function connectSSE(cid, onReady, opts) {
     if (cancelAgent === 'all') {
       // Don't clear activeInteractions — server is source of truth via syncActive
       syncActiveFromServer();
-      // Clean up all narrations + thinking
-      document.querySelectorAll('#messages .narration').forEach(el => el.remove());
       document.querySelectorAll('#messages .thinking-block').forEach(el => el.remove());
     } else {
       trackAgentDone(cancelAgent);
-      // Clean up this agent's narrations
-      document.querySelectorAll('#messages .narration').forEach(el => {
-        if (el.dataset.finalizedAgent === cancelAgent.toLowerCase()) el.remove();
-      });
     }
     // Finalize streaming chunks instead of removing them (preserve visible text)
     if (cancelAgent === 'all') {

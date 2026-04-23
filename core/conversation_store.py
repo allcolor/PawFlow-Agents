@@ -1078,8 +1078,8 @@ class ConversationStore:
     # ════════════════════════════════════════════════════════════════════
     #
     # Single write path. Every message (assistant block, tool call,
-    # tool result, user input, delegate request/reply, narration,
-    # context injection, display_only) goes through here exactly ONCE.
+    # tool result, user input, delegate request/reply, context
+    # injection, display_only) goes through here exactly ONCE.
     #
     # The router decides per-message which files to write based on
     # (role, source.type, display_only, tool_calls). Atomic under the

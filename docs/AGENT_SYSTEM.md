@@ -422,7 +422,6 @@ PawFlow uses Server-Sent Events (SSE) for real-time communication between the ag
 | `token` | A token of the response (streamed incrementally). |
 | `tool_start` | Agent is calling a tool (name + arguments). |
 | `tool_result` | Tool execution completed (result summary). |
-| `narration` | Human-readable description of what the agent is doing (from narrator service or synthesized). |
 | `done` | Agent turn is complete. Includes response, model, tokens_in/out, tools_called, duration_ms. |
 | `error_event` | An error occurred. |
 | `message_queued` | A new message was queued because the agent is busy. |
@@ -433,13 +432,6 @@ PawFlow uses Server-Sent Events (SSE) for real-time communication between the ag
 | `plan_updated` | Plan status or step status changed. |
 | `thought_scheduled` | Random thought scheduled for later. |
 | `title_generated` | Conversation title was auto-generated. |
-
-### Narration
-
-When the agent calls tools without producing text, a narration is generated to keep the user informed. Two strategies:
-
-1. **Synthesized narration** (`_synthesize_narration`): Pattern-based, instant -- e.g., "Reading 3 files, Running command."
-2. **Narrator service** (`narrator_service`): A separate LLM call that describes what the agent is doing in natural language. Has a 4-second timeout to avoid blocking the loop.
 
 ### Queue Behavior
 

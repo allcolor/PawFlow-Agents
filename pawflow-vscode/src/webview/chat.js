@@ -796,19 +796,6 @@ function handleSSE(event) {
       }
       break;
 
-    case 'narration':
-      // Display-only narration (not persisted in context)
-      if (data.text) {
-        var narEl = document.createElement('div');
-        narEl.className = 'msg narration';
-        narEl.style.cssText = 'font-style:italic;opacity:0.7;font-size:12px;';
-        narEl.textContent = data.text;
-        narEl.dataset.agent = (agent || '').toLowerCase();
-        messagesEl.appendChild(narEl);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      }
-      break;
-
     case 'error_event':
       addMsg('error', data.message || 'Error');
       statusEl.textContent = '';

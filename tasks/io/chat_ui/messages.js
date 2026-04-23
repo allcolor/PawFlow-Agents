@@ -149,7 +149,6 @@ function addMsg(role, text, extra) {
   // Map roles to CSS classes
   let cssClass = role;
   if (role === 'tool_call' || role === 'tool_result') cssClass = 'tool';
-  else if (role === 'narration') cssClass = 'narration';
   else if (role === 'assistant' && extra && extra.source && extra.source.type === 'agent') {
     const srcName = (extra.source.name || '').toLowerCase();
     if (srcName) cssClass = 'subagent';
@@ -344,10 +343,6 @@ function addMsg(role, text, extra) {
     details.appendChild(content);
     el.innerHTML = '';
     el.appendChild(details);
-  } else if (role === 'narration') {
-    const srcN = (extra && extra.source) ? displayAgentName(extra.source.name || '') : '';
-    const src = extra && extra.source ? extra.source : {type: 'agent', name: srcN};
-    el.innerHTML = timeHtml + sourceBadge(src) + '<em>' + escapeHtml(text) + '</em>';
   } else if (role === 'user') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text) + _attachHtml;
   } else if (role === 'sub_agent_trace') {

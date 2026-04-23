@@ -340,10 +340,6 @@ class AgentLoopTask(
                 "type": "string", "required": False, "default": "${summarizer_service}",
                 "description": "Dedicated LLM service for context compaction/summary.",
             },
-            "narrator_service": {
-                "type": "string", "required": False, "default": "${narrator_service}",
-                "description": "Dedicated LLM service for tool-call narration.",
-            },
             "llm_service": {
                 "type": "string", "required": False, "default": "",
                 "description": "LLM service ID — leave empty when agents have their own (conv_agents config).",

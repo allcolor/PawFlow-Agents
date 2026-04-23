@@ -73,7 +73,7 @@ class AgentSerializationMixin:
                               conversation_id: str = "") -> List[LLMMessage]:
         """Deserialize messages from storage.
 
-        By default, display_only messages (narrations, sub_agent_trace) are
+        By default, display_only messages (sub_agent_trace, etc.) are
         excluded — they are transcript-only, not for LLM context.
         Pass include_display_only=True for UI replay.
         """
@@ -319,7 +319,7 @@ class AgentSerializationMixin:
                 if m.get("timestamp"):
                     entry["timestamp"] = m["timestamp"]
                 result.append(entry)
-            elif role in ("tool_call", "tool_result", "narration", "thinking"):
+            elif role in ("tool_call", "tool_result", "thinking"):
                 # Skip meta tools from display
                 if role in ("tool_call", "tool_result") and m.get("tool_name") in _META_TOOLS:
                     continue

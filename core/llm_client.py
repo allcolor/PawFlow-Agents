@@ -655,9 +655,14 @@ class LLMClient(
                             overflow, reduced,
                         )
 
-                is_429 = "429" in err_str or "rate_limit" in err_str.lower()
-                is_529 = "529" in err_str or "overloaded" in err_str.lower()
-                is_500 = "500" in err_str or "Internal server error" in err_str
+                # Match HTTP codes as standalone tokens — plain substring
+                # matching fired false positives on captured CC PIDs like
+                # 165500 / 1429xx, turning our own intentional kills into
+                # retriable "500"/"429" errors.
+                is_429 = bool(re.search(r'\b429\b', err_str)) or "rate_limit" in err_str.lower()
+                is_529 = bool(re.search(r'\b529\b', err_str)) or "overloaded" in err_str.lower()
+                is_500 = (bool(re.search(r'\b500\b', err_str))
+                           or "Internal server error" in err_str)
 
                 if is_529:
                     overloaded_attempts += 1
@@ -674,10 +679,14 @@ class LLMClient(
                                 logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fb_err)
                         raise LLMClientError(f"Overloaded (529) after {overloaded_attempts} attempts: {last_error}")
 
-                retryable = is_429 or is_529 or is_500 or any(
-                    code in err_str for code in ("503", "502", "reset", "timeout",
-                                                  "api_error", "server_error")
-                )
+                _is_cc_our_exit = "Claude CLI stream exited" in err_str
+                _other_code_re = re.compile(
+                    r'\b(503|502|reset|timeout|api_error|server_error)\b',
+                    re.IGNORECASE)
+                retryable = (
+                    (is_429 or is_529 or is_500
+                     or bool(_other_code_re.search(err_str)))
+                    and not _is_cc_our_exit)
                 if retryable and attempt < self.max_retries:
                     server_delay = self._parse_retry_after(err_str)
                     base_delay = 2.0
@@ -807,18 +816,40 @@ class LLMClient(
                             overflow, reduced,
                         )
 
-                is_429 = "429" in err_str or "rate_limit" in err_str.lower()
-                is_529 = "529" in err_str or "overloaded" in err_str.lower()
-                is_500 = "500" in err_str or "Internal server error" in err_str
+                # HTTP status codes matched as standalone tokens — plain
+                # substring matching was catastrophic: a captured CC
+                # container PID like "165500" or "1429xx" matched "500"/
+                # "429" and the retry loop treated our own intentional
+                # kills as transient upstream failures, spawning
+                # concurrent compact/main CC replays that ate pool slots.
+                is_429 = bool(re.search(r'\b429\b', err_str)) or "rate_limit" in err_str.lower()
+                is_529 = bool(re.search(r'\b529\b', err_str)) or "overloaded" in err_str.lower()
+                is_500 = (bool(re.search(r'\b500\b', err_str))
+                           or "Internal server error" in err_str)
                 is_compact_stall = "compact_stall" in err_str
                 # Tool-result stall: PawFlow's watchdog killed CC because
                 # it went idle mid-turn. Our own recovery action — transparent
                 # to the user, always retry.
                 is_tool_stall = "tool_stall" in err_str
-                retryable = is_429 or is_529 or is_500 or is_compact_stall or is_tool_stall or any(
-                    code in err_str for code in ("503", "502", "reset", "timeout",
-                                                  "api_error", "server_error")
-                )
+                # Claude CLI stream exit with a non-retryable reason is OUR
+                # own kill (compact_result delivered, user cancel, MCP
+                # teardown). The provider already absorbed the intentional
+                # exits where the payload was delivered; anything reaching
+                # here is a real local failure, NOT a transient API issue.
+                # Retrying it spawns another CC container on every attempt.
+                _is_cc_our_exit = (
+                    "Claude CLI stream exited" in err_str
+                    and not is_compact_stall
+                    and not is_tool_stall)
+                # Match other HTTP codes and error markers as standalone
+                # tokens too — same substring risk.
+                _other_code_re = re.compile(
+                    r'\b(503|502|reset|timeout|api_error|server_error)\b',
+                    re.IGNORECASE)
+                retryable = (
+                    (is_429 or is_529 or is_500 or is_compact_stall
+                     or is_tool_stall or bool(_other_code_re.search(err_str)))
+                    and not _is_cc_our_exit)
 
                 if is_529:
                     overloaded_attempts += 1

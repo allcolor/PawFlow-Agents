@@ -940,6 +940,18 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             def _drain_stderr():
                 try:
                     for _line in proc.stderr:
+                        # setsid --wait prints "setsid: child NN did not
+                        # exit normally: Success" whenever the session
+                        # leader is SIGKILL'd. Our _kill_cc_hard ALWAYS
+                        # uses SIGKILL (it IS the kill mechanism), so
+                        # this message fires on every clean compact/
+                        # cancel. Keeping it in _stderr_buffer poisons
+                        # the "Claude CLI stream exited ...: <stderr>"
+                        # exception string, which the outer retry logic
+                        # then has to special-case. Drop it at the source.
+                        if (_line.startswith("setsid: child ")
+                                and "did not exit normally" in _line):
+                            continue
                         self._stderr_buffer.append(_line)
                         if (not proc._pf_pid
                                 and '__PF_CLAUDE_PID=' in _line):

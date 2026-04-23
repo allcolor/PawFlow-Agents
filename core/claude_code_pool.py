@@ -255,13 +255,29 @@ class ClaudeCodePool:
         # errored with "not a pid or valid job spec", and the whole
         # claude spawn failed 100% of the time.
         #
+        # Why `setsid` at the outer level?
+        # docker exec does NOT create a new session per exec — every exec
+        # in the same container inherits the container's containerd-shim
+        # session (or whatever PGID the shim holds). Without setsid, bash
+        # inherits a PGID shared with EVERY OTHER CONCURRENT exec in the
+        # container. When `_kill_cc_hard` sends `kill -9 -<PGID>`
+        # targeting its own claude, it actually SIGKILLs every sibling
+        # exec that shares the PGID — e.g. the main agent's CC when a
+        # compact / memory_extract / sub-agent finishes. Repro: user's
+        # log showed compact's kill with pgid=1985254 immediately preceded
+        # main's exit 137, both streams' stderr buffers showing the same
+        # __PF_CLAUDE_PID= value (mirrored from shared self._stderr_buffer,
+        # but more importantly they were in the SAME process group).
+        #
+        # setsid gives bash its own session + PGID. After the exec chain,
+        # claude's PID == PGID == SID — isolated from siblings. Negative-
+        # PID kill then targets only this exec's process group.
+        #
         # Chained `exec`: bash PID == setpriv PID == claude PID (exec
-        # replaces the process in place). Under docker exec, bash is
-        # already the session leader for its exec, so claude becomes
-        # the process-group leader (PID == PGID). `kill -9 -<PID>` with
-        # a NEGATIVE PID in `_kill_cc_hard` sends SIGKILL to the whole
-        # pgroup, reaping claude + every Node worker it forked — the
-        # original goal of 0e22927 without the bash-quirk footgun.
+        # replaces the process in place). `kill -9 -<PID>` with a NEGATIVE
+        # PID in `_kill_cc_hard` sends SIGKILL to the whole pgroup, reaping
+        # claude + every Node worker it forked — the original goal of
+        # 0e22927 without the bash-quirk footgun.
         import shlex
         _claude_quoted = " ".join(shlex.quote(str(a)) for a in claude_args)
         _shell_script = (
@@ -273,7 +289,19 @@ class ClaudeCodePool:
         )
         exec_args.extend([
             container_name,
-            "unshare", "-m", "--",
+            # setsid --wait: new session + PGID per exec so kill -9 -<PGID>
+            # only hits THIS exec's process group, never siblings. Without
+            # setsid every concurrent docker exec in the same container
+            # inherits the container's containerd-shim PGID, and a kill
+            # targeting that PGID wipes every sibling exec — repro seen
+            # when a compact/memory_extract finishes and its
+            # _kill_cc_hard takes out the main agent's CC with it
+            # (exit 137). setsid forks once (bash is typically a PGL so
+            # can't become a session leader without forking); --wait makes
+            # the setsid parent block for the child and propagate its exit
+            # status so docker exec still sees the real return code.
+            # unshare -m: private mount namespace for the /cc_sessions bind.
+            "setsid", "--wait", "unshare", "-m", "--",
             "bash", "-c", _shell_script,
         ])
 

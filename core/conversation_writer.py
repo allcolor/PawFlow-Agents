@@ -185,24 +185,34 @@ class ConversationWriter:
                 # Publish SSE events AFTER successful write
                 sse_events = item.get("sse_events")
                 if sse_events:
-                    try:
-                        from core.conversation_event_bus import ConversationEventBus
-                        bus = ConversationEventBus.instance()
-                        for sse_evt in sse_events:
-                            # SSE target cid may differ from writer cid
-                            # (e.g. task sub-conv writes routed to parent).
-                            _evt_cid = sse_evt.get("cid") or self._cid
+                    from core.conversation_event_bus import ConversationEventBus
+                    bus = ConversationEventBus.instance()
+                    for sse_evt in sse_events:
+                        # SSE target cid may differ from writer cid
+                        # (e.g. task sub-conv writes routed to parent).
+                        _evt_cid = sse_evt.get("cid") or self._cid
+                        # Diagnostic subscriber count is best-effort. A
+                        # missing/misbehaving method must NOT swallow the
+                        # publish below — that turned SSE into a silent
+                        # drop when _FakeBus (and any bus variant without
+                        # subscriber_count) raised AttributeError inside
+                        # the old outer try/except.
+                        _sub_count = -1
+                        try:
                             _sub_count = bus.subscriber_count(_evt_cid)
-                            logger.info(
-                                "[conv-writer:%s] publish %s → cid=%s "
-                                "subs=%d",
-                                self._cid[:8], sse_evt["type"],
-                                _evt_cid[:8], _sub_count)
+                        except Exception:
+                            pass
+                        logger.info(
+                            "[conv-writer:%s] publish %s → cid=%s subs=%d",
+                            self._cid[:8], sse_evt["type"],
+                            _evt_cid[:8], _sub_count)
+                        try:
                             bus.publish_event(
                                 _evt_cid, sse_evt["type"], sse_evt.get("data"))
-                    except Exception as sse_err:
-                        logger.warning("[conv-writer:%s] SSE publish failed: %s",
-                                       self._cid[:8], sse_err)
+                        except Exception as sse_err:
+                            logger.warning(
+                                "[conv-writer:%s] SSE publish failed: %s",
+                                self._cid[:8], sse_err)
             except Exception as e:
                 logger.error("[conv-writer:%s] write failed: %s",
                              self._cid[:8], e, exc_info=True)

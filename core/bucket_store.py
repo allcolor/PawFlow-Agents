@@ -251,16 +251,32 @@ class BucketStore:
         return out
 
     def estimated_header_chars(self) -> int:
-        """Rough char budget of the current pyramid header.
+        """Char budget of the current pyramid header as the AGENT sees it.
 
         Used by the bg worker's rollup-trigger check — compares to
         HEADER_BUDGET (in chars, via a 1-token≈4-char approximation
         done at the caller). Cheaper than a full tokenizer pass.
+
+        Counts summary + rendered tool_trace digest per bucket (matches
+        what assemble_summary_header produces). Counting summary-only
+        underestimates by 20-50% because tool_trace digests can be
+        several KB per bucket — trigger fires too late, pyramid header
+        bloats past budget, and the agent's own /compact fires before
+        rollup catches up (repro: 5 buckets, summary=80kch, but full
+        header=108kch; threshold=120kch, so we'd trigger rollup on the
+        NEXT bucket vs. already-overdue).
         """
+        from core.tool_activity_digest import format_activity_digest, is_empty
         total = 0
         for d in self.get_all_summaries():
             s = d.get("summary", "") or ""
             total += len(s)
+            _tt = d.get("tool_trace")
+            if _tt and not is_empty(_tt):
+                try:
+                    total += len(format_activity_digest(_tt))
+                except Exception:
+                    pass
         return total
 
     def get_rollup_input(self) -> List[Dict]:

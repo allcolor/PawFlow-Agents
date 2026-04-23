@@ -145,6 +145,14 @@ class ToolRelayService(BaseService):
         import asyncio
         from services.filesystem_service import _ws_recv_frame, _ws_send_frame
         service = self
+        # Capture for the finally-log so a disconnect can be traced
+        # back to the specific CC session it belonged to. Without this,
+        # every disconnect just says "addr=10.x.x.x" and the previous
+        # CC's lagging cleanup looks identical to a newly-started
+        # session failing immediately.
+        _conv_id = ""
+        _agent_name = ""
+        _already_logged_disconnect = False
         try:
             opcode, payload = await _ws_recv_frame(reader)
             if opcode != 0x01:
@@ -228,15 +236,28 @@ class ToolRelayService(BaseService):
                 or 'reset by peer' in _err_str.lower()
                 or isinstance(e, (ConnectionResetError, asyncio.IncompleteReadError)))
             if _peer_close:
-                logger.info('Tool relay disconnected: %s (closed by peer)', remote)
+                logger.info(
+                    'Tool relay disconnected (closed by peer): '
+                    'conv=%s agent=%s addr=%s',
+                    _conv_id, _agent_name, remote)
             else:
-                logger.error('Tool relay connection error (%s): %s', remote, e, exc_info=True)
+                logger.error(
+                    'Tool relay connection error: conv=%s agent=%s '
+                    'addr=%s err=%s',
+                    _conv_id, _agent_name, remote, e, exc_info=True)
+            _already_logged_disconnect = True
         finally:
             try:
                 writer.close()
             except Exception as e:
                 logger.debug('writer.close failed: %s', e, exc_info=True)
-            logger.info('Tool relay disconnected: %s', remote)
+            # Only log here if the except didn't already (registration
+            # reject / clean exit from the receive loop with no
+            # exception). Prevents the old double-line spam.
+            if not _already_logged_disconnect:
+                logger.info(
+                    'Tool relay disconnected: conv=%s agent=%s addr=%s',
+                    _conv_id, _agent_name, remote)
 
 
 

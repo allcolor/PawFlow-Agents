@@ -914,26 +914,17 @@ class AgentUtilsMixin:
 
     def _wire_embed_fn(
         self, registry: ToolRegistry, client: LLMClient,
+        user_id: str = "",
     ) -> None:
         """Wire embedding function into RememberHandler and SemanticRecallHandler.
 
-        When no api_key is available (claude-code uses OAuth, not API key),
-        unregister semantic_recall so the agent doesn't see it as available
-        and try to call it just to get 'not configured' errors.
+        `EmbeddingProvider.embed(provider="auto", ...)` picks the OpenAI API
+        when `api_key` is set and falls back to the local sentence-transformer
+        otherwise. Claude-Code agents (OAuth, no api_key) get the local model —
+        so `semantic_recall` and embedded `remember` work for every provider.
+        Handlers MUST stay registered or the agent never learns the tool exists.
         """
         from core.tool_registry import RememberHandler, SemanticRecallHandler
-
-        if not client.api_key:
-            # No embedding provider → drop semantic_recall from this agent's
-            # toolset entirely.
-            _to_drop = [h for h in registry.list_tools()
-                        if isinstance(h, SemanticRecallHandler)]
-            for _h in _to_drop:
-                try:
-                    registry.unregister(_h.name)
-                except Exception:
-                    pass
-            return
 
         _api_key = client.api_key
         _base_url = client.base_url
@@ -950,4 +941,23 @@ class AgentUtilsMixin:
                 h.set_embed_fn(embed_fn)
             elif isinstance(h, SemanticRecallHandler):
                 h.set_embed_fn(embed_fn)
+
+        if user_id:
+            import threading
+            from core.memory_store import MemoryStore
+
+            def _backfill():
+                try:
+                    n = MemoryStore.instance().ensure_embeddings(user_id, embed_fn)
+                    if n:
+                        logger.info(
+                            "[memory] backfilled %d embedding(s) for user %s",
+                            n, user_id,
+                        )
+                except Exception:
+                    logger.exception("[memory] ensure_embeddings failed")
+
+            threading.Thread(
+                target=_backfill, name="memory-embed-backfill", daemon=True,
+            ).start()
 

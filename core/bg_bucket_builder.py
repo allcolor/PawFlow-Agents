@@ -42,6 +42,25 @@ from core.tool_activity_digest import (
 logger = logging.getLogger(__name__)
 
 
+def _build_embed_fn(client: Any):
+    """Return a callable that embeds text using `client`'s credentials when
+    available, falling back to the local sentence-transformer otherwise.
+    `EmbeddingProvider.embed(provider="auto", ...)` does that selection.
+    Returns None if `client` is missing so the caller can keep embed_fn=None.
+    """
+    api_key = getattr(client, "api_key", "") or ""
+    base_url = getattr(client, "base_url", "") or ""
+
+    def _embed(text: str):
+        from core.embeddings import EmbeddingProvider
+        vecs = EmbeddingProvider.instance().embed(
+            [text], provider="auto", api_key=api_key, base_url=base_url,
+        )
+        return vecs[0] if vecs else []
+
+    return _embed
+
+
 # Extra compact_instructions passed to the injected summarize_fn for
 # bucket building. Orients the summarizer toward multi-agent context
 # and the Files & operations requirement. Activity digest is appended
@@ -802,7 +821,8 @@ class BgBucketBuilder:
             from core.memory_auto_extract import auto_extract_memories
             auto_extract_memories(
                 user_id=user_id, summary=summary,
-                agent_name="", llm_client=client)
+                agent_name="", llm_client=client,
+                embed_fn=_build_embed_fn(client))
         except Exception:
             logger.debug(
                 "[bg-bucket] auto_extract_memories failed for cid=%s "
@@ -905,7 +925,8 @@ class BgBucketBuilder:
                 from core.memory_auto_extract import auto_extract_memories
                 auto_extract_memories(
                     user_id=user_id, summary=result,
-                    agent_name="", llm_client=client)
+                    agent_name="", llm_client=client,
+                    embed_fn=_build_embed_fn(client))
             except Exception:
                 logger.debug("[bg-bucket] consolidate memory extract failed",
                               exc_info=True)

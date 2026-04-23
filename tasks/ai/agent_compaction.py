@@ -478,6 +478,18 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             if not isinstance(items, list):
                 return
             from core.memory_store import MemoryStore
+            from core.embeddings import EmbeddingProvider
+            _api_key = getattr(client, "api_key", "") or ""
+            _base_url = getattr(client, "base_url", "") or ""
+            def _embed_fact(t: str):
+                try:
+                    vecs = EmbeddingProvider.instance().embed(
+                        [t], provider="auto",
+                        api_key=_api_key, base_url=_base_url,
+                    )
+                    return vecs[0] if vecs else None
+                except Exception:
+                    return None
             store = MemoryStore.instance()
             stored = 0
             for item in items[:5]:
@@ -497,6 +509,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     category = "facts"
                 store.remember(
                     user_id, text, tags, source="compaction",
+                    embedding=_embed_fact(text),
                     agent=agent_name, category=category,
                 )
                 stored += 1

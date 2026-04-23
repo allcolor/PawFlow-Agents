@@ -467,6 +467,56 @@ class MemoryStore:
                 self._save_user(user_id)
             return count
 
+    def ensure_embeddings(self, user_id: str,
+                          embed_fn: Callable[[str], List[float]]) -> int:
+        """Embed only entries that currently have no embedding.
+
+        Idempotent backfill: safe to call on every agent wire-up. Returns
+        the number of entries freshly embedded (0 means everything was
+        already covered).
+
+        Runs `embed_fn` WITHOUT holding `_store_lock` so concurrent
+        `remember`/`recall`/`forget` aren't blocked by a long backfill
+        (several hundred entries times model latency can add up to tens
+        of seconds).
+        """
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            todo = [(e.id, e.text)
+                    for e in self._memories.get(user_id, [])
+                    if e.embedding is None]
+
+        if not todo:
+            return 0
+
+        updates: Dict[str, List[float]] = {}
+        for mid, text in todo:
+            try:
+                vec = embed_fn(text)
+            except Exception as exc:
+                logger.warning(f"ensure_embeddings: failed on {mid}: {exc}")
+                continue
+            if vec:
+                updates[mid] = vec
+
+        if not updates:
+            return 0
+
+        with self._store_lock:
+            entries = self._memories.get(user_id, [])
+            count = 0
+            for e in entries:
+                if e.embedding is not None:
+                    continue
+                vec = updates.get(e.id)
+                if vec is None:
+                    continue
+                e.embedding = vec
+                count += 1
+            if count > 0:
+                self._save_user(user_id)
+            return count
+
     # ── Disk persistence ──────────────────────────────────────────
 
     def _user_path(self, user_id: str) -> Path:

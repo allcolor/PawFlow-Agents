@@ -30,6 +30,7 @@ def auto_extract_memories(
     summary: str,
     agent_name: str = "",
     llm_client=None,
+    embed_fn=None,
 ) -> int:
     """Extract and store memories from a compaction summary.
 
@@ -55,11 +56,20 @@ def auto_extract_memories(
         if not text or len(text) < 10:
             continue
         try:
+            embedding = None
+            if embed_fn is not None:
+                try:
+                    vec = embed_fn(text)
+                    if vec:
+                        embedding = vec
+                except Exception as exc:
+                    logger.debug(f"[auto-extract] embed failed: {exc}")
             store.remember(
                 user_id=user_id,
                 text=text,
                 tags=["auto-extracted", "compaction"],
                 source="compaction",
+                embedding=embedding,
                 agent=agent_name,
                 category=fact.get("category", "") or fact.get("hall", "facts"),
             )

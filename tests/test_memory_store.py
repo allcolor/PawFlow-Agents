@@ -133,6 +133,39 @@ class TestMemoryStore(unittest.TestCase):
         assert self.store.count("user1") == 2
         assert self.store.count("user2") == 0
 
+    def test_ensure_embeddings_backfills_only_orphans(self):
+        # Two entries without embedding, one with.
+        self.store.remember("u", "alpha", ["t"])
+        self.store.remember("u", "beta", ["t"])
+        self.store.remember("u", "gamma", ["t"], embedding=[0.5, 0.5])
+
+        calls = []
+
+        def embed(text):
+            calls.append(text)
+            return [float(len(text)), 0.0]
+
+        n = self.store.ensure_embeddings("u", embed)
+        assert n == 2
+        assert sorted(calls) == ["alpha", "beta"]
+        # Second call should be a no-op — everything already embedded.
+        assert self.store.ensure_embeddings("u", embed) == 0
+        # Original vector preserved
+        by_text = {e.text: e for e in self.store.list_all("u")}
+        assert by_text["gamma"].embedding == [0.5, 0.5]
+        assert by_text["alpha"].embedding is not None
+        assert by_text["beta"].embedding is not None
+
+    def test_ensure_embeddings_skips_on_failure(self):
+        self.store.remember("u", "a", ["t"])
+
+        def failing(text):
+            raise RuntimeError("boom")
+
+        n = self.store.ensure_embeddings("u", failing)
+        assert n == 0
+        assert self.store.list_all("u")[0].embedding is None
+
 
 class TestMemoryPersistence(unittest.TestCase):
 

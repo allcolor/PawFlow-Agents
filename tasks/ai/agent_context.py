@@ -96,7 +96,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
         # Wire embedding function for semantic memory handlers
         if client:
-            self._wire_embed_fn(registry, client)
+            self._wire_embed_fn(registry, client, user_id=_user_id_for_svc)
 
         # Set up SubAgentExecutor for delegate
         from core.agent_executor import SubAgentExecutor

@@ -189,7 +189,7 @@ def test_memory_extractor_called_per_bucket(fake_builder, monkeypatch):
     """auto_extract_memories should fire once per bucket build."""
     calls_to_extract = []
 
-    def _fake_extract(user_id, summary, agent_name="", llm_client=None):
+    def _fake_extract(user_id, summary, agent_name="", llm_client=None, **kwargs):
         calls_to_extract.append({
             "user_id": user_id,
             "summary_len": len(summary),

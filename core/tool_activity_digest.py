@@ -52,16 +52,40 @@ def _extract_command(args: Dict[str, Any]) -> str:
     return ""
 
 
+def _strip_tool_output_wrapper(text: str) -> str:
+    """Strip the anti-injection wrapper added by
+    AgentCore._wrap_tool_output_safety (agent_core.py):
+      "<tool_output tool=\"name\">\n<body>\n</tool_output>\nNote: ..."
+    Without stripping, the FIRST non-empty line of a wrapped result is
+    just the wrapper opening tag — _result_digest then returns the
+    useless string "<tool_output tool=\"bash\">" and every command
+    in the bucket trace loses its actual output line.
+    """
+    if not isinstance(text, str) or not text:
+        return text or ""
+    if text.startswith("<tool_output tool="):
+        first_nl = text.find("\n")
+        if first_nl >= 0:
+            text = text[first_nl + 1:]
+        _close = text.rfind("</tool_output>")
+        if _close >= 0:
+            text = text[:_close].rstrip("\n")
+    return text
+
+
 def _result_digest(result_text: str, limit: int = 60) -> str:
     """First non-empty line of a tool result, trimmed. Used as success/
     failure hint in command entries. Empty → empty. Errors preserved
-    because they carry the most useful signal."""
+    because they carry the most useful signal. Strips the
+    anti-injection wrapper first so the digest reflects real output,
+    not the wrapper opening tag."""
     if not isinstance(result_text, str):
         return ""
+    result_text = _strip_tool_output_wrapper(result_text)
     for line in result_text.splitlines():
         s = line.strip()
         if s:
-            return s[:limit] + ("…" if len(s) > limit else "")
+            return s[:limit] + ("..." if len(s) > limit else "")
     return ""
 
 

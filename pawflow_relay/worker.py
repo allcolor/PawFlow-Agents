@@ -264,8 +264,15 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
 
 def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,
                 allow_automation=False, allow_local_screen=False, allow_local=False,
-                gateway_cookie="", session_token=""):
-    """Connect to the PawFlow server via WebSocket and process filesystem commands."""
+                gateway_cookie="", session_token="", server_mount=""):
+    """Connect to the PawFlow server via WebSocket and process filesystem commands.
+
+    server_mount: if set, mount a FUSE proxy at this local path that
+    forwards each syscall to the server's RelayServerFs handler over
+    the same WS tunnel. Read-only in this phase. The path is bind-mounted
+    by the operator into any docker container that needs to see the
+    user's CLAUDE_SESSIONS_DIR slot.
+    """
     import ssl
     import base64 as b64
     from urllib.parse import urlparse
@@ -1439,6 +1446,34 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _child_relays = {}  # relay_id → thread (child relay instances)
             _terminal_sessions = {}  # session_id → {master_fd, pid, reader}
 
+            # ── Server-FS FUSE mount (relay→server inverse direction) ──
+            # Borrows (sock, _send_lock) from the WS we just registered.
+            # Lives until the connection drops; cancel_all() unblocks any
+            # in-flight FUSE callback with EIO so the kernel doesn't hang.
+            _server_fs_client = None
+            _server_fs_mount = None
+            if server_mount:
+                from pawflow_relay.server_fs_client import ServerFsClient
+                from pawflow_relay.server_fs_mount import ServerFsMount
+                _server_fs_client = ServerFsClient(
+                    send_callable=lambda b: _ws_frame_send(sock, b),
+                    send_lock=_send_lock)
+                try:
+                    _server_fs_mount = ServerFsMount(
+                        _server_fs_client, server_mount)
+                    _server_fs_mount.start()
+                    sys.stderr.write(
+                        f"[FSRelay] server-fs mounted at {server_mount}\n")
+                except Exception as _smerr:
+                    sys.stderr.write(
+                        f"[FSRelay] server-fs mount FAILED: {_smerr}\n"
+                        "  Likely cause: missing pyfuse3 / libfuse3, or no "
+                        "CAP_SYS_ADMIN. Continuing without server-fs.\n")
+                    _server_fs_mount = None
+                    if _server_fs_client is not None:
+                        _server_fs_client.cancel_all('mount failed')
+                        _server_fs_client = None
+
             def _open_terminal(cols=80, rows=24, shell=None):
                 import uuid as _uuid_term
                 import fcntl
@@ -1555,7 +1590,16 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     continue
 
                 msg = json.loads(payload.decode("utf-8"))
-                if msg.get("type") == "spawn_relay":
+                _mtype = msg.get("type")
+                if _mtype == "relay_response":
+                    # Inverse-direction reply for a relay→server FS op.
+                    # Wake the FUSE callback waiting on this request_id.
+                    if _server_fs_client is not None:
+                        if not _server_fs_client.dispatch_response(msg):
+                            sys.stderr.write(
+                                f"[FSRelay] orphan relay_response: {msg.get('request_id', '?')}\n")
+                    continue
+                if _mtype == "spawn_relay":
                     # Server asks us to create a child relay for a different root
                     _sr_root = msg.get("root", "")
                     _sr_id = msg.get("relay_id", "")
@@ -1726,6 +1770,20 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _ct = locals().get('_close_all_terminals')
             if _ct:
                 _ct()
+            # Tear down server-fs FUSE mount + unblock pending FUSE waiters
+            # so the kernel doesn't hang on a now-dead WebSocket.
+            _sfm = locals().get('_server_fs_mount')
+            if _sfm is not None:
+                try:
+                    _sfm.stop()
+                except Exception as _se:
+                    sys.stderr.write(f"[FSRelay] server-fs stop: {_se}\n")
+            _sfc = locals().get('_server_fs_client')
+            if _sfc is not None:
+                try:
+                    _sfc.cancel_all('relay disconnected')
+                except Exception:
+                    pass
             # Stop watchdog
             try:
                 _watchdog_stop.set()

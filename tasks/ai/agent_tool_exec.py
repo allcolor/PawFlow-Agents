@@ -194,7 +194,11 @@ class AgentToolExecMixin:
                 # The image is sent for the CURRENT LLM call only.
                 # After the call, the message is deflated to text-only
                 # (see _deflate_image_messages) so base64 doesn't bloat context.
-                if isinstance(result, str) and "__image_data__:" in result:
+                # Gate on handler's _returns_images flag — a grep match on the
+                # literal "__image_data__:" string must NOT be split into blocks.
+                _h = next((h for h in registry.list_tools() if h.name == tc.name), None)
+                _ri = bool(getattr(_h, '_returns_images', False))
+                if _ri and isinstance(result, str) and "__image_data__:" in result:
                     lines = result.split("\n")
                     text_lines = []
                     image_parts = []

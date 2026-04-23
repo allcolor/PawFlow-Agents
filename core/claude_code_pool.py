@@ -199,37 +199,51 @@ class ClaudeCodePool:
         host_ip = get_host_ip()
 
         # Per-exec mount namespace via `unshare -m`: each docker exec gets
-        # its own private view of the filesystem, so the bind of
-        # session_dir → /workspace is visible ONLY to this CC subprocess.
-        # Concurrent agents in the same pool container each see their own
-        # /workspace pointing at their own session_dir — no collision on
-        # session.jsonl, .mcp.json, or .credentials.json.
+        # its own private view of the filesystem. We bind the user's slot
+        # `/cc_sessions/<user>` over `/cc_sessions` so CC sees its conv
+        # tree at `/cc_sessions/<conv>/<agent>` — the SAME canonical path
+        # the user's relay exposes via its server-fs FUSE mount. No path
+        # translation needed downstream.
+        #
+        # Cross-user iso: the bind hides every other user's subtree from
+        # this exec's namespace. Cross-conv (same user) is intentionally
+        # visible — the relay shows the same.
         #
         # The wrapper runs as root (needed for mount + unshare -m with
         # CAP_SYS_ADMIN) then drops privileges to uid 1000 via setpriv
         # before exec'ing claude — Claude Code refuses to run as root.
+        #
+        # session_dir layout: /cc_sessions/<user>/<conv>/<agent>
+        # After the bind:     /cc_sessions/<conv>/<agent>
+        _sd_parts = session_dir.lstrip("/").split("/")
+        if len(_sd_parts) < 3 or _sd_parts[0] != "cc_sessions":
+            raise ValueError(
+                f"session_dir must look like /cc_sessions/<user>/<conv>/...; "
+                f"got {session_dir!r}")
+        _user_slot = "/cc_sessions/" + _sd_parts[1]
+        _ns_workdir = "/" + "/".join(_sd_parts[:1] + _sd_parts[2:])
+        # _ns_workdir = "/cc_sessions/<conv>/<agent>"
         exec_args = [
             "-i",
             "--user", "root",
             "-e", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "-e", "HOME=/workspace",
+            "-e", f"HOME={_ns_workdir}",
             "-e", "USER=pawflow",
-            "-e", "CLAUDE_CONFIG_DIR=/workspace",
+            "-e", f"CLAUDE_CONFIG_DIR={_ns_workdir}",
             "-e", "NODE_OPTIONS=--max-old-space-size=768",
             "-e", f"PAWFLOW_HOST={host_ip}",
             "-e", "GIT_CONFIG_COUNT=1",
             "-e", "GIT_CONFIG_KEY_0=safe.directory",
-            "-e", "GIT_CONFIG_VALUE_0=/workspace",
+            "-e", f"GIT_CONFIG_VALUE_0={_ns_workdir}",
         ]
         # Pass extra env vars (e.g. ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL)
         for k, v in (extra_env or {}).items():
             exec_args.extend(["-e", f"{k}={v}"])
         # Build the in-namespace command:
-        #   mkdir -p /workspace
-        #   mount --bind <session_dir> /workspace      (private to this ns)
-        #   cd /workspace
-        #   printf "__PF_CLAUDE_PID=$$" 1>&2          (bash PID = claude PID
-        #                                               after chained exec)
+        #   mount --bind /cc_sessions/<user> /cc_sessions    (private to this ns)
+        #   cd /cc_sessions/<conv>/<agent>
+        #   printf "__PF_CLAUDE_PID=$$" 1>&2                 (bash PID = claude PID
+        #                                                     after chained exec)
         #   exec setpriv ... -- claude <args>
         #
         # Why `exec` + $$ and NOT `setsid ... & + $!` ?
@@ -251,9 +265,8 @@ class ClaudeCodePool:
         import shlex
         _claude_quoted = " ".join(shlex.quote(str(a)) for a in claude_args)
         _shell_script = (
-            f"mkdir -p /workspace && "
-            f"mount --bind {shlex.quote(session_dir)} /workspace && "
-            f"cd /workspace && "
+            f"mount --bind {shlex.quote(_user_slot)} /cc_sessions && "
+            f"cd {shlex.quote(_ns_workdir)} && "
             f'printf "__PF_CLAUDE_PID=%s\\n" "$$" 1>&2 && '
             f"exec setpriv --reuid=1000 --regid=1000 --clear-groups "
             f"-- claude {_claude_quoted}"

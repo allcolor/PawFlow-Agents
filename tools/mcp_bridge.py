@@ -659,43 +659,36 @@ def main():
                                   f"got string: {tool_args[:200]}")
                     else:
                         _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
+                        # Server returns either a plain string OR a pre-built
+                        # list of MCP content blocks (for tools that emit
+                        # __image_data__: markers). The bridge stays dumb and
+                        # forwards whatever shape the server hands back.
                         result = client.request("execute_tool",
                                                 tool_name=tool_name,
                                                 arguments=tool_args)
-                        result = str(result) if result else "(no output)"
+                        if result is None or result == "":
+                            result = "(no output)"
             else:
                 result = f"Error: unknown tool '{name}'"
 
             _log(f"RESULT {name}: {str(result)[:100]}")
-            # Sanitize tool result (strip invisible/malicious unicode)
-            try:
-                from core.sanitization import sanitize_unicode
-                result = sanitize_unicode(str(result)) if result else result
-            except ImportError:
-                pass  # core.sanitization not available in Docker container
-            # Convert __image_data__ markers to MCP image content blocks
-            result_str = str(result)
-            if "__image_data__:" in result_str:
-                content = []
-                for rline in result_str.split("\n"):
-                    if rline.startswith("__image_data__:"):
-                        parts = rline.split(":", 2)
-                        if len(parts) == 3:
-                            mime, b64 = parts[1], parts[2]
-                            content.append({
-                                "type": "image",
-                                "data": b64,
-                                "mimeType": mime,
-                            })
-                    elif rline.strip():
-                        content.append({"type": "text", "text": rline})
-                if not content:
-                    content = [{"type": "text", "text": result_str}]
+            # Server-side splitting wins: if it's already MCP content blocks,
+            # forward as-is. Otherwise treat as plain text.
+            if isinstance(result, list):
+                content = result
+                is_error = False
             else:
+                result_str = str(result)
+                try:
+                    from core.sanitization import sanitize_unicode
+                    result_str = sanitize_unicode(result_str)
+                except ImportError:
+                    pass  # core.sanitization not available in Docker container
                 content = [{"type": "text", "text": result_str}]
+                is_error = result_str.startswith("Error:")
             _respond(req_id, {
                 "content": content,
-                "isError": result_str.startswith("Error:"),
+                "isError": is_error,
             })
         else:
             _respond(req_id, None,

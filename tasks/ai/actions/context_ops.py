@@ -24,13 +24,19 @@ def _find_cc_session_jsonl(conv_id: str, agent_name: str, store,
     if not session_id:
         return ""
 
-    from core.llm_providers.claude_code import _get_sessions_base
+    from core.llm_providers.claude_code import (
+        _get_sessions_base, LLMClaudeCodeMixin)
     if not conv_id or not agent_name:
         raise ValueError(f"BUG: conv_id={conv_id!r}, agent_name={agent_name!r} required for CC session")
     # Path is: <sessions_base>/{user_id}/{conv_id}/{agent}/
     uid = user_id or store.get_user_id(conv_id) or "default"
     workdir = os.path.join(_get_sessions_base(), uid, conv_id, agent_name)
-    projects_dir = os.path.join(workdir, "projects", "-workspace")
+    # CC derives the project bucket from its containerized cwd
+    # (/cc_sessions/<conv>/<agent>) by replacing every non-alphanum char
+    # with '-'. _cc_project_key reproduces that so we land on the exact
+    # on-disk bucket name.
+    proj_key = LLMClaudeCodeMixin._cc_project_key(workdir, containerize=True)
+    projects_dir = os.path.join(workdir, "projects", proj_key)
     jsonl_path = os.path.join(projects_dir, f"{session_id}.jsonl")
 
     if not os.path.exists(jsonl_path):

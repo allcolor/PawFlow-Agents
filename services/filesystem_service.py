@@ -221,6 +221,12 @@ class RelayService(BaseService):
         self._pending: Dict[str, tuple] = {}
         self._pending_lock = threading.Lock()
 
+        # Inverse-direction handler: relay-initiated FS ops scoped to the
+        # owner's CLAUDE_SESSIONS_DIR slot. Lazy because user_id arrives
+        # after construction (set_user_id called by the registry).
+        self._server_fs = None
+        self._server_fs_lock = threading.Lock()
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "token": {"type": "string", "required": True, "sensitive": True,
@@ -287,6 +293,14 @@ class RelayService(BaseService):
             except Exception as e:
                 logger.error('Failed to unregister relay route %s: %s', self._route_path, e, exc_info=True)
             self._connection = None
+        # Release any open fds in the inverse-direction handler
+        with self._server_fs_lock:
+            if self._server_fs is not None:
+                try:
+                    self._server_fs.close()
+                except Exception as e:
+                    logger.debug('server_fs.close failed: %s', e, exc_info=True)
+                self._server_fs = None
 
     def _handle_ws(self, sock, path_params, meta):
         import asyncio
@@ -396,6 +410,9 @@ class RelayService(BaseService):
 
     async def _dispatch_relay_msg(self, msg, writer, service):
         mtype = msg.get('type')
+        if mtype == 'relay_request':
+            await service._handle_relay_request(msg, writer)
+            return
         if mtype in ('result', 'error'):
             service._resolve_pending(msg)
         elif mtype == 'progress':
@@ -436,6 +453,48 @@ class RelayService(BaseService):
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
+
+    def _get_server_fs(self):
+        """Lazy-instantiate the inverse-direction FS handler.
+
+        Returns None if no user_id is set yet — callers must reject the
+        request rather than fall back to an unscoped handler.
+        """
+        if not self._user_id:
+            return None
+        with self._server_fs_lock:
+            if self._server_fs is None:
+                from services.relay_server_fs import RelayServerFs
+                self._server_fs = RelayServerFs(self._user_id)
+            return self._server_fs
+
+    async def _handle_relay_request(self, msg, writer):
+        """Service a relay→server FS op (the inverse direction).
+
+        The relay's FUSE proxy forwards each FUSE callback as a
+        `relay_request` over the existing tunnel; we run the op against
+        the owner's CLAUDE_SESSIONS_DIR slot and reply with the matching
+        `relay_response`.
+        """
+        request_id = msg.get('request_id', '')
+        method = msg.get('method', '')
+        args = msg.get('args', {}) or {}
+        fs = self._get_server_fs()
+        if fs is None:
+            reply = {'error': 'EACCES', 'errno': 13,
+                     'message': 'relay has no owner user_id'}
+        else:
+            # FS ops are sync — run on the loop's default executor so we
+            # don't block other relay traffic on a slow disk.
+            import asyncio
+            loop = asyncio.get_event_loop()
+            reply = await loop.run_in_executor(None, fs.handle, method, args)
+        envelope = {'type': 'relay_response', 'request_id': request_id, **reply}
+        try:
+            await _ws_send_frame(writer, json.dumps(envelope).encode())
+        except Exception as e:
+            logger.warning('[server-fs] failed to send response for %s: %s',
+                           request_id, e)
 
     # ── Relay connection management ──
 

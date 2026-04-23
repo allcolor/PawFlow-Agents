@@ -437,7 +437,17 @@ class RelayThread:
                 *_extra_add_host,
                 "--cpus", self.docker_cpus, "--memory", self.docker_memory,
                 "--shm-size", "512m",
-                "--security-opt", "no-new-privileges",
+                # NOTE: do NOT pass --security-opt no-new-privileges here.
+                # It disables the setuid bit on /usr/bin/fusermount3, which
+                # the unprivileged pawflow user needs to mount the server-fs
+                # FUSE endpoint at /cc_sessions.
+                # FUSE (server-fs tunnel mount at /cc_sessions): SYS_ADMIN lets
+                # pyfuse3 call mount() directly, /dev/fuse is the kernel char
+                # device the FUSE lib opens, and apparmor:unconfined stops
+                # Ubuntu's docker-default profile from blocking mount/umount.
+                "--cap-add", "SYS_ADMIN",
+                "--device", "/dev/fuse",
+                "--security-opt", "apparmor:unconfined",
                 "-e", "GIT_CONFIG_COUNT=4",
                 "-e", "GIT_CONFIG_KEY_0=safe.directory",
                 "-e", "GIT_CONFIG_VALUE_0=/workspace",
@@ -465,6 +475,7 @@ class RelayThread:
                 "--allow-exec",
                 "--allow-automation",
                 "--allow-local-screen",
+                "--server-mount", "/cc_sessions",
             ] + (["--allow-local"] if self.allow_local else [])
             # One-shot diagnostic: dump the -v flags so we can confirm
             # the relay-script dev-mount lands on /opt/pawflow/*.py.

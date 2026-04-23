@@ -91,6 +91,11 @@ def worker_main():
                         help="Pre-acquired _pf_gw cookie value")
     parser.add_argument("--session-token", default=os.environ.get("PAWFLOW_SESSION_TOKEN", ""),
                         help="User session token / pawflow_token cookie")
+    parser.add_argument("--server-mount",
+                        default=os.environ.get("PAWFLOW_SERVER_MOUNT", ""),
+                        help=("Mount the server's CLAUDE_SESSIONS_DIR/<owning_user>/ "
+                              "slot at this local path via FUSE-over-tunnel. "
+                              "Requires pyfuse3 + libfuse3."))
     args = parser.parse_args()
     sys.stderr.write(
         f"[FSRelay] args parsed: server={bool(args.server)}, "
@@ -268,6 +273,7 @@ def worker_main():
                         allow_local_screen=args.allow_local_screen,
                         allow_local=args.allow_local,
                         gateway_cookie=gateway_cookie,
-                        session_token=session_token)
+                        session_token=session_token,
+                        server_mount=args.server_mount)
         finally:
             _cleanup()

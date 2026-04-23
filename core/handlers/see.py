@@ -24,10 +24,10 @@ class SeeHandler(BaseFsHandler):
 
     def __init__(self):
         super().__init__()
-        # Images/video/audio produce large base64 output;
-        # tool_registry skips cap for __image_data__ markers anyway,
-        # but audio transcriptions can also be long.
+        # Audio transcriptions can be long; image/video frames are emitted
+        # as __image_data__: markers, exempted from the cap via _returns_images.
         self._tool_result_max_chars = 500_000
+        self._returns_images = True
 
     @property
     def name(self):

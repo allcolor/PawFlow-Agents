@@ -1164,6 +1164,27 @@ class ToolRelayService(BaseService):
             result_str = _redact_secrets(result_str, _secret_values,
                                          secret_names=_secret_names)
 
+        # Convert __image_data__: markers into MCP content blocks server-side,
+        # gated on the handler's _returns_images flag. Without this gate, a
+        # grep result matching the literal marker string would be wrongly
+        # split into separate text/image blocks by the bridge.
+        _h_for_img = next((h for h in registry.list_tools() if h.name == tool_name), None)
+        _returns_images = bool(getattr(_h_for_img, '_returns_images', False)) if _h_for_img else False
+        if _returns_images and "__image_data__:" in result_str:
+            blocks = []
+            for rline in result_str.split("\n"):
+                if rline.startswith("__image_data__:"):
+                    parts = rline.split(":", 2)
+                    if len(parts) == 3:
+                        blocks.append({"type": "image",
+                                       "data": parts[2],
+                                       "mimeType": parts[1]})
+                elif rline.strip():
+                    blocks.append({"type": "text", "text": rline})
+            if blocks:
+                return {"type": "result", "request_id": request_id,
+                        "data": blocks}
+
         return {"type": "result", "request_id": request_id, "data": result_str}
 
     def _resolve_secrets_env(self, user_id: str, conversation_id: str) -> dict:

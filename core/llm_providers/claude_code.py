@@ -227,8 +227,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             proc.kill()
         except Exception:
             logger.debug("exception suppressed", exc_info=True)
-        _container = getattr(self, '_pool_container_name', '') or ''
-        _pid = int(getattr(self, '_cc_container_pid', 0) or 0)
+        # Read per-stream tags pinned on `proc` at spawn time — NOT from
+        # `self` which is a singleton shared with concurrent streams
+        # (main agent, compact, memory_extract, btw, sub-agents). A
+        # later-spawned stream clobbers `self._pool_container_name` and
+        # `self._cc_container_pid` mid-flight; reading from proc ties
+        # the kill to the exact subprocess we're targeting.
+        _container = getattr(proc, '_pf_container', '') or ''
+        try:
+            _pid = int(getattr(proc, '_pf_pid', 0) or 0)
+        except (TypeError, ValueError):
+            _pid = 0
         if not _container or not _pid:
             logger.error(
                 "[claude-code] _kill_cc_hard SKIPPED -- container=%r "
@@ -442,6 +451,30 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         os.replace(_tmp, session_file)
 
     # ── Non-streaming (complete) ────────────────────────────────────
+
+    @staticmethod
+    def _cc_project_key(workdir: str, containerize: bool) -> str:
+        """Derive the project subdir name CC uses to bucket session files.
+
+        CC encodes its cwd into a project key by stripping the leading
+        slash and replacing every non-alphanum character (including `_`)
+        with `-`. Proof on disk: cwd=/cc_sessions/X/Y produces
+        `-cc-sessions-X-Y` (both `/` and `_` mapped to `-`). The pool's
+        per-exec mount-namespace gives CC `cwd=/cc_sessions/<conv>/<agent>`,
+        so the key becomes `-cc-sessions-<conv>-<agent>`. Native mode
+        uses cwd=workdir on the host directly.
+
+        If this derivation drifts from CC's real algorithm, `--resume`
+        would silently fall through to a fresh NEW session; the
+        file_exists guard in _stream_claude_code drops --resume in that
+        case rather than losing history without warning.
+        """
+        if containerize:
+            rel = os.path.relpath(workdir, _get_sessions_base()).replace(
+                "\\", "/").split("/", 1)[-1]
+            return "-cc-sessions-" + rel.replace("/", "-").replace("_", "-")
+        return "-" + workdir.lstrip("/\\").replace("\\", "/").replace(
+            "/", "-").replace("_", "-")
 
     def _pool_popen(self, workdir: str, cmd: list, **popen_kwargs) -> tuple:
         """Launch claude in a pool container or locally.
@@ -808,43 +841,66 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             workdir, user_id, conv_id, agent_name)
         _containerize = getattr(self, 'containerize', False)
 
-        # In pool mode, MCP config path is inside /cc_sessions/...
+        # In pool mode, the per-exec mount-namespace binds /cc_sessions/<user>
+        # over /cc_sessions; CC's working directory is /cc_sessions/<conv>/<agent>.
+        # MCP config path inside that namespace = workdir basename joined to it.
         _mcp_arg = mcp_path
         if _containerize and mcp_path:
-            # Pool: symlink /workspace → /cc_sessions/<session_dir>
-            # CC sees /workspace just like the old per-container model
-            _mcp_arg = f"/workspace/{os.path.basename(mcp_path)}"
-            _container_workdir = "/workspace"
+            _rel_no_user = os.path.relpath(
+                workdir, _get_sessions_base()).replace("\\", "/").split("/", 1)[-1]
+            _container_workdir = f"/cc_sessions/{_rel_no_user}"
+            _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
         else:
             _container_workdir = workdir
 
-        cmd = self._build_claude_cmd(model, session_id,
+        # Gate --resume on the jsonl actually existing at the expected
+        # path. If it doesn't, CC would silently create a NEW empty
+        # session under the same sid and we'd lose all history without
+        # any error. Fall back to a true NEW session (drop --resume),
+        # which is a well-defined state the caller can detect via the
+        # SESSION MISMATCH check downstream.
+        _effective_session_id = session_id
+        _expected_session_file = ""
+        _exists = False
+        if session_id:
+            _proj_key = self._cc_project_key(workdir, _containerize)
+            _expected_session_file = os.path.join(
+                workdir, "projects", _proj_key, f"{session_id}.jsonl")
+            _exists = os.path.exists(_expected_session_file)
+            _size = os.path.getsize(_expected_session_file) if _exists else 0
+            if _exists:
+                logger.info(
+                    "claude-code RESUME: session_id=%s file_size=%d path=%s",
+                    session_id, _size, _expected_session_file)
+            else:
+                logger.warning(
+                    "claude-code NEW (resume jsonl MISSING at expected path): "
+                    "session_id=%s expected=%s — dropping --resume, "
+                    "starting fresh CC session",
+                    session_id, _expected_session_file)
+                _effective_session_id = ""
+
+        cmd = self._build_claude_cmd(model, _effective_session_id,
                                      mcp_config_path=_mcp_arg,
                                      workdir=workdir)
 
         logger.info("claude-code stream: cwd=%s, containerize=%s, cmd=%s",
                      workdir, _containerize, " ".join(str(c) for c in cmd[:20]))
-        if session_id:
-            # Verify session file exists at expected path
-            _expected_session_file = os.path.join(workdir, "projects", "-workspace", f"{session_id}.jsonl")
-            _exists = os.path.exists(_expected_session_file)
-            _size = os.path.getsize(_expected_session_file) if _exists else 0
-            logger.info("claude-code RESUME: session_id=%s file_exists=%s file_size=%d path=%s",
-                         session_id, _exists, _size, _expected_session_file)
-            # Scrub legacy [image: image_<ts>_<n>.<ext>] placeholders from
-            # user text fields. These were written before the vision-
-            # placeholder fix and make the agent pattern-match "image
-            # attached → call see() with this filename" on every new
-            # user turn. The image bytes are still forwarded via the
-            # native vision channel, so stripping the text reference is
-            # purely cosmetic for the transcript AND prevents the bogus
-            # see() calls.
-            if _exists:
-                try:
-                    self._scrub_legacy_image_placeholders(_expected_session_file)
-                except Exception as _scrub_err:
-                    logger.warning("[claude-code] session scrub failed (%s): %s",
-                                   session_id[:8], _scrub_err)
+        # Scrub legacy [image: image_<ts>_<n>.<ext>] placeholders from
+        # user text fields. These were written before the vision-
+        # placeholder fix and make the agent pattern-match "image
+        # attached → call see() with this filename" on every new
+        # user turn. The image bytes are still forwarded via the
+        # native vision channel, so stripping the text reference is
+        # purely cosmetic for the transcript AND prevents the bogus
+        # see() calls. Only meaningful when we actually --resume an
+        # existing jsonl; skip for NEW sessions.
+        if session_id and _exists:
+            try:
+                self._scrub_legacy_image_placeholders(_expected_session_file)
+            except Exception as _scrub_err:
+                logger.warning("[claude-code] session scrub failed (%s): %s",
+                               session_id[:8], _scrub_err)
 
         # Track pool container for cleanup
         self._pool_container_name = None
@@ -863,30 +919,43 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # need preempt/cancel and must not overwrite the main agent's proc.
             if not getattr(self, '_ephemeral_stream', False):
                 self._claude_proc = proc
-            # Capture the container-side claude PID from the shell wrapper's
-            # stderr preamble (`__PF_CLAUDE_PID=<n>` emitted by the pool's
-            # shell script before `exec setpriv ... claude`). Saves us from
-            # pkill/argv matching which breaks on fresh sessions where CC's
-            # sid isn't in argv (no `--resume`). A tiny daemon thread drains
-            # stderr continuously so the pipe can't fill; captured content
-            # is buffered for post-mortem inspection.
+            # Per-stream session info pinned on the proc object. The
+            # provider instance is a SINGLETON shared across concurrent
+            # streams (main agent, compact, memory_extract, btw, sub-agents);
+            # storing container name / container PID on `self` means any
+            # later-spawned stream clobbers the in-flight one's tracking
+            # state (line 897 resets `_pool_container_name=None`, line 920
+            # resets `_cc_container_pid=0`). When _kill_cc_hard fires, it
+            # then reads zeros and skips — CC CLI orphans inside the pool
+            # container. Pinning to `proc` ties the info to the exact
+            # subprocess the kill targets, so clobbers on `self` don't
+            # matter. Drain thread updates proc._pf_pid in place.
+            proc._pf_container = self._pool_container_name
+            proc._pf_pid = 0
+            # Keep self.* mirrors for the codepath that still reads them
+            # (cancel_claude_code force-stop, cleanup_proc) — but treat them
+            # as best-effort hints, not authoritative for kill.
             self._cc_container_pid = 0
             self._stderr_buffer = []
             def _drain_stderr():
                 try:
                     for _line in proc.stderr:
                         self._stderr_buffer.append(_line)
-                        if (not self._cc_container_pid
+                        if (not proc._pf_pid
                                 and '__PF_CLAUDE_PID=' in _line):
                             try:
                                 _pid_str = _line.split(
                                     '__PF_CLAUDE_PID=', 1)[1].strip()
-                                self._cc_container_pid = int(_pid_str)
+                                _pid_int = int(_pid_str)
+                                proc._pf_pid = _pid_int
+                                # Mirror for legacy callers; will be
+                                # clobbered by a later stream's spawn but
+                                # proc._pf_pid remains authoritative.
+                                self._cc_container_pid = _pid_int
                                 logger.info(
                                     "[claude-code] captured container PID=%d "
                                     "(container=%s)",
-                                    self._cc_container_pid,
-                                    self._pool_container_name)
+                                    _pid_int, proc._pf_container)
                             except Exception:
                                 logger.debug("exception suppressed", exc_info=True)
                 except Exception:
@@ -2260,7 +2329,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         _sent = list(getattr(self, '_sent_preempt_texts', []))
                         _sid = getattr(self, '_current_session_id', '') or ''
                         _jsonl = os.path.join(
-                            workdir, 'projects', '-workspace',
+                            workdir, 'projects',
+                            self._cc_project_key(workdir, _containerize),
                             f"{_sid}.jsonl") if _sid else ''
                         _pstatus = self._check_preempt_in_jsonl(_jsonl, _sent)
                         # CC writes a stdin preempt to its session jsonl

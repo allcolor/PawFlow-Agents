@@ -1,0 +1,76 @@
+"""Regression test: both relay docker-run builders activate the server-fs FUSE.
+
+Phase 3 drops `/workspace` in favor of `/cc_sessions/<conv>/<agent>`, which
+the relay reaches via a FUSE-over-WS mount at `/cc_sessions`. For the mount
+to come up inside the relay container, the docker-run command MUST carry:
+
+    --cap-add SYS_ADMIN
+    --device /dev/fuse
+    --security-opt apparmor:unconfined
+
+and the worker inside the container MUST receive the mountpoint — either via
+`--server-mount /cc_sessions` on the CLI or via `PAWFLOW_SERVER_MOUNT=/cc_sessions`
+in the env.
+
+Two call sites build a docker-run for the relay:
+  - pawflow_relay/thread.py     (user-side: `pawflow_cli --docker-image ...`)
+  - core/server_relay_manager.py (server-spawned per-conversation relays)
+
+Both are tested here by inspecting the module source — the commands are
+assembled inline inside long methods, so a source-level assertion is the
+least-invasive way to lock the config without extracting helpers.
+"""
+
+import inspect
+import unittest
+
+
+class RelayFuseLaunchTests(unittest.TestCase):
+
+    _FUSE_DOCKER_FLAGS = (
+        '"--cap-add", "SYS_ADMIN"',
+        '"--device", "/dev/fuse"',
+        '"--security-opt", "apparmor:unconfined"',
+    )
+
+    def _assert_all_present(self, src: str, needles: tuple, where: str):
+        missing = [n for n in needles if n not in src]
+        self.assertFalse(
+            missing,
+            f'{where}: missing FUSE launch flags: {missing}',
+        )
+
+    # ── user-side relay (pawflow_cli --docker-image) ──────────────────
+
+    def test_thread_py_docker_run_has_fuse_flags(self):
+        from pawflow_relay import thread
+        src = inspect.getsource(thread)
+        self._assert_all_present(src, self._FUSE_DOCKER_FLAGS,
+                                  'pawflow_relay/thread.py docker run')
+
+    def test_thread_py_passes_server_mount_to_launcher(self):
+        from pawflow_relay import thread
+        src = inspect.getsource(thread)
+        self.assertIn('"--server-mount", "/cc_sessions"', src,
+                      'pawflow_relay/thread.py must pass --server-mount '
+                      '/cc_sessions to pawflow_relay_launcher.py')
+
+    # ── server-spawned relay (core/server_relay_manager.py) ───────────
+
+    def test_server_relay_manager_has_fuse_flags(self):
+        from core import server_relay_manager
+        src = inspect.getsource(server_relay_manager)
+        self._assert_all_present(src, self._FUSE_DOCKER_FLAGS,
+                                  'core/server_relay_manager.py docker run')
+
+    def test_server_relay_manager_sets_server_mount_env(self):
+        from core import server_relay_manager
+        src = inspect.getsource(server_relay_manager)
+        self.assertIn('PAWFLOW_SERVER_MOUNT=/cc_sessions', src,
+                      'core/server_relay_manager.py must pass '
+                      'PAWFLOW_SERVER_MOUNT=/cc_sessions env to relay '
+                      'container (picked up by pawflow_relay.cli default)')
+
+
+if __name__ == '__main__':
+    unittest.main()

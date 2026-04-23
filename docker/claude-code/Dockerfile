@@ -14,14 +14,17 @@ RUN npm install -g @anthropic-ai/claude-code
 RUN if id -u node 2>/dev/null; then usermod -l pawflow -d /home/pawflow -m node && groupmod -n pawflow node; \
     elif ! id -u pawflow 2>/dev/null; then groupadd -g 1000 pawflow && useradd -u 1000 -g 1000 -m -s /bin/bash pawflow; fi
 
-# /workspace is created as a symlink by the pool at exec time
-# (points to /cc_sessions/<user>/<conv>/<agent>)
-# Don't create it as a directory here — the pool needs to replace it.
+# /cc_sessions is the host CLAUDE_SESSIONS_DIR mount (set up by the pool
+# at `docker run`). The per-exec mount-namespace then binds the user's
+# slot `/cc_sessions/<user>` over `/cc_sessions` so CC sees its conv
+# tree at `/cc_sessions/<conv>/<agent>` — the same canonical path the
+# user's relay exposes via server-fs FUSE. CLAUDE_CONFIG_DIR is set
+# per-exec to that conv path; the value here is just a sane default for
+# diagnostics outside an exec.
 WORKDIR /home/pawflow
 
-# Claude Code expects HOME for config
 ENV HOME="/home/pawflow"
-ENV CLAUDE_CONFIG_DIR="/workspace"
+ENV CLAUDE_CONFIG_DIR="/home/pawflow"
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV USER="pawflow"
 

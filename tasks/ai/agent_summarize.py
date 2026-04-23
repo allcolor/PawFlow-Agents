@@ -646,10 +646,31 @@ class AgentSummarizeMixin:
         _saved_agent = getattr(_inner, '_agent_name', '')
         _saved_user = getattr(_inner, '_user_id', '')
         _saved_event_cid = getattr(_inner, '_event_cid', '')
+        # Shared-pyramid compact runs on the MAIN agent's provider (same
+        # llm_service as the agent itself). Without the save/restore below,
+        # spawning the compact's CC inside `_stream_claude_code` clobbers
+        # the in-flight main stream's tracking on `self`:
+        #   - `_claude_proc` ← compact_proc (then None after compact cleanup)
+        #   - `_pool_container_name` ← None, then compact's, then None
+        #   - `_cc_container_pid` ← 0, then compact's, then 0
+        # Result: `send_user_message` sees `_claude_proc=None` and routes
+        # the user's next message to PendingQueue ("No running Claude Code
+        # process to send message to"), _inject_catchup injects to compact
+        # stdin, and force-stop targets nothing. The main agent looks dead
+        # from the outside even while its stream thread is still alive.
+        # Mark the compact as ephemeral (same flag `btw` uses) so
+        # `_stream_claude_code` skips `self._claude_proc = proc`, and
+        # save/restore the other pool-tracking attrs around the call so
+        # main's values survive compact's spawn/cleanup.
+        _saved_ephemeral = getattr(_inner, '_ephemeral_stream', False)
+        _saved_claude_proc = getattr(_inner, '_claude_proc', None)
+        _saved_pool_name = getattr(_inner, '_pool_container_name', None)
+        _saved_cc_pid = getattr(_inner, '_cc_container_pid', 0)
         _inner._conversation_id = '_compact'
         _inner._agent_name = 'compact'
         _inner._user_id = user_id
         _inner._event_cid = ''
+        _inner._ephemeral_stream = True
 
         try:
             for attempt in range(1, max_retries + 1):
@@ -746,6 +767,17 @@ class AgentSummarizeMixin:
             _inner._agent_name = _saved_agent
             _inner._user_id = _saved_user
             _inner._event_cid = _saved_event_cid
+            _inner._ephemeral_stream = _saved_ephemeral
+            # Restore main-agent pool tracking that compact's _cleanup_proc
+            # wiped to None/0. Only restore if main actually had something —
+            # compact running as the first stream ever would have None here
+            # and that's correct state.
+            if _saved_claude_proc is not None:
+                _inner._claude_proc = _saved_claude_proc
+            if _saved_pool_name:
+                _inner._pool_container_name = _saved_pool_name
+            if _saved_cc_pid:
+                _inner._cc_container_pid = _saved_cc_pid
             # One-shot helper: wipe the entire _compact workdir for this
             # user. Nothing here needs to persist between compactions.
             try:

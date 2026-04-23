@@ -237,11 +237,14 @@ class ToolRegistry:
             # Run post-hooks (specific then wildcard)
             for hook in self._hooks.get(f"post:{name}", []) + self._hooks.get("post:*", []):
                 result = hook(name, args, result)
-            # Safety cap: prevent oversized results from crashing any caller
-            # Skip cap for multimodal image markers — they are converted to
-            # image content blocks by the agent loop, not sent as text.
+            # Safety cap: prevent oversized results from crashing any caller.
+            # Skip cap only for handlers that declare _returns_images=True AND
+            # actually emit a marker — otherwise a grep match on the literal
+            # "__image_data__:" string would wrongly bypass the cap.
             _max = getattr(handler, '_tool_result_max_chars', 50000)
-            _has_image = isinstance(result, str) and "__image_data__:" in result
+            _has_image = (getattr(handler, '_returns_images', False)
+                          and isinstance(result, str)
+                          and "__image_data__:" in result)
             if isinstance(result, str) and len(result) > _max and not _has_image:
                 try:
                     from core.file_store import FileStore

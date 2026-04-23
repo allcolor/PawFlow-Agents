@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     file less man-db chrony \
     libffi-dev libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
     libncurses-dev libgdbm-dev liblzma-dev tk-dev uuid-dev \
+    fuse3 libfuse3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python ──────────────────────────────────────────────────────────
@@ -65,6 +66,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        tqdm tabulate colorama \
        python-docx openpyxl python-pptx striprtf PyPDF2 ebooklib \
        networkx graphifyy tree-sitter \
+       pyfuse3 trio \
        tree-sitter-python tree-sitter-javascript tree-sitter-typescript \
        tree-sitter-go tree-sitter-rust tree-sitter-java \
        tree-sitter-c tree-sitter-cpp tree-sitter-ruby \
@@ -229,8 +231,11 @@ RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 # Refresh desktop menu cache so all .desktop files appear in XFCE
 RUN update-desktop-database /usr/share/applications 2>/dev/null || true
 
-# Give pawflow user ownership of workspace and docker group
-RUN mkdir -p /workspace && chown pawflow:pawflow /workspace \
+# Give pawflow user ownership of workspace and docker group.
+# /cc_sessions is the canonical mountpoint for the server-fs FUSE tunnel;
+# pre-create it so the unprivileged pawflow user can mount onto it.
+RUN mkdir -p /workspace /cc_sessions \
+    && chown pawflow:pawflow /workspace /cc_sessions \
     && (groupadd -f docker; usermod -aG docker pawflow) 2>/dev/null || true
 
 # ── PawFlow relay + SDK ────────────────────────────────────────────

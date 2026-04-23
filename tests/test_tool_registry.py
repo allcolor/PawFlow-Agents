@@ -387,5 +387,49 @@ class TestGetToolDefinitions(unittest.TestCase):
             assert "parameters" in d
 
 
+class TestImageMarkerCapBypass(unittest.TestCase):
+    """Cap bypass for __image_data__: must be gated by _returns_images.
+
+    Regression: a grep result matching the literal marker string used to
+    bypass the 50K cap and trigger split-into-blocks downstream, leaking
+    huge payloads back to MCP callers.
+    """
+
+    def test_marker_in_text_does_not_bypass_cap_for_regular_handler(self):
+        # 200K of text containing the marker as plain content (e.g. a grep hit)
+        big = ("line with __image_data__:fake content\n" * 6000)
+        self.assertIn("__image_data__:", big)
+        self.assertGreater(len(big), 50_000)
+        reg = ToolRegistry()
+        reg.register(MockHandler(name="grep_like", result=big))
+        out = reg.execute("grep_like", {})
+        # Cap fires — either FileStore link or simple truncation suffix
+        self.assertLessEqual(
+            len(out),
+            50_000 + 500,
+            f"cap should clip; got {len(out):,} chars",
+        )
+
+    def test_marker_bypasses_cap_only_when_handler_returns_images(self):
+        big = ("__image_data__:image/png:" + ("A" * 200_000))
+        h = MockHandler(name="image_tool", result=big)
+        h._returns_images = True
+        reg = ToolRegistry()
+        reg.register(h)
+        out = reg.execute("image_tool", {})
+        # Marker present + flag set → cap skipped, full payload preserved
+        self.assertEqual(len(out), len(big))
+
+    def test_returns_images_without_marker_still_caps(self):
+        # Defensive: flag alone doesn't disable the cap; marker must also be present
+        big = "X" * 200_000
+        h = MockHandler(name="see_no_marker", result=big)
+        h._returns_images = True
+        reg = ToolRegistry()
+        reg.register(h)
+        out = reg.execute("see_no_marker", {})
+        self.assertLessEqual(len(out), 50_000 + 500)
+
+
 if __name__ == "__main__":
     unittest.main()

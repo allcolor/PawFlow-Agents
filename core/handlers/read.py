@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 class ReadHandler(BaseFsHandler):
 
+    def __init__(self):
+        super().__init__()
+        self._returns_images = True
+
     @property
     def name(self):
         return "read"

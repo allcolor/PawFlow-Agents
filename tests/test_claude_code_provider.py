@@ -728,9 +728,11 @@ class TestKillCcHardByPid(unittest.TestCase):
 
     def test_kills_entire_process_group(self):
         client = self._client()
-        client._cc_container_pid = 4242
-        client._pool_container_name = "pool-1"
+        # Tags pinned per-stream on proc — immune to concurrent-stream
+        # clobber of self.* attrs. _kill_cc_hard reads from proc only.
         proc = MagicMock(); proc.kill = MagicMock()
+        proc._pf_container = "pool-1"
+        proc._pf_pid = 4242
         with patch("subprocess.run") as mock_run, \
              patch("pawflow_relay.utils.docker_cmd", return_value=["docker"]):
             mock_run.return_value = MagicMock(returncode=0, stderr=b"")
@@ -747,9 +749,9 @@ class TestKillCcHardByPid(unittest.TestCase):
 
     def test_logs_loud_error_when_no_pid(self):
         client = self._client()
-        client._cc_container_pid = 0
-        client._pool_container_name = "pool-1"
         proc = MagicMock()
+        proc._pf_container = "pool-1"
+        proc._pf_pid = 0
         with patch("subprocess.run") as mock_run, \
              patch("core.llm_providers.claude_code.logger") as mock_log:
             client._kill_cc_hard(proc)
@@ -761,9 +763,9 @@ class TestKillCcHardByPid(unittest.TestCase):
 
     def test_logs_loud_error_when_no_container(self):
         client = self._client()
-        client._cc_container_pid = 4242
-        client._pool_container_name = ""
         proc = MagicMock()
+        proc._pf_container = ""
+        proc._pf_pid = 4242
         with patch("subprocess.run") as mock_run, \
              patch("core.llm_providers.claude_code.logger") as mock_log:
             client._kill_cc_hard(proc)
@@ -772,6 +774,28 @@ class TestKillCcHardByPid(unittest.TestCase):
         msg = mock_log.error.call_args[0][0]
         self.assertIn("SKIPPED", msg)
         self.assertIn("ORPHANED", msg)
+
+    def test_proc_tags_survive_concurrent_stream_clobbering_self(self):
+        """Regression for the singleton-clobber bug: when a second stream
+        spawns mid-flight on the same provider and resets self.* state,
+        the in-flight stream's _kill_cc_hard must still succeed because
+        it reads per-stream tags from proc, not self."""
+        client = self._client()
+        proc = MagicMock(); proc.kill = MagicMock()
+        proc._pf_container = "pool-compacter"
+        proc._pf_pid = 2814383
+        # Simulate clobber: another concurrent stream has reset self.*
+        # (what would previously trigger "SKIPPED ORPHANED" on this kill).
+        client._pool_container_name = None
+        client._cc_container_pid = 0
+        with patch("subprocess.run") as mock_run, \
+             patch("pawflow_relay.utils.docker_cmd", return_value=["docker"]):
+            mock_run.return_value = MagicMock(returncode=0, stderr=b"")
+            client._kill_cc_hard(proc)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("-2814383", cmd)
+        self.assertIn("pool-compacter", cmd)
 
 
 class TestProviderInProviders(unittest.TestCase):

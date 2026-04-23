@@ -27,8 +27,23 @@ services:
     build: docker/relay-dev
     volumes:
       - relay-workspace:/workspace
+      # Mount point for the server-fs FUSE proxy. Bind-propagation must
+      # be `rshared` so the FUSE mount that the relay daemon creates
+      # under /cc_sessions becomes visible to anything that bind-mounts
+      # from this container later (and to host /var/lib/pawflow/server-fs
+      # if you want to inspect from outside).
+      - /var/lib/pawflow/server-fs:/cc_sessions:rshared
     environment:
       - PAWFLOW_SERVER=ws://pawflow:8000/ws/relay
+      - PAWFLOW_SERVER_MOUNT=/cc_sessions
+    # FUSE in a container needs CAP_SYS_ADMIN, /dev/fuse, and an apparmor
+    # profile that doesn't sandbox the mount syscall.
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt:
+      - apparmor:unconfined
     depends_on:
       pawflow:
         condition: service_healthy

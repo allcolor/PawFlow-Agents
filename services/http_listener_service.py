@@ -373,10 +373,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # Block until flow responds. NO TIMEOUT — project rule: only the
         # LLM watchdog has a timeout, nowhere else. If a request stalls
         # forever, that's a backend bug we want to surface (not paper over
-        # with a 504). The slow-response log below catches anything > 5s.
+        # with a 504). The slow-response log below catches anything > 5s,
+        # but skips paths that are legitimately long-lived (LLM streaming
+        # through /relay-proxy/ can take 60+ s per turn).
         req.wait()
         _waited = _t_http.monotonic() - _t_dispatch
-        if _waited > 5.0:
+        _is_streaming_path = path.startswith("/relay-proxy/")
+        if _waited > 5.0 and not _is_streaming_path:
             logger.warning("[http] slow response — %s %s took %.1fs "
                             "(request_id=%s, status=%d)",
                             method, path, _waited, req.request_id[:8],

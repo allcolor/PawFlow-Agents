@@ -430,28 +430,28 @@ class ClaudeCodePool:
         ])
 
         cmd = docker_cmd() + ["exec"] + exec_args
-        # Log a redacted env-var summary so we can verify each spawn's
-        # ANTHROPIC_BASE_URL / NODE_TLS_REJECT_UNAUTHORIZED / etc. made
-        # it into the container. Values longer than 80 chars are
-        # truncated; api key values are always scrubbed so they don't
-        # leak into operator logs.
-        _env_preview = []
-        _i = 0
-        while _i < len(exec_args) - 1:
-            if exec_args[_i] == "-e":
-                _kv = exec_args[_i + 1]
-                _k, _, _v = _kv.partition("=")
-                if _k.lower() in ("anthropic_api_key", "api_key"):
-                    _v = f"<{len(_v)} chars redacted>"
-                elif len(_v) > 80:
-                    _v = _v[:77] + "..."
-                _env_preview.append(f"{_k}={_v}")
-                _i += 2
-            else:
-                _i += 1
-        logger.info(
-            "Pool exec: %s envs=%s cmd_tail=%s",
-            container_name, _env_preview, " ".join(cmd[-6:]))
+        logger.info("Pool exec: %s", container_name)
+        # Detailed env dump at DEBUG — re-enable when diagnosing env-
+        # propagation bugs (ANTHROPIC_BASE_URL, NODE_TLS_REJECT_UNAUTHORIZED,
+        # etc.). Keys are scrubbed so the line stays paste-safe.
+        if logger.isEnabledFor(logging.DEBUG):
+            _env_preview = []
+            _i = 0
+            while _i < len(exec_args) - 1:
+                if exec_args[_i] == "-e":
+                    _kv = exec_args[_i + 1]
+                    _k, _, _v = _kv.partition("=")
+                    if _k.lower() in ("anthropic_api_key", "api_key"):
+                        _v = f"<{len(_v)} chars redacted>"
+                    elif len(_v) > 80:
+                        _v = _v[:77] + "..."
+                    _env_preview.append(f"{_k}={_v}")
+                    _i += 2
+                else:
+                    _i += 1
+            logger.debug(
+                "Pool exec envs=%s cmd_tail=%s",
+                _env_preview, " ".join(cmd[-6:]))
 
         return subprocess.Popen(cmd, **popen_kwargs)
 

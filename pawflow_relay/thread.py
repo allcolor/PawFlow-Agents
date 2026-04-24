@@ -691,10 +691,6 @@ class RelayThread:
             # Stream chunks back as http_response events; the relay forwards
             # them to PawFlow via WebSocket.
             from fs_http import action_http_fetch as _http_fetch
-            _fetch_url = req.get("url", "?")
-            _fetch_method = req.get("method", "?")
-            self._log(
-                f"[HostHelper] http_fetch START {_fetch_method} {_fetch_url}")
             _chunk_stats = {"bytes": 0, "chunks": 0, "status": None}
 
             def _on_chunk(kind, data):
@@ -716,10 +712,17 @@ class RelayThread:
                         f"[HostHelper] http_fetch sendall({kind}) failed: {_se}")
             try:
                 result = _http_fetch(".", ".", req, on_chunk=_on_chunk)
-                self._log(
-                    f"[HostHelper] http_fetch DONE status={_chunk_stats['status']} "
-                    f"bytes={_chunk_stats['bytes']} chunks={_chunk_stats['chunks']} "
-                    f"result_ok={result.get('ok') if isinstance(result, dict) else '?'}")
+                # Only log abnormal outcomes: error statuses, zero-
+                # byte responses, or failed results. Happy path (200
+                # + bytes) stays quiet.
+                _ok = result.get("ok") if isinstance(result, dict) else False
+                _status = _chunk_stats["status"]
+                if (not _ok or (_status and _status >= 400)
+                        or _chunk_stats["bytes"] == 0):
+                    self._log(
+                        f"[HostHelper] http_fetch status={_status} "
+                        f"bytes={_chunk_stats['bytes']} "
+                        f"chunks={_chunk_stats['chunks']} ok={_ok}")
                 resp = json.dumps({"type": "result", "data": result}) + "\n"
             except Exception as e:
                 self._log(f"[HostHelper] http_fetch EXCEPTION: {e}")

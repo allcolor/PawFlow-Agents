@@ -55,9 +55,11 @@ def _relay_proxy_handler(pending_req):
     relay_id = pending_req.path_params.get("relay_id", "")
     token = pending_req.path_params.get("token", "")
     rest = pending_req.path_params.get("rest", "")
-    # Log as early as possible so "request received" is visible even if
-    # token/IP checks reject or the handler later raises.
-    logger.info(
+    # DEBUG-level entry log — per-request IN/END below are the INFO
+    # line operators actually watch. Re-enable at INFO only when
+    # chasing an intercept (gateway, auth, route match) that rejects
+    # before the IN line.
+    logger.debug(
         "relay-proxy HIT method=%s path=%s src=%s relay=%s token_prefix=%s",
         pending_req.method, pending_req.path,
         pending_req.remote_addr, relay_id, token[:8])
@@ -117,10 +119,9 @@ def _relay_proxy_handler(pending_req):
     # request, and already safe to log (it's only useful for this one
     # in-flight request).
     _log_tag = f"relay-proxy[{token[:8]}]"
-    logger.info(
-        "%s IN %s path=%s → forwarding via relay=%s target=%s body=%dB",
-        _log_tag, method, pending_req.path, relay_id, target_url,
-        len(pending_req.body or b""))
+    logger.debug(
+        "%s IN %s → target=%s body=%dB",
+        _log_tag, method, target_url, len(pending_req.body or b""))
 
     # Forward headers (minus hop-by-hop and Host)
     _drop = {"host", "connection", "content-length", "transfer-encoding",
@@ -143,8 +144,6 @@ def _relay_proxy_handler(pending_req):
             _state["headers"] = dict(data.get("headers") or {})
             import time as _t
             _stats["t0"] = _t.monotonic()
-            logger.info("%s START status=%d headers=%d",
-                         _log_tag, _state["status"], len(_state["headers"]))
             _started.set()
         elif kind == "chunk":
             try:
@@ -159,9 +158,15 @@ def _relay_proxy_handler(pending_req):
         elif kind == "end":
             import time as _t
             _elapsed = _t.monotonic() - _stats["t0"] if _stats["t0"] else 0.0
-            logger.info("%s END bytes=%d chunks=%d elapsed=%.2fs status=%d",
-                         _log_tag, _stats["bytes"], _stats["chunks"],
-                         _elapsed, _state["status"])
+            # Summary line at INFO only for error statuses or WARN
+            # worthy conditions; otherwise DEBUG. Success + streaming
+            # bodies are the common case and don't need to spam the log.
+            _log = (logger.warning
+                    if _state["status"] >= 400 or _stats["bytes"] == 0
+                    else logger.debug)
+            _log("%s END bytes=%d chunks=%d elapsed=%.2fs status=%d",
+                 _log_tag, _stats["bytes"], _stats["chunks"],
+                 _elapsed, _state["status"])
             _done.set()
             _queue_event.set()
 

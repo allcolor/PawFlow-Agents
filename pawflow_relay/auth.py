@@ -142,17 +142,13 @@ def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
     port = int(port_str)
     request_id = msg.get("request_id", "")
     _action = msg.get("action", "?")
-    _fwd_log = (
-        f"[FSRelay] fwd→host action={_action} req={request_id[:8]} "
-        f"→ {host_helper}"
-    )
-    _sys.stderr.write(_fwd_log + "\n")
 
     try:
         sock = _sock.create_connection((host, port), timeout=10)
     except Exception as e:
         _sys.stderr.write(
-            f"[FSRelay] fwd→host FAILED to connect: {e}\n")
+            f"[FSRelay] fwd→host action={_action} "
+            f"FAILED to connect {host_helper}: {e}\n")
         return {"ok": False, "error": f"Cannot reach host helper at {host_helper}: {e}"}
 
     _sock_owned_by_bg = [False]

@@ -762,13 +762,10 @@ class AgentCoreMixin:
 
                     def _claude_code_turn_callback(text, tool_calls, turn_thinking=""):
                         logger.info(
-                            "[cc-callback] IN text=%d tc=%d thinking=%d"
-                            " text_preview=%r",
+                            "[cc-callback] IN text=%d tc=%d thinking=%d",
                             len(text) if text else 0,
                             len(tool_calls) if tool_calls else 0,
-                            len(turn_thinking) if turn_thinking else 0,
-                            (text[:200] + "…") if (text and len(text) > 200)
-                            else text)
+                            len(turn_thinking) if turn_thinking else 0)
                         """Called by claude-code at each internal turn boundary.
 
                         IMMUTABLE RULE: stream block → LLMMessage → writer →

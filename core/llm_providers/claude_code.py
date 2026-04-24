@@ -2290,19 +2290,20 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 "[claude-code] is_error result: "
                                 "api_error_status=%r duration_api_ms=%r "
                                 "terminal_reason=%r stop_reason=%r "
-                                "usage=%s subtype=%r _err_text=%r "
-                                "stderr_tail=%r",
+                                "subtype=%r _err_text=%r stderr_tail=%r",
                                 _api_status, _api_ms, _term, _stop,
-                                _usage, event.get("subtype"),
+                                event.get("subtype"),
                                 _err_text[:500], _stderr_snapshot)
-                            # Full event dump at INFO (was DEBUG — we
-                            # need the whole shape visible in the hot
-                            # log while chasing zero-iteration failures).
-                            import json as _json
-                            logger.info(
-                                "[claude-code] is_error full event: %s",
-                                _json.dumps(event, default=str,
-                                             ensure_ascii=False)[:4000])
+                            # Full event dump at DEBUG — re-enable at
+                            # INFO only when investigating an is_error
+                            # failure (e.g. zero-iteration / proxy
+                            # intercept). Happy path never reaches here.
+                            if logger.isEnabledFor(logging.DEBUG):
+                                import json as _json
+                                logger.debug(
+                                    "[claude-code] is_error full event: %s",
+                                    _json.dumps(event, default=str,
+                                                 ensure_ascii=False)[:4000])
                         except Exception:
                             logger.debug("exception suppressed", exc_info=True)
                         _lower = _err_text.lower()

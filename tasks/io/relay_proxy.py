@@ -55,6 +55,12 @@ def _relay_proxy_handler(pending_req):
     relay_id = pending_req.path_params.get("relay_id", "")
     token = pending_req.path_params.get("token", "")
     rest = pending_req.path_params.get("rest", "")
+    # Log as early as possible so "request received" is visible even if
+    # token/IP checks reject or the handler later raises.
+    logger.info(
+        "relay-proxy HIT method=%s path=%s src=%s relay=%s token_prefix=%s",
+        pending_req.method, pending_req.path,
+        pending_req.remote_addr, relay_id, token[:8])
 
     # Source IP restriction — no external access even with a valid token
     src_ip = pending_req.remote_addr or ""
@@ -106,12 +112,15 @@ def _relay_proxy_handler(pending_req):
 
     target_url = f"{target_scheme}://{target_hostport}{target_path}"
     method = pending_req.method or "GET"
-    # Per-request log tag so concurrent flows are traceable.
-    _log_tag = f"relay-proxy[{request_id[:8]}]" if (
-        request_id := pending_req.path_params.get("token", "")[:8] or "?") else "relay-proxy"
-    logger.info("%s IN %s %s → forwarding via relay=%s target=%s",
-                 _log_tag, method, pending_req.request_path,
-                 relay_id, target_url)
+    # Per-request log tag so concurrent flows are traceable. Using the
+    # proxy token's first 8 chars as a tag — ephemeral + unique per
+    # request, and already safe to log (it's only useful for this one
+    # in-flight request).
+    _log_tag = f"relay-proxy[{token[:8]}]"
+    logger.info(
+        "%s IN %s path=%s → forwarding via relay=%s target=%s body=%dB",
+        _log_tag, method, pending_req.path, relay_id, target_url,
+        len(pending_req.body or b""))
 
     # Forward headers (minus hop-by-hop and Host)
     _drop = {"host", "connection", "content-length", "transfer-encoding",

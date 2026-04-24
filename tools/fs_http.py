@@ -63,12 +63,19 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
     _headers = {k: v for k, v in headers.items() if k.lower() not in _drop}
 
     req_obj = urllib.request.Request(url, data=body_bytes, headers=_headers, method=method)
+    import sys as _sys
+    _sys.stderr.write(
+        f"[fs_http] fetch {method} {url} body={len(body_bytes or b'')}B "
+        f"headers={len(_headers)} streaming={on_chunk is not None}\n")
 
     try:
         with urllib.request.urlopen(req_obj, timeout=timeout) as resp:
+            _sys.stderr.write(
+                f"[fs_http] fetch {url} → status={getattr(resp, 'status', '?')}\n")
             return _consume(resp, on_chunk)
     except urllib.error.HTTPError as e:
         # HTTP error status — still has a body we want to forward.
+        _sys.stderr.write(f"[fs_http] fetch {url} → HTTPError {e.code}\n")
         try:
             return _consume(e, on_chunk)
         except Exception as inner:
@@ -81,9 +88,11 @@ def action_http_fetch(root_dir: str, path: str, req: Dict[str, Any], *,
             return {"ok": False, "status": e.code,
                     "error": f"HTTP {e.code}"}
     except urllib.error.URLError as e:
+        _sys.stderr.write(f"[fs_http] fetch {url} → URLError {e.reason}\n")
         logger.warning("http_fetch URL error: %s", e)
         return {"ok": False, "error": f"URL error: {e.reason}"}
     except Exception as e:
+        _sys.stderr.write(f"[fs_http] fetch {url} → Exception {type(e).__name__}: {e}\n")
         logger.warning("http_fetch failed: %s", e)
         return {"ok": False, "error": str(e)}
 

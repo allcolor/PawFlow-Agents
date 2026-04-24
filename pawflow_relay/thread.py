@@ -691,18 +691,38 @@ class RelayThread:
             # Stream chunks back as http_response events; the relay forwards
             # them to PawFlow via WebSocket.
             from fs_http import action_http_fetch as _http_fetch
+            _fetch_url = req.get("url", "?")
+            _fetch_method = req.get("method", "?")
+            self._log(
+                f"[HostHelper] http_fetch START {_fetch_method} {_fetch_url}")
+            _chunk_stats = {"bytes": 0, "chunks": 0, "status": None}
 
             def _on_chunk(kind, data):
+                if kind == "start":
+                    _chunk_stats["status"] = data.get("status") if isinstance(data, dict) else None
+                elif kind == "chunk":
+                    try:
+                        import base64 as _b64
+                        _chunk_stats["bytes"] += len(_b64.b64decode(data)) if isinstance(data, str) else len(data or b"")
+                    except Exception:
+                        pass
+                    _chunk_stats["chunks"] += 1
                 try:
                     msg = json.dumps({"type": "http_response", "kind": kind,
                                        "data": data}) + "\n"
                     conn.sendall(msg.encode("utf-8"))
-                except Exception:
-                    pass
+                except Exception as _se:
+                    self._log(
+                        f"[HostHelper] http_fetch sendall({kind}) failed: {_se}")
             try:
                 result = _http_fetch(".", ".", req, on_chunk=_on_chunk)
+                self._log(
+                    f"[HostHelper] http_fetch DONE status={_chunk_stats['status']} "
+                    f"bytes={_chunk_stats['bytes']} chunks={_chunk_stats['chunks']} "
+                    f"result_ok={result.get('ok') if isinstance(result, dict) else '?'}")
                 resp = json.dumps({"type": "result", "data": result}) + "\n"
             except Exception as e:
+                self._log(f"[HostHelper] http_fetch EXCEPTION: {e}")
                 resp = json.dumps({"type": "error", "error": str(e)}) + "\n"
             conn.sendall(resp.encode("utf-8"))
 

@@ -503,9 +503,13 @@ class ClaudeCodeSessionMixin:
             # to skip verification — safe here because the request
             # stays on the private network (private_only route) and
             # the ephemeral token is the real credential, not TLS.
-            if _base_url.startswith("https://") and "/relay-proxy/" in _base_url:
+            _tls_skip = (_base_url.startswith("https://")
+                         and "/relay-proxy/" in _base_url)
+            if _tls_skip:
                 env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
-            logger.info("Claude Code using custom endpoint: %s", _base_url)
+            logger.info(
+                "Claude Code using custom endpoint: %s (NODE_TLS_REJECT_UNAUTHORIZED=%s)",
+                _base_url, "0" if _tls_skip else "unset")
         else:
             logger.info("Claude Code no custom base_url configured")
         return env

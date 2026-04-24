@@ -26,7 +26,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from core.docker_utils import docker_cmd, to_host_path, get_host_ip
 
@@ -528,6 +528,35 @@ class ClaudeCodePool:
                        for i in range(0, len(_bridge_mounts), 2))
             if _bridge_mounts else "NONE")
 
+        # Resolve the HTTPS listener's public hostname so the container
+        # can reach it via that name (required when ANTHROPIC_BASE_URL
+        # is https://<hostname>:<port>/… — without --add-host the
+        # container's resolver would fail to look up the hostname that
+        # only lives in the user's /etc/hosts or C:\Windows\System32\
+        # drivers\etc\hosts). Maps to host-gateway so Docker routes
+        # back to the host on any platform.
+        _host_aliases: List[str] = []
+        try:
+            from services import http_listener_service as _hl_mod
+            _inst = getattr(_hl_mod, "_instances", None) or {}
+            for _p, _lst in _inst.items():
+                if _p == 19895:
+                    continue  # internal listener, not the public one
+                _ph = (getattr(_lst, "public_hostname", "") or "").strip()
+                if _ph and _ph not in _host_aliases:
+                    _host_aliases.append(_ph)
+        except Exception:
+            logger.debug(
+                "[pool] public_hostname lookup failed", exc_info=True)
+
+        _extra_add_hosts: list = []
+        for _alias in _host_aliases:
+            _extra_add_hosts.extend(["--add-host", f"{_alias}:host-gateway"])
+        if _extra_add_hosts:
+            logger.info(
+                "[pool] container hostname aliases → host-gateway: %s",
+                _host_aliases)
+
         run_args = [
             "-d",  # detached
             "--rm",  # auto-remove on exit — prevents dead-container pileup
@@ -539,6 +568,12 @@ class ClaudeCodePool:
             *_bridge_mounts,
             # Network: allow MCP bridge to reach host tool relay
             "--add-host", "host.docker.internal:host-gateway",
+            # Extra aliases for the HTTPS listener hostname — without
+            # these, https://<cert-CN>:9090/ from inside the container
+            # fails DNS (the hostname only exists in the user's host
+            # file), bails silently, and CC surfaces "empty or malformed
+            # response (HTTP 200)".
+            *_extra_add_hosts,
             # Run as non-root (Claude Code requirement)
             "--user", "1000:1000",
             # Force clean HOME/USER — PATH is set in docker exec, not here

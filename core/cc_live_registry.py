@@ -53,6 +53,14 @@ class CCLiveSession:
     workdir: str
     service_id: str
     svc_pool_idx: int
+    # MCP internal-auth token minted at spawn time. CC keeps using it
+    # across turns, so its lifetime is tied to the live session, not the
+    # turn. Revoked in teardown to avoid token accumulation.
+    mcp_internal_token: Optional[str] = None
+    # Shared heartbeat state updated by the reader daemon and consumed
+    # by the per-turn stall watchdog. Persistent across turns so the
+    # reader (captured once at spawn) can keep writing into it.
+    hb_state: Optional[Dict[str, object]] = None
     spawn_at: float = field(default_factory=time.monotonic)
     last_used: float = field(default_factory=time.monotonic)
     reuse_count: int = 0
@@ -285,3 +293,13 @@ def _teardown_session(session: CCLiveSession, reason: str, killer) -> None:
             ClaudeCodePool.instance().release(session.pool_container)
         except Exception:
             logger.debug("pool release failed", exc_info=True)
+    # 4. Revoke the MCP internal-auth token. Its lifetime was tied to
+    #    the live session, so teardown is the right moment — not turn
+    #    end. Skipping this leaks valid replayable tokens in
+    #    core.internal_auth._tokens until server restart.
+    if session.mcp_internal_token:
+        try:
+            from core.internal_auth import revoke_token
+            revoke_token(session.mcp_internal_token)
+        except Exception:
+            logger.debug("internal-auth revoke failed", exc_info=True)

@@ -182,6 +182,36 @@ def test_kill_and_evict_missing_is_noop(reg):
     assert calls == []
 
 
+def test_teardown_revokes_mcp_internal_token(reg, monkeypatch):
+    """MCP internal-auth token lifetime is tied to the live session, so
+    teardown (kill_and_evict / sweep / shutdown) must revoke it — not
+    turn end. This prevents token accumulation in core.internal_auth.
+    """
+    revoked = []
+
+    import core.internal_auth as ia
+    monkeypatch.setattr(ia, "revoke_token", lambda t: revoked.append(t))
+
+    key = ("u", "c", "a", "svc", 0)
+    s = _mk_session()
+    s.mcp_internal_token = "token-xyz"
+    reg.register(key, s)
+    reg.kill_and_evict(key, "compact", killer=lambda p: None)
+    assert revoked == ["token-xyz"]
+
+
+def test_teardown_skips_revoke_when_no_token(reg, monkeypatch):
+    revoked = []
+    import core.internal_auth as ia
+    monkeypatch.setattr(ia, "revoke_token", lambda t: revoked.append(t))
+
+    key = ("u", "c", "a", "svc", 0)
+    s = _mk_session()  # no token set
+    reg.register(key, s)
+    reg.kill_and_evict(key, "shutdown", killer=lambda p: None)
+    assert revoked == []
+
+
 # ── sweep_idle ──────────────────────────────────────────────
 
 

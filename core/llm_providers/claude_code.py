@@ -15,7 +15,14 @@ import re
 import subprocess
 import threading
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
+
+from core.cc_live_registry import CCLiveSession, LiveSessionRegistry
+
+# Feature flag gating live-session reuse. Off by default — when unset,
+# every turn spawns a fresh CC process as before. Set to "1" to keep CC
+# alive between turns and reuse the stream-json stdin/stdout.
+_LIVE_REUSE_ENABLED = os.environ.get("PAWFLOW_CC_LIVE_REUSE", "0") == "1"
 
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin, _get_sessions_base
 

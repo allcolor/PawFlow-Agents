@@ -168,3 +168,84 @@ def guess_llm_service(agent_name: str, conv_id: str = "") -> str:
         pass
     return ""
 
+
+# Sentinel values for agent_name that mean "not a specific agent" — per-
+# conv operations (compact, rebuild, view_context) accept these as
+# "whole conversation" scope and bypass membership checks.
+_AGENT_SCOPE_SENTINELS = frozenset({"", "ALL", "shared"})
+
+
+def require_agent_member(conv_id: str, agent_name: str,
+                         user_id: str = "",
+                         auto_register: bool = True) -> Optional[str]:
+    """Enforce that `agent_name` is a member of this conversation before
+    running a per-agent operation (compact, rebuild, delegate, etc.).
+
+    Returns None when the operation is allowed:
+      - agent_name is a scope sentinel ("", "ALL", "shared") — means
+        the whole conversation, no specific member required
+      - agent_name matches a conv_agents entry (case-insensitive)
+      - `auto_register=True` AND a global/user agent definition with a
+        derivable llm_service exists → the agent is added into
+        conv_agents on the fly and the caller can proceed
+
+    Returns a human-readable error string when the operation is NOT
+    allowed. Callers should surface it to the user rather than silently
+    propagate — the previous behaviour (accepting any string, creating
+    phantom per-agent dirs, failing late in _resolve_agent_client)
+    leaked state and produced confusing "No llm_service resolved"
+    errors for an agent the user never added to the conv.
+    """
+    if (agent_name or "") in _AGENT_SCOPE_SENTINELS:
+        return None
+    if not conv_id:
+        # Defensive: without a conv we can't check membership; allow.
+        # Caller paths that reach here with empty conv_id have their
+        # own invariants to enforce.
+        return None
+    try:
+        members = get_all_agent_configs(conv_id) or {}
+    except Exception as _err:
+        logger.warning(
+            "[agent-member] get_all_agent_configs(%s) failed: %s — "
+            "allowing without guard", (conv_id or "")[:8], _err)
+        return None
+    _needle = agent_name.lower()
+    for _k in members.keys():
+        if isinstance(_k, str) and _k.lower() == _needle:
+            return None  # already a member
+    if auto_register:
+        # Look up a global/user agent definition (resource). If one
+        # exists with an explicitly-declared llm_service (or one we can
+        # derive by naming heuristic), register it into conv_agents so
+        # the operation proceeds. Matches the user's expectation: "I
+        # have qwen defined globally with a service, it should work
+        # everywhere without per-conv re-configuration".
+        try:
+            from core.resource_store import ResourceStore
+            _adef = ResourceStore.instance().get_any(
+                "agent", agent_name, user_id or "")
+            if _adef is not None:
+                _svc = (_adef.get("llm_service", "")
+                        or guess_llm_service(agent_name, conv_id))
+                if _svc:
+                    add_agent_to_conv(conv_id, agent_name,
+                                      llm_service=_svc,
+                                      definition=agent_name)
+                    logger.info(
+                        "[agent-member] auto-registered agent '%s' "
+                        "into conv %s with llm_service='%s' (from "
+                        "global definition)",
+                        agent_name, conv_id[:8], _svc)
+                    return None
+        except Exception as _auto_err:
+            logger.warning(
+                "[agent-member] auto-register of '%s' failed: %s",
+                agent_name, _auto_err, exc_info=True)
+    return (
+        f"Agent '{agent_name}' is not a member of this conversation "
+        f"and has no resolvable llm_service. Known agents: "
+        f"{sorted(members.keys())}. Create '{agent_name}' as an agent "
+        f"resource (with an llm_service) or add it to this conversation "
+        f"via the agents panel.")
+

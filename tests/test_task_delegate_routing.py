@@ -190,6 +190,8 @@ class TestReverseDelegateScan:
              patch.object(h, "_is_duplicate_shared_delegate", return_value=False), \
              patch("core.conversation_writer.ConversationWriter.for_conversation"), \
              patch("core.conversation_event_bus.ConversationEventBus.instance"), \
+             patch("core.conv_agent_config.get_all_agent_configs",
+                   return_value={"B": {"llm_service": "svc"}}), \
              patch.object(h, "_preempt_caller") as mock_preempt:
             result = h._deliver_shared_delegate(
                 from_agent="agentA", to_agent="B",
@@ -211,6 +213,8 @@ class TestReverseDelegateScan:
              patch.object(h, "_is_duplicate_shared_delegate", return_value=False), \
              patch("core.conversation_writer.ConversationWriter.for_conversation"), \
              patch("core.conversation_event_bus.ConversationEventBus.instance"), \
+             patch("core.conv_agent_config.get_all_agent_configs",
+                   return_value={"B": {"llm_service": "svc"}}), \
              patch.object(h, "_wake_caller") as mock_wake:
             result = h._deliver_shared_delegate(
                 from_agent="agentA", to_agent="B",
@@ -235,6 +239,8 @@ class TestReverseDelegateScan:
              patch.object(h, "_is_duplicate_shared_delegate", return_value=False), \
              patch("core.conversation_writer.ConversationWriter.for_conversation"), \
              patch("core.conversation_event_bus.ConversationEventBus.instance"), \
+             patch("core.conv_agent_config.get_all_agent_configs",
+                   return_value={"B": {"llm_service": "svc"}}), \
              patch.object(h, "_preempt_caller") as mock_preempt:
             result = h._deliver_shared_delegate(
                 from_agent="agentA", to_agent="B",
@@ -243,3 +249,75 @@ class TestReverseDelegateScan:
             assert result["state"] == "running (preempted)"
             # Direct key → uses main conv, not task sub-conv
             assert mock_preempt.call_args.args[1] == "conv1"
+
+
+class TestSharedDelegateMembershipGuard:
+    """A delegate to an agent that's not in conv_agents must not silently
+    enqueue a phantom turn — that used to leave a dangling message in
+    the target's ctx and fail downstream in _resolve_agent_client with a
+    useless 'no llm_service' error. The guard either auto-registers the
+    target from a global definition (if one exists with a service) or
+    refuses the delegate with an actionable message."""
+
+    def test_refuses_when_target_not_in_conv_and_no_global_def(self):
+        h = _make_handler(conversation_id="conv1")
+        with patch("core.conv_agent_config.get_all_agent_configs",
+                   return_value={"claude": {"llm_service": "svc"}}), \
+             patch("core.resource_store.ResourceStore") as mock_rs, \
+             patch.object(h, "_is_duplicate_shared_delegate", return_value=False):
+            mock_rs.instance.return_value.get_any.return_value = None
+            result = h._deliver_shared_delegate(
+                from_agent="claude", to_agent="ghost",
+                message="hello", user_id="user1",
+                conv_id="conv1")
+        assert result["state"].startswith("error:")
+        assert "ghost" in result["state"]
+        assert "claude" in result["state"]  # lists known agents
+
+    def test_auto_registers_from_global_definition_with_service(self):
+        h = _make_handler(conversation_id="conv1")
+        with patch("core.conv_agent_config.get_all_agent_configs",
+                   return_value={"claude": {"llm_service": "svc"}}), \
+             patch("core.conv_agent_config.add_agent_to_conv") as mock_add, \
+             patch("core.resource_store.ResourceStore") as mock_rs, \
+             patch.object(h, "_is_duplicate_shared_delegate", return_value=False), \
+             patch.object(h, "_wake_caller"), \
+             patch("tasks.ai.agent_loop.AgentLoopTask._live_instance",
+                   new_callable=PropertyMock,
+                   return_value=MagicMock(
+                       _active_contexts={},
+                       _active_contexts_lock=threading.Lock())), \
+             patch("core.conversation_writer.ConversationWriter.for_conversation"):
+            mock_rs.instance.return_value.get_any.return_value = {
+                "prompt": "...",
+                "llm_service": "qwen_llm_service",
+            }
+            result = h._deliver_shared_delegate(
+                from_agent="claude", to_agent="qwen",
+                message="hello", user_id="user1",
+                conv_id="conv1")
+        mock_add.assert_called_once()
+        _kwargs = mock_add.call_args.kwargs
+        assert _kwargs["llm_service"] == "qwen_llm_service"
+        assert result["state"] == "idle (waking)"
+
+    def test_case_insensitive_membership_match(self):
+        """conv_agents stored as 'Qwen' but delegate called with 'qwen'
+        must match without triggering the guard."""
+        h = _make_handler(conversation_id="conv1")
+        with patch("core.conv_agent_config.get_all_agent_configs",
+                   return_value={"Qwen": {"llm_service": "svc"}}), \
+             patch.object(h, "_is_duplicate_shared_delegate", return_value=False), \
+             patch.object(h, "_wake_caller"), \
+             patch("tasks.ai.agent_loop.AgentLoopTask._live_instance",
+                   new_callable=PropertyMock,
+                   return_value=MagicMock(
+                       _active_contexts={},
+                       _active_contexts_lock=threading.Lock())), \
+             patch("core.conversation_writer.ConversationWriter.for_conversation"):
+            result = h._deliver_shared_delegate(
+                from_agent="claude", to_agent="qwen",
+                message="hello", user_id="user1",
+                conv_id="conv1")
+        # Should NOT be an error — case-insensitive match found it
+        assert not result["state"].startswith("error:")

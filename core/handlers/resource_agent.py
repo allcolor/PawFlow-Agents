@@ -799,6 +799,24 @@ class SpawnAgentsHandler(ToolHandler):
         """
         import uuid as _uuid
         conv_id = conv_id or self._conversation_id or ""
+        # Membership guard: the target agent MUST be a member of this
+        # conversation before we persist the delegate msg and wake its
+        # loop. Without this, a caller (or a hallucinated tool call)
+        # asking to delegate to an unknown agent silently enqueues a
+        # message for a phantom, spawns a wake loop, and the phantom's
+        # _resolve_agent_client hard-fails late — leaving a dangling
+        # message, an orphaned relay, and a confusing error.
+        # require_agent_member auto-registers from a global/user agent
+        # definition when possible, so valid cross-conv agents "just
+        # work"; returns an actionable error otherwise.
+        from core.conv_agent_config import require_agent_member
+        _member_err = require_agent_member(
+            conv_id, to_agent, user_id=user_id)
+        if _member_err:
+            logger.warning(
+                "[delegate-shared] membership check failed: %s",
+                _member_err)
+            return {"state": f"error: {_member_err}"}
         # Dedup: skip if the same (from, to, message) was just sent.
         if conv_id and self._is_duplicate_shared_delegate(
                 conv_id, from_agent, to_agent, message):

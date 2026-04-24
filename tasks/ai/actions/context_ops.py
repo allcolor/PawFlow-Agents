@@ -264,6 +264,17 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
+        # Membership guard — refuse per-agent view for an agent that
+        # isn't in this conv. Without this, /view_context ghost would
+        # try to load a phantom agent_context (returning empty) and
+        # surface confusing "no context" errors.
+        from core.conv_agent_config import require_agent_member
+        _vc_err = require_agent_member(conv_id, _ctx_agent,
+                                         user_id=user_id)
+        if _vc_err:
+            flowfile.set_content(json.dumps({"error": _vc_err}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         context_data = _ctx_load(conv_id, _ctx_agent)
         source_data = context_data if context_data is not None else store.load(conv_id, user_id=user_id)
         if not source_data:
@@ -471,6 +482,19 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        # Membership guard — `/compact ghost` used to silently create a
+        # per-agent dir (data/.../ghost/) and write a compacted ctx for
+        # an agent that was never added to this conv, producing orphan
+        # state. require_agent_member auto-registers from a global
+        # definition when possible (matches the user's mental model
+        # "I have qwen configured globally"); otherwise fails loud.
+        from core.conv_agent_config import require_agent_member
+        _cp_err = require_agent_member(conv_id, _ctx_agent,
+                                         user_id=user_id)
+        if _cp_err:
+            flowfile.set_content(json.dumps({"error": _cp_err}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         # Compaction always starts from the full transcript (personalized
         # for the agent). Feeding back an already-compacted agent_context
         # would layer stale summaries on top of each other.
@@ -545,6 +569,17 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _rb_agent = body.get("agent_name", "")
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        # Membership guard — same rationale as /compact: /rebuild ghost
+        # would load the transcript personalized for a non-member and
+        # save the result into a phantom per-agent dir. "ALL" rebuilds
+        # every member and bypasses the guard (sentinel).
+        from core.conv_agent_config import require_agent_member
+        _rb_err = require_agent_member(conv_id, _rb_agent,
+                                         user_id=user_id)
+        if _rb_err:
+            flowfile.set_content(json.dumps({"error": _rb_err}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
 

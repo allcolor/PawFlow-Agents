@@ -26,6 +26,7 @@ from tasks.ai.actions.memory_prompts import _handle_memory_prompts
 from tasks.ai.actions.cognitive_ui import _handle_cognitive_ui
 from tasks.ai.actions.usage import _handle_usage
 from tasks.ai.actions.plans import _handle_plans
+from tasks.ai.actions.cc_live import _handle_cc_live
 from tasks.ai.actions.command_dispatch import _handle_command_dispatch
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ _ACTION_HANDLERS = [
     _handle_cognitive_ui,
     _handle_usage,
     _handle_plans,
+    _handle_cc_live,
 ]
 
 
@@ -109,6 +111,7 @@ class AgentActionsMixin:
             "list_services", "list_repo_agents", "list_active",
             "get_permission_mode", "relay_list_available",
             "get_agent_conv_config", "list_secrets",
+            "cc_live_status",
         }
 
         # No conversation_id, or read-only action: run sync.

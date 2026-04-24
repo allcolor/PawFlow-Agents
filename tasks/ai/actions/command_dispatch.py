@@ -220,6 +220,25 @@ HELP: Dict[str, Dict[str, str]] = {
         "short": "Summarize context to N tokens",
         "detail": "Summarize the context to approximately N tokens.",
     },
+    "/cc_restart": {
+        "usage": "/cc_restart [agent]",
+        "short": "Kill warm Claude Code session(s) for this conv",
+        "detail": (
+            "Force a fresh Claude Code subprocess spawn on the next turn.\n\n"
+            "  /cc_restart          — kill every live CC session in this conv\n"
+            "  /cc_restart claude   — kill only the 'claude' agent's session\n\n"
+            "Only meaningful when PAWFLOW_CC_LIVE_REUSE=1 — otherwise every\n"
+            "turn spawns fresh anyway and this command is a no-op."
+        ),
+    },
+    "/cc_live": {
+        "usage": "/cc_live [agent]",
+        "short": "Show warm Claude Code sessions for this conv",
+        "detail": (
+            "List live CC subprocesses still attached to this conv:\n"
+            "idle time, reuse count, spawn age, service/pool index."
+        ),
+    },
 
     # ── Resources ──
     "/resources": {
@@ -768,6 +787,17 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
                 tokens = int(part)
         return {"action": "resume_conversation", "max_tokens": tokens,
                 "agent_name": agt, **base}
+
+    if cmd == "/cc_restart":
+        # Optional single positional arg = agent name. Empty = all agents.
+        _arg = arg.strip()
+        agt = _arg if _arg else ""
+        return {"action": "cc_restart", "agent_name": agt, **base}
+
+    if cmd == "/cc_live":
+        _arg = arg.strip()
+        agt = _arg if _arg else ""
+        return {"action": "cc_live_status", "agent_name": agt, **base}
 
     # ── Agent ──
     if cmd == "/agent":
@@ -1353,7 +1383,8 @@ def _handle_help(topic: str, flowfile: FlowFile) -> list:
                              "/history", "/search", "/fork"],
             "Agent": ["/agent", "/msg", "/btw", "/stop", "/resume", "/setname"],
             "Context": ["/compact", "/context", "/model", "/llm", "/effort",
-                        "/fast", "/rebuild", "/restart", "/rewind", "/summary"],
+                        "/fast", "/rebuild", "/restart", "/rewind", "/summary",
+                        "/cc_restart", "/cc_live"],
             "Resources": ["/resources", "/tools", "/call", "/skill", "/task",
                           "/service", "/flow", "/prompt", "/memory", "/cost"],
             "Secrets & Variables": ["/secrets", "/add-secret", "/variables",

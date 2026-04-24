@@ -1310,6 +1310,29 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             "type": "delegate_reply",
                             "source_agent": _ms.get("from", ""),
                         }
+                        # Tell the agent HOW to reply: just write text, the
+                        # auto-tag machinery in agent_core._append routes it
+                        # privately back to the caller. Without this hint
+                        # agents tend to invoke delegate() again (often on
+                        # the wrong target, e.g. themselves) because the
+                        # only delegate context they see is the inbound
+                        # `[delegate caller → self]` attribution.
+                        _caller = _ms.get("from", "") or "the caller"
+                        _delegate_hint = (
+                            "\n\nDELEGATE MODE: Agent '" + _caller + "' is "
+                            "waiting for your answer. Write your response as "
+                            "normal text — it will be routed back to '" + _caller + "' "
+                            "automatically as a private reply. Do NOT call "
+                            "delegate() yourself to answer — that would open a "
+                            "new thread instead of replying. Use delegate() "
+                            "only if you need to ASK a DIFFERENT agent before "
+                            "answering '" + _caller + "'."
+                        )
+                        if messages and messages[0].role == "system":
+                            messages[0] = LLMMessage(
+                                role="system",
+                                content=messages[0].content + _delegate_hint,
+                                conversation_id=conversation_id)
         except Exception:
             pass
 

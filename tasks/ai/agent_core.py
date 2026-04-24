@@ -302,7 +302,22 @@ class AgentCoreMixin:
                     and _tm.get("source_agent")
                     and msg.role in ("assistant", "tool")):
                 _self_name = ctx.get("active_agent_name", "") or ""
+                # Preserve the LLM meta fields from the original source
+                # (provider/model/tokens/context/base_url/containerized)
+                # so the recipient's UI can render the badge + meta line
+                # on the delegate block. Without this merge, the receiver
+                # sees a bare delegate block with no provider/tokens info.
+                _preserved = {}
+                if isinstance(msg.source, dict):
+                    for _k in ("provider", "model", "llm_service",
+                               "base_url", "containerized",
+                               "tokens_in", "tokens_out",
+                               "context_used", "context_max",
+                               "context_pct"):
+                        if _k in msg.source:
+                            _preserved[_k] = msg.source[_k]
                 msg.source = {
+                    **_preserved,
                     "type": "agent_delegate",
                     "from": _self_name,
                     "to": _tm["source_agent"],

@@ -252,7 +252,10 @@ function addMsg(role, text, extra) {
       }
       _inner.innerHTML = timeHtml + '<pre class="tool-result">' + escapeHtml((text || '').substring(0, 2000)) + '</pre>';
     } else {
-      _inner.innerHTML = timeHtml + renderMarkdown(text);
+      // Append buildMetaLine so delegate replies show provider/model/
+      // tokens/duration (fields preserved by agent_core._append when
+      // re-stamping the source as agent_delegate/kind=reply).
+      _inner.innerHTML = timeHtml + renderMarkdown(text) + buildMetaLine(extra);
     }
     if (_existing) {
       const _body = _existing.querySelector('.delegate-body');

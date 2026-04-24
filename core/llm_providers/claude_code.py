@@ -1020,7 +1020,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # / btw) never reuse: they're short-lived by design and must
         # not inherit nor leak another stream's proc.
         _svc_id = getattr(self, '_agent_service', '') or 'default'
-        _svc_pool_idx = int(getattr(self, '_current_pool_index', -1) or -1)
+        # Intentionally NOT `getattr(...) or -1`: `or` coerces 0 to -1,
+        # silently mapping OAuth pool slot 0 onto the api-key sentinel.
+        # The getattr default handles the "attr never set" case (api-key
+        # mode: _setup_credentials early-returns before assigning the
+        # attr).
+        _svc_pool_idx = int(getattr(self, '_current_pool_index', -1))
         _is_ephemeral = bool(getattr(self, '_ephemeral_stream', False))
         _live_reg = LiveSessionRegistry.instance()
         _live_key = None

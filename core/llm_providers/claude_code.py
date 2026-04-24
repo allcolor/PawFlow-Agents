@@ -10,6 +10,7 @@ bidirectional streaming. This enables:
 import json
 import logging
 import os
+import queue
 import re
 import subprocess
 import threading
@@ -1628,28 +1629,53 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _watchdog_thread = threading.Thread(target=_stall_watchdog, daemon=True)
         _watchdog_thread.start()
 
+        # Reader daemon: pure stdout → event queue pump. Decouples IO
+        # from dispatch so the dispatch loop can block on a single
+        # queue.get() and react promptly to proc death / sentinel EOF
+        # without polling stdout directly. Groundwork for live-session
+        # reuse (PR-2) where the reader survives across turns while
+        # each turn drains events from the same queue.
+        _event_q: queue.Queue = queue.Queue()
+        _READER_EOF = object()
+
+        def _reader_daemon():
+            try:
+                for _line in proc.stdout:
+                    _hb_state["stream_line_count"] += 1
+                    _hb_state["last_event_ts"] = time.monotonic()
+                    _line = _line.strip()
+                    if not _line:
+                        continue
+                    try:
+                        _ev = json.loads(_line)
+                    except json.JSONDecodeError:
+                        continue
+                    # Defensive: event must be a dict. When the stream
+                    # is wrapped in a PTY (script -qfc), extra terminal
+                    # output like "Script started" banners or control
+                    # sequences can produce parseable-but-non-dict
+                    # JSON (e.g. a bare string literal). Log once and
+                    # skip instead of exploding on .get().
+                    if not isinstance(_ev, dict):
+                        logger.warning(
+                            "[claude-code] non-dict JSON ignored (%s): %r",
+                            type(_ev).__name__, str(_ev)[:200])
+                        continue
+                    _event_q.put(_ev)
+            except Exception as _re_err:
+                logger.debug("[cc-reader] stdout read failed: %s", _re_err)
+            finally:
+                _event_q.put(_READER_EOF)
+
+        _reader_thread = threading.Thread(
+            target=_reader_daemon, daemon=True, name="cc-reader")
+        _reader_thread.start()
+
         try:
-            for line in proc.stdout:
-                _hb_state["stream_line_count"] += 1
-                _hb_state["last_event_ts"] = time.monotonic()
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                # Defensive: event must be a dict. When the stream is
-                # wrapped in a PTY (script -qfc), extra terminal output
-                # like "Script started" banners or control sequences
-                # can produce parseable-but-non-dict JSON (e.g. a bare
-                # string literal). Log once and skip instead of
-                # exploding on .get().
-                if not isinstance(event, dict):
-                    logger.warning(
-                        "[claude-code] non-dict JSON ignored (%s): %r",
-                        type(event).__name__, str(event)[:200])
-                    continue
+            while True:
+                event = _event_q.get()
+                if event is _READER_EOF:
+                    break
 
                 etype = event.get("type", "")
                 _hb_state["last_event_kind"] = etype

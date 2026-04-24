@@ -55,7 +55,7 @@ class AgentToolConfigMixin:
             SemanticRecallHandler,
             AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler,
             ListSecretsHandler,
-            ScheduleRecheckHandler, ShowFileHandler, SpawnAgentsHandler,
+            ScheduleWakeupHandler, ShowFileHandler, SpawnAgentsHandler,
             StoreSecretHandler, UpdatePlanHandler,
             VerifyPlanStepHandler,
             SecurityScanHandler,
@@ -165,9 +165,16 @@ class AgentToolConfigMixin:
                     h.set_conversation_id(conversation_id)
                 h.set_service_resolver(self._make_video_resolver(
                     user_id, conversation_id, agent_name))
-            elif isinstance(h, ScheduleRecheckHandler):
+            elif isinstance(h, ScheduleWakeupHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
+                if user_id:
+                    h.set_user_id(user_id)
+            elif h.name == "PushNotification":
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+                if agent_name and hasattr(h, "set_agent_name"):
+                    h.set_agent_name(agent_name)
                 if user_id:
                     h.set_user_id(user_id)
             elif hasattr(h, '_is_dynamic') or h.name in ('create_tool', 'delete_tool'):

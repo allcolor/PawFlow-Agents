@@ -160,11 +160,15 @@ class ScheduleContinuationHandler(ToolHandler):
         )
 
 
-class ScheduleRecheckHandler(ToolHandler):
-    """Schedule a persistent recheck for the current conversation.
+class ScheduleWakeupHandler(ToolHandler):
+    """Schedule a persistent wake-up for the current conversation.
 
-    The agent calls this to say "wake me up at time X" or "wake me up in N seconds".
-    The recheck survives server restarts — it's persisted to disk.
+    Agent calls this to say "wake me up at time X" or "wake me up in N seconds".
+    The wake-up survives server restarts — persisted via PollScheduler.
+
+    Replaces the Claude Code built-in `ScheduleWakeup` (blocked via
+    --disallowedTools) with a pawflow-native implementation that reuses
+    our persistent poll infrastructure.
     """
 
     _conversation_id: str = ""
@@ -172,7 +176,7 @@ class ScheduleRecheckHandler(ToolHandler):
 
     @property
     def name(self) -> str:
-        return "schedule_recheck"
+        return "ScheduleWakeup"
 
     @property
     def description(self) -> str:

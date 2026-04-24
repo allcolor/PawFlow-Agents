@@ -217,7 +217,7 @@ flow node, with the type `tool.<handler_name>`.
   `tool.status` attributes.
 
 **Excluded tools** (agent-internal, not useful as flow nodes):
-`get_tool_schema`, `use_tool`, `schedule_recheck`, `complete_task`,
+`get_tool_schema`, `use_tool`, `ScheduleWakeup`, `complete_task`,
 `verify_task`, `manage_resource`, `create_tool`, `pawflow_help`,
 `update_plan`, `create_plan`, `link_identity`, `browser_action`.
 

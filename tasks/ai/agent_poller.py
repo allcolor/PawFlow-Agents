@@ -704,7 +704,7 @@ class AgentPollerMixin:
             "that you started but didn't finish? If yes, continue working on it "
             "using your available tools.\n"
             "If everything is complete, respond with [NO_PENDING_WORK].\n"
-            "You can also use the schedule_recheck tool to schedule a future check-in "
+            "You can also use the ScheduleWakeup tool to schedule a future check-in "
             "at a specific time or after a delay."
         )
 

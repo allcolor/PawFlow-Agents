@@ -94,6 +94,38 @@ function connectSSE(cid, onReady, opts) {
     }
   });
 
+  // ── Proactive notifications (PushNotification MCP tool) ──────────
+  // The backend publishes TWO events per notification:
+  //   - `new_message` — already handled above, renders the bell row.
+  //   - `notification` — handled here, transient side-channel: bell
+  //     sound, toast banner, tab-title flash, browser Notification API
+  //     when the tab is backgrounded.
+  // Rate-limiting lives server-side; we fire every event we receive.
+  eventSource.addEventListener('notification', (e) => {
+    lastSSEActivity = Date.now();
+    let data = {};
+    try { data = e.data ? JSON.parse(e.data) : {}; } catch (_err) { return; }
+    const message = data.content || '';
+    const fromAgent = data.agent || 'assistant';
+    if (!message) return;
+    if (!isNotificationsMuted()) {
+      try { playNotificationBell(); } catch (_err) { /* no AudioContext in old browsers */ }
+    }
+    showNotificationToast(fromAgent, message);
+    flashTabTitle('🔔 ' + fromAgent + ': ' + message.slice(0, 40));
+    if (document.hidden && typeof Notification !== 'undefined'
+        && Notification.permission === 'granted') {
+      try {
+        const n = new Notification(fromAgent + ' → you', {
+          body: message,
+          tag: 'pawflow-notif-' + (cid || ''),
+          silent: isNotificationsMuted(),
+        });
+        n.onclick = () => { window.focus(); n.close(); };
+      } catch (_err) { /* Notification quota or API unavailable */ }
+    }
+  });
+
   eventSource.addEventListener('thinking', (e) => {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};

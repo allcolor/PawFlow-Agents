@@ -844,12 +844,18 @@ class ClaudeCodeSessionMixin:
     # sandbox (/tmp/claude-*/tasks/*.output) and is invisible to the
     # relay-mediated MCP tools; use mcp__pawflow__use_tool(bash,
     # run_in_background=true) for long-running commands instead.
+    # ScheduleWakeup and PushNotification are replaced by pawflow-native
+    # MCP tools of the same name (see core.handlers.file_ops and
+    # core.handlers.push_notification). The built-ins are blocked so the
+    # agent never falls through — it calls mcp__pawflow__use_tool(
+    # ScheduleWakeup, ...) / (PushNotification, ...) instead.
     _DISALLOWED_BUILTIN_TOOLS = (
         "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,WebFetch,WebSearch,"
         "Task,Agent,ToolSearch,ListMcpResourcesTool,ReadMcpResourceTool,"
         "EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,"
         "RemoteTrigger,Skill,TaskOutput,TaskStop,TodoWrite,"
-        "CronCreate,CronDelete,CronList,AskUserQuestion,Monitor"
+        "CronCreate,CronDelete,CronList,AskUserQuestion,Monitor,"
+        "ScheduleWakeup,PushNotification"
     )
 
     def _build_claude_cmd(self, model: str,

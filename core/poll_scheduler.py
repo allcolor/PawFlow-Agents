@@ -1,8 +1,8 @@
 """Persistent poll scheduler for agent conversations.
 
-Stores scheduled rechecks on disk so they survive process restarts.
-The agent can schedule future rechecks via the ``schedule_recheck`` tool
-or via the ``[RECHECK_IN:X]`` tag convention.
+Stores scheduled wake-ups on disk so they survive process restarts.
+The agent can schedule future wake-ups via the ``ScheduleWakeup`` tool
+(replaces the Claude Code built-in of the same name).
 """
 
 from __future__ import annotations

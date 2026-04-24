@@ -23,7 +23,7 @@ _CHAT_UI_DIR = Path(__file__).parent / "chat_ui"
 # JS modules in load order (each file must be standalone)
 _JS_MODULES = [
     "i18n.js", "state.js", "rxbus.js", "conversations.js", "messages.js",
-    "active_agents.js", "typing.js", "sse.js",
+    "active_agents.js", "typing.js", "notifications.js", "sse.js",
     "dialogs.js",
     "cmd_agent.js", "cmd_context.js", "cmd_resources.js", "cmd_conversation.js", "cmd_misc.js",
     "commands.js", "file_mention.js", "context_editor.js", "memories.js", "diary.js", "knowledge_graph.js", "project_graph.js",

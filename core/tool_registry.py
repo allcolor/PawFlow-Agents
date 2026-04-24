@@ -64,7 +64,7 @@ from core.handlers.dynamic_tool import (  # noqa: F401
 from core.handlers.file_ops import (  # noqa: F401
     CreateFileHandler,
     ScheduleContinuationHandler,
-    ScheduleRecheckHandler,
+    ScheduleWakeupHandler,
 )
 from core.handlers.flow_management import FlowManagerHandler  # noqa: F401
 from core.handlers.help_secrets import (  # noqa: F401
@@ -286,7 +286,9 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ScraplingFetchHandler())
     registry.register(CreateFileHandler())
     registry.register(ScheduleContinuationHandler())
-    registry.register(ScheduleRecheckHandler())
+    registry.register(ScheduleWakeupHandler())
+    from core.handlers.push_notification import PushNotificationHandler
+    registry.register(PushNotificationHandler())
     registry.register(ImageGenerationHandler())
     registry.register(EditImageHandler())
     registry.register(ImageModelInfoHandler())

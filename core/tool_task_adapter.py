@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 # Tools that should NOT become flow tasks (meta-tools, agent-internal)
 SKIP_TOOLS = {
     "get_tool_schema", "use_tool",  # lazy tools meta
-    "schedule_recheck",  # agent-loop internal
+    "ScheduleWakeup",  # agent-loop internal
+    "PushNotification",  # agent-loop internal (conv bell)
     "complete_task", "verify_task",  # task lifecycle (agent-only)
     "manage_resource",  # resource CRUD
     "create_tool",  # dynamic tool creation

@@ -547,7 +547,7 @@ Tasks with `is_persistent_source = True` and `has_pending_input()`:
 
 ## PollScheduler (persistent)
 For agent-initiated scheduled checks:
-- Use `schedule_recheck` tool to schedule a future wake-up
+- Use `ScheduleWakeup` tool to schedule a future wake-up
 - Persists across restarts (JSON file)
 - Supports absolute time or relative delay"""
 

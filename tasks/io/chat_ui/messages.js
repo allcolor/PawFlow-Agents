@@ -145,6 +145,38 @@ function addMsg(role, text, extra) {
       && extra.source.name === 'background') {
     role = 'tool_result';
   }
+  // PushNotification bell row: proactive attention signal from an agent.
+  // Rendered as a compact 🔔 line (not a full user bubble) so it doesn't
+  // clutter the transcript but stays visible on history reload. Append
+  // + return here — bypassing the generic role branches below.
+  if (role === 'user' && extra && extra.source
+      && extra.source.type === 'system'
+      && extra.source.name === 'notification') {
+    const notifEl = document.createElement('div');
+    notifEl.className = 'msg notification-row';
+    notifEl.style.cssText = (
+      'background:#1a3a2a;color:#4ecdc4;border-left:3px solid #4ecdc4;'
+      + 'padding:6px 12px;margin:4px 0;border-radius:4px;'
+      + 'font-size:12.5px;display:flex;align-items:baseline;gap:8px;'
+    );
+    const fromAgent = displayAgentName(extra.source.agent || 'agent');
+    const timeHtml = makeTimeHtml((extra && extra.ts) ? extra.ts : 0);
+    if (extra && extra.msg_id) notifEl.dataset.msgid = extra.msg_id;
+    notifEl.innerHTML = (
+      '<span style="font-size:14px;">🔔</span>'
+      + '<span style="font-weight:600;">' + escapeHtml(fromAgent) + ':</span>'
+      + '<span style="flex:1;">' + escapeHtml(text) + '</span>'
+      + timeHtml
+    );
+    const notifContainer = document.getElementById('messages');
+    if (notifContainer) {
+      const typingEl2 = document.getElementById('typing');
+      if (typingEl2) notifContainer.insertBefore(notifEl, typingEl2);
+      else notifContainer.appendChild(notifEl);
+    }
+    scrollBottom(true);
+    return notifEl;
+  }
   const el = document.createElement('div');
   // Map roles to CSS classes
   let cssClass = role;

@@ -533,8 +533,12 @@ class ClaudeCodePool:
         # is https://<hostname>:<port>/… — without --add-host the
         # container's resolver would fail to look up the hostname that
         # only lives in the user's /etc/hosts or C:\Windows\System32\
-        # drivers\etc\hosts). Maps to host-gateway so Docker routes
-        # back to the host on any platform.
+        # drivers\etc\hosts). Maps to the actual LAN IP (not
+        # host-gateway) so the container goes directly through the
+        # bridged network — host-gateway resolves to a Docker-
+        # internal gateway on some platforms (Docker Desktop, WSL2)
+        # that may not route back to the listener bound on 0.0.0.0
+        # of the LAN interface.
         _host_aliases: List[str] = []
         try:
             from services import http_listener_service as _hl_mod
@@ -549,13 +553,14 @@ class ClaudeCodePool:
             logger.debug(
                 "[pool] public_hostname lookup failed", exc_info=True)
 
+        _host_ip = get_host_ip()
         _extra_add_hosts: list = []
         for _alias in _host_aliases:
-            _extra_add_hosts.extend(["--add-host", f"{_alias}:host-gateway"])
+            _extra_add_hosts.extend(["--add-host", f"{_alias}:{_host_ip}"])
         if _extra_add_hosts:
             logger.info(
-                "[pool] container hostname aliases → host-gateway: %s",
-                _host_aliases)
+                "[pool] container hostname aliases → %s: %s",
+                _host_ip, _host_aliases)
 
         run_args = [
             "-d",  # detached

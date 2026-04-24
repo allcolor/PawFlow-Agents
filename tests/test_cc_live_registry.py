@@ -1,0 +1,296 @@
+"""Unit tests for core.cc_live_registry.
+
+Covers register/get/touch/evict/kill_and_evict, idle sweeper, shutdown,
+and drift-key safety (different keys map to different entries).
+No Docker, no real subprocess — a fake proc with a settable poll value.
+"""
+
+from __future__ import annotations
+
+import queue
+import threading
+import time
+
+import pytest
+
+from core.cc_live_registry import (
+    CCLiveSession,
+    LiveSessionRegistry,
+)
+
+
+class _FakeProc:
+    """Minimal stand-in for subprocess.Popen with controllable poll()."""
+
+    def __init__(self, alive: bool = True):
+        self._alive = alive
+        self.terminated = False
+        self.killed = False
+        self.wait_calls = 0
+
+    def poll(self):
+        return None if self._alive else 0
+
+    def terminate(self):
+        self.terminated = True
+        self._alive = False
+
+    def wait(self, timeout=None):
+        self.wait_calls += 1
+        return 0
+
+    def kill(self):
+        self.killed = True
+        self._alive = False
+
+    def die(self):
+        self._alive = False
+
+
+def _mk_session(alive: bool = True, svc: str = "svc-a",
+                idx: int = 0, last_used_offset: float = 0.0,
+                pool_container: str = "") -> CCLiveSession:
+    """Build a fake session; last_used_offset lets tests age the entry."""
+    session = CCLiveSession(
+        proc=_FakeProc(alive=alive),
+        event_q=queue.Queue(),
+        reader_thread=threading.Thread(target=lambda: None),
+        stop_event=threading.Event(),
+        pool_container=pool_container or None,
+        workdir="/tmp/workdir",
+        service_id=svc,
+        svc_pool_idx=idx,
+    )
+    if last_used_offset:
+        session.last_used = time.monotonic() - last_used_offset
+    return session
+
+
+@pytest.fixture
+def reg():
+    """Fresh (non-singleton) registry per test.
+
+    We bypass `instance()` to avoid cross-test state pollution.
+    """
+    return LiveSessionRegistry()
+
+
+# ── register / get ──────────────────────────────────────────
+
+
+def test_register_then_get_roundtrip(reg):
+    key = ("u1", "c1", "agent", "svc-a", 0)
+    s = _mk_session()
+    reg.register(key, s)
+    assert reg.get(key) is s
+    assert len(reg) == 1
+
+
+def test_get_missing_returns_none(reg):
+    assert reg.get(("u", "c", "a", "svc", 0)) is None
+
+
+def test_get_auto_evicts_dead_proc(reg):
+    key = ("u1", "c1", "agent", "svc-a", 0)
+    s = _mk_session(alive=True)
+    reg.register(key, s)
+    s.proc.die()
+    assert reg.get(key) is None
+    assert len(reg) == 0, "dead entry must be auto-evicted on get"
+
+
+def test_different_keys_distinct_entries(reg):
+    k1 = ("u1", "c1", "agent", "svc-a", 0)
+    k2 = ("u1", "c1", "agent", "svc-b", 0)  # service drift
+    k3 = ("u1", "c1", "agent", "svc-a", 1)  # pool_idx drift
+    reg.register(k1, _mk_session(svc="svc-a", idx=0))
+    reg.register(k2, _mk_session(svc="svc-b", idx=0))
+    reg.register(k3, _mk_session(svc="svc-a", idx=1))
+    assert len(reg) == 3
+    assert reg.get(k1).service_id == "svc-a"
+    assert reg.get(k2).service_id == "svc-b"
+    assert reg.get(k3).svc_pool_idx == 1
+
+
+def test_register_same_key_overwrites(reg):
+    key = ("u1", "c1", "agent", "svc", 0)
+    s1 = _mk_session()
+    s2 = _mk_session()
+    reg.register(key, s1)
+    reg.register(key, s2)
+    assert reg.get(key) is s2
+    assert len(reg) == 1
+
+
+# ── touch ─────────────────────────────────────────────────────
+
+
+def test_touch_increments_reuse_count_and_bumps_last_used(reg):
+    key = ("u", "c", "a", "svc", 0)
+    s = _mk_session(last_used_offset=10.0)
+    reg.register(key, s)
+    before = s.last_used
+    reg.touch(key)
+    reg.touch(key)
+    assert s.reuse_count == 2
+    assert s.last_used > before
+
+
+def test_touch_missing_key_is_noop(reg):
+    # Must not raise.
+    reg.touch(("nope", "x", "y", "z", 0))
+
+
+# ── evict / kill_and_evict ─────────────────────────────────────
+
+
+def test_evict_removes_without_killing(reg):
+    key = ("u", "c", "a", "svc", 0)
+    s = _mk_session()
+    reg.register(key, s)
+    out = reg.evict(key, "test")
+    assert out is s
+    assert len(reg) == 0
+    assert s.proc._alive  # NOT killed
+
+
+def test_kill_and_evict_calls_killer(reg):
+    key = ("u", "c", "a", "svc", 0)
+    s = _mk_session()
+    reg.register(key, s)
+    killed = []
+    reg.kill_and_evict(key, "compact", killer=lambda p: killed.append(p))
+    assert killed == [s.proc]
+    assert len(reg) == 0
+    assert s.stop_event.is_set()
+
+
+def test_kill_and_evict_fallback_without_killer(reg):
+    key = ("u", "c", "a", "svc", 0)
+    s = _mk_session()
+    reg.register(key, s)
+    reg.kill_and_evict(key, "shutdown", killer=None)
+    assert s.proc.terminated
+    assert s.proc.wait_calls >= 1
+
+
+def test_kill_and_evict_missing_is_noop(reg):
+    calls = []
+    reg.kill_and_evict(
+        ("nope", "x", "y", "z", 0), "gone",
+        killer=lambda p: calls.append(p))
+    assert calls == []
+
+
+# ── sweep_idle ──────────────────────────────────────────────
+
+
+def test_sweep_idle_evicts_expired_and_dead(reg):
+    k_fresh = ("u", "c", "fresh", "svc", 0)
+    k_stale = ("u", "c", "stale", "svc", 0)
+    k_dead = ("u", "c", "dead", "svc", 0)
+    s_fresh = _mk_session(last_used_offset=10.0)
+    s_stale = _mk_session(last_used_offset=7200.0)
+    s_dead = _mk_session(alive=False)
+    reg.register(k_fresh, s_fresh)
+    reg.register(k_stale, s_stale)
+    reg.register(k_dead, s_dead)
+
+    killed = []
+    n = reg.sweep_idle(idle_ttl_seconds=3600,
+                      killer=lambda p: killed.append(p))
+    assert n == 2
+    assert reg.get(k_fresh) is s_fresh
+    assert reg.get(k_stale) is None
+    assert reg.get(k_dead) is None
+    assert s_stale.proc in killed  # killer called for stale
+    # dead proc may not end up in killed list if poll() == 0 triggers
+    # killer branch anyway — the important thing is it's evicted.
+
+
+def test_sweep_idle_noop_when_all_fresh(reg):
+    reg.register(("u", "c", "a", "svc", 0), _mk_session())
+    reg.register(("u", "c", "b", "svc", 0), _mk_session())
+    n = reg.sweep_idle(idle_ttl_seconds=3600,
+                      killer=lambda p: None)
+    assert n == 0
+    assert len(reg) == 2
+
+
+# ── shutdown_all ────────────────────────────────────────────
+
+
+def test_shutdown_all_kills_everything(reg):
+    for i in range(5):
+        reg.register(("u", "c", f"a{i}", "svc", i), _mk_session())
+    killed = []
+    reg.shutdown_all(killer=lambda p: killed.append(p))
+    assert len(killed) == 5
+    assert len(reg) == 0
+
+
+def test_shutdown_stops_sweeper(reg):
+    # Start sweeper, then shutdown; the sweeper_stop event must be set.
+    reg.ensure_sweeper(tick_seconds=60, idle_ttl_seconds=3600,
+                       killer=lambda p: None)
+    assert reg._sweeper_started
+    reg.shutdown_all(killer=lambda p: None)
+    assert reg._sweeper_stop.is_set()
+
+
+# ── status ───────────────────────────────────────────────────
+
+
+def test_status_snapshot_shape(reg):
+    reg.register(("user1", "conv1", "agentA", "svc-a", 2),
+                 _mk_session(svc="svc-a", idx=2))
+    st = reg.status()
+    assert len(st) == 1
+    entry = st[0]
+    for field_name in ("user_id", "conv_id", "agent_name", "service_id",
+                       "svc_pool_idx", "live", "idle_seconds",
+                       "reuse_count", "spawn_at", "lived_seconds"):
+        assert field_name in entry, f"missing {field_name} in status entry"
+    assert entry["service_id"] == "svc-a"
+    assert entry["svc_pool_idx"] == 2
+    assert entry["live"] is True
+
+
+# ── concurrency ──────────────────────────────────────────────
+
+
+def test_concurrent_register_and_get(reg):
+    N = 50
+    errors = []
+
+    def writer(i):
+        try:
+            reg.register(("u", "c", f"a{i}", "svc", i), _mk_session())
+        except Exception as e:
+            errors.append(e)
+
+    def reader(i):
+        try:
+            _ = reg.get(("u", "c", f"a{i}", "svc", i))
+        except Exception as e:
+            errors.append(e)
+
+    threads = []
+    for i in range(N):
+        threads.append(threading.Thread(target=writer, args=(i,)))
+        threads.append(threading.Thread(target=reader, args=(i,)))
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len(reg) == N
+
+
+# ── singleton ─────────────────────────────────────────────────
+
+
+def test_instance_is_singleton():
+    a = LiveSessionRegistry.instance()
+    b = LiveSessionRegistry.instance()
+    assert a is b

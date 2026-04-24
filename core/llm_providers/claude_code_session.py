@@ -810,13 +810,17 @@ class ClaudeCodeSessionMixin:
         return os.path.join(project_root, "tools", "mcp_bridge.py")
 
     # All built-in Claude Code tools that must be disabled
-    # (server filesystem != user's filesystem — everything goes through MCP)
+    # (server filesystem != user's filesystem — everything goes through MCP).
+    # Monitor is included because its stdout-log file lives on the agent
+    # sandbox (/tmp/claude-*/tasks/*.output) and is invisible to the
+    # relay-mediated MCP tools; use mcp__pawflow__use_tool(bash,
+    # run_in_background=true) for long-running commands instead.
     _DISALLOWED_BUILTIN_TOOLS = (
         "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,WebFetch,WebSearch,"
         "Task,Agent,ToolSearch,ListMcpResourcesTool,ReadMcpResourceTool,"
         "EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,"
         "RemoteTrigger,Skill,TaskOutput,TaskStop,TodoWrite,"
-        "CronCreate,CronDelete,CronList,AskUserQuestion"
+        "CronCreate,CronDelete,CronList,AskUserQuestion,Monitor"
     )
 
     def _build_claude_cmd(self, model: str,

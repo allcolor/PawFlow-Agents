@@ -1,21 +1,23 @@
 """Claude Code container pool manager.
 
-Maintains a pool of warm Docker containers for Claude Code execution.
-Instead of spawning a new container per LLM call (docker run --rm),
-the pool keeps containers alive and runs claude via docker exec.
-
-Benefits:
-- No container startup latency (~3s saved per call)
-- Shared base memory (Node.js runtime) across sessions
-- Multiple credentials supported via per-process CLAUDE_CONFIG_DIR
-- Auto-scaling: spawns containers on demand, reaps idle ones
+One container per Claude Code exec (1:1). The pool keeps a small set of
+pre-warmed idle containers (`_ready`) so an acquire doesn't pay the
+~1-3s docker-run cost on the hot path, and tracks currently-running
+ones (`_active`). `release()` destroys the container with `docker rm -f`
+— it does NOT return the container to the ready pool, because kernel
+isolation is the whole point: sharing a container across execs lets a
+kill-cascade take out siblings (seen when a compact / memory_extract
+crashed its MCP bridge and main CC died with it, even with per-exec
+setsid PGIDs).
 
 Architecture:
-  Pool Container (long-lived, entrypoint=sleep infinity)
-    ├── Volume: data/claude_sessions → /cc_sessions
-    ├── Exec session 1: CLAUDE_CONFIG_DIR=/cc_sessions/<user>/<conv>/<agent> claude ...
-    ├── Exec session 2: CLAUDE_CONFIG_DIR=/cc_sessions/<user>/<conv>/<agent> claude ...
-    └── (up to max_sessions_per_container concurrent sessions)
+  _ready[name] → ContainerInfo   (idle, `sleep infinity`, awaiting exec)
+  _active[name] → ContainerInfo  (running a CC exec)
+
+  acquire(): prefer _ready, else spawn fresh; trigger async top-up
+  release(): docker rm -f; trigger async top-up
+  kill cascade is killed BY the kernel: separate PID namespaces per
+    container mean a buggy exec can only tear down its own container.
 """
 
 import logging
@@ -33,10 +35,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _ContainerInfo:
-    """State of a pool container."""
+    """State of a pool container.
+
+    `active_sessions` is either 0 (in `_ready`) or 1 (in `_active`) under
+    the 1:1 model — kept as an int for bookkeeping symmetry with the
+    readiness check and `last_used` touches.
+    """
     name: str
     active_sessions: int = 0
-    max_sessions: int = 5
+    max_sessions: int = 1
     created_at: float = field(default_factory=time.monotonic)
     last_used: float = field(default_factory=time.monotonic)
 
@@ -46,14 +53,14 @@ class _ContainerInfo:
 
 
 class ClaudeCodePool:
-    """Singleton pool of warm Docker containers for Claude Code.
+    """Singleton pool of one-CC-per-container Docker containers.
 
     Usage:
         pool = ClaudeCodePool.instance()
-        container = pool.acquire()       # get a container with a free slot
+        container = pool.acquire()         # new (or pre-warmed) container
         proc = pool.exec_claude(container, session_dir, claude_args)
         # ... stream proc.stdout ...
-        pool.release(container)          # free the slot
+        pool.release(container)            # docker rm -f (not returned to pool)
     """
 
     _instance: Optional['ClaudeCodePool'] = None
@@ -111,19 +118,31 @@ class ClaudeCodePool:
             pass
 
     def __init__(self):
-        self._containers: Dict[str, _ContainerInfo] = {}
+        # Containers currently running a CC exec. name → info.
+        self._active: Dict[str, _ContainerInfo] = {}
+        # Pre-warmed idle containers. Drawn by acquire() in FIFO order.
+        self._ready: Dict[str, _ContainerInfo] = {}
         self._lock = threading.Lock()
         self._reaper_started = False
 
-        # Config (can be overridden via env vars)
+        # Config (can be overridden via env vars). Defaults were retuned
+        # for the 1:1 model: cap bumped from 10 → 50 so concurrency isn't
+        # artificially capped now that each exec gets its own container.
         self.image = os.environ.get(
             "PAWFLOW_CC_IMAGE", "pawflow-claude-code:latest")
-        self.max_sessions_per_container = int(os.environ.get(
-            "PAWFLOW_CC_POOL_SESSIONS", "5"))
         self.max_containers = int(os.environ.get(
-            "PAWFLOW_CC_POOL_MAX", "10"))
+            "PAWFLOW_CC_POOL_MAX", "50"))
+        # Ready-pool target size. Kept at 0 by default so nobody
+        # accidentally burns RAM holding idle Node runtimes — opt-in
+        # when spawn latency matters (e.g. cold-start sensitive convs).
+        self.prewarm_count = int(os.environ.get(
+            "PAWFLOW_CC_POOL_PREWARM", "0"))
+        # Ready container TTL: idle pre-warmed containers get reaped
+        # this many seconds after their last touch. Covers the case
+        # where `prewarm_count` is reduced at runtime and the excess
+        # stays around otherwise.
         self.idle_timeout = int(os.environ.get(
-            "PAWFLOW_CC_POOL_IDLE", "300"))  # seconds
+            "PAWFLOW_CC_POOL_IDLE", "300"))
         self.cpu_limit = os.environ.get("PAWFLOW_CC_CPU", "2")
         self.memory_limit = os.environ.get("PAWFLOW_CC_MEM", "4g")
 
@@ -140,45 +159,142 @@ class ClaudeCodePool:
     # ── Public API ─────────────────────────────────────────────────
 
     def acquire(self) -> str:
-        """Acquire a container with a free slot. Returns container name.
+        """Acquire a container for a new CC exec. Returns container name.
 
-        Spawns a new container if all existing ones are full.
-        Raises RuntimeError if pool is exhausted (max_containers reached).
+        Prefers a pre-warmed container from `_ready`. Falls back to a
+        fresh spawn (paying the ~1-3s docker-run cost) when the ready
+        pool is empty. Triggers an async top-up so the NEXT acquire can
+        draw from the ready pool even if this one couldn't.
+
+        Raises RuntimeError if the pool is at its hard cap
+        (`PAWFLOW_CC_POOL_MAX`).
         """
+        spawn_needed = False
+        name = None
         with self._lock:
             self._ensure_reaper()
 
-            # Find container with available capacity
-            for info in self._containers.values():
-                if info.has_capacity:
-                    info.active_sessions += 1
-                    info.last_used = time.monotonic()
-                    logger.info("Pool acquire: %s (sessions=%d/%d)",
-                                info.name, info.active_sessions,
-                                info.max_sessions)
-                    return info.name
+            if self._ready:
+                # FIFO: take the oldest ready container.
+                name, info = next(iter(self._ready.items()))
+                del self._ready[name]
+                info.active_sessions = 1
+                info.last_used = time.monotonic()
+                self._active[name] = info
+                logger.info(
+                    "Pool acquire [ready]: %s (active=%d, ready=%d)",
+                    name, len(self._active), len(self._ready))
+            else:
+                # Check cap BEFORE releasing lock to spawn.
+                if len(self._active) + len(self._ready) >= self.max_containers:
+                    raise RuntimeError(
+                        f"Claude Code pool exhausted: active={len(self._active)} "
+                        f"+ ready={len(self._ready)} == max={self.max_containers}")
+                spawn_needed = True
 
-            # No capacity — spawn new container
-            if len(self._containers) >= self.max_containers:
-                raise RuntimeError(
-                    f"Claude Code pool exhausted: {len(self._containers)}"
-                    f"/{self.max_containers} containers, all full")
+        if spawn_needed:
+            # Spawn OUTSIDE the lock — docker run takes ~1-3s and must
+            # not block concurrent acquires/releases.
+            fresh = self._spawn_container()
+            with self._lock:
+                # Re-check cap: a concurrent acquire may have bumped us.
+                if (len(self._active) + len(self._ready)
+                        >= self.max_containers):
+                    self._kill_container(fresh)
+                    raise RuntimeError(
+                        f"Claude Code pool exhausted during race: "
+                        f"{len(self._active)}/{self.max_containers}")
+                info = _ContainerInfo(
+                    name=fresh, active_sessions=1, max_sessions=1,
+                    last_used=time.monotonic())
+                self._active[fresh] = info
+                name = fresh
+            logger.info(
+                "Pool acquire [spawned]: %s (active=%d, ready=%d)",
+                name, len(self._active), len(self._ready))
 
-            name = self._spawn_container()
-            self._containers[name].active_sessions = 1
-            logger.info("Pool acquire (new container): %s", name)
-            return name
+        # Fire-and-forget top-up — keeps `_ready` at `prewarm_count`.
+        self._trigger_topup()
+        return name
 
     def release(self, container_name: str):
-        """Release a session slot in a container."""
+        """Destroy the container backing a CC exec (`docker rm -f`).
+
+        Under the 1:1 model, the container's lifetime == the CC exec's
+        lifetime. Releasing returns it to the kernel, not to the ready
+        pool — a fresh container is spawned on demand (or already warm
+        via top-up) for the next acquire. This is what kills the
+        cross-exec kill-cascade: the destroyed PID namespace cannot
+        leak SIGKILL to another CC.
+        """
         with self._lock:
-            info = self._containers.get(container_name)
-            if info:
-                info.active_sessions = max(0, info.active_sessions - 1)
-                info.last_used = time.monotonic()
-                logger.info("Pool release: %s (sessions=%d/%d)",
-                            info.name, info.active_sessions,
-                            info.max_sessions)
+            info = self._active.pop(container_name, None)
+            if info is None:
+                # Already released, or never active under this pool.
+                # Could also be a ready container being forced down by
+                # a buggy caller — accept silently but warn.
+                if container_name in self._ready:
+                    del self._ready[container_name]
+                    logger.warning(
+                        "Pool release: %s was in ready pool, killing anyway",
+                        container_name)
+                else:
+                    logger.warning(
+                        "Pool release: unknown container %s", container_name)
+                    return
+        # Kill outside the lock — docker rm -f can take a second.
+        self._kill_container(container_name)
+        logger.info("Pool release [killed]: %s (active=%d, ready=%d)",
+                    container_name, len(self._active), len(self._ready))
+        # Top-up to maintain prewarm_count.
+        self._trigger_topup()
+
+    def _trigger_topup(self) -> None:
+        """Schedule an async top-up of the ready pool to `prewarm_count`.
+
+        Fire-and-forget — callers don't wait. Multiple concurrent
+        triggers are safe: each re-checks headroom under the lock before
+        spawning, so over-spawn is bounded by `max_containers`.
+        """
+        if self.prewarm_count <= 0:
+            return
+        threading.Thread(
+            target=self._topup_ready, daemon=True,
+            name="cc-pool-topup").start()
+
+    def _topup_ready(self) -> None:
+        """Spawn ready containers until `prewarm_count` is met.
+
+        Runs in its own thread. Each iteration re-reads `_ready` /
+        `_active` under the lock so a parallel acquire / release is
+        observed. Aborts at the `max_containers` cap.
+        """
+        while True:
+            with self._lock:
+                need = self.prewarm_count - len(self._ready)
+                room = self.max_containers - (
+                    len(self._active) + len(self._ready))
+                if need <= 0 or room <= 0:
+                    return
+            # Spawn one at a time, outside the lock.
+            try:
+                name = self._spawn_container()
+            except Exception as e:
+                logger.warning("Pool top-up: spawn failed: %s", e)
+                return
+            with self._lock:
+                if (len(self._active) + len(self._ready)
+                        >= self.max_containers):
+                    # Race: another acquire took the slot we just
+                    # created room for. Discard this container.
+                    self._kill_container(name)
+                    return
+                self._ready[name] = _ContainerInfo(
+                    name=name, active_sessions=0, max_sessions=1,
+                    last_used=time.monotonic())
+                logger.info(
+                    "Pool top-up [spawned ready]: %s (ready=%d/%d)",
+                    name, len(self._ready), self.prewarm_count)
 
     def exec_claude(self, container_name: str, session_dir: str,
                     claude_args: list, extra_env: dict = None,
@@ -313,34 +429,50 @@ class ClaudeCodePool:
 
     def status(self) -> dict:
         """Return pool status for diagnostics."""
+        now = time.monotonic()
         with self._lock:
-            containers = []
-            for info in self._containers.values():
-                containers.append({
+            active = [
+                {
                     "name": info.name,
-                    "sessions": info.active_sessions,
-                    "max_sessions": info.max_sessions,
-                    "idle_seconds": int(time.monotonic() - info.last_used),
-                })
+                    "idle_seconds": int(now - info.last_used),
+                }
+                for info in self._active.values()
+            ]
+            ready = [
+                {
+                    "name": info.name,
+                    "idle_seconds": int(now - info.last_used),
+                }
+                for info in self._ready.values()
+            ]
             return {
-                "containers": containers,
-                "total": len(self._containers),
+                "active": active,
+                "ready": ready,
+                "total": len(self._active) + len(self._ready),
                 "max": self.max_containers,
+                "prewarm": self.prewarm_count,
                 "image": self.image,
             }
 
     def shutdown(self):
         """Kill all pool containers (called on server shutdown)."""
         with self._lock:
-            for name in list(self._containers.keys()):
-                self._kill_container(name)
-            self._containers.clear()
-            logger.info("Pool shutdown: all containers killed")
+            names = list(self._active.keys()) + list(self._ready.keys())
+            self._active.clear()
+            self._ready.clear()
+        for name in names:
+            self._kill_container(name)
+        logger.info("Pool shutdown: %d container(s) killed", len(names))
 
     # ── Internal ───────────────────────────────────────────────────
 
     def _spawn_container(self) -> str:
-        """Spawn a new warm container. Must be called under self._lock."""
+        """Spawn a new warm container and return its name.
+
+        Pure spawn: caller owns the bookkeeping (`_active` / `_ready`).
+        MUST be called OUTSIDE `self._lock` — docker run takes ~1-3s and
+        blocking the lock would stall every other acquire/release.
+        """
         import uuid
         name = f"pf-cc-pool-{uuid.uuid4().hex[:8]}"
 
@@ -430,16 +562,16 @@ class ClaudeCodePool:
             docker_cmd() + ["exec", "--user", "root", name, "chronyd"],
             capture_output=True, timeout=5)
 
-        info = _ContainerInfo(
-            name=name,
-            max_sessions=self.max_sessions_per_container,
-        )
-        self._containers[name] = info
         logger.info("Pool container spawned: %s", name)
         return name
 
     def _kill_container(self, name: str):
-        """Kill and remove a container. Must be called under self._lock."""
+        """Kill and remove a container (`docker rm -f`).
+
+        Safe to call with or without `self._lock` held. Under the 1:1
+        model, callers typically call this OUTSIDE the lock since
+        docker rm -f can take ~1s.
+        """
         try:
             subprocess.run(
                 docker_cmd() + ["rm", "-f", name],
@@ -478,33 +610,41 @@ class ClaudeCodePool:
                 logger.warning("Pool reaper error: %s", e)
 
     def _reap_idle(self):
-        """Kill containers that have been idle for > idle_timeout."""
+        """Kill stale ready containers and dead active ones.
+
+        - Ready containers idle beyond `idle_timeout` are reaped so a
+          lowered `prewarm_count` eventually drains.
+        - Active containers whose underlying Docker process died
+          unexpectedly are dropped from bookkeeping so a subsequent
+          release() doesn't try to kill an already-gone container (and
+          so the cap accounting stays honest).
+        """
         now = time.monotonic()
         to_kill = []
+        to_forget_active = []
 
         with self._lock:
-            for name, info in list(self._containers.items()):
-                idle = now - info.last_used
-                if info.active_sessions == 0 and idle > self.idle_timeout:
-                    to_kill.append(name)
-                # Also remove dead containers
-                elif not self._is_container_alive(name):
-                    if info.active_sessions == 0:
-                        to_kill.append(name)
-                    else:
-                        logger.warning(
-                            "Pool container %s is dead but has %d active "
-                            "sessions — removing from pool",
-                            name, info.active_sessions)
-                        to_kill.append(name)
+            for name, info in list(self._ready.items()):
+                if (now - info.last_used) > self.idle_timeout:
+                    del self._ready[name]
+                    to_kill.append((name, "ready_idle"))
+            for name, info in list(self._active.items()):
+                if not self._is_container_alive(name):
+                    logger.warning(
+                        "Pool active container %s is dead — "
+                        "dropping from pool (caller should release)",
+                        name)
+                    del self._active[name]
+                    to_forget_active.append(name)
 
-            for name in to_kill:
-                self._kill_container(name)
-                del self._containers[name]
-
+        for name, reason in to_kill:
+            self._kill_container(name)  # idempotent if already dead
         if to_kill:
-            logger.info("Pool reaper: killed %d idle container(s): %s",
-                        len(to_kill), to_kill)
+            logger.info("Pool reaper: killed %d ready container(s)",
+                        len(to_kill))
+        if to_forget_active:
+            logger.info("Pool reaper: forgot %d dead active container(s): %s",
+                        len(to_forget_active), to_forget_active)
 
     def _cleanup_orphans(self):
         """Kill + remove orphan pf-cc-pool containers from previous runs.

@@ -53,16 +53,22 @@ def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[st
         else:
             _port, _listener = next(iter(instances.items()))
         # Mirror the listener's scheme: HTTPS when SSL is configured,
-        # HTTP otherwise. Previous hard-coded "http" broke HTTPS-only or
-        # TLS-peeking-but-HTTP-middleware-rejecting setups (CC saw 200
-        # + malformed body because the TLS-only listener sent back
-        # handshake garbage or an error page instead of proxying). CC
-        # runs in a Docker container that doesn't trust the self-signed
-        # LAN cert; _claude_code_env sets NODE_TLS_REJECT_UNAUTHORIZED=0
-        # when the proxy URL uses HTTPS so the container can still
-        # negotiate the connection. Traffic is still confined to the
-        # private network (route is private_only + token auth).
-        _scheme = "https" if getattr(_listener, "is_ssl", False) else "http"
+        # HTTP otherwise. For HTTPS, prefer the hostname the cert was
+        # issued for (via listener.public_hostname) over the bare LAN
+        # IP. Previously we used get_host_ip() which returns the LAN IP,
+        # producing URLs like `https://10.13.13.13:9090/…` that hit the
+        # listener OK at the TCP layer but caused the upstream HTTP
+        # path (TLS cert CN mismatch, Node fetch bailing out on an IP
+        # target with self-signed cert, or some middleware routing by
+        # Host) to bail silently with "API returned an empty or
+        # malformed response (HTTP 200)". Using the cert's hostname
+        # sidesteps CN validation entirely — the container resolves
+        # the hostname to the same LAN IP via its own DNS/hosts, but
+        # the cert matches. For plain HTTP we keep the LAN IP (no cert
+        # to match) since a custom hostname would require container-
+        # side DNS setup we don't manage.
+        _is_ssl = bool(getattr(_listener, "is_ssl", False))
+        _scheme = "https" if _is_ssl else "http"
     except Exception as e:
         logger.warning("HTTP listener lookup failed: %s", e)
         return None
@@ -77,7 +83,21 @@ def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[st
         logger.warning("Proxy token issue failed: %s", e)
         return None
 
-    _host = get_host_ip()
+    if _is_ssl:
+        _host = (getattr(_listener, "public_hostname", "") or "").strip()
+        if not _host:
+            # No hostname found on the cert — fall back to LAN IP. The
+            # container will need NODE_TLS_REJECT_UNAUTHORIZED=0 to
+            # accept the CN/SAN mismatch (set in _claude_code_env).
+            _host = get_host_ip()
+            logger.warning(
+                "relay-proxy URL using LAN IP %s with HTTPS: cert CN "
+                "validation will be skipped in the container. Configure "
+                "`public_hostname` on the HTTP listener (or a matching "
+                "SNI cert) so the container can verify normally.",
+                _host)
+    else:
+        _host = get_host_ip()
     _target = f"{target_host}:{target_port}"
     _path = target_path
     _s_prefix = "s/" if target_scheme == "https" else ""

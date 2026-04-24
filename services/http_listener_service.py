@@ -1169,6 +1169,49 @@ class HTTPListenerService(BaseService):
         """Whether the listener has SSL configured (accepts both plain+TLS)."""
         return self._default_ssl_ctx is not None
 
+    @property
+    def public_hostname(self) -> str:
+        """Best-effort hostname that matches the configured cert.
+
+        Used by components that need to hand an HTTPS URL to clients who
+        verify the cert (e.g. the relay-proxy URL embedded into CC's
+        ANTHROPIC_BASE_URL). Resolution order:
+          1. explicit `public_hostname` config key
+          2. first SNI-registered hostname (register_cert mapped it)
+          3. parse the Subject CN / first SAN of the default cert file
+          4. "" (caller falls back to LAN IP + skips cert verify)
+
+        Returning "" is a signal to the caller that no hostname binds
+        to the cert chain — it should then decide whether a bare IP URL
+        + cert-skip is acceptable for its context.
+        """
+        # 1. Explicit config override
+        _cfg = self.config.get("public_hostname", "") or ""
+        if _cfg:
+            return _cfg
+        # 2. First SNI-registered hostname
+        for _h in self._sni_certs.keys():
+            if _h:
+                return _h
+        # 3. Parse Subject CN / SAN from the default cert
+        if self._ssl_certfile:
+            try:
+                import ssl as _ssl_mod
+                _info = _ssl_mod._ssl._test_decode_cert(self._ssl_certfile)
+                # Try SAN first (modern certs prefer SAN over CN)
+                for _san_tuple in (_info.get("subjectAltName") or ()):
+                    if len(_san_tuple) == 2 and _san_tuple[0] == "DNS":
+                        return _san_tuple[1]
+                # Fall back to CN in Subject
+                for _rdn in (_info.get("subject") or ()):
+                    for _oid, _val in _rdn:
+                        if _oid == "commonName":
+                            return _val
+            except Exception:
+                logger.debug(
+                    "public_hostname cert parse failed", exc_info=True)
+        return ""
+
     def _close_connection(self):
         """Stop the HTTP server (only when ref count reaches 0)."""
         with self._ref_lock:

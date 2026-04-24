@@ -1728,43 +1728,68 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # Reader daemon: pure stdout → event queue pump. Decouples IO
         # from dispatch so the dispatch loop can block on a single
         # queue.get() and react promptly to proc death / sentinel EOF
-        # without polling stdout directly. Groundwork for live-session
-        # reuse (PR-2) where the reader survives across turns while
-        # each turn drains events from the same queue.
-        _event_q: queue.Queue = queue.Queue()
+        # without polling stdout directly.
+        #
+        # On reuse: the original reader is still draining the same
+        # proc.stdout. We adopt its queue + thread + stop_event; any
+        # stale events sitting in the queue from between-turn idle are
+        # unexpected (CC stays quiet after `result`) but the dispatch
+        # loop below still short-circuits on `result` so they'd be
+        # harmless at worst.
+        if _is_reuse:
+            _event_q = _live_session.event_q
+            _reader_thread = _live_session.reader_thread
+            _reader_stop = _live_session.stop_event
+        else:
+            _event_q = queue.Queue()
+            _reader_stop = threading.Event()
 
-        def _reader_daemon():
-            try:
-                for _line in proc.stdout:
-                    _hb_state["stream_line_count"] += 1
-                    _hb_state["last_event_ts"] = time.monotonic()
-                    _line = _line.strip()
-                    if not _line:
-                        continue
-                    try:
-                        _ev = json.loads(_line)
-                    except json.JSONDecodeError:
-                        continue
-                    # Defensive: event must be a dict. When the stream
-                    # is wrapped in a PTY (script -qfc), extra terminal
-                    # output like "Script started" banners or control
-                    # sequences can produce parseable-but-non-dict
-                    # JSON (e.g. a bare string literal). Log once and
-                    # skip instead of exploding on .get().
-                    if not isinstance(_ev, dict):
-                        logger.warning(
-                            "[claude-code] non-dict JSON ignored (%s): %r",
-                            type(_ev).__name__, str(_ev)[:200])
-                        continue
-                    _event_q.put(_ev)
-            except Exception as _re_err:
-                logger.debug("[cc-reader] stdout read failed: %s", _re_err)
-            finally:
-                _event_q.put(_CC_READER_EOF)
+            def _reader_daemon():
+                try:
+                    for _line in proc.stdout:
+                        if _reader_stop.is_set():
+                            break
+                        _hb_state["stream_line_count"] += 1
+                        _hb_state["last_event_ts"] = time.monotonic()
+                        _line = _line.strip()
+                        if not _line:
+                            continue
+                        try:
+                            _ev = json.loads(_line)
+                        except json.JSONDecodeError:
+                            continue
+                        # Defensive: event must be a dict. When the stream
+                        # is wrapped in a PTY (script -qfc), extra terminal
+                        # output like "Script started" banners or control
+                        # sequences can produce parseable-but-non-dict
+                        # JSON (e.g. a bare string literal). Log once and
+                        # skip instead of exploding on .get().
+                        if not isinstance(_ev, dict):
+                            logger.warning(
+                                "[claude-code] non-dict JSON ignored (%s): %r",
+                                type(_ev).__name__, str(_ev)[:200])
+                            continue
+                        _event_q.put(_ev)
+                except Exception as _re_err:
+                    logger.debug("[cc-reader] stdout read failed: %s", _re_err)
+                finally:
+                    _event_q.put(_CC_READER_EOF)
 
-        _reader_thread = threading.Thread(
-            target=_reader_daemon, daemon=True, name="cc-reader")
-        _reader_thread.start()
+            _reader_thread = threading.Thread(
+                target=_reader_daemon, daemon=True, name="cc-reader")
+            _reader_thread.start()
+
+        # Live-session reuse decision: set to True ONLY after a clean
+        # result-event break AND no compact/stall/auth failure. Any
+        # other exit path (EOF, exception, compact, stall) leaves this
+        # False so the `finally` block tears down the proc as usual.
+        _keep_alive = False
+        # Defensive init: post-finally code reads _stderr inside an
+        # `if proc.returncode ...` branch that stays skipped on the
+        # keep-alive path (proc still running → returncode=None). Setting
+        # to "" here keeps the name bound even if finally takes the
+        # keep-alive branch that skips _cleanup_proc.
+        _stderr = ""
 
         try:
             while True:
@@ -2547,8 +2572,28 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 from core.llm_client import CCCompactDetected
                 raise CCCompactDetected("CC auto-compact detected")
 
+            # Clean result-event exit: no compact, no watchdog stall kill.
+            # Promote to keep-alive so `finally` retains proc + reader +
+            # pool container for the next turn's reuse. proc.poll() must
+            # still be None — a racy EOF break between here and finally
+            # would leave us registering a dead session.
+            _stall_killed_flag = bool(getattr(self, '_stall_killed', False))
+            _keep_alive = (
+                _LIVE_REUSE_ENABLED
+                and _live_reg is not None
+                and _live_key is not None
+                and bool(getattr(self, '_result_emitted', False))
+                and not _stall_killed_flag
+                and proc.poll() is None
+            )
+
         except _CC401Retry:
-            # 401 mid-stream: credentials already refreshed, retry once
+            # 401 mid-stream: credentials already refreshed, retry once.
+            # Evict BEFORE recursing so the retry doesn't re-adopt the
+            # about-to-be-killed proc from the registry.
+            if (_is_reuse and _live_reg is not None
+                    and _live_key is not None):
+                _live_reg.evict(_live_key, "auth_401")
             logger.info("[claude-code] retrying after 401 token refresh")
             return self._stream_claude_code(
                 messages, model, temperature, max_tokens, tools, callback,
@@ -2571,21 +2616,69 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 _flush_turn()
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
-            # Cleanup process — _cleanup_proc captures stderr internally
-            _stderr = self._cleanup_proc(proc)
-            # Recover refreshed tokens from workdir (Claude Code may have refreshed them)
-            self._recover_tokens(workdir)
-            # Revoke the internal-auth token minted for this CC invocation —
-            # scoped to the lifetime of this stream, not retained across calls.
-            # Without this, tokens accumulate in core.internal_auth._tokens
-            # until server restart (memory-only, but a lingering valid token
-            # leaked from .mcp.json or process env stays replayable).
-            if _mcp_internal_token:
+
+            if _keep_alive:
+                # Retain proc + reader + pool container for reuse. Skip
+                # _cleanup_proc / pool release / token revoke — those are
+                # lifecycle-scoped to the live session, not the turn.
                 try:
-                    from core.internal_auth import revoke_token
-                    revoke_token(_mcp_internal_token)
+                    if _is_reuse:
+                        _live_reg.touch(_live_key)
+                    else:
+                        _session = CCLiveSession(
+                            proc=proc,
+                            event_q=_event_q,
+                            reader_thread=_reader_thread,
+                            stop_event=_reader_stop,
+                            pool_container=self._pool_container_name,
+                            workdir=workdir,
+                            service_id=_svc_id,
+                            svc_pool_idx=_svc_pool_idx,
+                            mcp_internal_token=_mcp_internal_token,
+                            hb_state=_hb_state,
+                        )
+                        _live_reg.register(_live_key, _session)
+                        # Start the idle sweeper on first register — no
+                        # work until there's a session to sweep.
+                        _live_reg.ensure_sweeper(
+                            killer=self._kill_cc_hard)
                 except Exception:
-                    logger.debug("internal-auth revoke failed", exc_info=True)
+                    logger.warning(
+                        "[cc-live] register/touch failed; falling back "
+                        "to full teardown", exc_info=True)
+                    _keep_alive = False  # fall through to teardown below
+                else:
+                    # Still recover refreshed OAuth tokens from workdir
+                    # — CC may have refreshed mid-turn and we want them
+                    # persisted for resume-without-live-session paths.
+                    try:
+                        self._recover_tokens(workdir)
+                    except Exception:
+                        logger.debug(
+                            "_recover_tokens failed", exc_info=True)
+
+            if not _keep_alive:
+                # Full teardown: evict any live-session entry first so
+                # the next turn doesn't re-adopt the dead proc, then
+                # kill + recover + revoke as before.
+                if (_is_reuse and _live_reg is not None
+                        and _live_key is not None):
+                    _live_reg.evict(_live_key, "turn_failed")
+                # Cleanup process — _cleanup_proc captures stderr internally
+                _stderr = self._cleanup_proc(proc)
+                # Recover refreshed tokens from workdir (Claude Code may have refreshed them)
+                self._recover_tokens(workdir)
+                # Revoke the internal-auth token minted for this CC invocation —
+                # scoped to the lifetime of this stream, not retained across calls.
+                # Without this, tokens accumulate in core.internal_auth._tokens
+                # until server restart (memory-only, but a lingering valid token
+                # leaked from .mcp.json or process env stays replayable).
+                if _mcp_internal_token:
+                    try:
+                        from core.internal_auth import revoke_token
+                        revoke_token(_mcp_internal_token)
+                    except Exception:
+                        logger.debug("internal-auth revoke failed", exc_info=True)
 
         # Don't error on non-zero exit if we got a successful result
         # (process was killed after break on result event — that's expected).

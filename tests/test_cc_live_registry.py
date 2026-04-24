@@ -212,6 +212,43 @@ def test_teardown_skips_revoke_when_no_token(reg, monkeypatch):
     assert revoked == []
 
 
+def test_kill_and_evict_by_conv_targets_only_matching_conv(reg):
+    """Context edit on conv C1 must kill every agent/service combination
+    pinned to C1 while leaving C2 untouched."""
+    reg.register(("u", "C1", "agentA", "svc", 0), _mk_session())
+    reg.register(("u", "C1", "agentB", "svc", 0), _mk_session())
+    reg.register(("u", "C1", "agentA", "svc", 1), _mk_session())  # pool-idx drift
+    reg.register(("u", "C2", "agentA", "svc", 0), _mk_session())
+    killed = []
+    n = reg.kill_and_evict_by_conv(
+        "C1", reason="edit", killer=lambda p: killed.append(p))
+    assert n == 3
+    assert len(reg) == 1
+    # Only C2's session survives.
+    assert reg.get(("u", "C2", "agentA", "svc", 0)) is not None
+    assert len(killed) == 3
+
+
+def test_kill_and_evict_by_conv_agent_scope(reg):
+    """Per-agent invalidation must spare sibling agents in the same conv."""
+    reg.register(("u", "C1", "agentA", "svc", 0), _mk_session())
+    reg.register(("u", "C1", "agentA", "svc", 1), _mk_session())
+    reg.register(("u", "C1", "agentB", "svc", 0), _mk_session())
+    n = reg.kill_and_evict_by_conv_agent(
+        "C1", "agentA", reason="compact", killer=lambda p: None)
+    assert n == 2
+    assert reg.get(("u", "C1", "agentB", "svc", 0)) is not None
+    # agentA entries both gone
+    assert reg.get(("u", "C1", "agentA", "svc", 0)) is None
+    assert reg.get(("u", "C1", "agentA", "svc", 1)) is None
+
+
+def test_kill_and_evict_by_conv_empty_registry_noop(reg):
+    # Must not raise; just returns 0.
+    assert reg.kill_and_evict_by_conv(
+        "nope", reason="edit", killer=lambda p: None) == 0
+
+
 # ── sweep_idle ──────────────────────────────────────────────
 
 

@@ -159,6 +159,41 @@ class LiveSessionRegistry:
             return
         _teardown_session(session, reason, killer)
 
+    def kill_and_evict_by_conv(self, conv_id: str, reason: str,
+                               killer=None) -> int:
+        """Kill every live session for a given conv_id. Returns the
+        count destroyed.
+
+        Triggered when the user edits the conversation context (delete
+        messages, manual compact, branch switch) — CC's view of history
+        is now stale so the warm session is unreusable and must die.
+        """
+        with self._lock:
+            victims = [(k, s) for k, s in self._sessions.items()
+                       if k[1] == conv_id]
+            for k, _s in victims:
+                self._sessions.pop(k, None)
+        for key, session in victims:
+            logger.info(
+                "[cc-live] kill_by_conv %s (%s)", _fmt_key(key), reason)
+            _teardown_session(session, reason, killer)
+        return len(victims)
+
+    def kill_and_evict_by_conv_agent(self, conv_id: str, agent_name: str,
+                                      reason: str, killer=None) -> int:
+        """Kill live sessions for a specific (conv, agent) pair."""
+        with self._lock:
+            victims = [(k, s) for k, s in self._sessions.items()
+                       if k[1] == conv_id and k[2] == agent_name]
+            for k, _s in victims:
+                self._sessions.pop(k, None)
+        for key, session in victims:
+            logger.info(
+                "[cc-live] kill_by_conv_agent %s (%s)",
+                _fmt_key(key), reason)
+            _teardown_session(session, reason, killer)
+        return len(victims)
+
     # ── Idle sweeper ────────────────────────────────────────
 
     def ensure_sweeper(self, tick_seconds: int = 60,

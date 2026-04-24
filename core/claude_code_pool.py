@@ -90,6 +90,14 @@ class ClaudeCodePool:
         """
         import atexit, signal, sys
         def _kill_all(*_args, **_kwargs):
+            # Kill live CC sessions FIRST so revoke_token has a chance
+            # to run before the containers are nuked — once docker rm -f
+            # fires, the proc is gone and the MCP bridge with it.
+            try:
+                from core.cc_live_registry import LiveSessionRegistry
+                LiveSessionRegistry.instance().shutdown_all()
+            except Exception:
+                pass
             try:
                 self.shutdown()
             except Exception:

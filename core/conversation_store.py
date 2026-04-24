@@ -1913,6 +1913,10 @@ class ConversationStore:
 
         Also wipes the stale session jsonls + companion dirs on disk so
         they don't pile up indefinitely across invalidations.
+
+        Live-session reuse: any warm CC proc for this conv is now
+        operating on a stale view of history. Kill every live session
+        bound to `cid` so the next turn spawns fresh.
         """
         extras = self.get_extras(cid) or {}
         _had_any = False
@@ -1936,6 +1940,20 @@ class ConversationStore:
         except Exception as _e:
             logger.debug("invalidate_claude_sessions disk prune failed for %s: %s",
                          cid[:8], _e)
+        # Kill any warm CC session running in this conv — its view of
+        # history is now stale (edit/compact/branch-switch).
+        try:
+            from core.cc_live_registry import LiveSessionRegistry
+            n = LiveSessionRegistry.instance().kill_and_evict_by_conv(
+                cid, reason="invalidate_claude_sessions")
+            if n:
+                logger.info(
+                    "Invalidated %d live CC session(s) for conv %s",
+                    n, cid[:8])
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_sessions live-evict failed for %s: %s",
+                cid[:8], _e)
 
     def invalidate_claude_session_for_agent(self, cid: str,
                                              agent_name: str) -> None:
@@ -1988,6 +2006,21 @@ class ConversationStore:
         except Exception as _e:
             logger.debug(
                 "invalidate_claude_session_for_agent disk prune failed "
+                "for %s/%s: %s", cid[:8], agent_name, _e)
+        # Kill any warm CC session for this (conv, agent) pair so the
+        # next turn spawns fresh.
+        try:
+            from core.cc_live_registry import LiveSessionRegistry
+            n = LiveSessionRegistry.instance().kill_and_evict_by_conv_agent(
+                cid, agent_name,
+                reason="invalidate_claude_session_for_agent")
+            if n:
+                logger.info(
+                    "Invalidated %d live CC session(s) for %s/%s",
+                    n, cid[:8], agent_name)
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_session_for_agent live-evict failed "
                 "for %s/%s: %s", cid[:8], agent_name, _e)
 
     # ── Bindings (repository associations) ──────────────────

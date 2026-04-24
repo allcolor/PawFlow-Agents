@@ -2568,13 +2568,54 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # 401 mid-stream: credentials already refreshed, retry once.
             # Evict BEFORE recursing so the retry doesn't re-adopt the
             # about-to-be-killed proc from the registry.
-            if _is_reuse and _live_key is not None:
+            if _live_key is not None:
                 _live_reg.evict(_live_key, "auth_401")
             logger.info("[claude-code] retrying after 401 token refresh")
             return self._stream_claude_code(
                 messages, model, temperature, max_tokens, tools, callback,
                 turn_callback=turn_callback, block_callback=block_callback,
                 _is_auth_retry=True)
+        except BaseException as _dispatch_exc:
+            # ANY other exception in the dispatch loop (CCCompactDetected,
+            # KeyboardInterrupt, AgentCancelled, programming bugs, etc.):
+            # 1. Evict the live-session entry IMMEDIATELY so a concurrent
+            #    reuse lookup cannot adopt this about-to-die proc. The
+            #    finally block evicts too, but that runs AFTER `raise`
+            #    propagates through intermediate frames — a concurrent
+            #    turn that calls `_live_reg.get(key)` in that window
+            #    would get a session pointing at a dying subprocess.
+            # 2. Force `_keep_alive = False` so the finally path takes
+            #    the teardown branch unconditionally (the normal keep-
+            #    alive computation happens AFTER the while loop; if an
+            #    exception escapes the loop, that computation never
+            #    ran — but defense-in-depth in case someone later adds
+            #    a keep-alive assignment earlier in the flow).
+            # 3. Kill hard NOW, not just in finally. `_cleanup_proc` in
+            #    finally does `proc.kill()` + pool release (which is
+            #    `docker rm -f` in the 1:1 model, so the container IS
+            #    nuked). Calling `_kill_cc_hard` here is belt-and-
+            #    suspenders: it adds a container-side pgid kill that
+            #    reaps any Node workers CC forked BEFORE the docker rm
+            #    tears down the namespace. Redundant but cheap; keeps
+            #    the exception teardown path symmetric with the explicit
+            #    kill paths (compact_boundary, compact_result, phantom).
+            # BaseException (not just Exception) catches AgentCancelled /
+            # SystemExit / KeyboardInterrupt too — those also leave a
+            # live proc behind if we don't tear down here.
+            if _live_key is not None:
+                try:
+                    _live_reg.evict(_live_key, "dispatch_exception")
+                except Exception:
+                    logger.debug("early-evict failed", exc_info=True)
+            _keep_alive = False
+            try:
+                self._kill_cc_hard(proc)
+            except Exception:
+                logger.debug("kill_cc_hard in except failed", exc_info=True)
+            logger.info(
+                "[claude-code] dispatch loop aborted by %s: %.200s",
+                type(_dispatch_exc).__name__, str(_dispatch_exc))
+            raise
         finally:
             # Stop compact stall watchdog
             _watchdog_stop.set()

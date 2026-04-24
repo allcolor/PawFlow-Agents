@@ -2274,11 +2274,33 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         try:
                             _stderr_snapshot = "".join(
                                 getattr(self, "_stderr_buffer", []) or [])[-4000:]
+                            # api_error_status = HTTP status CC's http
+                            # client actually received (None = never got
+                            # a response). duration_api_ms = how long CC
+                            # waited for the response — a few ms means
+                            # the connection failed fast (DNS/refused),
+                            # hundreds of ms means the server answered
+                            # (so the bug is upstream of CC's parser).
+                            _api_status = event.get("api_error_status")
+                            _api_ms = event.get("duration_api_ms")
+                            _term = event.get("terminal_reason", "")
+                            _stop = event.get("stop_reason", "")
+                            _usage = event.get("usage", {}) or {}
                             logger.error(
-                                "[claude-code] is_error result: subtype=%r "
-                                "event_keys=%s _err_text=%r stderr_tail=%r",
-                                event.get("subtype"), sorted(event.keys()),
+                                "[claude-code] is_error result: "
+                                "api_error_status=%r duration_api_ms=%r "
+                                "terminal_reason=%r stop_reason=%r "
+                                "usage=%s subtype=%r _err_text=%r "
+                                "stderr_tail=%r",
+                                _api_status, _api_ms, _term, _stop,
+                                _usage, event.get("subtype"),
                                 _err_text[:500], _stderr_snapshot)
+                            # Full event dump at DEBUG so we can replay.
+                            import json as _json
+                            logger.debug(
+                                "[claude-code] is_error full event: %s",
+                                _json.dumps(event, default=str,
+                                             ensure_ascii=False)[:4000])
                         except Exception:
                             logger.debug("exception suppressed", exc_info=True)
                         _lower = _err_text.lower()

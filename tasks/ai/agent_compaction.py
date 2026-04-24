@@ -437,18 +437,29 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             # this, CC's client.complete would resume the live conv session
             # (conv_id is still set on the shared client instance) and the
             # extract prompt + model's answer would leak into the user's
-            # chat as rogue turns. Same sentinel pattern as _summarize_via_cc.
+            # chat as rogue turns. Full save/restore of singleton tracking
+            # state (same pattern as _summarize_via_cc): without
+            # _ephemeral_stream + proc/pool/pool_idx preservation, spawning
+            # the memory-extract CC clobbers the main's cc-live key state
+            # and the main's next turn computes a mismatched key → REUSE
+            # misses and CC spawns a fresh container it shouldn't have.
             _inner = getattr(client, "_client", client)
-            _saved = (
-                getattr(_inner, "_conversation_id", ""),
-                getattr(_inner, "_agent_name", ""),
-                getattr(_inner, "_user_id", ""),
-                getattr(_inner, "_event_cid", ""),
-            )
+            _saved_conv = getattr(_inner, "_conversation_id", "")
+            _saved_agent = getattr(_inner, "_agent_name", "")
+            _saved_user = getattr(_inner, "_user_id", "")
+            _saved_event_cid = getattr(_inner, "_event_cid", "")
+            _saved_ephemeral = getattr(_inner, "_ephemeral_stream", False)
+            _saved_claude_proc = getattr(_inner, "_claude_proc", None)
+            _saved_pool_name = getattr(_inner, "_pool_container_name", None)
+            _saved_cc_pid = getattr(_inner, "_cc_container_pid", 0)
+            _saved_pool_idx = getattr(_inner, "_current_pool_index", -1)
+            _saved_session_id = getattr(_inner, "_current_session_id", "")
+            _saved_result_emitted = getattr(_inner, "_result_emitted", False)
             _inner._conversation_id = "_memory_extract"
             _inner._agent_name = "memory"
             _inner._user_id = user_id
             _inner._event_cid = ""
+            _inner._ephemeral_stream = True
             try:
                 resp = client.complete(
                     messages=[LLMMessage(role="user", content=prompt,
@@ -457,8 +468,22 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     max_tokens=1000,
                 )
             finally:
-                (_inner._conversation_id, _inner._agent_name,
-                 _inner._user_id, _inner._event_cid) = _saved
+                _inner._conversation_id = _saved_conv
+                _inner._agent_name = _saved_agent
+                _inner._user_id = _saved_user
+                _inner._event_cid = _saved_event_cid
+                _inner._ephemeral_stream = _saved_ephemeral
+                if _saved_claude_proc is not None:
+                    _inner._claude_proc = _saved_claude_proc
+                if _saved_pool_name:
+                    _inner._pool_container_name = _saved_pool_name
+                if _saved_cc_pid:
+                    _inner._cc_container_pid = _saved_cc_pid
+                if _saved_pool_idx >= 0:
+                    _inner._current_pool_index = _saved_pool_idx
+                if _saved_session_id:
+                    _inner._current_session_id = _saved_session_id
+                _inner._result_emitted = _saved_result_emitted
                 # One-shot helper: wipe the _memory_extract workdir for this
                 # user. Nothing here needs to persist between extractions.
                 try:

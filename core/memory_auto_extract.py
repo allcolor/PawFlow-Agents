@@ -43,7 +43,7 @@ def auto_extract_memories(
     if not llm_client:
         return 0  # No LLM = no extraction (no heuristic fallback)
 
-    facts = _extract_with_llm(llm_client, summary)
+    facts = _extract_with_llm(llm_client, summary, user_id=user_id)
 
     if not facts:
         return 0
@@ -82,21 +82,51 @@ def auto_extract_memories(
     return count
 
 
-def _extract_with_llm(client, summary: str) -> list:
-    """Use LLM to extract structured facts from summary."""
+def _extract_with_llm(client, summary: str, user_id: str = "") -> list:
+    """Use LLM to extract structured facts from summary.
+
+    CRITICAL: we ISOLATE this call from the caller's active conversation.
+    Callers (agent_streaming periodic save, bg_bucket_builder) pass the
+    main agent's LLM client, which still carries `_conversation_id` /
+    `_agent_name` / `_event_cid` / `_user_id` from the main stream's
+    context. If we don't swap those to a `_memory_extract` sentinel, the
+    extract prompt gets pushed on the main agent's live CC session
+    (via cc_live_registry reuse) — polluting the main conv with a rogue
+    "extract facts" turn whose reply lands in the user's chat as an
+    empty-text stop. Same pattern as tasks/ai/agent_compaction.py
+    _auto_extract_memories, centralised here so every caller benefits.
+    """
     try:
         from core.llm_client import LLMMessage
-        messages = [
-            LLMMessage(role="user", content=_EXTRACT_PROMPT + summary,
-                        conversation_id="_memory_extract"),
-        ]
-        resp = client.complete(
-            messages=messages,
-            temperature=0.2,
-            max_tokens=1000,
-            response_format="json",
+        # Swap sentinel context on the inner client (claude-code keeps
+        # conv/agent state on the provider mixin, not just on messages).
+        _inner = getattr(client, "_client", client)
+        _saved = (
+            getattr(_inner, "_conversation_id", ""),
+            getattr(_inner, "_agent_name", ""),
+            getattr(_inner, "_user_id", ""),
+            getattr(_inner, "_event_cid", ""),
         )
-        content = resp.content.strip()
+        _inner._conversation_id = "_memory_extract"
+        _inner._agent_name = "memory"
+        if user_id:
+            _inner._user_id = user_id
+        _inner._event_cid = ""
+        try:
+            messages = [
+                LLMMessage(role="user", content=_EXTRACT_PROMPT + summary,
+                            conversation_id="_memory_extract"),
+            ]
+            resp = client.complete(
+                messages=messages,
+                temperature=0.2,
+                max_tokens=1000,
+                response_format="json",
+            )
+            content = resp.content.strip()
+        finally:
+            (_inner._conversation_id, _inner._agent_name,
+             _inner._user_id, _inner._event_cid) = _saved
         # Parse JSON array from response (handle markdown code blocks)
         match = re.search(r'\[.*\]', content, re.DOTALL)
         if match:

@@ -1044,20 +1044,37 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _is_reuse = _live_session is not None
 
         if _is_reuse:
-            proc = _live_session.proc
-            self._pool_container_name = _live_session.pool_container
-            _mcp_internal_token = _live_session.mcp_internal_token
-            # Non-ephemeral by construction (see guard above); mirror the
-            # spawn path's self._claude_proc assignment so preempt /
-            # cancel_claude_code targets the reused process.
-            self._claude_proc = proc
-            logger.info(
-                "[cc-live] REUSE %s/%s/%s@%s#%d (reuse_count=%d, "
-                "lived=%.1fs)",
-                user_id[:6], conv_id[:8], agent_name or 'default',
-                _svc_id, _svc_pool_idx, _live_session.reuse_count,
-                time.monotonic() - _live_session.spawn_at)
+            # Serialise concurrent _stream_claude_code calls targeting the
+            # same live session. Without this, bg_bucket_builder's
+            # auto_extract_memories (or any other background caller that
+            # reuses the same client) can enter _stream while the main
+            # stream is still mid-turn, clobber proc.stdin with a rogue
+            # message, and end the main turn with an empty stop. The lock
+            # is RLock so one thread can re-enter (nested flush/retries
+            # during teardown) without deadlocking itself.
+            _turn_lock_acquired = _live_session.turn_lock.acquire()
+            _owns_turn_lock = _turn_lock_acquired
+            try:
+                proc = _live_session.proc
+                self._pool_container_name = _live_session.pool_container
+                _mcp_internal_token = _live_session.mcp_internal_token
+                # Non-ephemeral by construction (see guard above); mirror the
+                # spawn path's self._claude_proc assignment so preempt /
+                # cancel_claude_code targets the reused process.
+                self._claude_proc = proc
+                logger.info(
+                    "[cc-live] REUSE %s/%s/%s@%s#%d (reuse_count=%d, "
+                    "lived=%.1fs)",
+                    user_id[:6], conv_id[:8], agent_name or 'default',
+                    _svc_id, _svc_pool_idx, _live_session.reuse_count,
+                    time.monotonic() - _live_session.spawn_at)
+            except BaseException:
+                if _owns_turn_lock:
+                    try: _live_session.turn_lock.release()
+                    except Exception: pass
+                raise
         else:
+            _owns_turn_lock = False
             proc, self._pool_container_name, _mcp_internal_token = (
                 self._spawn_cc_stream(workdir, user_id, conv_id, agent_name,
                                       session_id, model))

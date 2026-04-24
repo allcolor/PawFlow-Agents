@@ -64,6 +64,13 @@ class CCLiveSession:
     spawn_at: float = field(default_factory=time.monotonic)
     last_used: float = field(default_factory=time.monotonic)
     reuse_count: int = 0
+    # Serializes concurrent _stream_claude_code calls that would
+    # otherwise push messages to the same proc.stdin simultaneously.
+    # Example: main stream turn N still running while bg_bucket’s
+    # auto_extract_memories triggers a second stream on the same
+    # (conv, agent) — the second call would corrupt the main
+    # stream's stdin. turn_lock keeps them strictly sequential.
+    turn_lock: object = field(default_factory=threading.RLock)
 
     def is_alive(self) -> bool:
         """True iff the underlying CC process is still running."""

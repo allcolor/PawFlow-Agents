@@ -111,6 +111,12 @@ class PendingQueue:
         entry = dict(message)
         if source:
             entry["_pending_source"] = source
+        # Diagnostic timestamp: when we enqueued (monotonic+wall). Lets
+        # drain() log the age so we can tell whether a drained message is
+        # "fresh from last turn" or "stuck since hours ago" (the latter is
+        # a bug — the queue should never retain messages across turns).
+        import time as _t
+        entry["_pending_enqueued_at"] = _t.time()
 
         with self._lock:
             with open(self._path, "a", encoding="utf-8") as f:
@@ -146,9 +152,22 @@ class PendingQueue:
                 pass
             tmp.replace(self._path)
         if entries:
-            logger.info("[pending-queue] drained %d message(s) from %s/%s",
+            # Diagnostic: log age of each drained entry. Fresh entries
+            # (<60s) are normal — messages that arrived during the just-
+            # ended turn. Stale entries (>300s) indicate a leak where an
+            # intermediate drain should have fired but didn't.
+            import time as _t
+            _now = _t.time()
+            _ages = []
+            for _e in entries:
+                _enq = _e.get("_pending_enqueued_at")
+                if isinstance(_enq, (int, float)):
+                    _ages.append(int(_now - _enq))
+            _age_summary = ",".join(f"{a}s" for a in _ages) if _ages else "?"
+            logger.info("[pending-queue] drained %d message(s) from %s/%s "
+                        "(ages=%s)",
                         len(entries), self.conv_id[:8],
-                        self.agent_name or "_shared")
+                        self.agent_name or "_shared", _age_summary)
         return entries
 
     def peek_count(self) -> int:

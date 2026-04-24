@@ -2266,6 +2266,21 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 e.get("message", str(e)) if isinstance(e, dict) else str(e)
                                 for e in _errors)
                             logger.error("[claude-code] errors: %s", _errors)
+                        # Dump the full event body + any stderr lines we've
+                        # accumulated — useful when the "error" is an opaque
+                        # "empty or malformed response" (CC's HTTP client
+                        # sometimes swallows the upstream body and we need
+                        # stderr or the raw event to see what really failed).
+                        try:
+                            _stderr_snapshot = "".join(
+                                getattr(self, "_stderr_buffer", []) or [])[-4000:]
+                            logger.error(
+                                "[claude-code] is_error result: subtype=%r "
+                                "event_keys=%s _err_text=%r stderr_tail=%r",
+                                event.get("subtype"), sorted(event.keys()),
+                                _err_text[:500], _stderr_snapshot)
+                        except Exception:
+                            logger.debug("exception suppressed", exc_info=True)
                         _lower = _err_text.lower()
                         _is_auth = (
                             "authentication" in _lower

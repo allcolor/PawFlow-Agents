@@ -793,6 +793,34 @@ def _check_request_inner(handler) -> bool:
     if path in _EXEMPT_PATHS:
         return False
 
+    # Routes flagged `public=True AND private_only=True` carry their own
+    # credential (usually a URL-embedded ephemeral token) AND restrict
+    # themselves to RFC1918 source IPs. They must bypass this human-
+    # oriented challenge page — otherwise automated LAN-only clients
+    # (CC container hitting /relay-proxy/, service-to-service callbacks,
+    # …) get the HTML challenge instead of their actual response and
+    # can't parse it. Repro: CC surfaced
+    #   "API returned an empty or malformed response (HTTP 200) —
+    #    check for a proxy or gateway intercepting the request"
+    # while the Matrix-themed challenge page was what actually flew
+    # back (container has no _gw cookie). The private_only flag is
+    # the guarantee that this bypass can't be abused from the public
+    # internet.
+    try:
+        _server = getattr(handler, "server", None)
+        _registry = getattr(_server, "_route_registry", None)
+        if _registry is not None:
+            _match = _registry.match(handler.command, path)
+            _entry = _match[0] if _match else None
+            if (_entry is not None
+                    and getattr(_entry, "public", False)
+                    and getattr(_entry, "private_only", False)):
+                return False
+    except Exception:
+        logger.debug(
+            "gateway public+private_only exempt check failed",
+            exc_info=True)
+
     # /files/{file_id} — check if public or gateway_key access
     if path.startswith("/files/"):
         file_id = path.split("/")[2] if len(path.split("/")) >= 3 else ""

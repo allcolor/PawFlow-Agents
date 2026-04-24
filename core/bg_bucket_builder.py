@@ -811,6 +811,22 @@ class BgBucketBuilder:
             "[bg-bucket] built bucket cid=%s seq %d..%d (%d msgs, "
             "summary=%d chars)",
             cid[:8], first_seq, last_seq, len(chunk), len(summary))
+        # Summarizer overshoot surveillance: when the LLM returns a
+        # summary far above `target_tokens=BUCKET_OUTPUT_TARGET`, the
+        # pyramid header bloats proportionally — 5 buckets at 3x target
+        # put the header at 30k tokens, matching the entire nominal
+        # HEADER_BUDGET, and /compact has to compress it privately
+        # every time (step 2c). Make the drift visible so we can tune
+        # the summarizer prompt or lower the target if it's chronic.
+        _summary_tokens_est = int(len(summary) / 3.5)
+        if _summary_tokens_est > BUCKET_OUTPUT_TARGET * 1.5:
+            logger.warning(
+                "[bg-bucket] L1 summary overshoot cid=%s seq %d..%d: "
+                "~%d tokens (target=%d, %.1fx). Pyramid header will "
+                "bloat faster than designed; rollup fires earlier.",
+                cid[:8], first_seq, last_seq, _summary_tokens_est,
+                BUCKET_OUTPUT_TARGET,
+                _summary_tokens_est / float(BUCKET_OUTPUT_TARGET))
 
         # Feed the memory extractor: each bucket summary is a distilled
         # phase of the conversation — exactly the right granularity for
@@ -836,10 +852,20 @@ class BgBucketBuilder:
         object_count exceeds trigger count. Return True if a rollup or
         collapse actually fired."""
         over_count = store.object_count > ROLLUP_TRIGGER_COUNT
-        # HEADER_BUDGET is a token budget; compare against chars with a
-        # ~4-chars-per-token approximation (conservative — overestimates
-        # rollup frequency a bit, which is fine).
-        over_budget = store.estimated_header_chars() > HEADER_BUDGET * 4
+        # HEADER_BUDGET is a token budget; convert to chars via 3.5
+        # chars/token (consistent with agent_utils._estimate_tokens
+        # default and agent_compaction._compact). The previous `*4`
+        # assumed ~4 chars/token and over-estimated the char budget by
+        # ~14%, letting the header drift to ~34k tokens before rollup.
+        # Combined with LLM summarizers systematically overshooting
+        # BUCKET_OUTPUT_TARGET (2-3× observed), a 5-bucket pyramid hit
+        # ~32k tokens of header and sat just under the old `*4` ceiling
+        # of 120k chars forever — rollup never fired, /compact had to
+        # compress the header privately on every run (step 2c).
+        # Tighten to `*3` (~26k tokens trigger, 20% margin under the
+        # 30k nominal budget) so rollup kicks in early and keeps the
+        # header well under HEADER_BUDGET even with summarizer drift.
+        over_budget = store.estimated_header_chars() > HEADER_BUDGET * 3
         if not (over_count or over_budget):
             return False
 
@@ -919,6 +945,22 @@ class BgBucketBuilder:
         except Exception:
             logger.exception("[bg-bucket] consolidate failed")
             return ""
+
+        # Surveillance symmetric with L1 build: a rolled-up SB that
+        # overshoots target_tokens defeats the rollup's whole purpose
+        # (the point is to shrink N buckets into one small summary).
+        # Flag it so chronic drift doesn't silently keep the header
+        # above budget even post-rollup.
+        if result:
+            _result_tokens_est = int(len(result) / 3.5)
+            if _result_tokens_est > BUCKET_OUTPUT_TARGET * 1.5:
+                logger.warning(
+                    "[bg-bucket] SB consolidation overshoot cid=%s: "
+                    "~%d tokens (target=%d, %.1fx, from %d buckets). "
+                    "Post-rollup header will stay large.",
+                    cid[:8], _result_tokens_est, BUCKET_OUTPUT_TARGET,
+                    _result_tokens_est / float(BUCKET_OUTPUT_TARGET),
+                    len(bucket_docs))
 
         if result and user_id:
             try:

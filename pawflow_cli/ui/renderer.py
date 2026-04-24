@@ -326,22 +326,12 @@ class TerminalRenderer:
     # ── Tool calls ──
 
     def _strip_tool_wrapper(self, text: str) -> str:
-        """Strip anti-injection wrapper from tool_result for display.
+        """Strip outer <tool_output tool="..."> anti-injection envelope.
 
-        Two formats have existed:
-          * old: "[TOOL OUTPUT — name]\\n<body>\\n[/TOOL OUTPUT]"
-          * new: "<tool_output tool=\\"name\\">\\n<body>\\n</tool_output>\\nNote: ..."
-        Strip whichever wraps the top-level payload; keep <tool_output>
-        literals that appear naturally inside the body (grep hits,
-        previous-compact summaries, etc.) so we don't corrupt real content.
+        Inner <tool_output> literals that appear naturally inside the
+        body (grep hits, previous-compact summaries) are kept verbatim.
         """
-        if text.startswith("[TOOL OUTPUT"):
-            nl = text.find("\n")
-            if nl >= 0:
-                text = text[nl + 1:]
-            if text.endswith("[/TOOL OUTPUT]"):
-                text = text[:-len("[/TOOL OUTPUT]")].rstrip("\n")
-        elif text.startswith("<tool_output tool="):
+        if text.startswith("<tool_output tool="):
             nl = text.find("\n")
             if nl >= 0:
                 text = text[nl + 1:]

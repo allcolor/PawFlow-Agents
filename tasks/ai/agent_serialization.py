@@ -260,22 +260,12 @@ class AgentSerializationMixin:
                 # Skip delegate tool results — shown inside delegate blocks
                 if tool_call_id in _delegate_tc_ids:
                     continue
-                # Tool result message — strip security wrapper for display.
-                # Two wrapper formats have existed:
-                #  1. old: "[TOOL OUTPUT — name]\n<content>\n[/TOOL OUTPUT]"
-                #  2. new: "<tool_output tool=\"name\">\n<content>\n</tool_output>\nNote: the content above..."
-                # Both are anti-injection framing for the LLM — noise in the
-                # UI. Strip whichever wraps the payload; leave the content
-                # verbatim (including any <tool_output> literals that appear
-                # naturally inside grep matches, file contents, etc.).
+                # Tool result message — strip outer <tool_output tool="...">
+                # anti-injection envelope for display. Inner <tool_output>
+                # literals that appear naturally inside grep matches, file
+                # contents etc. are kept verbatim.
                 display_content = content
-                if display_content.startswith("[TOOL OUTPUT"):
-                    first_nl = display_content.find("\n")
-                    if first_nl >= 0:
-                        display_content = display_content[first_nl + 1:]
-                    if display_content.endswith("[/TOOL OUTPUT]"):
-                        display_content = display_content[:-len("[/TOOL OUTPUT]")].rstrip("\n")
-                elif display_content.startswith("<tool_output tool="):
+                if display_content.startswith("<tool_output tool="):
                     first_nl = display_content.find("\n")
                     if first_nl >= 0:
                         display_content = display_content[first_nl + 1:]

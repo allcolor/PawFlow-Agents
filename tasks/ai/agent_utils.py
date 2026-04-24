@@ -619,14 +619,15 @@ class AgentUtilsMixin:
                 m.content = _ref_match.group(1)
                 continue
 
-            # Strip TOOL OUTPUT wrapper for storage
+            # Strip outer <tool_output tool="..."> wrapper for storage.
             _inner = content
-            if _inner.startswith("[TOOL OUTPUT"):
+            if _inner.startswith("<tool_output tool="):
                 _nl = _inner.find("\n")
                 if _nl >= 0:
                     _inner = _inner[_nl + 1:]
-                if _inner.endswith("[/TOOL OUTPUT]"):
-                    _inner = _inner[:-len("[/TOOL OUTPUT]")].rstrip()
+                _close = _inner.rfind("</tool_output>")
+                if _close >= 0:
+                    _inner = _inner[:_close].rstrip()
 
             # Save to FileStore
             try:

@@ -403,21 +403,12 @@ class AgentCoreMixin:
                                 "mcp__pawflow__get_tool_schema"):
                             _preview = (msg.content if isinstance(msg.content, str)
                                         else str(msg.content))
-                            # Strip anti-injection wrapper before showing
-                            # in chat. Two formats have existed:
-                            #   old: [TOOL OUTPUT — name]\n<body>\n[/TOOL OUTPUT]
-                            #   new: <tool_output tool="name">\n<body>\n</tool_output>\nNote: ...
-                            # Same approach as pawflow_cli/ui/renderer.py
-                            # and agent_serialization.py — strip the outer
-                            # wrapper only, keep inner <tool_output>
-                            # literals (grep hits, nested summaries).
-                            if _preview.startswith("[TOOL OUTPUT"):
-                                _nl = _preview.find("\n")
-                                if _nl >= 0:
-                                    _preview = _preview[_nl + 1:]
-                                if _preview.endswith("[/TOOL OUTPUT]"):
-                                    _preview = _preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
-                            elif _preview.startswith("<tool_output tool="):
+                            # Strip outer <tool_output tool="..."> wrapper
+                            # before showing in chat. Inner <tool_output>
+                            # literals (grep hits, nested summaries) are
+                            # kept verbatim — only the top-level envelope
+                            # is removed.
+                            if _preview.startswith("<tool_output tool="):
                                 _nl = _preview.find("\n")
                                 if _nl >= 0:
                                     _preview = _preview[_nl + 1:]
@@ -1469,14 +1460,10 @@ class AgentCoreMixin:
                                               conversation_id=conversation_id)
                         _tr_msg._tool_name = tc.name
                         _append(_tr_msg)
-                        # Preview for SSE
+                        # Preview for SSE — result_text is raw from the
+                        # tool executor (wrap above is on _wrapped, not
+                        # result_text), so no strip is needed.
                         _prev = result_text[:2000] if isinstance(result_text, str) else str(result_text)[:2000]
-                        if isinstance(_prev, str) and _prev.startswith("[TOOL OUTPUT"):
-                            _nl = _prev.find("\n")
-                            if _nl >= 0:
-                                _prev = _prev[_nl + 1:]
-                            if _prev.endswith("[/TOOL OUTPUT]"):
-                                _prev = _prev[:-len("[/TOOL OUTPUT]")].rstrip("\n")
                         emitter.on_tool_result(tc, result_text, _prev)
 
                     # Per-turn aggregate cap: if total tool results > 200K chars,

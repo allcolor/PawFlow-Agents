@@ -1135,6 +1135,14 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 "\n- For file operations use tools: read, write, edit, bash, glob, grep, etc. "
                 "Set the source/destination/relay parameter to the relay service name."
                 "\n- The user's files are ONLY accessible through the MCP pawflow tools."
+                "\n- Memory retrieval: your native `memory/` folder only holds "
+                "what you wrote yourself via the memory skill. The PawFlow "
+                "MemoryStore is a superset — user-added entries, cross-conv "
+                "facts, other agents' memories, and semantic search. When "
+                "looking for context beyond your recent notes, call the MCP "
+                "`recall(query=...)` tool FIRST; use your native memory folder "
+                "only as a fallback. Writes via the memory skill still sync "
+                "automatically to the PawFlow store, so keep using it."
                 + _fs_services_info
             )
 

@@ -393,7 +393,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 89  # + upscale_video, remove_background, describe_image, remix_image, speech_to_video, clone_voice, speak, delete_voice
+        assert len(registry.list_tools()) == 90  # + upscale_video, remove_background, describe_image, remix_image, speech_to_video, clone_voice, speak, delete_voice, ScheduleWakeup, PushNotification
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})

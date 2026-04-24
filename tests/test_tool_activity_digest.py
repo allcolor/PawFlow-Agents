@@ -156,6 +156,46 @@ def test_merge_accumulates_counts_and_dedups_lists():
     assert [c["cmd"] for c in merged["commands"]] == ["c1", "c2"]
 
 
+def test_merge_caps_commands_and_delegations_to_most_recent():
+    # Flood both lists past the default cap so the tail-cap actually fires.
+    old_cmds = [{"cmd": f"old_{i}", "result": ""} for i in range(150)]
+    new_cmds = [{"cmd": f"new_{i}", "result": ""} for i in range(40)]
+    old_dels = [{"agent": "a", "brief": f"old_{i}"} for i in range(150)]
+    new_dels = [{"agent": "b", "brief": f"new_{i}"} for i in range(40)]
+    a = {"edits": {}, "reads": {}, "creates": [], "deletes": [],
+         "commands": old_cmds, "delegations": old_dels}
+    b = {"edits": {}, "reads": {}, "creates": [], "deletes": [],
+         "commands": new_cmds, "delegations": new_dels}
+    merged = merge_traces([a, b])
+    # Default cap keeps the 100 most recent of each.
+    assert len(merged["commands"]) == 100
+    assert len(merged["delegations"]) == 100
+    # Tail survives: the final new_39 is there, old_0 is gone.
+    assert merged["commands"][-1]["cmd"] == "new_39"
+    assert merged["delegations"][-1]["brief"] == "new_39"
+    assert all(c["cmd"] != "old_0" for c in merged["commands"])
+
+
+def test_merge_cap_can_be_overridden():
+    cmds = [{"cmd": f"c{i}", "result": ""} for i in range(20)]
+    a = {"edits": {}, "reads": {}, "creates": [], "deletes": [],
+         "commands": cmds, "delegations": []}
+    merged = merge_traces([a], max_commands=5)
+    assert [c["cmd"] for c in merged["commands"]] == [
+        "c15", "c16", "c17", "c18", "c19"]
+
+
+def test_format_shows_most_recent_commands_not_oldest():
+    t = {"edits": {}, "reads": {}, "creates": [], "deletes": [],
+         "commands": [{"cmd": f"c{i}", "result": ""} for i in range(50)],
+         "delegations": []}
+    out = format_activity_digest(t, max_paths_per_section=5)
+    # Newest 5 (c45…c49) shown, oldest not present.
+    for i in range(45, 50):
+        assert f"c{i}" in out
+    assert "c0 " not in out and "c10 " not in out
+
+
 def test_is_empty():
     assert is_empty(None)
     assert is_empty({})

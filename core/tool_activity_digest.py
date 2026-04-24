@@ -251,16 +251,20 @@ def format_activity_digest(trace: Dict[str, Any],
         lines.append("Files deleted:")
         for p in deletes[:max_paths_per_section]:
             lines.append(f"  - {p}")
+    # Commands + delegations are append-only chronological lists.
+    # Show the TAIL (most recent) so the digest reflects current
+    # activity, not sedimented ancient entries — same rationale as the
+    # merge-time cap in merge_traces.
     if commands:
         lines.append("Commands run:")
-        for entry in commands[:max_paths_per_section]:
+        for entry in commands[-max_paths_per_section:]:
             cmd = entry.get("cmd", "")
             res = entry.get("result", "")
             suffix = f"  → {res}" if res else ""
             lines.append(f"  - {cmd}{suffix}")
     if delegations:
         lines.append("Delegations:")
-        for d in delegations[:max_paths_per_section]:
+        for d in delegations[-max_paths_per_section:]:
             brief = d.get("brief") or ""
             lines.append(f"  - {d.get('agent', '?')}: {brief}")
 
@@ -269,10 +273,29 @@ def format_activity_digest(trace: Dict[str, Any],
     return "[TOOL ACTIVITY in this phase]\n" + "\n".join(lines)
 
 
-def merge_traces(traces: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+# Cap for commands/delegations stored in a merged trace. These are
+# append-only lists with no dedup (same command can reasonably run many
+# times), so without a cap every rollup inherits all previous history
+# and the tool_trace grows unboundedly (observed 3700+ commands in a
+# single level-1 bucket after multiple rollups). Keep the most recent
+# N so the stored state stays bounded and the agent-visible digest
+# reflects current activity rather than sedimented ancient commands.
+_MERGE_MAX_COMMANDS = 100
+_MERGE_MAX_DELEGATIONS = 100
+
+
+def merge_traces(traces: Iterable[Dict[str, Any]],
+                 *, max_commands: int = _MERGE_MAX_COMMANDS,
+                 max_delegations: int = _MERGE_MAX_DELEGATIONS
+                 ) -> Dict[str, Any]:
     """Consolidate N structured traces into one. Used at rollup time
     when multiple level-1 buckets collapse into a single SB. Counts
     sum, lists deduplicate while preserving first-seen order.
+
+    commands and delegations are capped to the most recent N entries
+    (keeps the tail) so the merged trace stays bounded across successive
+    rollups — otherwise every rollup accumulates all historical tool
+    activity forever.
     """
     edits: Counter = Counter()
     reads: Counter = Counter()
@@ -303,6 +326,12 @@ def merge_traces(traces: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             commands.append(cmd)
         for d in (t.get("delegations") or []):
             delegations.append(d)
+
+    # Keep the tail so the most recent activity survives across rollups.
+    if len(commands) > max_commands:
+        commands = commands[-max_commands:]
+    if len(delegations) > max_delegations:
+        delegations = delegations[-max_delegations:]
 
     return {
         "edits": dict(edits),

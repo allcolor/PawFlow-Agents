@@ -2295,9 +2295,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 _api_status, _api_ms, _term, _stop,
                                 _usage, event.get("subtype"),
                                 _err_text[:500], _stderr_snapshot)
-                            # Full event dump at DEBUG so we can replay.
+                            # Full event dump at INFO (was DEBUG — we
+                            # need the whole shape visible in the hot
+                            # log while chasing zero-iteration failures).
                             import json as _json
-                            logger.debug(
+                            logger.info(
                                 "[claude-code] is_error full event: %s",
                                 _json.dumps(event, default=str,
                                              ensure_ascii=False)[:4000])

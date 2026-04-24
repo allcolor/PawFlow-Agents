@@ -226,9 +226,7 @@ HELP: Dict[str, Dict[str, str]] = {
         "detail": (
             "Force a fresh Claude Code subprocess spawn on the next turn.\n\n"
             "  /cc_restart          — kill every live CC session in this conv\n"
-            "  /cc_restart claude   — kill only the 'claude' agent's session\n\n"
-            "Only meaningful when PAWFLOW_CC_LIVE_REUSE=1 — otherwise every\n"
-            "turn spawns fresh anyway and this command is a no-op."
+            "  /cc_restart claude   — kill only the 'claude' agent's session"
         ),
     },
     "/cc_live": {

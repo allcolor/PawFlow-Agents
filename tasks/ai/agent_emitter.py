@@ -115,7 +115,7 @@ class StreamEmitter(AgentEmitter):
             "provider": _prov if isinstance(_prov, str) else "",
             "model": _model,
             "base_url": _re.sub(r'(key|token|secret)=[^&]+', r'\1=***', _burl) if _burl and isinstance(_burl, str) else "",
-            "containerized": bool(getattr(_client, 'containerize', False)),
+            "containerized": _prov == "claude-code",
         }
 
     # ── Lifecycle ──────────────────────────────────────────────────────

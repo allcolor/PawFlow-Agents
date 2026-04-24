@@ -265,8 +265,9 @@ function syncActiveFromServer() {
         contextUsed: existing ? existing.contextUsed : 0,
         contextMax: existing ? existing.contextMax : 0,
         contextPct: existing ? existing.contextPct : 0,
-        // Claude Code live-session reuse telemetry (PAWFLOW_CC_LIVE_REUSE=1).
-        // Fields are undefined when the flag is off — treat absence as "not live".
+        // Claude Code live-session reuse telemetry. Server enriches
+        // these fields when the warm CC proc for (conv, agent) is alive
+        // in the registry; absence means no live session.
         ccLive: !!a.cc_live,
         ccReuseCount: a.cc_reuse_count || 0,
         ccLivedSeconds: a.cc_lived_seconds || 0,
@@ -321,8 +322,7 @@ function stopSingle(agentName, taskId) {
 }
 
 // Kill the warm Claude Code subprocess for a specific agent in this
-// conv. Next turn will spawn fresh. Server-side no-op when
-// PAWFLOW_CC_LIVE_REUSE is off.
+// conv. Next turn will spawn fresh.
 function ccRestartSingle(agentName) {
   if (!conversationId || !agentName) return;
   fireAction('cc_restart', { agent_name: agentName });

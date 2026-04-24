@@ -8,13 +8,12 @@ with `-`. Sessions get stored under
 The per-exec mount-namespace gives CC a cwd of `/cc_sessions/<conv>/<agent>`
 (after binding the user's slot over /cc_sessions), so the key is
 `-cc-sessions-<conv>-<agent>` — CC maps BOTH `/` and `_` to `-` in its
-on-disk project key. Native (non-pool) mode keeps cwd=workdir.
+on-disk project key.
 
 If this derivation drifts, session resume breaks silently — we'd look
 for session files at a project key CC never used.
 """
 
-import os
 import unittest
 from unittest.mock import patch
 
@@ -29,8 +28,7 @@ class TestCCProjectKey(unittest.TestCase):
             return_value='/host/data/runtime/sessions/claude',
         ):
             key = _Cls._cc_project_key(
-                '/host/data/runtime/sessions/claude/alice/conv123/agent1',
-                containerize=True)
+                '/host/data/runtime/sessions/claude/alice/conv123/agent1')
         self.assertEqual(key, '-cc-sessions-conv123-agent1')
 
     def test_pool_key_with_nested_subagent_path(self):
@@ -39,23 +37,9 @@ class TestCCProjectKey(unittest.TestCase):
             return_value='/host/sessions',
         ):
             key = _Cls._cc_project_key(
-                '/host/sessions/alice/conv1/a/sub',
-                containerize=True)
+                '/host/sessions/alice/conv1/a/sub')
         # All segments after <user> become part of the key
         self.assertEqual(key, '-cc-sessions-conv1-a-sub')
-
-    def test_native_key_uses_workdir_directly(self):
-        # Native mode: CC's cwd is the host workdir, so the key derives
-        # from the full path.
-        key = _Cls._cc_project_key(
-            '/some/host/path', containerize=False)
-        self.assertEqual(key, '-some-host-path')
-
-    def test_native_key_no_leading_dash_doubling(self):
-        # Already-leading-slash paths get one `-` prefix, not two
-        key = _Cls._cc_project_key('/x', containerize=False)
-        self.assertEqual(key, '-x')
-        self.assertFalse(key.startswith('--'))
 
 
 if __name__ == '__main__':

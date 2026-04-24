@@ -19,11 +19,6 @@ from typing import Dict, List, Optional
 
 from core.cc_live_registry import CCLiveSession, LiveSessionRegistry
 
-# Feature flag gating live-session reuse. Off by default — when unset,
-# every turn spawns a fresh CC process as before. Set to "1" to keep CC
-# alive between turns and reuse the stream-json stdin/stdout.
-_LIVE_REUSE_ENABLED = os.environ.get("PAWFLOW_CC_LIVE_REUSE", "0") == "1"
-
 # Sentinel pushed onto the per-session event queue when the reader daemon
 # exits (proc stdout EOF). Module-level so the SAME object identity holds
 # across turns for a reused session — the dispatch loop does `event is
@@ -65,7 +60,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     # Session/workdir methods inherited from ClaudeCodeSessionMixin:
     # _get_session_workdir, _claude_code_env, _setup_credentials,
     # _recover_tokens, _setup_mcp_config, _build_claude_cmd,
-    # _get_tool_relay_info, _get_mcp_bridge_path, _DISALLOWED_BUILTIN_TOOLS
+    # _get_tool_relay_info, _DISALLOWED_BUILTIN_TOOLS
 
     # ── Process management ──────────────────────────────────────────
 
@@ -468,59 +463,48 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     # ── Non-streaming (complete) ────────────────────────────────────
 
     @staticmethod
-    def _cc_project_key(workdir: str, containerize: bool) -> str:
+    def _cc_project_key(workdir: str) -> str:
         """Derive the project subdir name CC uses to bucket session files.
 
         CC encodes its cwd into a project key by stripping the leading
         slash and replacing every non-alphanum character (including `_`)
-        with `-`. Proof on disk: cwd=/cc_sessions/X/Y produces
-        `-cc-sessions-X-Y` (both `/` and `_` mapped to `-`). The pool's
-        per-exec mount-namespace gives CC `cwd=/cc_sessions/<conv>/<agent>`,
-        so the key becomes `-cc-sessions-<conv>-<agent>`. Native mode
-        uses cwd=workdir on the host directly.
+        with `-`. The pool's per-exec mount-namespace gives CC
+        `cwd=/cc_sessions/<conv>/<agent>`, so the key becomes
+        `-cc-sessions-<conv>-<agent>`.
 
         If this derivation drifts from CC's real algorithm, `--resume`
         would silently fall through to a fresh NEW session; the
         file_exists guard in _stream_claude_code drops --resume in that
         case rather than losing history without warning.
         """
-        if containerize:
-            rel = os.path.relpath(workdir, _get_sessions_base()).replace(
-                "\\", "/").split("/", 1)[-1]
-            return "-cc-sessions-" + rel.replace("/", "-").replace("_", "-")
-        return "-" + workdir.lstrip("/\\").replace("\\", "/").replace(
-            "/", "-").replace("_", "-")
+        rel = os.path.relpath(workdir, _get_sessions_base()).replace(
+            "\\", "/").split("/", 1)[-1]
+        return "-cc-sessions-" + rel.replace("/", "-").replace("_", "-")
 
     def _pool_popen(self, workdir: str, cmd: list, **popen_kwargs) -> tuple:
-        """Launch claude in a pool container or locally.
+        """Launch claude inside a pool container via docker exec.
 
-        Returns (proc, pool_container_name). Caller must release pool_container
-        when done (if not None).
+        Returns (proc, pool_container_name). Caller must release
+        pool_container when done — release destroys the container
+        (`docker rm -f`) under the 1:1 model.
         """
-        _containerize = getattr(self, 'containerize', False)
         _env = self._claude_code_env(workdir)
-        if _containerize:
-            from core.claude_code_pool import ClaudeCodePool
-            pool = ClaudeCodePool.instance()
-            container = pool.acquire()
-            _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
-            _session_dir = f"/cc_sessions/{_rel}"
-            # Pass API key / base URL to container if configured
-            _extra = {}
-            if _env.get("ANTHROPIC_API_KEY"):
-                _extra["ANTHROPIC_API_KEY"] = _env["ANTHROPIC_API_KEY"]
-            if _env.get("ANTHROPIC_BASE_URL"):
-                _extra["ANTHROPIC_BASE_URL"] = _env["ANTHROPIC_BASE_URL"]
-            proc = pool.exec_claude(
-                container, _session_dir, cmd[1:],  # skip 'claude' binary
-                extra_env=_extra or None,
-                **popen_kwargs)
-            return proc, container
-        else:
-            proc = subprocess.Popen(
-                cmd, cwd=workdir, env=_env,
-                **popen_kwargs)
-            return proc, None
+        from core.claude_code_pool import ClaudeCodePool
+        pool = ClaudeCodePool.instance()
+        container = pool.acquire()
+        _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
+        _session_dir = f"/cc_sessions/{_rel}"
+        # Pass API key / base URL to container if configured
+        _extra = {}
+        if _env.get("ANTHROPIC_API_KEY"):
+            _extra["ANTHROPIC_API_KEY"] = _env["ANTHROPIC_API_KEY"]
+        if _env.get("ANTHROPIC_BASE_URL"):
+            _extra["ANTHROPIC_BASE_URL"] = _env["ANTHROPIC_BASE_URL"]
+        proc = pool.exec_claude(
+            container, _session_dir, cmd[1:],  # skip 'claude' binary
+            extra_env=_extra or None,
+            **popen_kwargs)
+        return proc, container
 
     def _pool_release(self, container_name):
         """Release a pool container slot."""
@@ -791,19 +775,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         from core.llm_client import LLMClientError
         mcp_path, _mcp_internal_token = self._setup_mcp_config(
             workdir, user_id, conv_id, agent_name)
-        _containerize = getattr(self, 'containerize', False)
 
-        # In pool mode, the per-exec mount-namespace binds /cc_sessions/<user>
-        # over /cc_sessions; CC's working directory is /cc_sessions/<conv>/<agent>.
-        # MCP config path inside that namespace = workdir basename joined to it.
+        # The pool's per-exec mount-namespace binds /cc_sessions/<user>
+        # over /cc_sessions; CC's working directory is
+        # /cc_sessions/<conv>/<agent>. MCP config path inside that
+        # namespace = workdir basename joined to it.
         _mcp_arg = mcp_path
-        if _containerize and mcp_path:
+        if mcp_path:
             _rel_no_user = os.path.relpath(
                 workdir, _get_sessions_base()).replace("\\", "/").split("/", 1)[-1]
             _container_workdir = f"/cc_sessions/{_rel_no_user}"
             _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
-        else:
-            _container_workdir = workdir
 
         # Gate --resume on the jsonl actually existing at the expected
         # path. If it doesn't, CC would silently create a NEW empty
@@ -815,7 +797,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _expected_session_file = ""
         _exists = False
         if session_id:
-            _proj_key = self._cc_project_key(workdir, _containerize)
+            _proj_key = self._cc_project_key(workdir)
             _expected_session_file = os.path.join(
                 workdir, "projects", _proj_key, f"{session_id}.jsonl")
             _exists = os.path.exists(_expected_session_file)
@@ -836,8 +818,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                      mcp_config_path=_mcp_arg,
                                      workdir=workdir)
 
-        logger.info("claude-code stream: cwd=%s, containerize=%s, cmd=%s",
-                     workdir, _containerize, " ".join(str(c) for c in cmd[:20]))
+        logger.info("claude-code stream: cwd=%s cmd=%s",
+                     workdir, " ".join(str(c) for c in cmd[:20]))
         # Scrub legacy [image: image_<ts>_<n>.<ext>] placeholders from
         # user text fields. These were written before the vision-
         # placeholder fix and make the agent pattern-match "image
@@ -931,15 +913,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             _th.Thread(target=_drain_stderr, daemon=True,
                        name="cc-stderr-drain").start()
         except FileNotFoundError:
-            _bin = "docker" if _containerize else self.claude_binary
             if self._pool_container_name:
                 from core.claude_code_pool import ClaudeCodePool
                 ClaudeCodePool.instance().release(self._pool_container_name)
                 self._pool_container_name = None
             raise LLMClientError(
-                f"Binary '{_bin}' not found. "
-                + ("Install Docker Desktop." if _containerize
-                   else "Install with: npm install -g @anthropic-ai/claude-code"))
+                "Binary 'docker' not found. Install Docker Desktop.")
 
         return proc, self._pool_container_name, _mcp_internal_token
 
@@ -1037,17 +1016,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # (mcp setup, container exec, CC startup, --resume load) and
         # pushes the new user message onto the existing stdin. A miss
         # (or a dead proc — auto-evicted by get()) falls through to
-        # _spawn_cc_stream as before. Ephemeral streams (compact /
-        # memory_extract / btw) never reuse: they're short-lived by
-        # design and must not inherit nor leak another stream's proc.
+        # _spawn_cc_stream. Ephemeral streams (compact / memory_extract
+        # / btw) never reuse: they're short-lived by design and must
+        # not inherit nor leak another stream's proc.
         _svc_id = getattr(self, '_agent_service', '') or 'default'
         _svc_pool_idx = int(getattr(self, '_current_pool_index', -1) or -1)
         _is_ephemeral = bool(getattr(self, '_ephemeral_stream', False))
-        _live_reg = (LiveSessionRegistry.instance()
-                     if _LIVE_REUSE_ENABLED else None)
+        _live_reg = LiveSessionRegistry.instance()
         _live_key = None
         _live_session: Optional[CCLiveSession] = None
-        if _live_reg is not None and conv_id and not _is_ephemeral:
+        if conv_id and not _is_ephemeral:
             _live_key = (user_id, conv_id, agent_name or 'default',
                          _svc_id, _svc_pool_idx)
             _live_session = _live_reg.get(_live_key)
@@ -2495,7 +2473,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         _sid = getattr(self, '_current_session_id', '') or ''
                         _jsonl = os.path.join(
                             workdir, 'projects',
-                            self._cc_project_key(workdir, _containerize),
+                            self._cc_project_key(workdir),
                             f"{_sid}.jsonl") if _sid else ''
                         _pstatus = self._check_preempt_in_jsonl(_jsonl, _sent)
                         # CC writes a stdin preempt to its session jsonl
@@ -2576,12 +2554,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # Promote to keep-alive so `finally` retains proc + reader +
             # pool container for the next turn's reuse. proc.poll() must
             # still be None — a racy EOF break between here and finally
-            # would leave us registering a dead session.
+            # would leave us registering a dead session. Ephemeral streams
+            # (_live_key is None) never keep alive.
             _stall_killed_flag = bool(getattr(self, '_stall_killed', False))
             _keep_alive = (
-                _LIVE_REUSE_ENABLED
-                and _live_reg is not None
-                and _live_key is not None
+                _live_key is not None
                 and bool(getattr(self, '_result_emitted', False))
                 and not _stall_killed_flag
                 and proc.poll() is None
@@ -2591,8 +2568,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # 401 mid-stream: credentials already refreshed, retry once.
             # Evict BEFORE recursing so the retry doesn't re-adopt the
             # about-to-be-killed proc from the registry.
-            if (_is_reuse and _live_reg is not None
-                    and _live_key is not None):
+            if _is_reuse and _live_key is not None:
                 _live_reg.evict(_live_key, "auth_401")
             logger.info("[claude-code] retrying after 401 token refresh")
             return self._stream_claude_code(
@@ -2661,8 +2637,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 # Full teardown: evict any live-session entry first so
                 # the next turn doesn't re-adopt the dead proc, then
                 # kill + recover + revoke as before.
-                if (_is_reuse and _live_reg is not None
-                        and _live_key is not None):
+                if _is_reuse and _live_key is not None:
                     _live_reg.evict(_live_key, "turn_failed")
                 # Cleanup process — _cleanup_proc captures stderr internally
                 _stderr = self._cleanup_proc(proc)

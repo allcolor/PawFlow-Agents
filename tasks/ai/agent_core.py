@@ -239,7 +239,7 @@ class AgentCoreMixin:
                 "model": model_override or _client_model,
                 "base_url": _re.sub(r'(key|token|secret)=[^&]+', r'\1=***',
                                     _client_base_url) if _client_base_url else "",
-                "containerized": bool(getattr(client, 'containerize', False)),
+                "containerized": _client_provider == "claude-code",
             }
             if tok_in or tok_out:
                 src["tokens_in"] = tok_in

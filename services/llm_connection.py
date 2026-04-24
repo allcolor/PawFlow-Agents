@@ -363,10 +363,6 @@ class LLMConnectionService(BaseService):
                 "type": "integer", "default": 50000,
                 "description": "Max chars for tool results in LLM context (0 = default 50000)",
             },
-            "containerize": {
-                "type": "boolean", "default": False,
-                "description": "Run in Docker container for isolation (requires Docker)",
-            },
             "docker_image": {
                 "type": "string", "default": "pawflow-claude-code:latest",
                 "description": "Docker image for containerized execution",
@@ -407,7 +403,6 @@ class LLMConnectionService(BaseService):
                     "fallback_model": {"visible": False},
                     "max_concurrent": {"visible": False},
                     "timeout":       {"default": 600},
-                    "containerize":  {"visible": True},
                     "docker_image":  {"visible": True},
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},

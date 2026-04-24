@@ -4,10 +4,6 @@ Handles:
   - cc_restart       kill all live CC subprocesses for a conv (or a
                      specific agent), forcing a fresh spawn on next turn.
   - cc_live_status   return a snapshot of live sessions for the conv.
-
-The registry is flag-gated (PAWFLOW_CC_LIVE_REUSE) but these actions
-are always safe: with the flag off, the registry is empty and both
-actions are no-ops that report 0 live sessions.
 """
 
 import json

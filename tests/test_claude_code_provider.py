@@ -276,14 +276,17 @@ class TestClaudeCodeEnv(unittest.TestCase):
         self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-test-123")
 
     def test_env_with_base_url(self):
-        """base_url configured → ANTHROPIC_BASE_URL passed to CC."""
+        """base_url configured → ANTHROPIC_BASE_URL passed to CC with
+        localhost translated to host.docker.internal (CC runs inside a
+        Docker container; localhost would resolve to the container itself)."""
         client = LLMClient(provider="claude-code", config={
             "api_key": "sk-test", "base_url": "http://localhost:11434/v1"})
         client._conversation_id = "test-conv"
         client._agent_name = "test-agent"
         client._user_id = "test-user"
         env = client._claude_code_env("/tmp")
-        self.assertEqual(env["ANTHROPIC_BASE_URL"], "http://localhost:11434/v1")
+        self.assertEqual(env["ANTHROPIC_BASE_URL"],
+                          "http://host.docker.internal:11434/v1")
         self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-test")
 
 
@@ -815,8 +818,6 @@ class TestProviderInProviders(unittest.TestCase):
         })
         self.assertEqual(client.provider, "claude-code")
         self.assertEqual(client.default_model, "opus")
-        # claude_binary is auto-detected, not configurable
-        self.assertIsInstance(client.claude_binary, str)
 
 
 

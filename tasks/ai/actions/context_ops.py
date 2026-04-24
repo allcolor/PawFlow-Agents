@@ -35,7 +35,7 @@ def _find_cc_session_jsonl(conv_id: str, agent_name: str, store,
     # (/cc_sessions/<conv>/<agent>) by replacing every non-alphanum char
     # with '-'. _cc_project_key reproduces that so we land on the exact
     # on-disk bucket name.
-    proj_key = LLMClaudeCodeMixin._cc_project_key(workdir, containerize=True)
+    proj_key = LLMClaudeCodeMixin._cc_project_key(workdir)
     projects_dir = os.path.join(workdir, "projects", proj_key)
     jsonl_path = os.path.join(projects_dir, f"{session_id}.jsonl")
 

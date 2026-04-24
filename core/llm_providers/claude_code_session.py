@@ -479,7 +479,11 @@ class ClaudeCodeSessionMixin:
         # property. If still a localhost URL in Docker, translate to
         # host.docker.internal so the container can reach the host.
         if _base_url:
-            if getattr(self, 'containerize', False) and "/relay-proxy/" not in _base_url:
+            # CC runs inside a Docker container — any localhost / 127.0.0.1
+            # URL must be translated to host.docker.internal so the
+            # container can reach the host-side listener. Relay-proxy URLs
+            # already point at the in-container MCP bridge; leave untouched.
+            if "/relay-proxy/" not in _base_url:
                 import re
                 _repl = lambda m: m.group(1) + "host.docker.internal" + (m.group(2) or '')
                 _base_url = re.sub(
@@ -748,24 +752,17 @@ class ClaudeCodeSessionMixin:
         once the CC invocation ends (success or failure), otherwise the token
         lingers valid in memory until server restart.
         """
-        _containerize = getattr(self, 'containerize', False)
-
-        if _containerize:
-            mcp_bridge = "/opt/pawflow/mcp_bridge.py"
-            python_bin = "python3"
-        else:
-            mcp_bridge = self._get_mcp_bridge_path()
-            if not os.path.exists(mcp_bridge):
-                return "", ""
-            import sys as _sys
-            python_bin = _sys.executable or "python"
+        # CC runs inside a Docker container — the MCP bridge script is
+        # bind-mounted at /opt/pawflow/mcp_bridge.py (see pool._spawn_container).
+        mcp_bridge = "/opt/pawflow/mcp_bridge.py"
+        python_bin = "python3"
 
         relay_url, relay_token = self._get_tool_relay_info()
         if not relay_url:
             logger.warning("No toolRelay service — MCP bridge will have no tools")
 
-        # In Docker mode, replace localhost with the host IP reachable from container
-        if _containerize and relay_url:
+        # Replace localhost with the host IP reachable from the container.
+        if relay_url:
             from core.docker_utils import get_host_ip
             _host_ip = get_host_ip()
             relay_url = relay_url.replace("localhost", _host_ip)
@@ -803,12 +800,6 @@ class ClaudeCodeSessionMixin:
         logger.info("MCP config written: %s (relay=%s)", mcp_path, relay_url)
         return mcp_path, internal_token
 
-    def _get_mcp_bridge_path(self) -> str:
-        """Path to the MCP bridge script (tools/mcp_bridge.py at project root)."""
-        project_root = os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))))
-        return os.path.join(project_root, "tools", "mcp_bridge.py")
-
     # All built-in Claude Code tools that must be disabled
     # (server filesystem != user's filesystem — everything goes through MCP).
     # Monitor is included because its stdout-log file lives on the agent
@@ -834,8 +825,9 @@ class ClaudeCodeSessionMixin:
         Only our pawflow MCP tools (get_tool_schema, use_tool) remain.
         If MCP fails, Claude Code has ZERO tools and stops.
 
-        When containerize=True, uses the pool (docker exec) or falls back
-        to docker run if pool is disabled.
+        CC always runs inside a pool-managed Docker container (1 CC per
+        container); `_pool_popen` injects docker exec and the setsid /
+        unshare wrapper around this arg list.
         """
         claude_args = ["-p"]
         if session_id:
@@ -857,11 +849,7 @@ class ClaudeCodeSessionMixin:
         # disallowedTools LAST — variadic option, must not consume other flags
         claude_args.extend(["--disallowedTools", self._DISALLOWED_BUILTIN_TOOLS])
 
-        if not getattr(self, 'containerize', False):
-            return [self.claude_binary] + claude_args
-
-        # Docker pool mode: acquire container, store args for exec
+        # Container is acquired and exec'd by the caller via _pool_popen /
+        # pool.exec_claude; we just return the CLI args.
         self._pool_claude_args = claude_args
-        # _pool_container_name is set by the caller (_stream_claude_code)
-        # which calls pool.acquire() and pool.exec_claude()
-        return claude_args  # just the claude args, caller handles docker exec
+        return claude_args

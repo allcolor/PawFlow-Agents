@@ -1247,8 +1247,16 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             return {"ok": True}
 
         if action == "script_hash":
-            # Return hash of current relay scripts for version check
-            _script_dir = os.path.dirname(os.path.abspath(__file__))
+            # Return hash of current relay scripts for version check.
+            # Scripts live at /opt/pawflow/*.py (bind-mounted from the
+            # host's tools/ in dev setups, or written there in legacy
+            # sync setups). __file__ points at the pawflow_relay
+            # PACKAGE dir (/opt/pawflow/pawflow_relay/), so the scripts
+            # are one level up. Using __file__'s own dir misses them
+            # all, returns an empty hash, triggers update_scripts which
+            # then hits EROFS on the read-only bind-mount.
+            _script_dir = os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))
             _h = hashlib.sha256()
             for _sf in ["pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py", "fs_screen.py", "fs_mcp.py"]:
                 _sp = os.path.join(_script_dir, _sf)
@@ -1258,22 +1266,36 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             return {"ok": True, "data": {"hash": _h.hexdigest()[:16]}}
 
         if action == "update_scripts":
-            # Receive updated relay scripts from server, write to script dir, hot-reload
+            # Receive updated relay scripts from server, write to script dir, hot-reload.
+            # Same path correction as script_hash: scripts live at
+            # /opt/pawflow/, not inside the pawflow_relay/ package.
             _scripts = msg.get("scripts", {})
             _new_hash = msg.get("script_hash", "")
             if not _scripts:
                 return {"ok": False, "error": "No scripts provided"}
-            _script_dir = os.path.dirname(os.path.abspath(__file__))
+            _script_dir = os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))
             _updated = []
+            _readonly_skipped = []
             for _fname, _content_b64 in _scripts.items():
                 if _fname not in ("pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
                                   "fs_screen.py", "fs_mcp.py"):
                     continue  # Only accept known relay files
                 _dst = os.path.join(_script_dir, _fname)
                 _data = base64.b64decode(_content_b64)
-                with open(_dst, "wb") as _f:
-                    _f.write(_data)
-                _updated.append(_fname)
+                try:
+                    with open(_dst, "wb") as _f:
+                        _f.write(_data)
+                    _updated.append(_fname)
+                except OSError as _e:
+                    # EROFS (errno 30): file is bind-mounted read-only
+                    # from the host in dev setups. The mount IS the
+                    # "update" — host edits are already visible. Skip
+                    # silently instead of failing the whole sync.
+                    if getattr(_e, "errno", 0) == 30:
+                        _readonly_skipped.append(_fname)
+                    else:
+                        raise
             # Hot-reload importable modules (not pawflow_relay.py itself)
             import importlib
             for _mod_name in ["fs_actions", "fs_exec", "fs_screen", "fs_mcp"]:
@@ -1283,9 +1305,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     except Exception as _e:
                         sys.stderr.write(f"[FSRelay] Failed to reload {_mod_name}: {_e}\n")
             _needs_restart = "pawflow_relay_launcher.py" in _updated
-            sys.stderr.write(f"[FSRelay] Scripts updated: {_updated} hash={_new_hash}"
-                             f"{' (restart needed)' if _needs_restart else ''}\n")
-            return {"ok": True, "data": {"updated": _updated, "needs_restart": _needs_restart}}
+            if _updated or _readonly_skipped:
+                sys.stderr.write(
+                    f"[FSRelay] Scripts updated={_updated} "
+                    f"readonly_skipped={_readonly_skipped} hash={_new_hash}"
+                    f"{' (restart needed)' if _needs_restart else ''}\n")
+            return {"ok": True, "data": {
+                "updated": _updated,
+                "readonly_skipped": _readonly_skipped,
+                "needs_restart": _needs_restart}}
 
         # Note: permission checks are enforced server-side by ToolApprovalGate.
         # (local_screen forwarding handled earlier, before desktop handlers)

@@ -494,12 +494,19 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         container = pool.acquire()
         _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         _session_dir = f"/cc_sessions/{_rel}"
-        # Pass API key / base URL to container if configured
+        # Pass API key / base URL / TLS skip to container if configured
         _extra = {}
         if _env.get("ANTHROPIC_API_KEY"):
             _extra["ANTHROPIC_API_KEY"] = _env["ANTHROPIC_API_KEY"]
         if _env.get("ANTHROPIC_BASE_URL"):
             _extra["ANTHROPIC_BASE_URL"] = _env["ANTHROPIC_BASE_URL"]
+        # NODE_TLS_REJECT_UNAUTHORIZED=0 is set by _claude_code_env only
+        # for HTTPS relay-proxy URLs pointing at a LAN IP with a self-
+        # signed cert. Without this passthrough the container still
+        # refuses the TLS handshake (self-signed cert not in the trust
+        # store) and CC surfaces "empty or malformed response (HTTP 200)".
+        if _env.get("NODE_TLS_REJECT_UNAUTHORIZED"):
+            _extra["NODE_TLS_REJECT_UNAUTHORIZED"] = _env["NODE_TLS_REJECT_UNAUTHORIZED"]
         proc = pool.exec_claude(
             container, _session_dir, cmd[1:],  # skip 'claude' binary
             extra_env=_extra or None,

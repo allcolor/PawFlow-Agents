@@ -1295,11 +1295,43 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         # This is the equivalent of "exec on host" for all tools — used by
         # http_fetch (LLM proxy) and any other tool that needs the user's
         # actual localhost / host network.
+        #
+        # STRICT: local=True is a contract, not a hint. If we can't honour
+        # it, we MUST fail loud. The previous fallthrough silently ran the
+        # action inside the relay container — which means
+        # `http_fetch("http://localhost:8080/")` hit the container's
+        # network namespace instead of the user's host. Repro: CC gets
+        # HTTP 200 with an empty/malformed body (whatever happens to
+        # listen on :8080 INSIDE the container, or an immediate EOF from
+        # the in-container proxy), qwen on the user's host sees zero
+        # requests, and the operator spends an afternoon hunting a ghost.
+        # Fail explicitly so the error surfaces as "host helper
+        # unavailable" rather than a misleading upstream error.
         if msg.get("local"):
             _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
-            if _hh and ws_sock_ref[0]:
-                _fwd = {k: v for k, v in msg.items() if k != "local"}
-                return _forward_to_host_helper(_hh, _fwd, ws_sock_ref[0], _ws_frame_send)
+            if not _hh:
+                return {
+                    "ok": False,
+                    "error": (
+                        "local=True requested but PAWFLOW_HOST_HELPER is "
+                        "not configured on the relay container. "
+                        "Host-forwarding is required for this action "
+                        "(e.g. http_fetch to the user's localhost). "
+                        "Restart the relay via the managed path so the "
+                        "host-helper thread starts and the env var is "
+                        "propagated."),
+                }
+            if not ws_sock_ref[0]:
+                return {
+                    "ok": False,
+                    "error": (
+                        "local=True requested but the relay's WS to the "
+                        "server is not alive — cannot stream progress "
+                        "back from the host helper."),
+                }
+            _fwd = {k: v for k, v in msg.items() if k != "local"}
+            return _forward_to_host_helper(
+                _hh, _fwd, ws_sock_ref[0], _ws_frame_send)
 
         from fs_actions import ACTIONS as _FS_ACTIONS
         handler_func = _FS_ACTIONS.get(action)

@@ -52,11 +52,17 @@ def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[st
             _port, _listener = _public[0]
         else:
             _port, _listener = next(iter(instances.items()))
-        # Always HTTP for the proxy URL: the listener supports both HTTP+HTTPS
-        # but the cert may be issued for a hostname (e.g. pawflow.allcolor.org)
-        # that doesn't match the LAN IP we expose. Traffic stays on the
-        # private network (private_only route restriction + token auth).
-        _scheme = "http"
+        # Mirror the listener's scheme: HTTPS when SSL is configured,
+        # HTTP otherwise. Previous hard-coded "http" broke HTTPS-only or
+        # TLS-peeking-but-HTTP-middleware-rejecting setups (CC saw 200
+        # + malformed body because the TLS-only listener sent back
+        # handshake garbage or an error page instead of proxying). CC
+        # runs in a Docker container that doesn't trust the self-signed
+        # LAN cert; _claude_code_env sets NODE_TLS_REJECT_UNAUTHORIZED=0
+        # when the proxy URL uses HTTPS so the container can still
+        # negotiate the connection. Traffic is still confined to the
+        # private network (route is private_only + token auth).
+        _scheme = "https" if getattr(_listener, "is_ssl", False) else "http"
     except Exception as e:
         logger.warning("HTTP listener lookup failed: %s", e)
         return None
@@ -491,6 +497,14 @@ class ClaudeCodeSessionMixin:
                 _base_url = re.sub(
                     r'(https?://)127\.0\.0\.1(:\d+)?', _repl, _base_url)
             env["ANTHROPIC_BASE_URL"] = _base_url
+            # HTTPS relay-proxy URLs hit PawFlow via a LAN IP whose
+            # self-signed cert isn't in the container's trust store.
+            # Claude CLI is Node-based and honours NODE_TLS_REJECT_UNAUTHORIZED=0
+            # to skip verification — safe here because the request
+            # stays on the private network (private_only route) and
+            # the ephemeral token is the real credential, not TLS.
+            if _base_url.startswith("https://") and "/relay-proxy/" in _base_url:
+                env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
             logger.info("Claude Code using custom endpoint: %s", _base_url)
         else:
             logger.info("Claude Code no custom base_url configured")

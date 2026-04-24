@@ -106,6 +106,12 @@ def _relay_proxy_handler(pending_req):
 
     target_url = f"{target_scheme}://{target_hostport}{target_path}"
     method = pending_req.method or "GET"
+    # Per-request log tag so concurrent flows are traceable.
+    _log_tag = f"relay-proxy[{request_id[:8]}]" if (
+        request_id := pending_req.path_params.get("token", "")[:8] or "?") else "relay-proxy"
+    logger.info("%s IN %s %s → forwarding via relay=%s target=%s",
+                 _log_tag, method, pending_req.request_path,
+                 relay_id, target_url)
 
     # Forward headers (minus hop-by-hop and Host)
     _drop = {"host", "connection", "content-length", "transfer-encoding",
@@ -120,21 +126,33 @@ def _relay_proxy_handler(pending_req):
     _queue_lock = threading.Lock()
     _queue_event = threading.Event()
     _done = threading.Event()
+    _stats = {"bytes": 0, "chunks": 0, "t0": 0.0}
 
     def _on_chunk(kind: str, data: Any):
         if kind == "start":
             _state["status"] = int(data.get("status", 200))
             _state["headers"] = dict(data.get("headers") or {})
+            import time as _t
+            _stats["t0"] = _t.monotonic()
+            logger.info("%s START status=%d headers=%d",
+                         _log_tag, _state["status"], len(_state["headers"]))
             _started.set()
         elif kind == "chunk":
             try:
                 raw = base64.b64decode(data) if isinstance(data, str) else data
             except Exception:
                 raw = b""
+            _stats["bytes"] += len(raw)
+            _stats["chunks"] += 1
             with _queue_lock:
                 _queue.append(raw)
             _queue_event.set()
         elif kind == "end":
+            import time as _t
+            _elapsed = _t.monotonic() - _stats["t0"] if _stats["t0"] else 0.0
+            logger.info("%s END bytes=%d chunks=%d elapsed=%.2fs status=%d",
+                         _log_tag, _stats["bytes"], _stats["chunks"],
+                         _elapsed, _state["status"])
             _done.set()
             _queue_event.set()
 

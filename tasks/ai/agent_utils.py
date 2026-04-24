@@ -155,22 +155,71 @@ class AgentUtilsMixin:
         Returns (client, service_id, resolved_svc) or (None, "", None).
         """
         svc_id = ""
+        # Diagnostic state: populated during conv-level lookup so a
+        # failed resolve can report *why* instead of just "no service".
+        # Without this, silent exceptions and empty configs were
+        # indistinguishable in the error trace.
+        _diag_all_agents: list = []
+        _diag_agent_found = False
+        _diag_conv_svc_raw = ""
+        _diag_conv_exc: Optional[str] = None
         # 1. Conv-level agent config
         if conversation_id and agent_name:
             try:
-                from core.conv_agent_config import get_agent_config
+                from core.conv_agent_config import (
+                    get_agent_config, get_all_agent_configs)
                 from core.expression import resolve_value
+                _all_cfgs = get_all_agent_configs(conversation_id) or {}
+                _diag_all_agents = list(_all_cfgs.keys())
+                # Case-insensitive membership check — get_agent_config
+                # does the same, but we want it for diagnostics even if
+                # the subsequent resolve_value raises.
+                _needle = (agent_name or "").lower()
+                _diag_agent_found = any(
+                    isinstance(_k, str) and _k.lower() == _needle
+                    for _k in _diag_all_agents)
                 acfg = get_agent_config(conversation_id, agent_name)
-                svc_id = resolve_value(acfg.get("llm_service", ""),
+                _diag_conv_svc_raw = acfg.get("llm_service", "") or ""
+                svc_id = resolve_value(_diag_conv_svc_raw,
                                        owner=user_id) or ""
-            except Exception:
-                pass
+            except Exception as _cvr_err:
+                # Don't swallow silently — a broken ${…} expression in
+                # the agent's llm_service or a malformed conv_agents
+                # entry used to disappear here, leaving only the "no
+                # service resolved" error with no clue as to cause.
+                _diag_conv_exc = f"{type(_cvr_err).__name__}: {_cvr_err}"
+                logger.warning(
+                    "[agent-resolve] conv-level lookup failed for "
+                    "agent '%s' in conv %s: %s",
+                    agent_name, (conversation_id or "")[:8],
+                    _diag_conv_exc, exc_info=True)
         # 2. Task default
+        _diag_task_svc = ""
         if not svc_id:
-            svc_id = self._resolve_service_param("llm_service", user_id)
+            _diag_task_svc = self._resolve_service_param(
+                "llm_service", user_id)
+            svc_id = _diag_task_svc
             if not svc_id:
+                # Hard fail with a self-contained diagnosis so the log
+                # line is enough to see what went wrong (previously the
+                # user had to instrument the code to find out whether
+                # the agent was missing from conv_agents, had an empty
+                # llm_service, or had an unresolvable ${…} expression).
                 raise RuntimeError(
-                    "No llm_service resolved. Check conv_agents config, flow params, or global parameters.")
+                    "No llm_service resolved for agent {!r} in conv "
+                    "{!r} (user {!r}). "
+                    "conv_agents keys={!r}; "
+                    "agent_found_in_conv_agents={}; "
+                    "conv_level_llm_service_raw={!r}; "
+                    "conv_lookup_exc={!r}; "
+                    "task_default_llm_service={!r}. "
+                    "Check conv_agents config, flow params, or global "
+                    "parameters.".format(
+                        agent_name, (conversation_id or "")[:8],
+                        user_id or "",
+                        _diag_all_agents, _diag_agent_found,
+                        _diag_conv_svc_raw, _diag_conv_exc,
+                        _diag_task_svc))
         client, svc = self._resolve_llm_service(svc_id, user_id, conversation_id)
         return client, svc_id, svc
 

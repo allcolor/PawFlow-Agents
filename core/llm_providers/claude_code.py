@@ -24,6 +24,13 @@ from core.cc_live_registry import CCLiveSession, LiveSessionRegistry
 # alive between turns and reuse the stream-json stdin/stdout.
 _LIVE_REUSE_ENABLED = os.environ.get("PAWFLOW_CC_LIVE_REUSE", "0") == "1"
 
+# Sentinel pushed onto the per-session event queue when the reader daemon
+# exits (proc stdout EOF). Module-level so the SAME object identity holds
+# across turns for a reused session — the dispatch loop does `event is
+# _CC_READER_EOF` to break; a new sentinel per turn would wrongly treat
+# the ORIGINAL reader's EOF as a regular event.
+_CC_READER_EOF = object()
+
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin, _get_sessions_base
 
 logger = logging.getLogger(__name__)
@@ -758,6 +765,184 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             logger.warning("[claude-code] catch-up failed: %s", e)
             return ""
 
+    def _spawn_cc_stream(self, workdir: str, user_id: str, conv_id: str,
+                         agent_name: str, session_id: str, model):
+        """Spawn a fresh Claude Code subprocess (CC container exec + CLI).
+
+        Extracted from _stream_claude_code so the live-session reuse path
+        can skip spawning and pull proc + mcp token from a cached session.
+        This is a pure move; behavior is identical when called.
+
+        Writes .mcp.json + mints an internal-auth token, computes the
+        effective --resume session id (dropped if the jsonl is missing),
+        scrubs legacy image placeholders in the resumed jsonl, builds the
+        CLI command, and launches via the pool.
+
+        Side effects:
+            - self._claude_proc  (unless _ephemeral_stream)
+            - self._pool_container_name
+            - self._cc_container_pid (= 0 initially; drain thread fills it)
+            - self._stderr_buffer
+            - proc._pf_container / proc._pf_pid
+            - Starts a daemon cc-stderr-drain thread.
+
+        Returns: (proc, pool_container_name, mcp_internal_token).
+        """
+        from core.llm_client import LLMClientError
+        mcp_path, _mcp_internal_token = self._setup_mcp_config(
+            workdir, user_id, conv_id, agent_name)
+        _containerize = getattr(self, 'containerize', False)
+
+        # In pool mode, the per-exec mount-namespace binds /cc_sessions/<user>
+        # over /cc_sessions; CC's working directory is /cc_sessions/<conv>/<agent>.
+        # MCP config path inside that namespace = workdir basename joined to it.
+        _mcp_arg = mcp_path
+        if _containerize and mcp_path:
+            _rel_no_user = os.path.relpath(
+                workdir, _get_sessions_base()).replace("\\", "/").split("/", 1)[-1]
+            _container_workdir = f"/cc_sessions/{_rel_no_user}"
+            _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
+        else:
+            _container_workdir = workdir
+
+        # Gate --resume on the jsonl actually existing at the expected
+        # path. If it doesn't, CC would silently create a NEW empty
+        # session under the same sid and we'd lose all history without
+        # any error. Fall back to a true NEW session (drop --resume),
+        # which is a well-defined state the caller can detect via the
+        # SESSION MISMATCH check downstream.
+        _effective_session_id = session_id
+        _expected_session_file = ""
+        _exists = False
+        if session_id:
+            _proj_key = self._cc_project_key(workdir, _containerize)
+            _expected_session_file = os.path.join(
+                workdir, "projects", _proj_key, f"{session_id}.jsonl")
+            _exists = os.path.exists(_expected_session_file)
+            _size = os.path.getsize(_expected_session_file) if _exists else 0
+            if _exists:
+                logger.info(
+                    "claude-code RESUME: session_id=%s file_size=%d path=%s",
+                    session_id, _size, _expected_session_file)
+            else:
+                logger.warning(
+                    "claude-code NEW (resume jsonl MISSING at expected path): "
+                    "session_id=%s expected=%s — dropping --resume, "
+                    "starting fresh CC session",
+                    session_id, _expected_session_file)
+                _effective_session_id = ""
+
+        cmd = self._build_claude_cmd(model, _effective_session_id,
+                                     mcp_config_path=_mcp_arg,
+                                     workdir=workdir)
+
+        logger.info("claude-code stream: cwd=%s, containerize=%s, cmd=%s",
+                     workdir, _containerize, " ".join(str(c) for c in cmd[:20]))
+        # Scrub legacy [image: image_<ts>_<n>.<ext>] placeholders from
+        # user text fields. These were written before the vision-
+        # placeholder fix and make the agent pattern-match "image
+        # attached → call see() with this filename" on every new
+        # user turn. The image bytes are still forwarded via the
+        # native vision channel, so stripping the text reference is
+        # purely cosmetic for the transcript AND prevents the bogus
+        # see() calls. Only meaningful when we actually --resume an
+        # existing jsonl; skip for NEW sessions.
+        if session_id and _exists:
+            try:
+                self._scrub_legacy_image_placeholders(_expected_session_file)
+            except Exception as _scrub_err:
+                logger.warning("[claude-code] session scrub failed (%s): %s",
+                               session_id[:8], _scrub_err)
+
+        # Track pool container for cleanup
+        self._pool_container_name = None
+
+        try:
+            proc, self._pool_container_name = self._pool_popen(
+                workdir, cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+            )
+            # Ephemeral streams (btw) don't register proc — they don't
+            # need preempt/cancel and must not overwrite the main agent's proc.
+            if not getattr(self, '_ephemeral_stream', False):
+                self._claude_proc = proc
+            # Per-stream session info pinned on the proc object. The
+            # provider instance is a SINGLETON shared across concurrent
+            # streams (main agent, compact, memory_extract, btw, sub-agents);
+            # storing container name / container PID on `self` means any
+            # later-spawned stream clobbers the in-flight one's tracking
+            # state. Pinning to `proc` ties the info to the exact subprocess
+            # the kill targets, so clobbers on `self` don't matter. Drain
+            # thread updates proc._pf_pid in place.
+            proc._pf_container = self._pool_container_name
+            proc._pf_pid = 0
+            # Keep self.* mirrors for the codepath that still reads them
+            # (cancel_claude_code force-stop, cleanup_proc) — but treat them
+            # as best-effort hints, not authoritative for kill.
+            self._cc_container_pid = 0
+            self._stderr_buffer = []
+            def _drain_stderr():
+                try:
+                    for _line in proc.stderr:
+                        # setsid --wait prints "setsid: child NN did not
+                        # exit normally: Success" whenever the session
+                        # leader is SIGKILL'd. Our _kill_cc_hard ALWAYS
+                        # uses SIGKILL (it IS the kill mechanism), so
+                        # this message fires on every clean compact/
+                        # cancel. Keeping it in _stderr_buffer poisons
+                        # the "Claude CLI stream exited ...: <stderr>"
+                        # exception string, which the outer retry logic
+                        # then has to special-case. Drop it at the source.
+                        if (_line.startswith("setsid: child ")
+                                and "did not exit normally" in _line):
+                            continue
+                        # __PF_CLAUDE_PID=<pid>\n is the shell wrapper's
+                        # spawn-time preamble. We capture it into
+                        # proc._pf_pid below, log it at INFO as "captured
+                        # container PID=<pid>", and that's the only value
+                        # it has. Keeping the raw line in _stderr_buffer
+                        # means every clean post-kill log surfaces as
+                        # "Claude CLI stderr: __PF_CLAUDE_PID=<pid>" at
+                        # ERROR level — misleading (no error, just a
+                        # leftover PID dump). Drop it after capture.
+                        if '__PF_CLAUDE_PID=' in _line:
+                            if not proc._pf_pid:
+                                try:
+                                    _pid_str = _line.split(
+                                        '__PF_CLAUDE_PID=', 1)[1].strip()
+                                    _pid_int = int(_pid_str)
+                                    proc._pf_pid = _pid_int
+                                    self._cc_container_pid = _pid_int
+                                    logger.info(
+                                        "[claude-code] captured container PID=%d "
+                                        "(container=%s)",
+                                        _pid_int, proc._pf_container)
+                                except Exception:
+                                    logger.debug("exception suppressed", exc_info=True)
+                            continue
+                        self._stderr_buffer.append(_line)
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
+            import threading as _th
+            _th.Thread(target=_drain_stderr, daemon=True,
+                       name="cc-stderr-drain").start()
+        except FileNotFoundError:
+            _bin = "docker" if _containerize else self.claude_binary
+            if self._pool_container_name:
+                from core.claude_code_pool import ClaudeCodePool
+                ClaudeCodePool.instance().release(self._pool_container_name)
+                self._pool_container_name = None
+            raise LLMClientError(
+                f"Binary '{_bin}' not found. "
+                + ("Install Docker Desktop." if _containerize
+                   else "Install with: npm install -g @anthropic-ai/claude-code"))
+
+        return proc, self._pool_container_name, _mcp_internal_token
+
     def _stream_claude_code(
         self, messages, model, temperature, max_tokens, tools, callback=None,
         turn_callback=None, block_callback=None, _is_auth_retry=False,
@@ -845,161 +1030,47 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     self._current_pool_index)
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
-        mcp_path, _mcp_internal_token = self._setup_mcp_config(
-            workdir, user_id, conv_id, agent_name)
-        _containerize = getattr(self, 'containerize', False)
-
-        # In pool mode, the per-exec mount-namespace binds /cc_sessions/<user>
-        # over /cc_sessions; CC's working directory is /cc_sessions/<conv>/<agent>.
-        # MCP config path inside that namespace = workdir basename joined to it.
-        _mcp_arg = mcp_path
-        if _containerize and mcp_path:
-            _rel_no_user = os.path.relpath(
-                workdir, _get_sessions_base()).replace("\\", "/").split("/", 1)[-1]
-            _container_workdir = f"/cc_sessions/{_rel_no_user}"
-            _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
-        else:
-            _container_workdir = workdir
-
-        # Gate --resume on the jsonl actually existing at the expected
-        # path. If it doesn't, CC would silently create a NEW empty
-        # session under the same sid and we'd lose all history without
-        # any error. Fall back to a true NEW session (drop --resume),
-        # which is a well-defined state the caller can detect via the
-        # SESSION MISMATCH check downstream.
-        _effective_session_id = session_id
-        _expected_session_file = ""
-        _exists = False
-        if session_id:
-            _proj_key = self._cc_project_key(workdir, _containerize)
-            _expected_session_file = os.path.join(
-                workdir, "projects", _proj_key, f"{session_id}.jsonl")
-            _exists = os.path.exists(_expected_session_file)
-            _size = os.path.getsize(_expected_session_file) if _exists else 0
-            if _exists:
-                logger.info(
-                    "claude-code RESUME: session_id=%s file_size=%d path=%s",
-                    session_id, _size, _expected_session_file)
-            else:
-                logger.warning(
-                    "claude-code NEW (resume jsonl MISSING at expected path): "
-                    "session_id=%s expected=%s — dropping --resume, "
-                    "starting fresh CC session",
-                    session_id, _expected_session_file)
-                _effective_session_id = ""
-
-        cmd = self._build_claude_cmd(model, _effective_session_id,
-                                     mcp_config_path=_mcp_arg,
-                                     workdir=workdir)
-
-        logger.info("claude-code stream: cwd=%s, containerize=%s, cmd=%s",
-                     workdir, _containerize, " ".join(str(c) for c in cmd[:20]))
-        # Scrub legacy [image: image_<ts>_<n>.<ext>] placeholders from
-        # user text fields. These were written before the vision-
-        # placeholder fix and make the agent pattern-match "image
-        # attached → call see() with this filename" on every new
-        # user turn. The image bytes are still forwarded via the
-        # native vision channel, so stripping the text reference is
-        # purely cosmetic for the transcript AND prevents the bogus
-        # see() calls. Only meaningful when we actually --resume an
-        # existing jsonl; skip for NEW sessions.
-        if session_id and _exists:
-            try:
-                self._scrub_legacy_image_placeholders(_expected_session_file)
-            except Exception as _scrub_err:
-                logger.warning("[claude-code] session scrub failed (%s): %s",
-                               session_id[:8], _scrub_err)
-
-        # Track pool container for cleanup
-        self._pool_container_name = None
         _auth_retried = _is_auth_retry
 
-        try:
-            proc, self._pool_container_name = self._pool_popen(
-                workdir, cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-            )
-            # Ephemeral streams (btw) don't register proc — they don't
-            # need preempt/cancel and must not overwrite the main agent's proc.
-            if not getattr(self, '_ephemeral_stream', False):
-                self._claude_proc = proc
-            # Per-stream session info pinned on the proc object. The
-            # provider instance is a SINGLETON shared across concurrent
-            # streams (main agent, compact, memory_extract, btw, sub-agents);
-            # storing container name / container PID on `self` means any
-            # later-spawned stream clobbers the in-flight one's tracking
-            # state (line 897 resets `_pool_container_name=None`, line 920
-            # resets `_cc_container_pid=0`). When _kill_cc_hard fires, it
-            # then reads zeros and skips — CC CLI orphans inside the pool
-            # container. Pinning to `proc` ties the info to the exact
-            # subprocess the kill targets, so clobbers on `self` don't
-            # matter. Drain thread updates proc._pf_pid in place.
-            proc._pf_container = self._pool_container_name
-            proc._pf_pid = 0
-            # Keep self.* mirrors for the codepath that still reads them
-            # (cancel_claude_code force-stop, cleanup_proc) — but treat them
-            # as best-effort hints, not authoritative for kill.
-            self._cc_container_pid = 0
-            self._stderr_buffer = []
-            def _drain_stderr():
-                try:
-                    for _line in proc.stderr:
-                        # setsid --wait prints "setsid: child NN did not
-                        # exit normally: Success" whenever the session
-                        # leader is SIGKILL'd. Our _kill_cc_hard ALWAYS
-                        # uses SIGKILL (it IS the kill mechanism), so
-                        # this message fires on every clean compact/
-                        # cancel. Keeping it in _stderr_buffer poisons
-                        # the "Claude CLI stream exited ...: <stderr>"
-                        # exception string, which the outer retry logic
-                        # then has to special-case. Drop it at the source.
-                        if (_line.startswith("setsid: child ")
-                                and "did not exit normally" in _line):
-                            continue
-                        # __PF_CLAUDE_PID=<pid>\n is the shell wrapper's
-                        # spawn-time preamble. We capture it into
-                        # proc._pf_pid below, log it at INFO as "captured
-                        # container PID=<pid>", and that's the only value
-                        # it has. Keeping the raw line in _stderr_buffer
-                        # means every clean post-kill log surfaces as
-                        # "Claude CLI stderr: __PF_CLAUDE_PID=<pid>" at
-                        # ERROR level — misleading (no error, just a
-                        # leftover PID dump). Drop it after capture.
-                        if '__PF_CLAUDE_PID=' in _line:
-                            if not proc._pf_pid:
-                                try:
-                                    _pid_str = _line.split(
-                                        '__PF_CLAUDE_PID=', 1)[1].strip()
-                                    _pid_int = int(_pid_str)
-                                    proc._pf_pid = _pid_int
-                                    self._cc_container_pid = _pid_int
-                                    logger.info(
-                                        "[claude-code] captured container PID=%d "
-                                        "(container=%s)",
-                                        _pid_int, proc._pf_container)
-                                except Exception:
-                                    logger.debug("exception suppressed", exc_info=True)
-                            continue
-                        self._stderr_buffer.append(_line)
-                except Exception:
-                    logger.debug("exception suppressed", exc_info=True)
-            import threading as _th
-            _th.Thread(target=_drain_stderr, daemon=True,
-                       name="cc-stderr-drain").start()
-        except FileNotFoundError:
-            _bin = "docker" if _containerize else self.claude_binary
-            if self._pool_container_name:
-                from core.claude_code_pool import ClaudeCodePool
-                ClaudeCodePool.instance().release(self._pool_container_name)
-                self._pool_container_name = None
-            raise LLMClientError(
-                f"Binary '{_bin}' not found. "
-                + ("Install Docker Desktop." if _containerize
-                   else "Install with: npm install -g @anthropic-ai/claude-code"))
+        # Live-session reuse: look up a warm CC process pinned by
+        # (user, conv, agent, service, pool_idx). A hit skips the spawn
+        # (mcp setup, container exec, CC startup, --resume load) and
+        # pushes the new user message onto the existing stdin. A miss
+        # (or a dead proc — auto-evicted by get()) falls through to
+        # _spawn_cc_stream as before. Ephemeral streams (compact /
+        # memory_extract / btw) never reuse: they're short-lived by
+        # design and must not inherit nor leak another stream's proc.
+        _svc_id = getattr(self, '_agent_service', '') or 'default'
+        _svc_pool_idx = int(getattr(self, '_current_pool_index', -1) or -1)
+        _is_ephemeral = bool(getattr(self, '_ephemeral_stream', False))
+        _live_reg = (LiveSessionRegistry.instance()
+                     if _LIVE_REUSE_ENABLED else None)
+        _live_key = None
+        _live_session: Optional[CCLiveSession] = None
+        if _live_reg is not None and conv_id and not _is_ephemeral:
+            _live_key = (user_id, conv_id, agent_name or 'default',
+                         _svc_id, _svc_pool_idx)
+            _live_session = _live_reg.get(_live_key)
+        _is_reuse = _live_session is not None
+
+        if _is_reuse:
+            proc = _live_session.proc
+            self._pool_container_name = _live_session.pool_container
+            _mcp_internal_token = _live_session.mcp_internal_token
+            # Non-ephemeral by construction (see guard above); mirror the
+            # spawn path's self._claude_proc assignment so preempt /
+            # cancel_claude_code targets the reused process.
+            self._claude_proc = proc
+            logger.info(
+                "[cc-live] REUSE %s/%s/%s@%s#%d (reuse_count=%d, "
+                "lived=%.1fs)",
+                user_id[:6], conv_id[:8], agent_name or 'default',
+                _svc_id, _svc_pool_idx, _live_session.reuse_count,
+                time.monotonic() - _live_session.spawn_at)
+        else:
+            proc, self._pool_container_name, _mcp_internal_token = (
+                self._spawn_cc_stream(workdir, user_id, conv_id, agent_name,
+                                      session_id, model))
 
         # Multi-agent catch-up: when resuming a session, inject messages
         # from other agents that CC hasn't seen (arrived after CC's last turn)
@@ -1505,15 +1576,33 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # Heartbeat state for observability — updated by the main event
         # loop so the watchdog (and anyone reading logs) can see WHERE
         # we are when nothing moves for long stretches.
-        _hb_state = {
-            "last_event_ts": 0.0,       # time.monotonic() of last stdout line read
-            "last_event_kind": "",      # 'assistant', 'user', 'system', 'result', ...
-            "last_dispatched_tc": "",   # last tool_use dispatched (id + name)
-            "last_tool_result_id": "",  # last tool_result received
-            "stream_line_count": 0,     # total lines read from CC stdout
-            "last_turn_flush_ts": 0.0,  # monotonic of last _flush_turn
-            "stdin_closed": False,      # True once we sent EOF on stdin
-        }
+        #
+        # On reuse we share the session's hb_state dict by reference so
+        # the original reader daemon (captured at spawn time) keeps
+        # writing into the SAME object this turn's watchdog reads. We
+        # reset the per-turn counters in place rather than allocating a
+        # fresh dict, which would orphan the reader's closure.
+        if _is_reuse and _live_session.hb_state is not None:
+            _hb_state = _live_session.hb_state
+            _hb_state.update({
+                "last_event_ts": 0.0,
+                "last_event_kind": "",
+                "last_dispatched_tc": "",
+                "last_tool_result_id": "",
+                "stream_line_count": 0,
+                "last_turn_flush_ts": 0.0,
+                "stdin_closed": False,
+            })
+        else:
+            _hb_state = {
+                "last_event_ts": 0.0,       # time.monotonic() of last stdout line read
+                "last_event_kind": "",      # 'assistant', 'user', 'system', 'result', ...
+                "last_dispatched_tc": "",   # last tool_use dispatched (id + name)
+                "last_tool_result_id": "",  # last tool_result received
+                "stream_line_count": 0,     # total lines read from CC stdout
+                "last_turn_flush_ts": 0.0,  # monotonic of last _flush_turn
+                "stdin_closed": False,      # True once we sent EOF on stdin
+            }
         # Sentinel-session EOF nudge: after _SENTINEL_EOF_INTERVAL
         # seconds of silence on a _compact/_memory_extract session,
         # close proc.stdin to signal EOF to CC. CC interprets this as
@@ -1643,7 +1732,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # reuse (PR-2) where the reader survives across turns while
         # each turn drains events from the same queue.
         _event_q: queue.Queue = queue.Queue()
-        _READER_EOF = object()
 
         def _reader_daemon():
             try:
@@ -1672,7 +1760,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             except Exception as _re_err:
                 logger.debug("[cc-reader] stdout read failed: %s", _re_err)
             finally:
-                _event_q.put(_READER_EOF)
+                _event_q.put(_CC_READER_EOF)
 
         _reader_thread = threading.Thread(
             target=_reader_daemon, daemon=True, name="cc-reader")
@@ -1681,7 +1769,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         try:
             while True:
                 event = _event_q.get()
-                if event is _READER_EOF:
+                if event is _CC_READER_EOF:
                     break
 
                 etype = event.get("type", "")

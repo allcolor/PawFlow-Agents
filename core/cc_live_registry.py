@@ -162,7 +162,7 @@ class LiveSessionRegistry:
     # ── Idle sweeper ────────────────────────────────────────
 
     def ensure_sweeper(self, tick_seconds: int = 60,
-                       idle_ttl_seconds: int = 3600,
+                       idle_ttl_seconds: int = 1800,
                        killer=None) -> None:
         """Start the idle sweeper thread (idempotent).
 

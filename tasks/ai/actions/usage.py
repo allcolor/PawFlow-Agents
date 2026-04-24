@@ -146,7 +146,36 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                     })
         except Exception:
             pass
-        flowfile.set_content(json.dumps({"active": active}).encode())
+
+        # Live Claude Code sessions — enrich active rows with cc_live
+        # telemetry (badge/button in active_agents.js) and surface
+        # sessions that are live but idle between turns (proc kept warm
+        # by the registry, waiting for the next user message).
+        cc_live_list = []
+        try:
+            from core.cc_live_registry import LiveSessionRegistry
+            _cc_entries = [
+                e for e in LiveSessionRegistry.instance().status()
+                if e.get("conv_id") == conv_id
+            ]
+            # Index by agent for O(1) enrichment.
+            _by_agent = {e["agent_name"]: e for e in _cc_entries}
+            for row in active:
+                _aname = row.get("agent_name")
+                _ent = _by_agent.get(_aname)
+                if _ent:
+                    row["cc_live"] = bool(_ent.get("live"))
+                    row["cc_idle_seconds"] = _ent.get("idle_seconds", 0)
+                    row["cc_reuse_count"] = _ent.get("reuse_count", 0)
+                    row["cc_lived_seconds"] = _ent.get("lived_seconds", 0)
+            cc_live_list = _cc_entries
+        except Exception:
+            logger.debug("cc_live enrichment failed", exc_info=True)
+
+        flowfile.set_content(json.dumps({
+            "active": active,
+            "cc_live": cc_live_list,
+        }).encode())
         return [flowfile]
 
     if action == "get_usage":

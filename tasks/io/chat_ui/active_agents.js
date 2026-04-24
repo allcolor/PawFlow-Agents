@@ -183,8 +183,29 @@ function updateActivePanel() {
     if (ctxMax > 0) {
       ctxHtml = renderCtxGauge({ used: ctxUsed, max: ctxMax, pct: ctxPct }, { width: 60 });
     }
+    // Live-session badge + restart button: only shown when CC is reusing
+    // a warm process for this agent. Tooltip surfaces lived / reuse
+    // count so the user knows how much state is being preserved before
+    // they decide to restart.
+    let liveBadge = '';
+    let restartBtn = '';
+    if (info.ccLive) {
+      const lived = Math.round(info.ccLivedSeconds || 0);
+      const livedStr = lived < 60 ? lived + 's'
+        : Math.floor(lived / 60) + 'm' + (lived % 60) + 's';
+      const liveTitle = 'Claude Code reused (lived ' + livedStr
+        + ', reuse #' + (info.ccReuseCount || 0) + ')';
+      liveBadge = '<span class="a-cc-live" title="' + liveTitle
+        + '" style="display:inline-block;padding:1px 5px;margin-right:4px;'
+        + 'font-size:9px;font-weight:bold;color:#0f0;border:1px solid #0f0;'
+        + 'border-radius:3px;vertical-align:middle;">LIVE</span>';
+      restartBtn = '<button class="btn-cc-restart" title="Restart CC (kill warm session)"'
+        + ' onclick="ccRestartSingle(\'' + escapeHtml(apiName) + '\')"'
+        + '>&#x21BB;</button>';
+    }
     return '<div class="active-row">'
       + '<span class="a-spinner" style="color:' + color + '">\u2733</span>'
+      + liveBadge
       + '<span class="a-name" style="color:' + color + '">' + escapeHtml(displayName) + '</span>'
       + '<span class="a-msg">' + preview + '</span>'
       + '<span class="a-status">' + escapeHtml(statusText) + '</span>'
@@ -192,6 +213,7 @@ function updateActivePanel() {
       + '<span class="a-time">' + timeStr + '</span>'
       + '<span class="a-actions">'
       + '<button title="Interrupt (force answer)" onclick="interruptSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x23F8;</button>'
+      + restartBtn
       + '<button class="btn-stop" title="Stop" onclick="stopSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x25A0;</button>'
       + '</span></div>';
   }).join('');
@@ -243,6 +265,12 @@ function syncActiveFromServer() {
         contextUsed: existing ? existing.contextUsed : 0,
         contextMax: existing ? existing.contextMax : 0,
         contextPct: existing ? existing.contextPct : 0,
+        // Claude Code live-session reuse telemetry (PAWFLOW_CC_LIVE_REUSE=1).
+        // Fields are undefined when the flag is off — treat absence as "not live".
+        ccLive: !!a.cc_live,
+        ccReuseCount: a.cc_reuse_count || 0,
+        ccLivedSeconds: a.cc_lived_seconds || 0,
+        ccIdleSeconds: a.cc_idle_seconds || 0,
         updatedAt: now,
       };
       // Hydrate persistent cache from server's persisted context_usage so the
@@ -289,5 +317,23 @@ function stopSingle(agentName, taskId) {
   // Optimistic removal — server will confirm on next poll
   const key = taskId ? agentKey(agentName + '::' + taskId) : agentKey(agentName);
   delete activeInteractions[key];
+  updateActivePanel();
+}
+
+// Kill the warm Claude Code subprocess for a specific agent in this
+// conv. Next turn will spawn fresh. Server-side no-op when
+// PAWFLOW_CC_LIVE_REUSE is off.
+function ccRestartSingle(agentName) {
+  if (!conversationId || !agentName) return;
+  fireAction('cc_restart', { agent_name: agentName });
+  // Optimistically clear the live badge — the server poll will
+  // authoritatively refresh it (to absent) within a few seconds.
+  const key = agentKey(agentName);
+  const info = activeInteractions[key];
+  if (info) {
+    info.ccLive = false;
+    info.ccReuseCount = 0;
+    info.ccLivedSeconds = 0;
+  }
   updateActivePanel();
 }

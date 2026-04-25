@@ -141,7 +141,11 @@ def test_format_includes_all_sections():
     assert "qwen" in out
 
 
-def test_merge_accumulates_counts_and_dedups_lists():
+def test_merge_keeps_only_last_bucket_for_file_fields():
+    # edits / reads / creates / deletes mirror the most recent bucket only.
+    # Earlier buckets contribute via the narrative summary, not via the
+    # structured trace — otherwise rollups re-accumulate forever and
+    # the tool_trace ballooned (observed thousands of stale entries).
     a = {"edits": {"foo.py": 2}, "creates": ["new.py"], "reads": {"z.py": 1},
          "deletes": [], "commands": [{"cmd": "c1", "result": ""}],
          "delegations": []}
@@ -149,11 +153,45 @@ def test_merge_accumulates_counts_and_dedups_lists():
          "reads": {"z.py": 2, "w.py": 1}, "deletes": ["gone.py"],
          "commands": [{"cmd": "c2", "result": ""}], "delegations": []}
     merged = merge_traces([a, b])
-    assert merged["edits"] == {"foo.py": 5, "bar.py": 1}
-    assert merged["creates"] == ["new.py", "other.py"]  # dedup preserves order
-    assert merged["reads"] == {"z.py": 3, "w.py": 1}
+    # File-touch fields snap to the last bucket — no accumulation.
+    assert merged["edits"] == {"foo.py": 3, "bar.py": 1}
+    assert merged["creates"] == ["new.py", "other.py"]
+    assert merged["reads"] == {"z.py": 2, "w.py": 1}
     assert merged["deletes"] == ["gone.py"]
+    # commands / delegations still concat — they're append-only signal.
     assert [c["cmd"] for c in merged["commands"]] == ["c1", "c2"]
+
+
+def test_merge_drops_earlier_bucket_file_activity():
+    # Concrete repro of the bug the user hit: file-edit counters that
+    # only appear in the older bucket must NOT survive the rollup.
+    old = {"edits": {"only_in_old.py": 99},
+           "creates": ["old_create.py"],
+           "reads": {"old_read.py": 50},
+           "deletes": ["old_delete.py"],
+           "commands": [], "delegations": []}
+    new = {"edits": {"recent.py": 1},
+           "creates": ["recent_create.py"],
+           "reads": {"recent_read.py": 1},
+           "deletes": [],
+           "commands": [], "delegations": []}
+    merged = merge_traces([old, new])
+    assert merged["edits"] == {"recent.py": 1}
+    assert merged["creates"] == ["recent_create.py"]
+    assert merged["reads"] == {"recent_read.py": 1}
+    assert merged["deletes"] == []
+    assert "only_in_old.py" not in merged["edits"]
+    assert "old_create.py" not in merged["creates"]
+
+
+def test_merge_empty_input_yields_empty_trace():
+    merged = merge_traces([])
+    assert merged["edits"] == {}
+    assert merged["creates"] == []
+    assert merged["reads"] == {}
+    assert merged["deletes"] == []
+    assert merged["commands"] == []
+    assert merged["delegations"] == []
 
 
 def test_merge_caps_commands_and_delegations_to_most_recent():

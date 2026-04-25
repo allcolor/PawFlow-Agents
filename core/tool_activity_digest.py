@@ -289,55 +289,49 @@ def merge_traces(traces: Iterable[Dict[str, Any]],
                  max_delegations: int = _MERGE_MAX_DELEGATIONS
                  ) -> Dict[str, Any]:
     """Consolidate N structured traces into one. Used at rollup time
-    when multiple level-1 buckets collapse into a single SB. Counts
-    sum, lists deduplicate while preserving first-seen order.
+    when multiple level-1 buckets collapse into a single SB.
 
-    commands and delegations are capped to the most recent N entries
-    (keeps the tail) so the merged trace stays bounded across successive
-    rollups — otherwise every rollup accumulates all historical tool
-    activity forever.
+    Bounding strategy (must be applied to ALL fields, not just commands /
+    delegations — prior versions accumulated edits/creates/reads/deletes
+    forever and the tool_trace ballooned across successive rollups):
+
+    - edits / reads (Counters), creates / deletes (de-duped lists):
+      keep ONLY the most recent input bucket's snapshot. The narrative
+      summary captures the older activity; the structured trace stays
+      bounded by mirroring whatever the latest bucket held. Earlier
+      buckets' file-touch counts would otherwise re-accumulate at every
+      rollup.
+    - commands / delegations (append-only lists):
+      concatenate then tail-cap. These are intentionally not de-duped
+      (the same command running 50x is signal), so we keep the most
+      recent N entries.
     """
-    edits: Counter = Counter()
-    reads: Counter = Counter()
-    creates: List[str] = []
-    deletes: List[str] = []
+    traces_list = [t for t in traces if isinstance(t, dict)]
+
+    last_trace: Dict[str, Any] = traces_list[-1] if traces_list else {}
+    last_edits = dict(last_trace.get("edits") or {})
+    last_reads = dict(last_trace.get("reads") or {})
+    last_creates = list(last_trace.get("creates") or [])
+    last_deletes = list(last_trace.get("deletes") or [])
+
     commands: List[Dict[str, str]] = []
     delegations: List[Dict[str, str]] = []
-
-    _seen_creates = set()
-    _seen_deletes = set()
-
-    for t in traces:
-        if not isinstance(t, dict):
-            continue
-        for p, c in (t.get("edits") or {}).items():
-            edits[p] += int(c)
-        for p, c in (t.get("reads") or {}).items():
-            reads[p] += int(c)
-        for p in (t.get("creates") or []):
-            if p not in _seen_creates:
-                _seen_creates.add(p)
-                creates.append(p)
-        for p in (t.get("deletes") or []):
-            if p not in _seen_deletes:
-                _seen_deletes.add(p)
-                deletes.append(p)
+    for t in traces_list:
         for cmd in (t.get("commands") or []):
             commands.append(cmd)
         for d in (t.get("delegations") or []):
             delegations.append(d)
 
-    # Keep the tail so the most recent activity survives across rollups.
     if len(commands) > max_commands:
         commands = commands[-max_commands:]
     if len(delegations) > max_delegations:
         delegations = delegations[-max_delegations:]
 
     return {
-        "edits": dict(edits),
-        "creates": creates,
-        "reads": dict(reads),
-        "deletes": deletes,
+        "edits": last_edits,
+        "creates": last_creates,
+        "reads": last_reads,
+        "deletes": last_deletes,
         "commands": commands,
         "delegations": delegations,
     }

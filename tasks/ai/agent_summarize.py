@@ -641,16 +641,15 @@ class AgentSummarizeMixin:
                 "BUG: user_id is required for CC-based summarization "
                 "(every conversation belongs to a user)")
 
-        # Identity for this compact: passed via call_* kwargs to
-        # complete_stream — no longer mutates the shared client. The
-        # only state still on `self` for the duration of the compact
-        # is pool-tracking (proc/container name/PID) which the cleanup
-        # path resets to None/0; we save/restore those so main's
-        # send_user_message and force-stop discovery survive.
+        # Compact runs on its OWN cloned client. Each Claude Code
+        # stream already has its own Docker container; the Python
+        # orchestration state (proc/container/pid/result_emitted/
+        # compacting/preempt_*/stderr_buffer/...) must also be its
+        # own — otherwise a concurrent compact/memory/btw stream
+        # clobbers the main agent's tracking simply by writing
+        # attributes on a shared singleton.
         _inner = getattr(client, '_client', client)
-        _saved_claude_proc = getattr(_inner, '_claude_proc', None)
-        _saved_pool_name = getattr(_inner, '_pool_container_name', None)
-        _saved_cc_pid = getattr(_inner, '_cc_container_pid', 0)
+        _compact_client = _inner.clone_for_call()
 
         _compact_call_kwargs = {
             "call_user_id": user_id,
@@ -675,7 +674,7 @@ class AgentSummarizeMixin:
                 _stream_response = None
                 _stream_exc = None
                 try:
-                    _stream_response = client.complete_stream(
+                    _stream_response = _compact_client.complete_stream(
                         messages=[LLMMessage(role="user", content=prompt,
                                                conversation_id="_compact")],
                         max_tokens=min(target_tokens * 3, 8000),
@@ -752,16 +751,8 @@ class AgentSummarizeMixin:
 
             raise RuntimeError("Claude Code failed to call compact_result after retries")
         finally:
-            # Restore main-agent pool tracking that compact's _cleanup_proc
-            # wiped to None/0. Only restore if main actually had something —
-            # compact running as the first stream ever would have None here
-            # and that's correct state.
-            if _saved_claude_proc is not None:
-                _inner._claude_proc = _saved_claude_proc
-            if _saved_pool_name:
-                _inner._pool_container_name = _saved_pool_name
-            if _saved_cc_pid:
-                _inner._cc_container_pid = _saved_cc_pid
+            # _compact_client is the cloned isolated instance — nothing
+            # to restore on the shared singleton (we never wrote to it).
             # One-shot helper: wipe the entire _compact workdir for this
             # user. Nothing here needs to persist between compactions.
             try:

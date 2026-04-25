@@ -433,20 +433,15 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 "Return 0-5 items. If nothing is worth remembering, return [].\n\n"
                 f"SUMMARY:\n{summary[:4000]}"
             )
-            # Per-call identity via call_* kwargs (no mutation of shared
-            # client state for those 5 fields). Pool-tracking state
-            # still lives on the client and is overwritten by spawn/
-            # cleanup of this memory-extract stream — save/restore so
-            # main's send_user_message + cc-live registry survive.
+            # Memory extract runs on its OWN cloned client — fully
+            # isolated from the shared singleton (concurrent main /
+            # compact / btw streams cannot clobber its state and vice
+            # versa). Each CC stream already has its own container;
+            # the Python orchestration state must be per-stream too.
             _inner = getattr(client, "_client", client)
-            _saved_claude_proc = getattr(_inner, "_claude_proc", None)
-            _saved_pool_name = getattr(_inner, "_pool_container_name", None)
-            _saved_cc_pid = getattr(_inner, "_cc_container_pid", 0)
-            _saved_pool_idx = getattr(_inner, "_current_pool_index", -1)
-            _saved_session_id = getattr(_inner, "_current_session_id", "")
-            _saved_result_emitted = getattr(_inner, "_result_emitted", False)
+            _memory_client = _inner.clone_for_call()
             try:
-                resp = client.complete(
+                resp = _memory_client.complete(
                     messages=[LLMMessage(role="user", content=prompt,
                                           conversation_id="_memory_extract")],
                     temperature=0.3,
@@ -458,17 +453,6 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     call_ephemeral_stream=True,
                 )
             finally:
-                if _saved_claude_proc is not None:
-                    _inner._claude_proc = _saved_claude_proc
-                if _saved_pool_name:
-                    _inner._pool_container_name = _saved_pool_name
-                if _saved_cc_pid:
-                    _inner._cc_container_pid = _saved_cc_pid
-                if _saved_pool_idx >= 0:
-                    _inner._current_pool_index = _saved_pool_idx
-                if _saved_session_id:
-                    _inner._current_session_id = _saved_session_id
-                _inner._result_emitted = _saved_result_emitted
                 # One-shot helper: wipe the _memory_extract workdir for this
                 # user. Nothing here needs to persist between extractions.
                 try:

@@ -72,19 +72,16 @@ class AgentSideChannelsMixin:
             # For CC providers: use a transient sub-conv (like tasks).
             # The CC session lives only for this btw call, then is destroyed.
             # _ephemeral_stream prevents btw from overwriting _claude_proc.
-            # Per-client lock serializes concurrent btw CC calls (e.g. /btw @ALL).
-            # Per-call identity passed via call_* kwargs to complete_stream
-            # below — the shared client's _conversation_id / _user_id /
-            # _agent_name / _ephemeral_stream stay untouched.
+            # btw runs on its OWN cloned client — fully isolated from the
+            # shared singleton. Each Claude Code stream has its own
+            # container; the Python orchestration state must be per-
+            # stream too. The previous _btw_lock that serialized concurrent
+            # /btw calls is no longer needed (each call has its own state).
             _is_cc = hasattr(client, 'cancel_claude_code')
             _btw_conv_id = f"{conversation_id}::btw::{agent_name}"
-            _cc_lock = None
-            if _is_cc:
-                import threading as _btw_threading
-                if not hasattr(client, '_btw_lock'):
-                    client._btw_lock = _btw_threading.Lock()
-                _cc_lock = client._btw_lock
-                _cc_lock.acquire()
+            _btw_client = client
+            if _is_cc and hasattr(client, 'clone_for_call'):
+                _btw_client = client.clone_for_call()
 
             # 2. Build lightweight context: system + last N messages (truncated)
             raw = store.load(conversation_id) or []
@@ -141,7 +138,7 @@ class AgentSideChannelsMixin:
                 "call_event_cid": conversation_id,  # publish to parent conv
                 "call_ephemeral_stream": True,
             } if _is_cc else {}
-            response = client.complete_stream(
+            response = _btw_client.complete_stream(
                 messages=btw_messages,
                 tools=None,
                 temperature=0.5,
@@ -157,8 +154,6 @@ class AgentSideChannelsMixin:
                     store.delete(_btw_conv_id)
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
-                if _cc_lock:
-                    _cc_lock.release()
 
             # 4. Persist btw Q&A in conversation history
             import time as _btw_time
@@ -201,11 +196,6 @@ class AgentSideChannelsMixin:
                     store.delete(_btw_conv_id)
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
-                if _cc_lock:
-                    try:
-                        _cc_lock.release()
-                    except RuntimeError:
-                        pass  # already released
             bus.publish_event(conversation_id, "btw_done", {
                 "agent_name": agent_name,
                 "error": str(e),

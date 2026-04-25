@@ -423,22 +423,15 @@ class SubAgentExecutor:
             from core.conversation_store import ConversationStore
             sub_conv_id = ConversationStore.instance().generate_id()
 
-        # Per-call identity passed via call_* kwargs to complete_stream
-        # below — no mutation of shared client state for those 5 fields.
-        # _subagent_event_cb is a different concern (UI event redirect)
-        # and is still set on the client; save/restore for that one
-        # field stays.
-        _saved_client_state = {
-            "_subagent_event_cb": getattr(client, "_subagent_event_cb", None),
-        }
-        # A delegate has its OWN context — exactly what the caller
-        # passed via task.context_mode (built into task.context_messages
-        # by resource_agent._resolve_context). The sub-agent must NOT
-        # inherit the main agent's shared context, nor a previous
-        # delegate's session of the same agent. Each delegate call is a
-        # fresh CC session rooted in sub_conv_id (parent::task::<tid>),
-        # so the initial prompt IS the context_mode-resolved messages.
+        # Sub-agent runs on its OWN cloned client — fully isolated from
+        # the parent's singleton. Each Claude Code stream already has
+        # its own container; the Python orchestration state must be
+        # per-stream too. _subagent_event_cb (UI sub_agent_* event
+        # redirect) is set on the clone, not the parent.
         _delegate_conv_id = sub_conv_id or task.parent_conversation_id or ""
+        if hasattr(client, 'clone_for_call'):
+            client = client.clone_for_call()
+        _saved_client_state = {}  # nothing to restore — clone is private
         # Suppress raw provider SSE events to the parent bus — the
         # SubAgentExecutor already emits sub_agent_* events that the UI
         # uses to render delegate sub-blocks. event_cid=None is the

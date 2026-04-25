@@ -98,54 +98,29 @@ def _extract_with_llm(client, summary: str, user_id: str = "") -> list:
     """
     try:
         from core.llm_client import LLMMessage
-        # Per-call identity passed via call_* kwargs — no mutation of
-        # shared client state for these 5 fields. Pool-tracking state
-        # (_claude_proc / _pool_container_name / _cc_container_pid /
-        # _current_pool_index / _current_session_id / _result_emitted)
-        # still lives on the shared client and is overwritten by the
-        # spawn/cleanup of this memory-extract stream — we save/restore
-        # those so the main agent's send_user_message and cc-live
-        # registry still find the right values after we're done.
+        # Memory extract runs on its OWN cloned client — fully isolated
+        # from the shared singleton. Each Claude Code stream already
+        # has its own container; the Python orchestration state must
+        # also be per-stream so concurrent main-agent / compact streams
+        # don't see or clobber memory's flags (and vice versa).
         _inner = getattr(client, "_client", client)
-        _saved_claude_proc = getattr(_inner, "_claude_proc", None)
-        _saved_pool_name = getattr(_inner, "_pool_container_name", None)
-        _saved_cc_pid = getattr(_inner, "_cc_container_pid", 0)
-        _saved_pool_idx = getattr(_inner, "_current_pool_index", -1)
-        _saved_session_id = getattr(_inner, "_current_session_id", "")
-        _saved_result_emitted = getattr(_inner, "_result_emitted", False)
-        try:
-            messages = [
-                LLMMessage(role="user", content=_EXTRACT_PROMPT + summary,
-                            conversation_id="_memory_extract"),
-            ]
-            resp = client.complete(
-                messages=messages,
-                temperature=0.2,
-                max_tokens=1000,
-                response_format="json",
-                call_user_id=user_id,
-                call_conversation_id="_memory_extract",
-                call_agent_name="memory",
-                call_event_cid="",
-                call_ephemeral_stream=True,
-            )
-            content = resp.content.strip()
-        finally:
-            # Only restore pool/proc state if the main agent actually had
-            # something — memory-extract running as the first CC stream
-            # ever (no main in flight) would have None/0/"" here and
-            # restoring those as-is is correct.
-            if _saved_claude_proc is not None:
-                _inner._claude_proc = _saved_claude_proc
-            if _saved_pool_name:
-                _inner._pool_container_name = _saved_pool_name
-            if _saved_cc_pid:
-                _inner._cc_container_pid = _saved_cc_pid
-            if _saved_pool_idx >= 0:
-                _inner._current_pool_index = _saved_pool_idx
-            if _saved_session_id:
-                _inner._current_session_id = _saved_session_id
-            _inner._result_emitted = _saved_result_emitted
+        _memory_client = _inner.clone_for_call()
+        messages = [
+            LLMMessage(role="user", content=_EXTRACT_PROMPT + summary,
+                        conversation_id="_memory_extract"),
+        ]
+        resp = _memory_client.complete(
+            messages=messages,
+            temperature=0.2,
+            max_tokens=1000,
+            response_format="json",
+            call_user_id=user_id,
+            call_conversation_id="_memory_extract",
+            call_agent_name="memory",
+            call_event_cid="",
+            call_ephemeral_stream=True,
+        )
+        content = resp.content.strip()
         # Parse JSON array from response (handle markdown code blocks)
         match = re.search(r'\[.*\]', content, re.DOTALL)
         if match:

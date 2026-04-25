@@ -337,6 +337,34 @@ class LLMClient(
         # Abort signal — set from another thread to cancel the current LLM call
         self._abort = threading.Event()
 
+    def clone_for_call(self) -> "LLMClient":
+        """Return a fresh LLMClient instance sharing this one's config but
+        with NO per-stream state.
+
+        Each Claude Code stream owns its own Docker container and CLI
+        subprocess; the orchestration state on the Python client
+        (`_claude_proc`, `_pool_container_name`, `_cc_container_pid`,
+        `_current_pool_index`, `_current_session_id`, `_result_emitted`,
+        `_compacting`, `_preempt_pending`, `_had_preempts_this_turn`,
+        `_stderr_buffer`, …) MUST also be per-stream — otherwise a
+        concurrent compact / memory-extract / btw / sub-agent stream
+        clobbers the main agent's tracking via simple attribute writes
+        on a shared singleton.
+
+        Use this whenever a code path runs an isolated stream that
+        should not see or affect the main agent's state. Compact,
+        memory_extract, btw, and sub-agent delegate paths must each
+        clone for their call.
+
+        Config is reused by reference (LazyResolveDict semantics).
+        Token-tracking callback (`_on_tokens`) is propagated so the
+        owning service still gets usage updates.
+        """
+        clone = self.__class__(provider=self.provider,
+                                config=self._config_ref)
+        clone._on_tokens = self._on_tokens
+        return clone
+
     def _cfg(self, key: str, default: Any = "") -> Any:
         """Read a config value just-in-time (resolves expressions on every call)."""
         return self._config_ref.get(key, default) if self._config_ref else default

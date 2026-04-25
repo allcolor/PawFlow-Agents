@@ -212,10 +212,20 @@ class RelayService(BaseService):
         self._relay_shells: List[str] = []  # available shells on the relay system
         self._relay_info: Dict[str, Any] = {}  # full registration info (platform, containerized, etc.)
 
-        # Relay connection pool — supports multiple connections for resilience
+        # Relay connection pool. Each entry is one WS to the same
+        # service_id. The pool typically holds exactly one entry —
+        # multi-relay setups link several RelayServices to a conversation
+        # (core/relay_bindings) with one designated default; routing
+        # between different relays happens at the agent-tool-config
+        # level via that default + explicit `relay=` param, NOT inside
+        # this pool. The pool grows beyond 1 only during reconnect
+        # overlap: a dying WS that the server hasn't detected as dead
+        # yet, plus the freshly reconnected one. We always send to the
+        # most-recently-connected WS first and fall back to older ones
+        # only if it fails. Round-robin would split traffic across the
+        # dying and live WS unpredictably.
         self._relay_pool: List[Dict] = []  # [{"reader", "writer", "loop"}]
         self._relay_pool_lock = threading.Lock()
-        self._relay_idx = 0
 
         # Pending requests: {request_id: (Event, result_holder)}
         self._pending: Dict[str, tuple] = {}
@@ -701,10 +711,37 @@ class RelayService(BaseService):
                 except Exception:
                     pass
 
+    def _send_to_pool(self, pool: List[Dict], payload: bytes):
+        """Send `payload` over the WS pool, most-recently-connected first.
+
+        Returns None on success, the last exception on total failure.
+        Round-robin would be incoherent here — the pool only ever holds
+        more than one entry during a reconnect overlap (a dying old WS
+        plus the freshly attached new one), so splitting traffic across
+        the two would route some requests to the dying socket. Multi-
+        relay is handled at the conversation level via core/relay_bindings
+        (link_relay + set_default_relay), not inside this pool.
+        """
+        last_err = None
+        for conn in reversed(pool):
+            writer, loop = conn["writer"], conn["loop"]
+
+            async def _send(w=writer):
+                await _ws_send_frame(w, payload)
+
+            try:
+                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
+                return None
+            except Exception as e:
+                last_err = e
+                continue
+        return last_err
+
     def _request(self, action: str, path: str = ".", **kwargs) -> Any:
         """Send a command to the relay and wait for the result (sync).
 
-        Uses connection pool with round-robin + failover.
+        Uses the pool's most-recently-connected entry first, falling
+        back to older entries only on send failure.
         """
         with self._relay_pool_lock:
             pool = self._relay_pool[:]
@@ -731,24 +768,7 @@ class RelayService(BaseService):
             **kwargs,
         }).encode("utf-8")
 
-        # Round-robin with failover
-        last_err = None
-        for attempt in range(len(pool)):
-            idx = (self._relay_idx + attempt) % len(pool)
-            conn = pool[idx]
-            writer, loop = conn["writer"], conn["loop"]
-
-            async def _send(w=writer):
-                await _ws_send_frame(w, payload)
-
-            try:
-                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
-                self._relay_idx = idx + 1
-                last_err = None
-                break
-            except Exception as e:
-                last_err = e
-                continue
+        last_err = self._send_to_pool(pool, payload)
 
         if last_err:
             with self._pending_lock:
@@ -805,23 +825,7 @@ class RelayService(BaseService):
             **kwargs,
         }).encode("utf-8")
 
-        last_err = None
-        for attempt in range(len(pool)):
-            idx = (self._relay_idx + attempt) % len(pool)
-            conn = pool[idx]
-            writer, loop = conn["writer"], conn["loop"]
-
-            async def _send(w=writer):
-                await _ws_send_frame(w, payload)
-
-            try:
-                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
-                self._relay_idx = idx + 1
-                last_err = None
-                break
-            except Exception as e:
-                last_err = e
-                continue
+        last_err = self._send_to_pool(pool, payload)
 
         if last_err:
             with self._pending_lock:
@@ -879,23 +883,7 @@ class RelayService(BaseService):
             **kwargs,
         }).encode("utf-8")
 
-        last_err = None
-        for attempt in range(len(pool)):
-            idx = (self._relay_idx + attempt) % len(pool)
-            conn = pool[idx]
-            writer, loop = conn["writer"], conn["loop"]
-
-            async def _send(w=writer):
-                await _ws_send_frame(w, payload)
-
-            try:
-                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
-                self._relay_idx = idx + 1
-                last_err = None
-                break
-            except Exception as e:
-                last_err = e
-                continue
+        last_err = self._send_to_pool(pool, payload)
 
         if last_err:
             with self._pending_lock:

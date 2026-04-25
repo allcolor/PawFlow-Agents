@@ -343,8 +343,14 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     td_tokens += len(json.dumps(params) if isinstance(params, dict) else str(params)) / cpt
             td_tokens = int(td_tokens)
 
-        # Target: 25% of max (same as summarization — leave 75% for response)
-        target = int(max_tokens * 0.25) - int(td_tokens)
+        # `max_tokens` here is already the compact cap passed in by
+        # the caller (cap = real_max × target_fraction = 0.25 × max,
+        # i.e. 50k for a 200k model). Don't re-multiply by 0.25 — the
+        # earlier `target = int(max_tokens * 0.25) - td_tokens`
+        # computed 6.25% of the real max instead of 25%, hard-
+        # truncating to 12.5k when force-fit fired. Use the cap
+        # directly minus the constant tool-defs overhead.
+        target = int(max_tokens) - int(td_tokens)
         if target < 1000:
             target = 1000
 
@@ -761,8 +767,18 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             _bucket_store.assemble_summary_header() if _bucket_store else "")
 
         def _build_output(saved: List[LLMMessage]) -> List[LLMMessage]:
-            """Assemble system + pyramid_header (context bridge) + saved."""
-            self._truncate_tool_results(saved)
+            """Assemble system + pyramid_header (context bridge) + saved.
+
+            Pure assembly — NO truncation. Earlier versions called
+            `self._truncate_tool_results(saved)` here unconditionally,
+            which clipped every tool result > 800 chars on every
+            assemble call regardless of whether the output actually
+            fit the cap. Symptom: a compact with header=10k and a
+            tail rich in tool I/O (e.g. 88 transcript rows) would
+            truncate to ~30k even when the full content fit easily
+            in the 50k cap. Step 2a in the caller now owns the
+            decision to truncate (only when new_estimate > cap).
+            """
             out: List[LLMMessage] = []
             if system_msg:
                 out.append(system_msg)

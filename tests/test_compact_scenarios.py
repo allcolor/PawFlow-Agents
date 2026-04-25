@@ -416,12 +416,14 @@ def test_maybe_trigger_is_o1_no_full_scan(fake_builder, monkeypatch):
     assert read_calls == []
 
 
-def test_compact_force_calls_build_now_sync(monkeypatch):
-    """Forced /compact (manual or compact_boundary) always asks bg to
-    flush partials synchronously, so the pyramid is caught up before
-    the agent assembles. With the new TAIL_TOKEN_BUDGET trigger
-    keeping the tail bounded, this sync call typically completes fast
-    (≤ 1 small partial bucket to flush)."""
+def test_compact_always_calls_build_now_sync(monkeypatch):
+    """Every /compact (forced OR auto-trigger) blocks on bg's
+    build_now_sync so the pyramid is caught up before assemble. This
+    is the strict-fidelity guarantee: the tail handed downstream is
+    always covered by the pyramid, so deterministic steps suffice and
+    we never silently truncate via force_fit because bg fell behind.
+    In steady state TAIL_TOKEN_BUDGET keeps the gap tiny → call is
+    a no-op."""
     from tasks.ai.agent_compaction import AgentCompactionMixin
     from core.llm_client import LLMMessage
     from core import bg_bucket_builder as _bb_mod
@@ -484,11 +486,12 @@ def test_compact_force_calls_build_now_sync(monkeypatch):
     class _C:
         api_key = ""
         base_url = ""
+    # Auto-trigger path (force=False) — must still call build_now_sync
     out = instance._compact(
         list(msgs), _C(),
         max_tokens=200_000,
         target_fraction=0.25,
-        force=True,
+        force=False,
         conversation_id="cid_test",
         agent_name="claude",
         user_id="uid",

@@ -612,20 +612,20 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         # and maintained by core.bg_bucket_builder (the only writer).
         # This hot path is READ-ONLY on the pyramid.
         #
-        # Two regimes:
-        #   force=True  (manual /compact, CC compact_boundary, /compact
-        #                --rebuild) → block on build_now_sync so the
-        #                pyramid is caught up (incl. partial flush of
-        #                "in-progress" msgs) before we assemble. With
-        #                the new TAIL_TOKEN_BUDGET trigger keeping the
-        #                gap small, this sync call typically flushes
-        #                ≤ 1 small partial bucket and returns fast.
-        #   force=False (auto-trigger at 80%) → fire maybe_trigger
-        #                (async). The bg-builder's token-budget trigger
-        #                keeps the tail under TAIL_TOKEN_BUDGET so the
-        #                hot path's deterministic 2a/2d steps suffice
-        #                — no synchronous bucket build, no LLM call in
-        #                the agent's hot path.
+        # Always block on build_now_sync (when user_id is known) so
+        # the pyramid is caught up before we assemble — partial flush
+        # included for any msgs in progress. Strict guarantee: the
+        # tail handed to assemble never exceeds TAIL_TOKEN_BUDGET, so
+        # downstream steps stay deterministic (2a truncate + 2d
+        # force_fit) without ever needing an LLM-summarize fallback.
+        # In steady state the bg-builder keeps the gap small and this
+        # call is a no-op (`_pick_chunk` returns []); it only blocks
+        # if bg fell behind, which is exactly when blocking is the
+        # correct behaviour — it pays a few seconds once to keep
+        # output fidelity intact, instead of silently truncating
+        # content via force_fit. Manual /compact and CC compact_
+        # boundary already passed force=True; auto-trigger at 80%
+        # benefits from the same guarantee.
         _bucket_store = None
         if conversation_id:
             try:
@@ -633,7 +633,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 from core.bucket_store import BucketStore
                 from core.conversation_store import ConversationStore
                 _bb = BgBucketBuilder.instance()
-                if force and user_id:
+                if user_id:
                     try:
                         _bb.build_now_sync(
                             conversation_id, user_id,
@@ -643,8 +643,6 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                             "[compact] build_now_sync failed — continuing "
                             "with whatever pyramid state exists",
                             exc_info=True)
-                elif user_id:
-                    _bb.maybe_trigger(conversation_id, user_id)
                 _conv_dir = ConversationStore.instance()._conv_dir(conversation_id)
                 _bucket_store = BucketStore.get(_conv_dir)
                 _last_seq = _bucket_store.last_seq

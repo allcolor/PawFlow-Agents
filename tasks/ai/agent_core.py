@@ -170,6 +170,22 @@ class AgentCoreMixin:
         use_conv_store = ctx.get("use_conv_store", False)
         user_id = ctx.get("user_id", "")
 
+        # Each main agent loop runs on its OWN cloned LLMClient — fully
+        # isolated from the resolver's singleton. Concurrent main agents
+        # (different conversations / users on the same server) would
+        # otherwise clobber each other's per-call state on `self.*`:
+        #   * client._claude_proc — set per spawn; A's preempt would
+        #     route to B's proc after B's spawn overwrote it.
+        #   * client._conversation_id / _agent_name — read by
+        #     send_user_message to identify the active stream; with
+        #     concurrent setattrs the wrong (conv, agent) wins.
+        #   * client._cc_container_pid / _current_session_id /
+        #     _result_emitted / _compacting / _stderr_buffer / etc.
+        # Compact / memory-extract / btw / sub-agent delegate already
+        # clone for their calls; main was the last remaining path on
+        # the shared singleton. Closing the gap.
+        if hasattr(client, 'clone_for_call'):
+            client = client.clone_for_call()
         # Set context on client for providers that need it (claude-code)
         client._conversation_id = conversation_id
         client._user_id = user_id
@@ -992,7 +1008,6 @@ class AgentCoreMixin:
                             # (session already has it from initial context)
                             _call_context = [_new_msgs[-1]]
 
-                    _resume_retried = False
                     try:
                         _check_budget(ctx, total_tokens_in, total_tokens_out)
                         response = _llm_call(_call_context)
@@ -1205,9 +1220,22 @@ class AgentCoreMixin:
                                 raise AgentCancelled()
                         _is_auth_error = "auth" in err_str.lower() or "401" in err_str
                         if _is_claude_code and ctx.get("_claude_has_session") and not _is_auth_error:
-                            logger.warning("[claude-code] resume failed (%s), "
-                                           "retrying with full context", err_str[:100])
-                            # Invalidate this agent's CC session only
+                            # Hard-fail: when CC has an active session,
+                            # `messages` only carries [system_prompt +
+                            # last_user_msg] (agent_context skips load on
+                            # active session — CC owns the history).
+                            # Silently retrying with that anaemic context
+                            # WIPES every prior turn from the agent's view
+                            # (observed: 40% → 5% context drop after a
+                            # stray sweeper eviction). The only legitimate
+                            # context replaces are explicit /compact, CC's
+                            # own compact_boundary, or a context edit.
+                            # Anything else must surface as an error so
+                            # the user can decide — NEVER silently rebuild.
+                            logger.error(
+                                "[claude-code] resume failed (%s) — "
+                                "hard-fail (silent context replace forbidden)",
+                                err_str[:200])
                             try:
                                 from core.conversation_store import ConversationStore
                                 _an = ctx["active_agent_name"]
@@ -1216,24 +1244,14 @@ class AgentCoreMixin:
                             except Exception:
                                 logger.debug("exception suppressed", exc_info=True)
                             ctx["_claude_has_session"] = False
-                            try:
-                                _check_budget(ctx, total_tokens_in, total_tokens_out)
-                                llm_context = list(messages)
-                                response = _llm_call(llm_context)
-                                _resume_retried = True
-                            except Exception as retry_err:
-                                # Check if this was a force stop, not a real error
-                                try:
-                                    emitter.check_cancelled()
-                                except AgentCancelled:
-                                    raise
-                                logger.error("Claude-code full-context retry failed: %s", retry_err)
-                                emitter.on_fatal_error(f"LLM call failed: {retry_err}")
-                                _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {retry_err}"
-                                break
-                        if _resume_retried:
-                            pass  # resume fallback succeeded
-                        elif ("exceed_context_size" in err_str
+                            emitter.on_fatal_error(
+                                f"Claude Code session lost: {err_str}")
+                            _fatal_error = True
+                            _fatal_error_msg = (
+                                _fatal_error_msg
+                                or f"Claude Code session lost: {err_str}")
+                            break
+                        if ("exceed_context_size" in err_str
                               or "n_prompt_tokens" in err_str
                               or "Prompt is too long" in err_str
                               or "prompt_too_long" in err_str):

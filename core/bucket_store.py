@@ -65,11 +65,21 @@ TAIL_RESERVE = 10
 
 # Maximum estimated tokens of transcript-rows-since-last-pyramid we
 # tolerate before bg_bucket_builder fires a partial bucket. Sized to
-# fit the agent's compact tail budget: cap_min - HEADER_BUDGET, where
-# cap_min = max_tokens × 0.25 (target_fraction default) for a 200k
-# model = 50k → tail budget = 20k. Keep some margin so the trigger
-# fires *before* /compact would otherwise have to step 2b/2c.
-TAIL_TOKEN_BUDGET = 15000
+# match the agent's compact tail budget exactly:
+#
+#     cap = max_tokens × target_fraction = 200k × 0.25 = 50k
+#     header (max) = HEADER_BUDGET = 30k
+#     → tail target = cap - header = 20k
+#
+# Bg fires at 0.7 × TAIL_TOKEN_BUDGET = 14k so partial buckets land
+# before the tail can grow past 20k in the worst case (tail keeps
+# growing during the bucket build itself, ~30% headroom covers that).
+# Compact then assembles header (≤30k) + tail (≤20k) = up to 50k,
+# right at the cap. Earlier value (15k) under-utilised the cap by
+# ~5k tokens — compact output would top out at ~45k even when more
+# fidelity could fit, leading to "compact dropped my recent
+# context" complaints.
+TAIL_TOKEN_BUDGET = 20000
 
 
 class BucketStore:

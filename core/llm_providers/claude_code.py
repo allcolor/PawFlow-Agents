@@ -1509,7 +1509,36 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # EOF nudger in _stall_watchdog uses this as its silence
             # threshold anchor.
             _hb_state["last_turn_flush_ts"] = time.monotonic()
-            if (text or tc or turn_thinking) and turn_callback:
+            # Keep the cc-live idle timer fresh per-turn. Without this,
+            # the sweeper evicts active sessions whose last_used hadn't
+            # been bumped since stream-call start (touch is otherwise
+            # only called on REUSE entry / end-of-stream). bump_reuse=
+            # False so the per-turn keep-alive doesn't pollute the
+            # reuse counter. No-op for NEW path before end-of-stream
+            # register, which is fine — that path's register sets
+            # last_used = now anyway.
+            if _live_key is not None:
+                try:
+                    _live_reg.touch(_live_key, bump_reuse=False)
+                except Exception:
+                    logger.debug(
+                        "cc-live touch (per-turn) failed", exc_info=True)
+            # Phantom-only turn: CC emitted a tool_call we dropped at
+            # phantom detection (typo in param name, empty bash command,
+            # whitespace-only args) AND nothing else. Without `text` or
+            # surviving `tc`, the only thing left is `turn_thinking` —
+            # but that thinking was the model "explaining" the phantom
+            # call. Keeping it would persist an orphan assistant row
+            # (content_len=0, tool_calls=0, thinking_len>0) that the
+            # UI renders as a stray "Thought for Xs" bubble polluting
+            # the chat. Drop the turn entirely.
+            _phantom_only = (_dropped > 0 and not tc and not text)
+            if _phantom_only:
+                logger.info(
+                    "[claude-code] flush turn %d SKIPPED: phantom-only "
+                    "(dropped %d tc, no text, thinking=%d) — not persisted",
+                    _turn_count, _dropped, len(turn_thinking))
+            if (text or tc or turn_thinking) and turn_callback and not _phantom_only:
                 logger.info("[claude-code] flush turn %d: text=%d chars, tc=%d, thinking=%d, callback=%s",
                             _turn_count, len(text), len(tc), len(turn_thinking), bool(turn_callback))
                 try:

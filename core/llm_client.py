@@ -341,28 +341,57 @@ class LLMClient(
         """Return a fresh LLMClient instance sharing this one's config but
         with NO per-stream state.
 
-        Each Claude Code stream owns its own Docker container and CLI
-        subprocess; the orchestration state on the Python client
-        (`_claude_proc`, `_pool_container_name`, `_cc_container_pid`,
+        Valid for every provider (claude-code, openai, anthropic):
+        per-stream state lives on instance attributes and the clone
+        starts with __init__ defaults. Each Claude Code stream owns its
+        own Docker container and CLI subprocess; the Python orchestration
+        state (`_claude_proc`, `_pool_container_name`, `_cc_container_pid`,
         `_current_pool_index`, `_current_session_id`, `_result_emitted`,
         `_compacting`, `_preempt_pending`, `_had_preempts_this_turn`,
         `_stderr_buffer`, …) MUST also be per-stream — otherwise a
         concurrent compact / memory-extract / btw / sub-agent stream
         clobbers the main agent's tracking via simple attribute writes
-        on a shared singleton.
+        on a shared singleton. OpenAI / Anthropic don't carry as much
+        per-stream state but their `_cache_detector` and friends are
+        also instance-scoped, so the clone gets a fresh one — exactly
+        what an isolated one-shot call wants.
 
         Use this whenever a code path runs an isolated stream that
         should not see or affect the main agent's state. Compact,
         memory_extract, btw, and sub-agent delegate paths must each
         clone for their call.
 
-        Config is reused by reference (LazyResolveDict semantics).
-        Token-tracking callback (`_on_tokens`) is propagated so the
-        owning service still gets usage updates.
+        State propagated to the clone:
+          * config (by reference — LazyResolveDict semantics).
+          * `_on_tokens` callback so the owning service still receives
+            usage updates from the clone's calls.
+          * `_active_api_key` — required by api_keys_pool (LLMConnection
+            Service sets this to pick a pool slot; the api_key property
+            reads it first). Without propagation, a non-CC clone would
+            fall through to config's flat `api_key` which is typically
+            empty when a pool is configured → 401 on the first call.
+          * `_max_context_size` — set by agent_executor for sub-agents
+            so the CC provider can publish context-fill % via
+            message_meta. Per-call but propagated for SSE accuracy.
+
+        State explicitly NOT propagated:
+          * Pool-tracking attrs, _claude_proc, session ids, result
+            flags, preempt state, stderr buffer — these are exactly
+            what we want fresh.
+          * `_abort` — each clone has its own Event. Cancellation
+            targeting the parent does not propagate to clones; the
+            isolated streams have their own cancellation paths
+            (compact_result kill, sub-agent task cancel, etc).
         """
         clone = self.__class__(provider=self.provider,
                                 config=self._config_ref)
         clone._on_tokens = self._on_tokens
+        _active_key = getattr(self, '_active_api_key', None)
+        if _active_key:
+            clone._active_api_key = _active_key
+        _max_ctx = getattr(self, '_max_context_size', 0)
+        if _max_ctx:
+            clone._max_context_size = _max_ctx
         return clone
 
     def _cfg(self, key: str, default: Any = "") -> Any:

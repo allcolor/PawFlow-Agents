@@ -833,7 +833,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     ]:
                         try:
                             _pa_out = subprocess.check_output(
-                                _pa_cmd.split(), env=_user_env, timeout=5, text=True)
+                                _pa_cmd, env=_user_env, timeout=5, text=True)
                             sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
                         except Exception as _pa_err:
                             sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")

@@ -27,6 +27,56 @@ from pawflow_relay.register import (
 from pawflow_relay.worker import _ws_connect
 
 
+def _ensure_home_writable() -> None:
+    """Make sure $HOME is writable by the current user.
+
+    The relay container's /home/pawflow is a Docker named volume that
+    persists across image rebuilds. If a previous build laid it out
+    with a different UID (e.g. base image's first-user UID changed
+    from 1001 to 1000 between rebuilds), the volume keeps the old
+    ownership and the now-running pawflow user can't write into it.
+    Symptom seen in production: start_desktop fails silently before
+    spawning x11vnc because PulseAudio's `~/.config/pulse` mkdir hits
+    PermissionError, the exception is caught at the outer try, and
+    only Xvfb + dbus stay alive.
+
+    Native (non-container) installs typically have HOME already owned
+    by the user; this is a fast no-op there.
+    """
+    home = os.environ.get("HOME", "")
+    if not home or not os.path.isdir(home):
+        return
+    try:
+        st = os.stat(home)
+    except OSError:
+        return
+    if st.st_uid == os.geteuid():
+        return  # already owned by us
+    # Wrong UID. Try sudo chown — the relay container's pawflow has
+    # NOPASSWD sudo (Dockerfile sets /etc/sudoers.d/pawflow). Native
+    # users without sudo will see the warning but the relay still
+    # tries to start; PulseAudio / desktop will fail later with a
+    # clearer error.
+    user = os.environ.get("USER") or str(os.geteuid())
+    try:
+        r = subprocess.run(
+            ["sudo", "-n", "chown", "-R", f"{user}:{user}", home],
+            capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            sys.stderr.write(
+                f"[FSRelay] Re-claimed HOME ({home}) for {user} "
+                f"(was uid={st.st_uid}).\n")
+        else:
+            sys.stderr.write(
+                f"[FSRelay] Could not chown HOME ({home}) to {user}: "
+                f"{r.stderr.strip() or r.stdout.strip()}. Desktop / "
+                f"PulseAudio may fail.\n")
+    except Exception as e:
+        sys.stderr.write(
+            f"[FSRelay] sudo chown HOME failed: {e}. Desktop / "
+            f"PulseAudio may fail.\n")
+
+
 def _argparse_auto_register(args, gateway_cookie):
     """argparse.Namespace bridge into pawflow_relay.register.auto_register."""
     ws_url, ws_token, session_token, resolved_id, login_url = auto_register(
@@ -41,6 +91,11 @@ def _argparse_auto_register(args, gateway_cookie):
 
 
 def worker_main():
+    # Re-claim $HOME early — desktop start (PulseAudio config dir) and
+    # other features assume a writable HOME; a stale named volume from
+    # an older image can break that. See _ensure_home_writable docstring.
+    _ensure_home_writable()
+
     # Env var fallback — used when running as a server-spawned container
     _env_server = os.environ.get("PAWFLOW_RELAY_SERVER", "")
     _env_token = os.environ.get("PAWFLOW_RELAY_TOKEN", "")

@@ -2823,6 +2823,31 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     except Exception:
                         logger.debug("internal-auth revoke failed", exc_info=True)
 
+            # Release the live-session turn lock acquired at REUSE entry
+            # (line 1111). Held across the entire stream call so concurrent
+            # callers — bg_bucket_builder threads, next user turn's
+            # bg_streaming thread, etc. — don't push rogue input onto the
+            # in-flight session's stdin. WITHOUT this release, the first
+            # successful REUSE held the lock forever (acquire had no
+            # corresponding release on success path) and every subsequent
+            # turn that hit REUSE blocked indefinitely on
+            # turn_lock.acquire(). Symptom in the wild: user sends a
+            # second message, agent stream starts, log stops on
+            # `claude-code stream: conv_id=...`, no spawn / no REUSE log,
+            # 4+ minutes of silent freeze before the user gives up.
+            # RLock release is balanced with the single acquire at 1111;
+            # do it inside the finally so we cover normal return AND any
+            # exception that propagates through the streaming body.
+            if _owns_turn_lock and _live_session is not None:
+                try:
+                    _live_session.turn_lock.release()
+                except Exception:
+                    logger.debug(
+                        "turn_lock release failed (likely already released "
+                        "via the early-error path at line 1129)",
+                        exc_info=True)
+                _owns_turn_lock = False
+
         # Don't error on non-zero exit if we got a successful result
         # (process was killed after break on result event — that's expected).
         # `_compact_result_done` counts: when the sentinel compact session

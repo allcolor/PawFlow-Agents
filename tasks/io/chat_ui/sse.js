@@ -181,8 +181,28 @@ function connectSSE(cid, onReady, opts) {
       if (!_placed) {
         const _msgContainer = document.getElementById('messages');
         const _typingEl = document.getElementById('typing');
-        if (_typingEl) _msgContainer.insertBefore(details, _typingEl);
-        else _msgContainer.appendChild(details);
+        // Reorder for the CC text+tool_calls+thinking case: agent_core
+        // appends the text msg FIRST then the tool_calls msg with the
+        // thinking attached, so SSE order is new_message → thinking_content.
+        // Visually the thinking belongs ABOVE the text it preceded — if
+        // the most recent message inserted in this container is an
+        // assistant text from the same agent, slot the thinking block
+        // just before it. Falls back to the legacy "before #typing"
+        // placement when nothing matches.
+        const _msgs = _msgContainer.querySelectorAll(':scope > .msg.assistant, :scope > .msg.subagent');
+        const _lastAssistantMsg = _msgs.length ? _msgs[_msgs.length - 1] : null;
+        const _lastIsRecent = _lastAssistantMsg && (
+            !_lastAssistantMsg.dataset.thinkingPlaced
+            && (Date.now() - (parseInt(_lastAssistantMsg.dataset.insertedAt || '0', 10) || 0) < 5000)
+        );
+        if (_lastIsRecent) {
+          _msgContainer.insertBefore(details, _lastAssistantMsg);
+          _lastAssistantMsg.dataset.thinkingPlaced = '1';
+        } else if (_typingEl) {
+          _msgContainer.insertBefore(details, _typingEl);
+        } else {
+          _msgContainer.appendChild(details);
+        }
       }
       thinkingElements[aKey] = {el: details, content: content, summary: summary, text: '', startTime: Date.now()};
       scrollBottom();

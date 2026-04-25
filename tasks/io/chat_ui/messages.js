@@ -187,6 +187,12 @@ function addMsg(role, text, extra) {
   }
   el.className = 'msg ' + cssClass;
   if (msgId) el.dataset.msgid = msgId;
+  // Wallclock at insertion — lets sse.js's thinking_content handler
+  // know whether to slot a freshly-arrived thinking block ABOVE this
+  // message (CC bundles thinking onto the tool_calls msg that follows
+  // the text, so SSE order is new_message → thinking_content even
+  // though the thinking semantically came first).
+  el.dataset.insertedAt = String(Date.now());
   el.addEventListener('click', function(e) {
     if (e.ctrlKey || e.shiftKey) { e.preventDefault(); toggleMsgSelect(this, e); }
   });

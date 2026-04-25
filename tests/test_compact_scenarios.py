@@ -416,15 +416,14 @@ def test_maybe_trigger_is_o1_no_full_scan(fake_builder, monkeypatch):
     assert read_calls == []
 
 
-def test_compact_always_calls_build_now_sync(monkeypatch):
-    """Every /compact (forced OR auto-trigger) blocks on bg's
-    build_now_sync so the pyramid is caught up before assemble. This
-    is the strict-fidelity guarantee: the tail handed downstream is
-    always covered by the pyramid, so deterministic steps suffice and
-    we never silently truncate via force_fit because bg fell behind.
-    In steady state TAIL_TOKEN_BUDGET keeps the gap tiny → call is
-    a no-op."""
-    from tasks.ai.agent_compaction import AgentCompactionMixin
+def test_compact_never_calls_build_now_sync(monkeypatch):
+    """Compact must be INSTANT — no synchronous bucket build, no
+    CC subprocess spawn for summarization. Bg-builder runs async in
+    the background and keeps the pyramid up to date there; the user-
+    facing /compact only assembles existing pyramid + walks back the
+    transcript by token budget. If build_now_sync ever fires here,
+    a partial bucket build can drag a 60s LLM call into what should
+    be a sub-second operation."""
     from core.llm_client import LLMMessage
     from core import bg_bucket_builder as _bb_mod
     from core import bucket_store as _bs_mod
@@ -468,16 +467,9 @@ def test_compact_always_calls_build_now_sync(monkeypatch):
     monkeypatch.setattr(_bb_mod, "BgBucketBuilder", _StubBB)
     monkeypatch.setattr(_bs_mod, "BucketStore", _StubBS)
 
-    # _compact uses several mixin helpers (estimate_tokens, persist,
-    # serialize, ...). Patch the strict minimum on a Dummy that
-    # inherits from the FULL stack so all helpers exist.
     from tasks.ai.agent_loop import AgentLoopTask
     instance = AgentLoopTask.__new__(AgentLoopTask)
 
-    # No tools, tiny tail → assembled output well under cap; the
-    # truncate/force_fit branches stay dormant. The point is just to
-    # verify the build_now_sync invocation, which happens BEFORE any
-    # of those.
     msgs = [LLMMessage(role="system", content="sys",
                         conversation_id="cid", seq=1)]
     msgs += [LLMMessage(role="user", content="hi",
@@ -486,17 +478,20 @@ def test_compact_always_calls_build_now_sync(monkeypatch):
     class _C:
         api_key = ""
         base_url = ""
-    # Auto-trigger path (force=False) — must still call build_now_sync
     out = instance._compact(
         list(msgs), _C(),
         max_tokens=200_000,
         target_fraction=0.25,
-        force=False,
+        force=True,
         conversation_id="cid_test",
         agent_name="claude",
         user_id="uid",
     )
     assert out is not None
-    assert len(sync_calls) == 1
-    assert sync_calls[0]["allow_partial"] is True
-    assert sync_calls[0]["user_id"] == "uid"
+    # The whole point: compact MUST NOT spawn a synchronous bucket
+    # build. The async bg-builder is responsible for keeping the
+    # pyramid current; compact just reads it.
+    assert sync_calls == [], (
+        f"compact called build_now_sync ({len(sync_calls)} times) "
+        f"— this defeats the 'compact is instant' guarantee. "
+        f"calls={sync_calls!r}")

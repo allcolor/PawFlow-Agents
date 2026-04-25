@@ -601,38 +601,37 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         # content via force_fit. Manual /compact and CC compact_
         # boundary already passed force=True; auto-trigger at 80%
         # benefits from the same guarantee.
+        # ── Compact contract (instant, deterministic, no LLM call) ──
+        #
+        #   Output = system + pyramid_header + bridge + recent_tail
+        #     pyramid_header   ≤ HEADER_BUDGET (30k)  — what bg already
+        #                                              consolidated
+        #     recent_tail      ≤ TAIL_TARGET (20k)    — walked back
+        #                                              from end of
+        #                                              transcript by
+        #                                              token budget
+        #     total            ≤ cap (50k = 0.25 × max for 200k model)
+        #
+        # NO bg build_now_sync here — that would spawn a CC subprocess
+        # to summarize a pending partial bucket, defeating "compact is
+        # instant". Bg runs async via maybe_trigger and stays caught
+        # up under TAIL_TOKEN_BUDGET (20k) most of the time. If bg is
+        # behind, the pyramid_header reflects fewer covered msgs and
+        # the recent_tail walk-back below picks up the slack — same
+        # final user-visible content, just sliced differently.
+        # NO pre-filter on `m.seq > pyramid.last_seq` either. The
+        # contract takes the X MOST RECENT transcript rows by token
+        # budget, regardless of whether they're also covered by the
+        # summary. Overlap is intentional: the summary is dense
+        # context, the raw tail is fidelity for what the agent will
+        # immediately respond to.
         _bucket_store = None
         if conversation_id:
             try:
-                from core.bg_bucket_builder import BgBucketBuilder
                 from core.bucket_store import BucketStore
                 from core.conversation_store import ConversationStore
-                _bb = BgBucketBuilder.instance()
-                if user_id:
-                    try:
-                        _bb.build_now_sync(
-                            conversation_id, user_id,
-                            allow_partial=True)
-                    except Exception:
-                        logger.warning(
-                            "[compact] build_now_sync failed — continuing "
-                            "with whatever pyramid state exists",
-                            exc_info=True)
                 _conv_dir = ConversationStore.instance()._conv_dir(conversation_id)
                 _bucket_store = BucketStore.get(_conv_dir)
-                _last_seq = _bucket_store.last_seq
-                if _last_seq > 0:
-                    _before = len(messages)
-                    messages = [
-                        m for m in messages
-                        if m.role == "system" or m.seq > _last_seq
-                    ]
-                    _dropped = _before - len(messages)
-                    if _dropped:
-                        logger.info(
-                            "[compact] pyramid pre-filter: dropped %d msgs "
-                            "covered (last_seq=%d, pyramid_objects=%d)",
-                            _dropped, _last_seq, _bucket_store.object_count)
             except Exception as _bs_err:
                 logger.warning(
                     "[compact] bucket store init failed: %s — falling back "
@@ -877,18 +876,77 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         # touch the counter so they don't mask real failures.
         try:
             # ═════════════════════════════════════════════════════════
-            #  Hot-path squeeze (4 steps, pyramid read-only)
+            #  Token-budget tail selection (instant, deterministic)
             # ═════════════════════════════════════════════════════════
-            # Section A = [sys] + [pyramid_header bridge]
-            # Section B = messages post pre-filter (uncovered tail)
-            # Output   = A + B, must fit ≤ cap.
+            # Walk back from end of transcript, accumulating tokens
+            # until we hit TAIL_TARGET (20k = cap - HEADER_BUDGET).
+            # Stop early if we'd exceed cap when combined with the
+            # already-assembled header. Then orphan-fix: if the first
+            # kept msg is a tool/tool_result whose tool_call sits
+            # OUTSIDE the kept slice, extend backward to include the
+            # owning assistant turn (or drop the orphan tool_result).
             # ─────────────────────────────────────────────────────────
+            from core.bucket_store import HEADER_BUDGET as _HEADER_BUDGET
+            _TAIL_TARGET = max(1000, cap - _HEADER_BUDGET)  # 20k for 200k model
 
-            saved_recent = messages[start_idx:]
+            # Compute header-side overhead (system + pyramid bridge).
+            _header_only = _build_output([])
+            _header_tokens = _estimate(_header_only)
+            # Tail budget: target 20k OR (cap - header), whichever is
+            # smaller. If header is small, tail can fill more; if
+            # header is at HEADER_BUDGET, tail caps at 20k.
+            _tail_budget = max(1000, min(_TAIL_TARGET, cap - _header_tokens))
+
+            _tail_msgs = messages[start_idx:]
+            # Walk from end accumulating per-msg estimates.
+            _accum = 0
+            _take_from = len(_tail_msgs)
+            for _i in range(len(_tail_msgs) - 1, -1, -1):
+                _cost = _estimate([_tail_msgs[_i]])
+                if _accum + _cost > _tail_budget and _i < len(_tail_msgs) - 1:
+                    # Include at LEAST one msg even if oversized — a
+                    # single oversized recent msg beats an empty tail.
+                    break
+                _accum += _cost
+                _take_from = _i
+            saved_recent = _tail_msgs[_take_from:]
+
+            # Orphan tool_result fix: if the first kept msg is a tool
+            # role whose tool_call_id has no preceding assistant
+            # tool_call in saved_recent, extend backward until the
+            # owning assistant turn is included, or drop the orphan.
+            while saved_recent and saved_recent[0].role == "tool":
+                _orphan_id = getattr(saved_recent[0], 'tool_call_id', '')
+                _has_owner = False
+                for _m in saved_recent[1:]:
+                    if _m.role == "assistant" and _m.tool_calls:
+                        if any(tc.id == _orphan_id for tc in _m.tool_calls):
+                            _has_owner = True
+                            break
+                if _has_owner:
+                    break
+                # Extend one step back if possible
+                if _take_from > 0:
+                    _take_from -= 1
+                    saved_recent = _tail_msgs[_take_from:]
+                else:
+                    # Hit start of context — drop the orphan
+                    saved_recent = saved_recent[1:]
+                    break
+
+            logger.info(
+                "[compact] tail walk-back: kept %d/%d msgs "
+                "(~%d tokens, budget=%d, header=%d, cap=%d)",
+                len(saved_recent), len(_tail_msgs),
+                _accum, _tail_budget, _header_tokens, cap)
+
             compacted = _build_output(saved_recent)
             new_estimate = _estimate(compacted)
 
             # ── STEP 2a: truncate tool results in tail (deterministic) ──
+            # Should rarely fire now that the walk-back respects the
+            # budget — only triggers if a single huge msg pushed us
+            # over (the "include at least one" guarantee above).
             if new_estimate > cap:
                 logger.info(
                     "[compact] step 2a tool-result truncate (%d > cap %d)",

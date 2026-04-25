@@ -345,6 +345,9 @@ def create_default_registry() -> ToolRegistry:
     registry.register(CancelPlanHandler())
     registry.register(DeletePlanHandler())
     registry.register(VerifyPlanStepHandler())
+    from core.handlers.plan_mode import EnterPlanModeHandler, ExitPlanModeHandler
+    registry.register(EnterPlanModeHandler())
+    registry.register(ExitPlanModeHandler())
     registry.register(NotifyUserHandler())
     registry.register(AskUserHandler())
     registry.register(CreateToolHandler())
@@ -364,6 +367,11 @@ def create_default_registry() -> ToolRegistry:
     # Compact result (receives summary from Claude Code during compaction)
     from core.handlers.compact_result import CompactResultHandler
     registry.register(CompactResultHandler())
+
+    # Monitor — pawflow replacement for the CC built-in. Runs a relay
+    # bash command and returns early on regex match / line cap / timeout.
+    from core.handlers.monitor import MonitorHandler
+    registry.register(MonitorHandler())
 
     # Screen interaction (screenshots, clicks — requires relay with exec)
     from core.handlers.screen import ScreenHandler

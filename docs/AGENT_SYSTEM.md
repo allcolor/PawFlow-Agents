@@ -307,6 +307,8 @@ When the agent calls `update_plan(status="done")`:
 | `cancel_plan` | Cancel a plan. |
 | `delete_plan` | Delete a plan. |
 | `verify_plan_step` | Verify a completed step (when a verifier agent is assigned). |
+| `EnterPlanMode` | Enable plan-mode for the current conversation. While active, agent_context appends a directive forcing `create_plan` before any other tool. Pawflow replacement for the Claude Code built-in. |
+| `ExitPlanMode` | Disable plan-mode for the current conversation and return to normal operation. Pawflow replacement for the Claude Code built-in. |
 
 ### Force Stop
 
@@ -400,6 +402,10 @@ This reduces the constant token overhead from ~7000 tokens to ~200 tokens, makin
 ### Tool Result Size Limit
 
 Tool results are capped at `tool_result_max_chars` (default: 50,000 chars), configurable per LLM service or agent. This prevents a single large tool result from blowing up the context.
+
+### Long-running Command Watch (`Monitor`)
+
+Pawflow replacement for the Claude Code built-in `Monitor`. Runs a relay bash command and returns early on the first of: command exit, regex pattern matched `limit` lines, or `timeout_ms` elapsed (capped at 10 minutes). Use it instead of polling via `ScheduleWakeup` when you need to react as soon as a marker appears in the output (`FAILED`, `listening on port`, etc.). For watches longer than 10 minutes, use `bash(run_in_background=true)` plus output-file polling — `Monitor` is intentionally bounded so it never holds a turn open indefinitely.
 
 ---
 

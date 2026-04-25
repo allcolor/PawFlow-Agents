@@ -12,10 +12,10 @@ import ctypes
 import ctypes.util
 import logging
 import os
-import platform
 import socket
 import struct
 import subprocess
+import sys
 import threading
 import time
 
@@ -142,7 +142,7 @@ def _detect_pulse_monitor() -> str:
 
 
 def _capture_loop(source: str):
-    if platform.system() == "Windows":
+    if sys.platform.startswith("win"):
         logger.error("Windows not supported (use WASAPI capture)")
         return
 

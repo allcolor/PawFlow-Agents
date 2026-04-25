@@ -15,14 +15,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# `platform.system()` triggers `_win32_ver` → `_wmi_query` on
-# Python 3.14 Windows, which hangs indefinitely when WMI misbehaves.
-# `sys.platform` is a constant string baked at interpreter startup —
-# no syscall, instant. The exact mapping we need is "Windows" vs not,
-# so derive it from `sys.platform` instead.
-_SYSTEM = ("Windows" if sys.platform.startswith("win")
-            else "Darwin" if sys.platform == "darwin"
-            else "Linux")
+# Use `sys.platform` (constant string baked at interpreter startup)
+# rather than `platform.system()`. Python 3.14 reimplemented
+# `platform.system()` on Windows via `_win32_ver` → `_wmi_query`,
+# making a previously-instant call dependent on the WMI service —
+# which can hang indefinitely (corrupt WMI repository, heavy load,
+# AV interference, COM threading bug). A regression in CPython, not
+# something to defend against forever; but the workaround is trivial.
+_IS_WINDOWS = sys.platform.startswith("win")
 
 
 # ── Windows DPAPI ─────────────────────────────────────────────────
@@ -121,7 +121,7 @@ def _aes_decrypt(data: bytes) -> bytes:
 def protect(plaintext: str) -> str:
     """Encrypt a string. Returns base64-encoded ciphertext."""
     data = plaintext.encode("utf-8")
-    if _SYSTEM == "Windows":
+    if _IS_WINDOWS:
         encrypted = _dpapi_encrypt(data)
     else:
         encrypted = _aes_encrypt(data)
@@ -131,7 +131,7 @@ def protect(plaintext: str) -> str:
 def unprotect(ciphertext: str) -> str:
     """Decrypt a base64-encoded ciphertext. Returns plaintext string."""
     data = base64.b64decode(ciphertext)
-    if _SYSTEM == "Windows":
+    if _IS_WINDOWS:
         decrypted = _dpapi_decrypt(data)
     else:
         decrypted = _aes_decrypt(data)

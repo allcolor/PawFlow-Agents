@@ -13,7 +13,6 @@ Execution modes:
 """
 
 import os
-import platform
 import subprocess
 
 

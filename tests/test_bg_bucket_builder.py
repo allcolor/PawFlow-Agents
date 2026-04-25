@@ -420,9 +420,12 @@ def test_build_now_sync_empty_summary_breaks_loop(fake_builder):
 
 
 def test_build_persists_tool_trace_on_bucket(fake_builder):
-    # Need ≥ L1 + TAIL_RESERVE msgs to build a bucket
-    _write_shared(fake_builder._shared_path, 2 * L1_TRIGGER_MSGS)
-    # Minimal transcript with one tool_call in-range
+    # Exactly L1 + TAIL_RESERVE msgs: one L1 bucket fires, the rest is
+    # tail reserved (allow_partial default is True but available=0).
+    _write_shared(fake_builder._shared_path,
+                   L1_TRIGGER_MSGS + TAIL_RESERVE)
+    # Minimal transcript with one tool_call in-range (covered by the
+    # L1 bucket which spans seq 1..L1_TRIGGER_MSGS).
     with open(fake_builder._transcript_path, "w", encoding="utf-8") as f:
         f.write(json.dumps({
             "role": "assistant", "seq": 50, "ts": 150.0,

@@ -17,13 +17,20 @@ removes the offending entry when the current interpreter isn't Linux.
 
 from __future__ import annotations
 
-import platform
 import sys
 
 
 def _strip_pylib_on_non_linux() -> None:
-    """Remove `.pylib` variants from sys.path outside Linux."""
-    if platform.system() == "Linux":
+    """Remove `.pylib` variants from sys.path outside Linux.
+
+    Uses `sys.platform` (a constant string baked at interpreter
+    startup) rather than `platform.system()`. On Python 3.14 Windows,
+    `platform.system()` triggers `_win32_ver()` → `_wmi_query()`,
+    which hangs indefinitely when WMI misbehaves (observed during
+    pytest collection: every test invocation stalled the import of
+    this conftest forever). `sys.platform` has no syscall — instant.
+    """
+    if sys.platform.startswith("linux"):
         return
     sys.path[:] = [
         p for p in sys.path

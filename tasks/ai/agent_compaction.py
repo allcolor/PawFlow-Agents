@@ -879,23 +879,33 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             #  Token-budget tail selection (instant, deterministic)
             # ═════════════════════════════════════════════════════════
             # Walk back from end of transcript, accumulating tokens
-            # until we hit TAIL_TARGET (20k = cap - HEADER_BUDGET).
-            # Stop early if we'd exceed cap when combined with the
-            # already-assembled header. Then orphan-fix: if the first
-            # kept msg is a tool/tool_result whose tool_call sits
-            # OUTSIDE the kept slice, extend backward to include the
-            # owning assistant turn (or drop the orphan tool_result).
+            # until we approach the cap when combined with the
+            # already-assembled header. Goal: output as close to cap
+            # (50k for 200k model) as possible — header_actual + tail
+            # ≈ cap. The user's mental model: header is bounded by
+            # HEADER_BUDGET (30k) when the pyramid is full, leaving
+            # 20k for tail at maximum header; but when the header is
+            # smaller (fewer buckets / no rollup yet), the tail can
+            # grow proportionally larger to fill the cap. Don't waste
+            # cap with a fixed 20k tail ceiling — that artificially
+            # caps output at 32k when header is 12k, which the user
+            # called out as "Quand je dis 50k, je ne pense pas l'avoir
+            # dit en rigolant."
+            # Then orphan-fix: if the first kept msg is a tool/tool_
+            # result whose tool_call sits OUTSIDE the kept slice,
+            # extend backward to include the owning assistant turn
+            # (or drop the orphan).
             # ─────────────────────────────────────────────────────────
-            from core.bucket_store import HEADER_BUDGET as _HEADER_BUDGET
-            _TAIL_TARGET = max(1000, cap - _HEADER_BUDGET)  # 20k for 200k model
 
             # Compute header-side overhead (system + pyramid bridge).
             _header_only = _build_output([])
             _header_tokens = _estimate(_header_only)
-            # Tail budget: target 20k OR (cap - header), whichever is
-            # smaller. If header is small, tail can fill more; if
-            # header is at HEADER_BUDGET, tail caps at 20k.
-            _tail_budget = max(1000, min(_TAIL_TARGET, cap - _header_tokens))
+            # Bridge / format overhead headroom: each msg adds a small
+            # per-message constant in _estimate (role separator etc.);
+            # leave ~500 tokens of slack so the final assembled output
+            # rounds under cap rather than just-over.
+            _SAFETY_MARGIN = 500
+            _tail_budget = max(1000, cap - _header_tokens - _SAFETY_MARGIN)
 
             _tail_msgs = messages[start_idx:]
             # Walk from end accumulating per-msg estimates.

@@ -141,6 +141,31 @@ def test_touch_missing_key_is_noop(reg):
     reg.touch(("nope", "x", "y", "z", 0))
 
 
+def test_touch_bump_reuse_false_only_bumps_last_used(reg):
+    # Per-turn keep-alive uses bump_reuse=False so the reuse counter
+    # tracks stream-call resumes, not individual turns.
+    key = ("u", "c", "a", "svc", 0)
+    s = _mk_session(last_used_offset=10.0)
+    reg.register(key, s)
+    before = s.last_used
+    reg.touch(key, bump_reuse=False)
+    reg.touch(key, bump_reuse=False)
+    assert s.reuse_count == 0
+    assert s.last_used > before
+
+
+def test_per_turn_touch_prevents_idle_eviction(reg):
+    # Repro of the sweeper eviction bug: a long stream that bumps
+    # last_used per turn must not be evicted, even past idle_ttl.
+    key = ("u", "c", "a", "svc", 0)
+    s = _mk_session(last_used_offset=2000.0)  # registered 2000s ago
+    reg.register(key, s)
+    reg.touch(key, bump_reuse=False)  # one turn just flushed
+    killed = reg.sweep_idle(idle_ttl_seconds=1800)
+    assert killed == 0
+    assert reg.get(key) is s
+
+
 # ── evict / kill_and_evict ─────────────────────────────────────
 
 

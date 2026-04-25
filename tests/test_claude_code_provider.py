@@ -481,6 +481,9 @@ class TestStreamContinuesPastResultWhenPreemptPending(unittest.TestCase):
         self.client._conversation_id = "test-conv"
         self.client._agent_name = "test-agent"
         self.client._user_id = "test-user"
+        # Preempt-check invariant (9be66bf) requires a resolvable session_id;
+        # in a real stream this is set by CC's init event or REUSE entry.
+        self.client._current_session_id = "sess-test-preempt"
         self._cred_patcher = patch.object(self.client, '_setup_credentials')
         self._cred_patcher.start()
         self.addCleanup(self._cred_patcher.stop)

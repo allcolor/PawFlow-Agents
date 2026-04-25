@@ -16,6 +16,11 @@ from fs_common import (
     _translate_path,
     _to_host_path,
     detect_available_shells,
+    run_cancellable as _run_cancellable,
+)
+from pawflow_relay.proc_registry import (
+    register_inflight_proc,
+    unregister_inflight_proc,
 )
 
 
@@ -65,7 +70,8 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         ] + _docker_env_args + [
             _relay_container,
         ] + _container_shell
-        result = subprocess.run(
+        result = _run_cancellable(
+            req.get("request_id", ""),
             docker_exec_cmd,
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
@@ -110,7 +116,8 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
             "--security-opt", "no-new-privileges",
             _image,
         ] + _exec_cmd
-        result = subprocess.run(
+        result = _run_cancellable(
+            req.get("request_id", ""),
             _docker_cmd() + ["run"] + docker_run_args,
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
@@ -127,7 +134,8 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         if not executable and os.name == "nt":
             # Default: cmd.exe with UTF-8 codepage
             command = f"chcp 65001 >nul 2>&1 & {command}"
-        result = subprocess.run(
+        result = _run_cancellable(
+            req.get("request_id", ""),
             command, shell=True,
             executable=executable,
             capture_output=True, text=True,
@@ -220,6 +228,8 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
             popen_kwargs["executable"] = executable
 
     proc = subprocess.Popen(cmd if not popen_kwargs.get("shell") else cmd, **popen_kwargs)
+    _request_id = req.get("request_id", "")
+    register_inflight_proc(_request_id, proc)
 
     stdout_lines = []
     stderr_lines = []
@@ -228,56 +238,59 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
     truncated_out = False
     truncated_err = False
 
-    import selectors
-    sel = selectors.DefaultSelector()
-    sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
-    sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
+    try:
+        import selectors
+        sel = selectors.DefaultSelector()
+        sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
+        sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
 
-    import time as _time
-    # timeout=None → no deadline, run forever (project rule: no arbitrary timeouts).
-    deadline = _time.monotonic() + timeout if timeout is not None else None
-    open_streams = 2
+        import time as _time
+        # timeout=None → no deadline, run forever (project rule: no arbitrary timeouts).
+        deadline = _time.monotonic() + timeout if timeout is not None else None
+        open_streams = 2
 
-    while open_streams > 0:
-        if deadline is not None:
-            remaining = deadline - _time.monotonic()
-            if remaining <= 0:
-                proc.kill()
-                proc.wait()
-                raise TimeoutError(f"Command timed out after {timeout}s")
-            events = sel.select(timeout=min(remaining, 1.0))
-        else:
-            events = sel.select(timeout=1.0)
-        for key, _ in events:
-            stream_name = key.data
-            line = key.fileobj.readline()
-            if not line:
-                sel.unregister(key.fileobj)
-                open_streams -= 1
-                continue
-            if stream_name == "stdout":
-                total_stdout += len(line)
-                if total_stdout <= MAX_EXEC_OUTPUT:
-                    stdout_lines.append(line)
-                    if on_output:
-                        on_output("stdout", line)
-                elif not truncated_out:
-                    truncated_out = True
-                    if on_output:
-                        on_output("stdout", f"\n... (truncating, >{MAX_EXEC_OUTPUT} bytes)\n")
+        while open_streams > 0:
+            if deadline is not None:
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    proc.kill()
+                    proc.wait()
+                    raise TimeoutError(f"Command timed out after {timeout}s")
+                events = sel.select(timeout=min(remaining, 1.0))
             else:
-                total_stderr += len(line)
-                if total_stderr <= MAX_EXEC_OUTPUT:
-                    stderr_lines.append(line)
-                    if on_output:
-                        on_output("stderr", line)
-                elif not truncated_err:
-                    truncated_err = True
-                    if on_output:
-                        on_output("stderr", f"\n... (truncating, >{MAX_EXEC_OUTPUT} bytes)\n")
+                events = sel.select(timeout=1.0)
+            for key, _ in events:
+                stream_name = key.data
+                line = key.fileobj.readline()
+                if not line:
+                    sel.unregister(key.fileobj)
+                    open_streams -= 1
+                    continue
+                if stream_name == "stdout":
+                    total_stdout += len(line)
+                    if total_stdout <= MAX_EXEC_OUTPUT:
+                        stdout_lines.append(line)
+                        if on_output:
+                            on_output("stdout", line)
+                    elif not truncated_out:
+                        truncated_out = True
+                        if on_output:
+                            on_output("stdout", f"\n... (truncating, >{MAX_EXEC_OUTPUT} bytes)\n")
+                else:
+                    total_stderr += len(line)
+                    if total_stderr <= MAX_EXEC_OUTPUT:
+                        stderr_lines.append(line)
+                        if on_output:
+                            on_output("stderr", line)
+                    elif not truncated_err:
+                        truncated_err = True
+                        if on_output:
+                            on_output("stderr", f"\n... (truncating, >{MAX_EXEC_OUTPUT} bytes)\n")
 
-    sel.close()
-    proc.wait()
+        sel.close()
+        proc.wait()
+    finally:
+        unregister_inflight_proc(_request_id)
 
     stdout = "".join(stdout_lines)
     stderr = "".join(stderr_lines)

@@ -577,9 +577,26 @@ class ScraplingFetchHandler(ToolHandler):
             args = [sys.executable, "-c", script, url]
             if selector:
                 args.append(selector)
-            proc = subprocess.run(
-                args, capture_output=True, text=True, timeout=60,
+            # Spawn instead of run() so FORCE STOP can terminate the
+            # 60s-bound headless fetch via the kill_hook (the daemon
+            # exec_thread won't observe the cancel_event during a
+            # blocking subprocess.run otherwise).
+            popen = subprocess.Popen(
+                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
             )
+            try:
+                from services.tool_relay_service import register_kill_hook
+                register_kill_hook(popen.terminate)
+            except Exception:
+                pass
+            try:
+                stdout, stderr = popen.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                popen.kill()
+                stdout, stderr = popen.communicate()
+                raise
+            proc = subprocess.CompletedProcess(args, popen.returncode, stdout, stderr)
             if proc.returncode != 0:
                 logger.warning(f"stealth subprocess failed for {url}: "
                                f"{proc.stderr[:500]}")

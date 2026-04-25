@@ -193,12 +193,45 @@ $ cat /cc_sessions/convA/claude/projects/-workspace/<sub>/tool-results/<f>.txt
 ... (CC's spilled tool output, served from the PawFlow server) ...
 ```
 
+## Sister protocol: FileStore FUSE (`ffs.*`)
+
+The same WebSocket and `relay_request` / `relay_response` envelope is
+shared by a second handler that exposes the server FileStore as a
+virtualized FUSE hierarchy. Methods come in with the `ffs.` prefix
+and `services/filesystem_service.py:_handle_relay_request` dispatches
+them to `RelayFileStoreFs` instead of `RelayServerFs`.
+
+Layout (read-only):
+
+```
+/                          → dir, lists every file_id visible to the
+                              relay's owner user.
+/<file_id>                 → dir containing one file.
+/<file_id>/<filename>      → the file content.
+```
+
+Writes (`ffs.create`, `ffs.write`, `ffs.unlink`, ...) all return EROFS
+— the `file_id` would have to be assigned by `FileStore.store()`
+before the path could exist, so there is no sensible mapping for `cp
+foo.txt /filestore/<NEW>/`. Use the FileStore HTTP/MCP APIs for the
+write path.
+
+The relay-side mount is started by `pawflow_relay/worker.py` when
+`--filestore-mount /filestore` (or `PAWFLOW_FILESTORE_MOUNT`) is set,
+and reuses `ServerFsMount` with `method_prefix='ffs.'`. The default
+relay docker startup in `pawflow_relay/thread.py` already passes
+`--filestore-mount /filestore` so the mount is live alongside
+`/cc_sessions`.
+
 ## See also
 
-- `services/relay_server_fs.py` — server handler
+- `services/relay_server_fs.py` — server handler (sfs.*)
+- `services/relay_filestore_fs.py` — server handler (ffs.*, RO virtualized)
 - `tests/test_relay_server_fs.py` — 24 sandbox/op tests
-- `services/filesystem_service.py:_handle_relay_request` — dispatch
+- `tests/test_relay_filestore_fs.py` — 24 path/op/access-scope tests
+- `services/filesystem_service.py:_handle_relay_request` — prefix dispatch
 - `pawflow_relay/server_fs_client.py` — relay-side request/response correlator
-- `pawflow_relay/server_fs_mount.py` — FUSE proxy (lazy pyfuse3 import)
+- `pawflow_relay/server_fs_mount.py` — FUSE proxy (lazy pyfuse3 import,
+  `method_prefix` parameter selects which protocol it speaks)
 - `tests/test_server_fs_client.py` — 8 client tests
 - `tests/test_server_fs_roundtrip.py` — 5 end-to-end (no WS) tests

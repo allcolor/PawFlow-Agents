@@ -231,6 +231,11 @@ class RelayService(BaseService):
         self._user_id = ""
         self._server_fs = None
         self._server_fs_lock = threading.Lock()
+        # Second inverse-direction handler: virtualized FUSE view of the
+        # FileStore. Methods come in with the `ffs.` prefix and dispatch
+        # to RelayFileStoreFs instead of RelayServerFs.
+        self._filestore_fs = None
+        self._filestore_fs_lock = threading.Lock()
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -298,7 +303,7 @@ class RelayService(BaseService):
             except Exception as e:
                 logger.error('Failed to unregister relay route %s: %s', self._route_path, e, exc_info=True)
             self._connection = None
-        # Release any open fds in the inverse-direction handler
+        # Release any open fds in the inverse-direction handlers
         with self._server_fs_lock:
             if self._server_fs is not None:
                 try:
@@ -306,6 +311,13 @@ class RelayService(BaseService):
                 except Exception as e:
                     logger.debug('server_fs.close failed: %s', e, exc_info=True)
                 self._server_fs = None
+        with self._filestore_fs_lock:
+            if self._filestore_fs is not None:
+                try:
+                    self._filestore_fs.close()
+                except Exception as e:
+                    logger.debug('filestore_fs.close failed: %s', e, exc_info=True)
+                self._filestore_fs = None
 
     def _handle_ws(self, sock, path_params, meta):
         import asyncio
@@ -473,21 +485,42 @@ class RelayService(BaseService):
                 self._server_fs = RelayServerFs(self._user_id)
             return self._server_fs
 
+    def _get_filestore_fs(self):
+        """Lazy-instantiate the FileStore FUSE handler (ffs.* methods)."""
+        if not self._user_id:
+            return None
+        with self._filestore_fs_lock:
+            if self._filestore_fs is None:
+                from services.relay_filestore_fs import RelayFileStoreFs
+                self._filestore_fs = RelayFileStoreFs(self._user_id)
+            return self._filestore_fs
+
     async def _handle_relay_request(self, msg, writer):
         """Service a relay→server FS op (the inverse direction).
 
         The relay's FUSE proxy forwards each FUSE callback as a
-        `relay_request` over the existing tunnel; we run the op against
-        the owner's CLAUDE_SESSIONS_DIR slot and reply with the matching
-        `relay_response`.
+        `relay_request` over the existing tunnel. The method prefix
+        selects the handler:
+          - `sfs.*` → cc-sessions slot (CLAUDE_SESSIONS_DIR/<user>/)
+          - `ffs.*` → virtualized FileStore view
+        Anything else returns ENOSYS.
         """
         request_id = msg.get('request_id', '')
         method = msg.get('method', '')
         args = msg.get('args', {}) or {}
-        fs = self._get_server_fs()
+        if method.startswith('ffs.'):
+            fs = self._get_filestore_fs()
+        elif method.startswith('sfs.'):
+            fs = self._get_server_fs()
+        else:
+            fs = None
         if fs is None:
-            reply = {'error': 'EACCES', 'errno': 13,
-                     'message': 'relay has no owner user_id'}
+            if not self._user_id:
+                reply = {'error': 'EACCES', 'errno': 13,
+                         'message': 'relay has no owner user_id'}
+            else:
+                reply = {'error': 'ENOSYS', 'errno': 38,
+                         'message': f'unknown method prefix: {method!r}'}
         else:
             # FS ops are sync — run on the loop's default executor so we
             # don't block other relay traffic on a slow disk.
@@ -560,13 +593,53 @@ class RelayService(BaseService):
             evt.set()
 
     def cancel_pending(self, request_id: str):
-        """Cancel a pending request — unblock the waiting thread with an error."""
+        """Cancel a pending request — unblock the waiting thread AND tell
+        the relay to kill the underlying subprocess.
+
+        Two-step:
+          1. Push a `cancel_request` envelope to the relay so it can
+             terminate the Popen registered for this request_id (see
+             pawflow_relay.proc_registry).
+          2. Pop the local pending entry and unblock the waiter with
+             '[Interrupted by user]'. The thread that called `_request`
+             returns immediately even if the relay's kill takes a moment.
+        """
+        if request_id:
+            self._send_cancel_request_to_relay(request_id)
         with self._pending_lock:
             entry = self._pending.pop(request_id, None)
         if entry:
             evt, holder = entry
             holder["error"] = "[Interrupted by user]"
             evt.set()
+
+    def _send_cancel_request_to_relay(self, request_id: str):
+        """Broadcast a cancel_request envelope to every connected relay.
+
+        Best-effort and non-blocking: send timeouts are absorbed silently
+        because a missed cancel only means the action thread will exit
+        naturally when its subprocess does. We log the failure for
+        forensics but never raise — cancel_pending must always succeed
+        in unblocking the local waiter.
+        """
+        with self._relay_pool_lock:
+            pool = self._relay_pool[:]
+        if not pool:
+            return
+        payload = json.dumps({
+            "type": "cancel_request",
+            "request_id": request_id,
+        }).encode("utf-8")
+        for conn in pool:
+            writer, loop = conn["writer"], conn["loop"]
+            async def _send(w=writer):
+                await _ws_send_frame(w, payload)
+            try:
+                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=2)
+            except Exception as e:
+                logger.warning(
+                    "[%s] cancel_request push failed for %s: %s",
+                    self._service_id, request_id, e)
 
     def _dispatch_progress(self, msg: dict):
         """Forward progress messages to registered callback or terminal proxy."""
@@ -682,6 +755,17 @@ class RelayService(BaseService):
                 self._pending.pop(request_id, None)
             raise Exception(f"Failed to send to relay: {last_err}")
 
+        # Register a kill hook so a FORCE STOP at the tool-relay layer
+        # propagates all the way down to the relay's subprocess: the
+        # hook calls cancel_pending(rid) which both unblocks our local
+        # evt.wait() below AND pushes a cancel_request envelope so the
+        # relay terminates its Popen.
+        try:
+            from services.tool_relay_service import register_kill_hook
+            register_kill_hook(lambda rid=request_id: self.cancel_pending(rid))
+        except Exception:
+            pass
+
         evt.wait()  # no limit — relay operations take as long as they take
 
         if "error" in holder:
@@ -743,6 +827,13 @@ class RelayService(BaseService):
             with self._pending_lock:
                 self._pending.pop(request_id, None)
             raise Exception(f"Failed to send to relay: {last_err}")
+
+        # Same kill-hook registration as `_request` — see comment there.
+        try:
+            from services.tool_relay_service import register_kill_hook
+            register_kill_hook(lambda rid=request_id: self.cancel_pending(rid))
+        except Exception:
+            pass
 
         evt.wait(timeout=timeout)
 
@@ -810,6 +901,13 @@ class RelayService(BaseService):
             with self._pending_lock:
                 self._pending.pop(request_id, None)
             raise Exception(f"Failed to send to relay: {last_err}")
+
+        # Same kill-hook registration as `_request` — see comment there.
+        try:
+            from services.tool_relay_service import register_kill_hook
+            register_kill_hook(lambda rid=request_id: self.cancel_pending(rid))
+        except Exception:
+            pass
 
         # Wait for relay response — no limit unless timeout explicitly given
         _wait_timeout = kwargs.get("timeout")

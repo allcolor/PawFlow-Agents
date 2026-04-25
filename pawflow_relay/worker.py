@@ -82,6 +82,17 @@ def _tmp_allowlist():
 _TMP_ALLOWLIST = _tmp_allowlist()
 
 
+# ── In-flight subprocess registry ───────────────────────────────────
+# Lives in `pawflow_relay.proc_registry` to avoid a circular import
+# with the action handlers (fs_actions/fs_exec/...). Re-exported here
+# so call sites that already import from `worker` don't have to change.
+from pawflow_relay.proc_registry import (
+    register_inflight_proc,
+    unregister_inflight_proc,
+    kill_inflight_proc,
+)
+
+
 def _is_allowed_tmp_path(path: str) -> bool:
     """True when `path` is absolute and falls under a system temp dir."""
     if not path or not isinstance(path, str):
@@ -264,7 +275,8 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
 
 def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,
                 allow_automation=False, allow_local_screen=False, allow_local=False,
-                gateway_cookie="", session_token="", server_mount=""):
+                gateway_cookie="", session_token="", server_mount="",
+                filestore_mount=""):
     """Connect to the PawFlow server via WebSocket and process filesystem commands.
 
     server_mount: if set, mount a FUSE proxy at this local path that
@@ -272,6 +284,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     the same WS tunnel. Read-only in this phase. The path is bind-mounted
     by the operator into any docker container that needs to see the
     user's CLAUDE_SESSIONS_DIR slot.
+
+    filestore_mount: if set, mount a second FUSE proxy at this local
+    path that exposes the server FileStore as a virtualized hierarchy
+    (/<file_id>/<filename>). Read-only — writes go through the
+    HTTP/MCP FileStore APIs, not the FUSE mount.
     """
     import ssl
     import base64 as b64
@@ -1534,6 +1551,35 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         _server_fs_client.cancel_all('mount failed')
                         _server_fs_client = None
 
+            # ── FileStore FUSE mount (ffs.* protocol, RO virtualized view) ──
+            # Independent client so cleanup is symmetric with server-fs;
+            # both share the same WS tunnel via _ws_frame_send/_send_lock.
+            _filestore_fs_client = None
+            _filestore_fs_mount = None
+            if filestore_mount:
+                from pawflow_relay.server_fs_client import ServerFsClient
+                from pawflow_relay.server_fs_mount import ServerFsMount
+                _filestore_fs_client = ServerFsClient(
+                    send_callable=lambda b: _ws_frame_send(sock, b),
+                    send_lock=_send_lock)
+                try:
+                    _filestore_fs_mount = ServerFsMount(
+                        _filestore_fs_client, filestore_mount,
+                        method_prefix='ffs.',
+                        fsname='pawflow-filestore-fs')
+                    _filestore_fs_mount.start()
+                    sys.stderr.write(
+                        f"[FSRelay] filestore-fs mounted at {filestore_mount}\n")
+                except Exception as _fmerr:
+                    sys.stderr.write(
+                        f"[FSRelay] filestore-fs mount FAILED: {_fmerr}\n"
+                        "  Likely cause: missing pyfuse3 / libfuse3, or no "
+                        "CAP_SYS_ADMIN. Continuing without filestore-fs.\n")
+                    _filestore_fs_mount = None
+                    if _filestore_fs_client is not None:
+                        _filestore_fs_client.cancel_all('mount failed')
+                        _filestore_fs_client = None
+
             def _open_terminal(cols=80, rows=24, shell=None):
                 import uuid as _uuid_term
                 import fcntl
@@ -1654,10 +1700,32 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 if _mtype == "relay_response":
                     # Inverse-direction reply for a relay→server FS op.
                     # Wake the FUSE callback waiting on this request_id.
-                    if _server_fs_client is not None:
-                        if not _server_fs_client.dispatch_response(msg):
-                            sys.stderr.write(
-                                f"[FSRelay] orphan relay_response: {msg.get('request_id', '?')}\n")
+                    # Try each client in turn — request_ids are uuids so
+                    # only one will own a given response.
+                    _delivered = False
+                    for _fsc in (_server_fs_client, _filestore_fs_client):
+                        if _fsc is not None and _fsc.dispatch_response(msg):
+                            _delivered = True
+                            break
+                    if not _delivered and (_server_fs_client is not None
+                                            or _filestore_fs_client is not None):
+                        sys.stderr.write(
+                            f"[FSRelay] orphan relay_response: {msg.get('request_id', '?')}\n")
+                    continue
+                if _mtype == "cancel_request":
+                    # Server-initiated kill: a tool action that spawned a
+                    # Popen and registered it via register_inflight_proc()
+                    # gets terminated. After this returns, the action's
+                    # blocked `proc.wait()` unblocks and the action exits
+                    # — the original tool caller server-side has already
+                    # given up on the result, so we don't need to send a
+                    # response here.
+                    _rid = msg.get("request_id", "")
+                    if _rid:
+                        _ok = kill_inflight_proc(_rid)
+                        sys.stderr.write(
+                            f"[FSRelay] cancel_request rid={_rid} "
+                            f"hit={'yes' if _ok else 'no-such-proc'}\n")
                     continue
                 if _mtype == "spawn_relay":
                     # Server asks us to create a child relay for a different root
@@ -1832,18 +1900,20 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _ct()
             # Tear down server-fs FUSE mount + unblock pending FUSE waiters
             # so the kernel doesn't hang on a now-dead WebSocket.
-            _sfm = locals().get('_server_fs_mount')
-            if _sfm is not None:
-                try:
-                    _sfm.stop()
-                except Exception as _se:
-                    sys.stderr.write(f"[FSRelay] server-fs stop: {_se}\n")
-            _sfc = locals().get('_server_fs_client')
-            if _sfc is not None:
-                try:
-                    _sfc.cancel_all('relay disconnected')
-                except Exception:
-                    pass
+            for _name in ('_server_fs_mount', '_filestore_fs_mount'):
+                _m = locals().get(_name)
+                if _m is not None:
+                    try:
+                        _m.stop()
+                    except Exception as _se:
+                        sys.stderr.write(f"[FSRelay] {_name} stop: {_se}\n")
+            for _name in ('_server_fs_client', '_filestore_fs_client'):
+                _c = locals().get(_name)
+                if _c is not None:
+                    try:
+                        _c.cancel_all('relay disconnected')
+                    except Exception:
+                        pass
             # Stop watchdog
             try:
                 _watchdog_stop.set()

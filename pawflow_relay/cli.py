@@ -96,6 +96,12 @@ def worker_main():
                         help=("Mount the server's CLAUDE_SESSIONS_DIR/<owning_user>/ "
                               "slot at this local path via FUSE-over-tunnel. "
                               "Requires pyfuse3 + libfuse3."))
+    parser.add_argument("--filestore-mount",
+                        default=os.environ.get("PAWFLOW_FILESTORE_MOUNT", ""),
+                        help=("Mount a virtualized read-only view of the server "
+                              "FileStore (/<file_id>/<filename>) at this local "
+                              "path via FUSE-over-tunnel. "
+                              "Requires pyfuse3 + libfuse3."))
     args = parser.parse_args()
     sys.stderr.write(
         f"[FSRelay] args parsed: server={bool(args.server)}, "
@@ -274,6 +280,7 @@ def worker_main():
                         allow_local=args.allow_local,
                         gateway_cookie=gateway_cookie,
                         session_token=session_token,
-                        server_mount=args.server_mount)
+                        server_mount=args.server_mount,
+                        filestore_mount=args.filestore_mount)
         finally:
             _cleanup()

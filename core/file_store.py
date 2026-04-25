@@ -350,6 +350,31 @@ class FileStore:
                 return False
             return Path(entry.get("path", "")).exists()
 
+    def get_disk_path(self, file_id: str,
+                      user_id: str = "") -> Optional[Path]:
+        """Return the on-disk Path for a file, or None if missing/denied.
+
+        Used by code paths that need to open the file lazily (FUSE
+        proxy, streaming) instead of loading the bytes through `get()`.
+        Access is checked the same way as `get()`: returns None if the
+        entry is unknown, expired, or the user lacks access.
+        """
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._entries.get(file_id)
+            if entry is None:
+                return None
+        if entry.get("ttl", 0) > 0:
+            if time.time() - entry.get("created_at", 0) > entry["ttl"]:
+                self._delete_entry(file_id)
+                return None
+        if not self.check_access(file_id, user_id=user_id):
+            return None
+        path = Path(entry.get("path", ""))
+        if not path.exists():
+            return None
+        return path
+
     # ── Delete ───────────────────────────────────────────────────
 
     def delete(self, file_id: str, user_id: str = "") -> bool:

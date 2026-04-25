@@ -49,10 +49,12 @@ def _build_operations_class():
         _ENTRY_TIMEOUT = 1.0
 
         def __init__(self, client: ServerFsClient,
-                     request_timeout: float = 30.0):
+                     request_timeout: float = 30.0,
+                     method_prefix: str = 'sfs.'):
             super().__init__()
             self._cli = client
             self._timeout = request_timeout
+            self._method_prefix = method_prefix
             self._next_ino = pyfuse3.ROOT_INODE + 1
             self._ino2path: dict = {pyfuse3.ROOT_INODE: '/'}
             self._path2ino: dict = {'/': pyfuse3.ROOT_INODE}
@@ -91,6 +93,11 @@ def _build_operations_class():
         async def _req(self, op: str, args: dict) -> dict:
             timeout = self._timeout
             cli = self._cli
+            # Swap the hardcoded 'sfs.' prefix for whichever this mount
+            # is configured with, so the same Operations class serves
+            # the cc-sessions slot and the FileStore view side by side.
+            if self._method_prefix != 'sfs.' and op.startswith('sfs.'):
+                op = self._method_prefix + op[4:]
             return await trio.to_thread.run_sync(
                 lambda: cli.request(op, args, timeout))
 
@@ -362,11 +369,15 @@ class ServerFsMount:
     """
 
     def __init__(self, client: ServerFsClient, mountpoint: str,
-                 allow_other: bool = False, request_timeout: float = 30.0):
+                 allow_other: bool = False, request_timeout: float = 30.0,
+                 method_prefix: str = 'sfs.',
+                 fsname: str = 'pawflow-server-fs'):
         self._cli = client
         self._mountpoint = mountpoint
         self._allow_other = allow_other
         self._timeout = request_timeout
+        self._method_prefix = method_prefix
+        self._fsname = fsname
         self._thread: Optional[threading.Thread] = None
         self._started = threading.Event()
 
@@ -385,10 +396,11 @@ class ServerFsMount:
         import pyfuse3
         import trio
 
-        ops = Operations(self._cli, request_timeout=self._timeout)
+        ops = Operations(self._cli, request_timeout=self._timeout,
+                         method_prefix=self._method_prefix)
 
         fuse_opts = set(pyfuse3.default_options)
-        fuse_opts.add('fsname=pawflow-server-fs')
+        fuse_opts.add(f'fsname={self._fsname}')
         if self._allow_other:
             fuse_opts.add('allow_other')
 

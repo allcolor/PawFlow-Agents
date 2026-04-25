@@ -232,10 +232,13 @@ RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 RUN update-desktop-database /usr/share/applications 2>/dev/null || true
 
 # Give pawflow user ownership of workspace and docker group.
-# /cc_sessions is the canonical mountpoint for the server-fs FUSE tunnel;
-# pre-create it so the unprivileged pawflow user can mount onto it.
-RUN mkdir -p /workspace /cc_sessions \
-    && chown pawflow:pawflow /workspace /cc_sessions \
+# /cc_sessions is the canonical mountpoint for the server-fs FUSE tunnel
+# (sfs.* protocol); /filestore is the sister-protocol mountpoint for
+# the FileStore FUSE proxy (ffs.*, RO virtualized). Pre-create both so
+# the unprivileged pawflow user can mount onto them — root-owned dirs
+# would refuse the mount.
+RUN mkdir -p /workspace /cc_sessions /filestore \
+    && chown pawflow:pawflow /workspace /cc_sessions /filestore \
     && (groupadd -f docker; usermod -aG docker pawflow) 2>/dev/null || true
 
 # ── PawFlow relay + SDK ────────────────────────────────────────────

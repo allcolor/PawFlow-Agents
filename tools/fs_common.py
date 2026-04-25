@@ -93,3 +93,37 @@ def _resolve_shell(name: str) -> str:
                 "python3": "python", "js": "node"}
     canonical = _aliases.get(name.lower(), name.lower())
     return shells.get(canonical, "")
+
+
+def run_cancellable(request_id: str, cmd, *, timeout=None, **popen_kwargs):
+    """Drop-in replacement for `subprocess.run(capture_output=True, ...)`
+    that registers the spawned Popen so the server's cancel_request
+    envelope can terminate it (via pawflow_relay.proc_registry).
+
+    Use this for any subprocess call that may run long enough for the
+    user to want to FORCE STOP it. Short ops (`docker info`,
+    `git branch --show-current`, ...) don't need it.
+
+    Returns a `subprocess.CompletedProcess`. Caller passes
+    `text=True` / `encoding=...` / `errors=...` / `cwd=...` / `env=...`
+    through **popen_kwargs.
+    """
+    from pawflow_relay.proc_registry import (
+        register_inflight_proc, unregister_inflight_proc,
+    )
+    capture = popen_kwargs.pop("capture_output", False)
+    if capture:
+        popen_kwargs["stdout"] = subprocess.PIPE
+        popen_kwargs["stderr"] = subprocess.PIPE
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+    register_inflight_proc(request_id, proc)
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            raise
+    finally:
+        unregister_inflight_proc(request_id)
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)

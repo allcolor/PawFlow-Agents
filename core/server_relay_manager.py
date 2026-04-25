@@ -180,10 +180,15 @@ class ServerRelayManager:
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", relay_cpus,
             "--memory", relay_memory,
-            # FUSE (server-fs tunnel mount at /cc_sessions): SYS_ADMIN lets
-            # pyfuse3 call mount() directly, /dev/fuse is the kernel char
-            # device the FUSE lib opens, and apparmor:unconfined stops
-            # Ubuntu's docker-default profile from blocking mount/umount.
+            # FUSE mounts inside the relay container:
+            #   /cc_sessions — server-fs sister-protocol (sfs.*), the
+            #     conversation's CLAUDE_SESSIONS_DIR slot.
+            #   /filestore — FileStore sister-protocol (ffs.*), the
+            #     virtualized RO view of files visible to this user.
+            # SYS_ADMIN lets pyfuse3 call mount() directly, /dev/fuse is
+            # the kernel char device the FUSE lib opens, and apparmor:
+            # unconfined stops Ubuntu's docker-default profile from
+            # blocking mount/umount.
             "--cap-add", "SYS_ADMIN",
             "--device", "/dev/fuse",
             "--security-opt", "apparmor:unconfined",
@@ -193,6 +198,7 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
             "--env", "PAWFLOW_SERVER_MOUNT=/cc_sessions",
+            "--env", "PAWFLOW_FILESTORE_MOUNT=/filestore",
             "--publish", f"{desktop_host_port}:6080",
             "--publish", f"{audio_host_port}:6180",
             "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",

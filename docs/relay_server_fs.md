@@ -159,12 +159,50 @@ Requires:
 
 Both container-spawning launch paths wire this automatically:
 - `pawflow_cli --docker-image ...` → `pawflow_relay/thread.py` adds the
-  three docker flags above and passes `--server-mount /cc_sessions` to
-  the in-container launcher.
+  three docker flags above and passes `--server-mount /cc_sessions` and
+  `--filestore-mount /filestore` to the in-container launcher.
 - Server-side per-conversation relays → `core/server_relay_manager.py`
   adds the same docker flags and sets `PAWFLOW_SERVER_MOUNT=/cc_sessions`
-  in the container env (picked up by `pawflow_relay.cli`'s default).
+  + `PAWFLOW_FILESTORE_MOUNT=/filestore` in the container env (picked
+  up by `pawflow_relay.cli`'s default).
 Operators do not need to edit a compose file for these paths.
+
+### FUSE mount lifecycle vs. WS reconnects
+
+The FUSE filesystems are mounted **once** by the relay worker, before
+entering the WS reconnect loop, and stay up across drops/reconnects.
+The `ServerFsClient` bound to the WS is wrapped in a
+`SwappableServerFsClient` (see `pawflow_relay/server_fs_client.py`):
+on each reconnect the worker calls `set_inner(new_client)`; on each
+disconnect it calls `clear_inner()` and `cancel_all('relay disconnected')`.
+
+During the reconnect gap, FUSE callbacks return EIO transiently. The
+kernel-side mount and inode allocations stay stable, so:
+
+- Bind-mounts of `/cc_sessions` / `/filestore` in downstream containers
+  (notably the CC docker spawned per agent turn) remain valid — they
+  do not need to be recreated.
+- The negative-dentry cache problem (deep paths returning ENOENT after
+  an unmount/remount cycle) does not occur.
+
+The FUSE is unmounted **only** on relay shutdown (KeyboardInterrupt path
+in `_ws_connect`).
+
+### Multi-relay scenarios
+
+- **Spawn_relay child relays** (parent answers `spawn_relay` envelope):
+  the child runs in the parent's process/container, so it sees the
+  parent's FUSE mounts via the shared mount namespace. The child does
+  not mount its own FUSE.
+- **Multiple PawCode CLI sessions for the same user**: each runs its
+  own relay docker, each has its own FUSE mount. The server-side
+  `_relay_pool` round-robins tool calls between them — caveat: each
+  CLI's `/workspace` is its own host machine path, so a tool call may
+  read different content depending on which relay handled it. This
+  is a property of multi-relay routing, not of the FUSE layer.
+- **Multiple users**: each user's relays are sandboxed by `user_id`
+  on the server side; FUSE mounts in user A's relay can never see
+  user B's session slot or FileStore entries.
 
 ### Tools docker (where bash/exec runs)
 

@@ -55,6 +55,14 @@ class RelayFuseLaunchTests(unittest.TestCase):
                       'pawflow_relay/thread.py must pass --server-mount '
                       '/cc_sessions to pawflow_relay_launcher.py')
 
+    def test_thread_py_passes_filestore_mount_to_launcher(self):
+        from pawflow_relay import thread
+        src = inspect.getsource(thread)
+        self.assertIn('"--filestore-mount", "/filestore"', src,
+                      'pawflow_relay/thread.py must pass --filestore-mount '
+                      '/filestore to pawflow_relay_launcher.py so the FileStore '
+                      'sister-protocol (ffs.*) FUSE comes up alongside /cc_sessions')
+
     # ── server-spawned relay (core/server_relay_manager.py) ───────────
 
     def test_server_relay_manager_has_fuse_flags(self):
@@ -70,6 +78,33 @@ class RelayFuseLaunchTests(unittest.TestCase):
                       'core/server_relay_manager.py must pass '
                       'PAWFLOW_SERVER_MOUNT=/cc_sessions env to relay '
                       'container (picked up by pawflow_relay.cli default)')
+
+    def test_server_relay_manager_sets_filestore_mount_env(self):
+        from core import server_relay_manager
+        src = inspect.getsource(server_relay_manager)
+        self.assertIn('PAWFLOW_FILESTORE_MOUNT=/filestore', src,
+                      'core/server_relay_manager.py must pass '
+                      'PAWFLOW_FILESTORE_MOUNT=/filestore env so the\n'
+                      'FileStore FUSE (ffs.*) is mounted alongside /cc_sessions '
+                      'in the server-spawned per-conversation relay container')
+
+    # ── Dockerfile prep (mountpoints created at build time) ───────────
+
+    def test_dockerfile_precreates_fuse_mountpoints(self):
+        # /cc_sessions and /filestore must exist + be owned by pawflow at
+        # image build time. The unprivileged pawflow user can't mkdir at
+        # FS root at runtime (root-owned /), so os.makedirs in the FUSE
+        # mount path would fail — see commit log for the original repro.
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'docker', 'relay-dev', 'Dockerfile')
+        with open(path, 'r') as f:
+            src = f.read()
+        for needle in ('mkdir -p /workspace /cc_sessions /filestore',
+                       'chown pawflow:pawflow /workspace /cc_sessions /filestore'):
+            self.assertIn(needle, src,
+                          f'docker/relay-dev/Dockerfile must contain: {needle}')
 
 
 if __name__ == '__main__':

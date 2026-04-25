@@ -357,11 +357,15 @@ class ToolRelayService(BaseService):
     def cancel_agent(cls, conversation_id: str, agent_name: str):
         """Cancel all in-flight tool calls for a (conv, agent).
 
-        In-flight requests get their _executing Event set so they unblock,
-        and are added to the result cache as "interrupted".
+        Two-phase: 1) set cancel_event so cooperative loops abort,
+        2) invoke every registered kill_hook so subprocesses, sockets,
+        and other non-cooperative resources are torn down. Without
+        phase 2 the daemon exec thread keeps running after FORCE STOP
+        — a real risk for tools with side effects (HTTP writes, file
+        writes, spawned processes).
+
         Does NOT reject future requests — only kills current in-flight ones.
         """
-        # Set cancel_event on all in-flight requests for this agent
         with cls._inflight_lock:
             to_cancel = [(rid, info) for rid, info in cls._inflight.items()
                          if isinstance(info, dict)
@@ -371,6 +375,13 @@ class ToolRelayService(BaseService):
             cancel_evt = info.get("cancel")
             if cancel_evt:
                 cancel_evt.set()
+            for hook in list(info.get("kill_hooks") or []):
+                try:
+                    hook()
+                except Exception as _he:
+                    logger.warning(
+                        "[tool-relay] kill_hook failed for %s tool=%s: %s",
+                        rid, info.get("tool_name"), _he)
         if to_cancel:
             logger.info("[tool-relay] cancelled %d in-flight request(s) for %s/%s",
                         len(to_cancel), conversation_id, agent_name)
@@ -903,10 +914,17 @@ class ToolRelayService(BaseService):
                     if cc_tc_id:
                         break
             if not cc_tc_id and not _is_sentinel:
+                # Forensic dump: what was queued vs. what we asked for.
+                # Lets us see at a glance whether it's a tool_name alias
+                # divergence, an args_hash divergence, or genuine absence.
+                from core.background_tool import snapshot_cc_pending
+                _pending_now = snapshot_cc_pending(conversation_id, agent_name)
                 logger.info(
                     "[tool-relay] cc_tc MISS conv=%s agent=%s tool=%s "
-                    "args_hash=%s — background/kill won't find this request",
-                    conversation_id[:8], agent_name, tool_name, _ah)
+                    "args_hash=%s pending=%s — background/kill won't "
+                    "find this request",
+                    conversation_id[:8], agent_name, tool_name, _ah,
+                    _pending_now or "[]")
             elif cc_tc_id:
                 logger.debug(
                     "[tool-relay] cc_tc matched tc_id=%s (tool=%s)",
@@ -920,6 +938,9 @@ class ToolRelayService(BaseService):
         cancel_event = threading.Event()
         background_event = threading.Event()
         started_at = time.time()
+        # Shared mutable list — the exec thread populates it via
+        # register_kill_hook(); cancel_agent reads + invokes each hook.
+        kill_hooks: list = []
         with self._cache_lock:
             self._executing[request_id] = evt
         with self._inflight_lock:
@@ -931,18 +952,23 @@ class ToolRelayService(BaseService):
                 "cc_tc_id": cc_tc_id,
                 "tool_name": tool_name,
                 "started_at": started_at,
+                "kill_hooks": kill_hooks,
             }
 
         # Execute in a daemon thread so cancel/background can let it run on.
         _result_holder = [None]
 
         def _exec():
-            # Expose the cancel event to the tool's call stack via
-            # thread-local — long-running tools (Pixazo poll loops,
-            # browser automation, anything with its own retry/wait)
-            # can read it and abort early instead of hammering the
-            # remote API after the user already clicked Kill.
+            # Expose the cancel event + kill-hook registry to the tool's
+            # call stack via thread-local — long-running tools (Pixazo
+            # poll loops, browser automation, anything with its own
+            # retry/wait) can read the event and abort early instead of
+            # hammering the remote API after the user clicked Kill.
+            # Tools that spawn subprocesses MUST also call
+            # register_kill_hook(proc.terminate) so FORCE STOP can
+            # actually tear them down.
             _set_current_cancel_event(cancel_event)
+            _set_current_kill_hooks(kill_hooks)
             try:
                 _result_holder[0] = self._do_execute(
                     request_id, tool_name, arguments,
@@ -952,6 +978,7 @@ class ToolRelayService(BaseService):
                                       "data": f"Error: {e}"}
             finally:
                 _set_current_cancel_event(None)
+                _set_current_kill_hooks(None)
                 evt.set()
 
         exec_thread = threading.Thread(target=_exec, daemon=True)
@@ -1354,11 +1381,19 @@ def resolve_secret_values(user_id: str, conversation_id: str) -> tuple:
 ServiceFactory.register(ToolRelayService)
 
 
-# ── Thread-local cancel-event ────────────────────────────────────────
+# ── Thread-local cancel-event + kill-hooks ────────────────────────────
 # Populated by `_handle_execute._exec()` for the lifetime of one tool
 # dispatch so any code in the call stack (Pixazo poll loops, browser
 # automation, long-running waits) can check `current_cancel_event()`
 # and abort early when the user clicks Kill.
+#
+# Kill-hooks: callables a tool can register to be invoked from
+# `cancel_agent`. Use this for resources that don't observe the cancel
+# event mid-syscall — typically `subprocess.Popen` instances. Without a
+# hook, the daemon thread that owned the tool's _exec() keeps running
+# after FORCE STOP because Python threads can't be killed safely; the
+# hook gives `cancel_agent` a way to terminate the underlying process
+# so the thread's blocking `proc.wait()` returns.
 _thread_local = threading.local()
 
 
@@ -1371,3 +1406,23 @@ def current_cancel_event():
     None when not running inside a tool dispatch (tests, direct calls).
     """
     return getattr(_thread_local, "cancel_event", None)
+
+
+def _set_current_kill_hooks(hooks_list):
+    _thread_local.kill_hooks = hooks_list
+
+
+def register_kill_hook(callback) -> None:
+    """Register a callable to be invoked when the current tool is killed.
+
+    Tools that spawn external resources (subprocess.Popen, websockets,
+    HTTP sessions) MUST register a hook so FORCE STOP can shut them
+    down explicitly. The hook runs from `cancel_agent` and should be
+    fast and idempotent (terminate, close, signal — not block).
+
+    No-op when called outside a tool dispatch.
+    """
+    hooks = getattr(_thread_local, "kill_hooks", None)
+    if hooks is None:
+        return
+    hooks.append(callback)

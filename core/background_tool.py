@@ -99,6 +99,25 @@ def pop_cc_tc(conv_id: str, agent_name: str, tool_name: str,
     return ""
 
 
+def snapshot_cc_pending(conv_id: str, agent_name: str) -> list:
+    """Return a copy of the current pending cc_tc queue for (conv, agent).
+
+    Diagnostic only — used by the tool-relay MISS log to dump what was
+    queued at the moment a pop missed, so we can see which (tool_name,
+    args_hash) was waiting vs. what the bridge requested.
+    """
+    key = (conv_id, agent_name)
+    with _cc_pending_tcs_lock:
+        queue = _cc_pending_tcs.get(key) or []
+        return [
+            {"tool_name": e["tool_name"],
+             "args_hash": e["args_hash"],
+             "tc_id": e["tc_id"][-12:],
+             "age_s": round(time.time() - e["ts"], 2)}
+            for e in queue
+        ]
+
+
 def background(tc_id: str) -> bool:
     """Flag a tool_call for backgrounding.
 

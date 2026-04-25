@@ -85,3 +85,33 @@ def test_args_hash_is_deterministic():
     _reset_state()
     assert bg._args_hash({"a": 1, "b": 2}) == bg._args_hash({"b": 2, "a": 1})
     assert bg._args_hash({"a": 1}) != bg._args_hash({"a": 2})
+
+
+def test_snapshot_cc_pending_returns_empty_when_no_queue():
+    _reset_state()
+    assert bg.snapshot_cc_pending("c", "a") == []
+
+
+def test_snapshot_cc_pending_dumps_queued_entries():
+    _reset_state()
+    bg.enqueue_cc_tc("c", "a", "toolu_AAAAAAAAAAAA", "bash",
+                     bg._args_hash({"command": "ls"}))
+    bg.enqueue_cc_tc("c", "a", "toolu_BBBBBBBBBBBB", "read",
+                     bg._args_hash({"path": "/tmp/x"}))
+    snap = bg.snapshot_cc_pending("c", "a")
+    assert len(snap) == 2
+    names = [e["tool_name"] for e in snap]
+    assert names == ["bash", "read"]
+    # tc_id is truncated to last 12 chars
+    assert all(len(e["tc_id"]) == 12 for e in snap)
+    assert all("args_hash" in e and "age_s" in e for e in snap)
+
+
+def test_snapshot_does_not_consume_queue():
+    _reset_state()
+    h = bg._args_hash({"x": 1})
+    bg.enqueue_cc_tc("c", "a", "toolu_X", "tool", h)
+    bg.snapshot_cc_pending("c", "a")
+    bg.snapshot_cc_pending("c", "a")
+    # Pop still works after multiple snapshots
+    assert bg.pop_cc_tc("c", "a", "tool", h) == "toolu_X"

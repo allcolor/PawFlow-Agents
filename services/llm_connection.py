@@ -126,12 +126,24 @@ class LLMConnectionService(BaseService):
         max_tokens: int = 0,
         response_format: Optional[str] = None,
         tools: Optional[List[LLMToolDefinition]] = None,
+        thinking_budget: int = 0,
+        **call_kwargs,
     ) -> LLMResponse:
-        """Send a completion request to the LLM."""
+        """Send a completion request to the LLM.
+
+        Forwards `call_*` identity kwargs (call_user_id /
+        call_conversation_id / call_agent_name / call_event_cid /
+        call_ephemeral_stream) untouched to the underlying LLMClient
+        — they're the per-call identity scope used by providers
+        instead of mutating shared client state.
+        """
         self.ensure_connected()
         temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
         try:
-            resp = self._client.complete(messages, model, temperature, max_tokens, response_format, tools)
+            resp = self._client.complete(messages, model, temperature, max_tokens,
+                                          response_format, tools,
+                                          thinking_budget=thinking_budget,
+                                          **call_kwargs)
             self._track_tokens(resp, messages)
             return resp
         except LLMClientError as e:
@@ -145,12 +157,27 @@ class LLMConnectionService(BaseService):
         max_tokens: int = 0,
         tools: Optional[List[LLMToolDefinition]] = None,
         callback=None,
+        thinking_budget: int = 0,
+        thinking_callback=None,
+        turn_callback=None,
+        block_callback=None,
+        **call_kwargs,
     ) -> LLMResponse:
-        """Streaming completion — delegates to LLMClient.complete_stream()."""
+        """Streaming completion — delegates to LLMClient.complete_stream().
+
+        Forwards `call_*` identity kwargs untouched to the underlying
+        client (see complete docstring).
+        """
         self.ensure_connected()
         temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
         try:
-            resp = self._client.complete_stream(messages, model, temperature, max_tokens, tools, callback)
+            resp = self._client.complete_stream(
+                messages, model, temperature, max_tokens, tools, callback,
+                thinking_budget=thinking_budget,
+                thinking_callback=thinking_callback,
+                turn_callback=turn_callback,
+                block_callback=block_callback,
+                **call_kwargs)
             self._track_tokens(resp, messages)
             return resp
         except LLMClientError as e:

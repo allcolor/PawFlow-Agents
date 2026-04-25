@@ -616,10 +616,16 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         #   force=True  (manual /compact, CC compact_boundary, /compact
         #                --rebuild) → block on build_now_sync so the
         #                pyramid is caught up (incl. partial flush of
-        #                "in-progress" msgs) before we assemble.
-        #   force=False (auto trigger at 80%) → fire maybe_trigger
-        #                (async), continue immediately. Hot path will
-        #                squeeze privately if the tail is too big.
+        #                "in-progress" msgs) before we assemble. With
+        #                the new TAIL_TOKEN_BUDGET trigger keeping the
+        #                gap small, this sync call typically flushes
+        #                ≤ 1 small partial bucket and returns fast.
+        #   force=False (auto-trigger at 80%) → fire maybe_trigger
+        #                (async). The bg-builder's token-budget trigger
+        #                keeps the tail under TAIL_TOKEN_BUDGET so the
+        #                hot path's deterministic 2a/2d steps suffice
+        #                — no synchronous bucket build, no LLM call in
+        #                the agent's hot path.
         _bucket_store = None
         if conversation_id:
             try:
@@ -908,93 +914,21 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 compacted = _build_output(saved_recent)
                 new_estimate = _estimate(compacted)
 
-            # ── STEP 2b / 2c: iterative LLM squeeze ──
-            # At each iter, pick the dominant side (header vs tail) and
-            # shrink it. Header-shrink is a PRIVATE compression of the
-            # pyramid header for this agent (shared pyramid untouched).
-            # Tail-shrink digests the oldest part of saved_recent into
-            # a private_compaction msg (also ephemeral).
-            _iter = 0
-            _MAX_ITERS = 4  # safety; force-fit catches what remains
-            while new_estimate > cap and _iter < _MAX_ITERS:
-                _iter += 1
-                _hdr_chars = len(_pyramid_header or "")
-                _tail_chars = sum(
-                    len(m.content or "") for m in saved_recent
-                    if isinstance(m.content, str))
-
-                if _pyramid_header and _hdr_chars > _tail_chars * 1.5:
-                    # 2c: compress pyramid header privately for this agent
-                    logger.info(
-                        "[compact] step 2c compress-header (iter=%d, "
-                        "hdr=%d chars, tail=%d chars)",
-                        _iter, _hdr_chars, _tail_chars)
-                    _new_hdr = self._compress_pyramid_header_for_agent(
-                        _pyramid_header, client, cap,
-                        user_id=user_id,
-                        conversation_id=conversation_id)
-                    if _new_hdr and len(_new_hdr) < _hdr_chars:
-                        _pyramid_header = _new_hdr
-                        compacted = _build_output(saved_recent)
-                        new_estimate = _estimate(compacted)
-                        continue
-                    break  # compression didn't help
-                else:
-                    # 2b: digest oldest part of tail into private compaction.
-                    # Keep AS MANY recent messages as possible within the
-                    # remaining budget — preserving fidelity at the end of
-                    # the conversation is more important than compressing
-                    # it. Walk the tail from newest to oldest, accumulating
-                    # estimated tokens until the budget is exhausted; those
-                    # counted messages are kept, the rest get digested.
-                    if len(saved_recent) < 10:
-                        break
-                    # Budget reserved for the recent slice:
-                    #   cap - non-saved bytes (sys + bridge + any already-
-                    #   prepended digest from a previous iter) - reserve
-                    #   for the digest message we're about to insert.
-                    _non_saved_tokens = _estimate(
-                        [m for m in compacted if m not in saved_recent])
-                    _DIGEST_RESERVE_TOKENS = 3000
-                    _recent_budget = max(
-                        5000,
-                        cap - _non_saved_tokens - _DIGEST_RESERVE_TOKENS)
-                    _cum = 0
-                    _keep = 0
-                    for _m in reversed(saved_recent):
-                        _cost = _estimate([_m])
-                        if _cum + _cost > _recent_budget:
-                            break
-                        _cum += _cost
-                        _keep += 1
-                    # Floor: even if the budget is tiny, keep a handful of
-                    # the most recent turns so the agent isn't talking to
-                    # itself. Ceiling is the tail length (can't keep more
-                    # than we have).
-                    _keep = max(10, min(_keep, len(saved_recent)))
-                    logger.info(
-                        "[compact] step 2b digest-tail (iter=%d, "
-                        "tail_msgs=%d, keep=%d, recent_budget=%d tokens)",
-                        _iter, len(saved_recent), _keep, _recent_budget)
-                    _digest_msg, _new_tail = self._digest_oldest_tail(
-                        saved_recent, client, cap,
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        keep=_keep)
-                    if _digest_msg is None:
-                        break
-                    # Inject digest at the FRONT of saved_recent so the
-                    # bridge/header stays untouched. The digest carries
-                    # source.type=private_compaction and is regenerable
-                    # at the next compact.
-                    saved_recent = [_digest_msg] + _new_tail
-                    compacted = _build_output(saved_recent)
-                    new_estimate = _estimate(compacted)
-
             # ── STEP 2d: force-fit (brute truncate) — hard guarantee ──
+            # If we're still over cap after build_now_sync + 2a, the bg
+            # builder's TAIL_TOKEN_BUDGET invariant is broken: either it
+            # didn't fire (config mismatch / starved executor) or one
+            # tool result is so big that even truncated to _TOOL_TRUNC_LIMIT
+            # the tail busts cap. Either way we don't run an LLM call in
+            # the hot path — force_fit is deterministic and guarantees
+            # convergence. The WARNING is the alarm bell so chronic
+            # invariant breakage gets noticed.
             if new_estimate > cap:
                 logger.warning(
-                    "[compact] step 2d force-fit: %d > cap %d",
+                    "[compact] step 2d force-fit: %d > cap %d after "
+                    "tool-truncate. bg_bucket_builder TAIL_TOKEN_BUDGET "
+                    "invariant likely broken — investigate why tail wasn't "
+                    "absorbed.",
                     new_estimate, cap)
                 compacted = self._force_fit_context(
                     compacted, cap,
@@ -1067,140 +1001,6 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 conversation_id, agent_name, succeeded=False)
             raise
 
-
-    def _compress_pyramid_header_for_agent(
-            self, header_text: str, client, cap: int, *,
-            user_id: str, conversation_id: str) -> str:
-        """Privately compress a too-big pyramid header for ONE agent.
-
-        Fires from _compact step 2c when an agent's ctx is too small to
-        carry the full shared pyramid header. The result is injected
-        into this compact's output only — shared pyramid is untouched.
-
-        Uses the existing chunked-summarize pipeline
-        (_summarize_messages / _call_summarize), so oversized headers
-        are internally split without extra code here.
-
-        Return "" on failure (caller stops iterating).
-        """
-        if not header_text or not client or cap <= 0:
-            return ""
-        # Target ~60% of the cap so there's room for tail + response.
-        # Chars → tokens ~ /4 for mixed text.
-        target_tokens = max(500, int(cap * 0.60))
-        try:
-            return self._call_summarize(
-                client, header_text,
-                target_tokens=target_tokens,
-                user_id=user_id,
-                conversation_id=conversation_id,
-                compact_instructions=(
-                    "Compress this multi-phase conversation summary to "
-                    f"~{target_tokens} tokens. Preserve: key decisions, "
-                    "user intent evolution, agent handoffs, and "
-                    "deduplicated `## Files & operations` (keep the most-"
-                    "touched paths up to 20). Be aggressive — this will "
-                    "replace the full summary for a single agent whose "
-                    "context is too small to carry it all."
-                ),
-                final=True,
-            ) or ""
-        except Exception:
-            logger.warning("[compact] header compress failed",
-                            exc_info=True)
-            return ""
-
-    def _digest_oldest_tail(
-            self, tail: List[LLMMessage], client, cap: int, *,
-            user_id: str, conversation_id: str,
-            keep: int = 6) -> "tuple[Optional[LLMMessage], List[LLMMessage]]":
-        """Privately digest the oldest (len-keep) msgs of a tail.
-
-        Fires from _compact step 2b when the tail (post-pyramid, post-
-        tool-truncate) still busts cap. Produces ONE
-        source.type="private_compaction" msg that covers those older
-        msgs. The returned msg is regenerable at the next compact (no
-        special persistence — it's in agent_ctx until the next /compact
-        rebuilds from transcript).
-
-        Return (digest_msg, kept_tail) or (None, tail) on failure.
-        """
-        if not tail or len(tail) <= keep or not client:
-            return None, tail
-        to_digest = tail[:-keep]
-        kept = tail[-keep:]
-        target_tokens = max(300, cap // 10)
-        try:
-            summary = self._summarize_messages(
-                to_digest, client,
-                max_tokens=max(cap * 4, 16000),
-                target_tokens=target_tokens,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                compact_instructions=(
-                    "This is the oldest part of an agent's current work "
-                    "tail — tool calls, file edits, decisions in "
-                    "progress. Preserve: tool-call sequences, file "
-                    "paths, the state of any ongoing task, errors "
-                    "encountered. End with a short `## Files & "
-                    "operations` section listing the files and "
-                    "commands touched."
-                ),
-            )
-        except Exception:
-            logger.warning("[compact] tail digest failed", exc_info=True)
-            return None, tail
-        if not summary or len(summary.strip()) < 20:
-            return None, tail
-
-        _first_seq = min((m.seq for m in to_digest), default=0)
-        _last_seq = max((m.seq for m in to_digest), default=0)
-        _first_id = next(
-            (m.msg_id for m in to_digest if getattr(m, "msg_id", "")),
-            "")
-        _last_id = ""
-        for m in reversed(to_digest):
-            if getattr(m, "msg_id", ""):
-                _last_id = m.msg_id
-                break
-        # Position the digest chronologically BETWEEN the last digested
-        # message and the first kept message. Without this, LLMMessage's
-        # __post_init__ stamps ts=time.time(), which makes the digest
-        # NEWER than everything in the tail — UI renders it AFTER the
-        # most recent message, which makes no semantic sense (it
-        # summarises OLDER content). Picking first_kept.ts - 1ms puts
-        # it exactly where it belongs: right before the kept slice.
-        # seq stays at first_kept.seq - 1 for in-memory ordering (the
-        # on-disk seq is reassigned by _stamp_line at write time).
-        _first_kept = kept[0] if kept else None
-        if _first_kept and _first_kept.timestamp:
-            _digest_ts = float(_first_kept.timestamp) - 0.001
-        else:
-            import time as _t_now
-            _digest_ts = _t_now.time()
-        if _first_kept and isinstance(_first_kept.seq, int) and _first_kept.seq > 1:
-            _digest_seq = _first_kept.seq - 1
-        else:
-            _digest_seq = 0  # LLMMessage __post_init__ will mint one
-        digest_msg = LLMMessage(
-            role="user",
-            content=(
-                "[Private tail digest — older working context "
-                "compressed to fit this agent's window]\n\n"
-                + summary
-            ),
-            source={
-                "type": "private_compaction",
-                "covers_msg_count": len(to_digest),
-                "covers_seq": [int(_first_seq), int(_last_seq)],
-                "covers_msg_ids": [_first_id, _last_id],
-                "regen_at_next_compact": True,
-            },
-            timestamp=_digest_ts,
-            seq=_digest_seq,
-            conversation_id=conversation_id,
-        )
-        return digest_msg, kept
 
     @staticmethod
     def _cleanup_orphan_files(compacted: List[LLMMessage],

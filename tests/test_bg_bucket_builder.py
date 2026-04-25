@@ -24,7 +24,13 @@ import pytest
 from core.bg_bucket_builder import BgBucketBuilder
 from core.bucket_store import (
     BucketStore, L1_TRIGGER_MSGS, ROLLUP_TRIGGER_COUNT,
+    TAIL_RESERVE, TAIL_TOKEN_BUDGET,
 )
+
+# _PARTIAL_MIN is a private class attribute; re-export under a clean
+# name so tests can reason about partial-bucket flush thresholds
+# without poking at underscore-prefixed names.
+PARTIAL_MIN = BgBucketBuilder._PARTIAL_MIN
 
 
 # ── helpers ──────────────────────────────────────────────────────
@@ -175,7 +181,9 @@ class _FakeBuilder(BgBucketBuilder):
     def maybe_trigger(self, cid, user_id):
         if self._summarizer_resolver is None:
             return
-        if self._shared_gap(cid) < L1_TRIGGER_MSGS:
+        # Test-only simplified gating: only the shared-gap path. The
+        # production token-trigger path is exercised in test_pawflow.
+        if self._shared_gap(cid) < L1_TRIGGER_MSGS + TAIL_RESERVE:
             return
         with self._pending_lock:
             if cid in self._pending:
@@ -215,15 +223,17 @@ def _write_shared(path: Path, n: int, start_seq: int = 1):
 # ── _pick_chunk tests ────────────────────────────────────────────
 
 
-def test_pick_chunk_returns_empty_when_gap_too_small(fake_builder):
-    msgs = [_shared_msg(i) for i in range(1, 50)]
+def test_pick_chunk_returns_empty_when_below_tail_reserve(fake_builder):
+    # Fewer than TAIL_RESERVE msgs → available ≤ 0 → []
+    msgs = [_shared_msg(i) for i in range(1, max(1, TAIL_RESERVE))]
     assert fake_builder._pick_chunk(msgs, 0, allow_partial=False) == []
 
 
 def test_pick_chunk_normal_returns_l1_trigger_msgs(fake_builder):
     # Need ≥ L1_TRIGGER + TAIL_RESERVE msgs for a normal L1 bucket
-    # (last L1_TRIGGER always reserved as tail).
-    msgs = [_shared_msg(i) for i in range(1, 2 * L1_TRIGGER_MSGS + 10 + 1)]
+    # (last TAIL_RESERVE always reserved as tail).
+    msgs = [_shared_msg(i)
+             for i in range(1, L1_TRIGGER_MSGS + TAIL_RESERVE + 5 + 1)]
     chunk = fake_builder._pick_chunk(msgs, 0, allow_partial=False)
     assert len(chunk) == L1_TRIGGER_MSGS
 
@@ -234,8 +244,8 @@ def test_pick_chunk_bulk_mode_when_pyramid_empty_and_large_gap(fake_builder):
     msgs = [_shared_msg(i) for i in range(1, n + 1)]
     chunk = fake_builder._pick_chunk(msgs, current_object_count=0,
                                        allow_partial=False)
-    # Bulk absorbs everything except the last L1_TRIGGER_MSGS msgs (tail reserve)
-    assert len(chunk) == n - L1_TRIGGER_MSGS
+    # Bulk absorbs everything except the last TAIL_RESERVE msgs.
+    assert len(chunk) == n - TAIL_RESERVE
     # ... which is way more than a normal L1 chunk
     assert len(chunk) > L1_TRIGGER_MSGS * 2
 
@@ -250,33 +260,39 @@ def test_pick_chunk_bulk_not_fired_when_pyramid_not_empty(fake_builder):
 
 
 def test_pick_chunk_partial_when_allowed(fake_builder):
-    # Need gap > TAIL_RESERVE for anything to be bucketable.
-    # Gap = 200: available = 50 → in partial range (>=37, <150).
-    msgs = [_shared_msg(i) for i in range(1, 201)]
+    # Need gap > TAIL_RESERVE for anything to be bucketable. Pick a gap
+    # that yields available in [_PARTIAL_MIN, L1_TRIGGER) so the partial
+    # branch fires (not normal-L1, not empty).
+    available = max(PARTIAL_MIN, L1_TRIGGER_MSGS // 3)
+    n = available + TAIL_RESERVE
+    msgs = [_shared_msg(i) for i in range(1, n + 1)]
     chunk = fake_builder._pick_chunk(msgs, current_object_count=3,
                                        allow_partial=True)
-    assert len(chunk) == 50  # = 200 - TAIL_RESERVE(150)
+    assert len(chunk) == available
 
 
 def test_pick_chunk_partial_blocked_when_too_small(fake_builder):
-    # Gap = 180: available = 30 (< _PARTIAL_MIN=37) → return []
-    msgs = [_shared_msg(i) for i in range(1, 181)]
+    # available < _PARTIAL_MIN → []
+    n = TAIL_RESERVE + max(0, PARTIAL_MIN - 1)
+    msgs = [_shared_msg(i) for i in range(1, n + 1)]
     chunk = fake_builder._pick_chunk(msgs, current_object_count=3,
                                        allow_partial=True)
     assert chunk == []
 
 
 def test_pick_chunk_partial_not_allowed_async(fake_builder):
-    # Same 200 msgs but allow_partial=False → no chunk (available=50 < L1)
-    msgs = [_shared_msg(i) for i in range(1, 201)]
+    # Same gap but allow_partial=False → no chunk (available < L1_TRIGGER)
+    available = max(PARTIAL_MIN, L1_TRIGGER_MSGS // 3)
+    n = available + TAIL_RESERVE
+    msgs = [_shared_msg(i) for i in range(1, n + 1)]
     chunk = fake_builder._pick_chunk(msgs, current_object_count=3,
                                        allow_partial=False)
     assert chunk == []
 
 
 def test_pick_chunk_tail_only_returns_empty(fake_builder):
-    # gap <= TAIL_RESERVE → no bucketable content, tail-only
-    msgs = [_shared_msg(i) for i in range(1, L1_TRIGGER_MSGS + 1)]
+    # gap == TAIL_RESERVE → available = 0 → no bucketable content
+    msgs = [_shared_msg(i) for i in range(1, TAIL_RESERVE + 1)]
     chunk = fake_builder._pick_chunk(msgs, current_object_count=0,
                                        allow_partial=True)
     assert chunk == []
@@ -297,8 +313,11 @@ def _make_summarize_fn(output: str = "## Narrative\nok\n\n## Files & operations\
 
 
 def test_build_now_sync_builds_normal_l1_bucket(fake_builder):
-    # Need gap ≥ L1 + TAIL_RESERVE for a normal L1 bucket (tail reserved)
-    _write_shared(fake_builder._shared_path, 2 * L1_TRIGGER_MSGS)
+    # Need gap ≥ L1 + TAIL_RESERVE for a normal L1 bucket (tail reserved).
+    # Want exactly one L1 fired (no leftover for a second chunk), so use
+    # L1 + TAIL_RESERVE on the nose.
+    n = L1_TRIGGER_MSGS + TAIL_RESERVE
+    _write_shared(fake_builder._shared_path, n)
     summarize_fn, calls = _make_summarize_fn()
     fake_builder.set_summarizer_resolver(
         lambda uid: (_fake_client(), 128000, "svc-test"))
@@ -329,19 +348,20 @@ def test_build_now_sync_bulk_catchup_preserves_tail(fake_builder):
     result = fake_builder.build_now_sync("cid_test", "user_test",
                                            allow_partial=False)
     assert result["buckets_built"] == 1  # only the bulk bucket
-    assert calls[0]["n_msgs"] == n - L1_TRIGGER_MSGS  # all but tail reserve
+    assert calls[0]["n_msgs"] == n - TAIL_RESERVE  # all but tail reserve
     # last TAIL_RESERVE msgs NOT in pyramid
     store = BucketStore.get(fake_builder._conv_dir)
-    assert store.last_seq == n - L1_TRIGGER_MSGS
+    assert store.last_seq == n - TAIL_RESERVE
 
 
 def test_build_now_sync_partial_flush_preserves_tail(fake_builder):
-    # Gap 200 with existing pyramid + allow_partial: available = 50
-    # (between _PARTIAL_MIN=37 and L1_TRIGGER=150) → partial bucket
-    # flushes 50 msgs; last 150 stay as tail.
+    # gap with existing pyramid + allow_partial: available in
+    # [_PARTIAL_MIN, L1_TRIGGER) → partial bucket; tail reserved.
+    available = max(PARTIAL_MIN, L1_TRIGGER_MSGS // 3)
+    n = available + TAIL_RESERVE
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="pre-existing")
-    _write_shared(fake_builder._shared_path, 200, start_seq=101)
+    _write_shared(fake_builder._shared_path, n, start_seq=101)
 
     summarize_fn, calls = _make_summarize_fn()
     fake_builder.set_summarizer_resolver(
@@ -351,14 +371,16 @@ def test_build_now_sync_partial_flush_preserves_tail(fake_builder):
     result = fake_builder.build_now_sync("cid_test", "user_test",
                                            allow_partial=True)
     assert result["buckets_built"] == 1
-    assert calls[0]["n_msgs"] == 50  # 200 - TAIL_RESERVE(150)
+    assert calls[0]["n_msgs"] == available
 
 
 def test_build_now_sync_no_partial_when_forbidden(fake_builder):
-    # Gap 200, allow_partial=False: available = 50 < L1_TRIGGER → 0 bucket
+    # available < L1_TRIGGER and allow_partial=False → 0 bucket
+    available = max(PARTIAL_MIN, L1_TRIGGER_MSGS // 3)
+    n = available + TAIL_RESERVE
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="pre-existing")
-    _write_shared(fake_builder._shared_path, 200, start_seq=101)
+    _write_shared(fake_builder._shared_path, n, start_seq=101)
 
     summarize_fn, calls = _make_summarize_fn()
     fake_builder.set_summarizer_resolver(
@@ -427,8 +449,9 @@ def test_build_persists_tool_trace_on_bucket(fake_builder):
 
 
 def test_maybe_trigger_dedupes_in_flight_jobs(fake_builder):
-    # Need ≥ L1 + TAIL_RESERVE = 2×L1 msgs for maybe_trigger to consider firing
-    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS * 3)
+    # Need ≥ L1 + TAIL_RESERVE for maybe_trigger to consider firing.
+    _write_shared(fake_builder._shared_path,
+                   L1_TRIGGER_MSGS + TAIL_RESERVE + 5)
     fake_builder.set_summarizer_resolver(
         lambda uid: (_fake_client(), 128000, "svc-test"))
 
@@ -440,3 +463,90 @@ def test_maybe_trigger_dedupes_in_flight_jobs(fake_builder):
     # Still in pending from our manual add, never submitted new
     with fake_builder._pending_lock:
         assert "cid_test" in fake_builder._pending
+
+
+# ── Token-budget trigger (production BgBucketBuilder.maybe_trigger) ──
+
+
+def test_token_trigger_fires_below_msg_threshold(tmp_path, monkeypatch):
+    """The production maybe_trigger fires when transcript_chars exceed
+    TAIL_TOKEN_BUDGET × 0.7 even if the shared msg gap is below
+    L1_TRIGGER. This is the whole point of the token-based trigger:
+    tool-heavy turns blow the tail-token budget long before
+    L1_TRIGGER msgs of conversation accumulate.
+    """
+    bb = BgBucketBuilder(max_workers=1)
+    submitted: List[str] = []
+
+    def _fake_submit(fn, cid, user_id):
+        submitted.append((cid, user_id))
+        class _F:
+            def result(self, *a, **k): return None
+        return _F()
+    monkeypatch.setattr(bb._executor, "submit", _fake_submit)
+
+    bb.set_summarizer_resolver(
+        lambda uid: (_fake_client(), 128000, "svc"))
+    bb.set_summarize_fn(_make_summarize_fn()[0])
+
+    cid = "cid_token_trigger"
+    # Pre-seed caches: shared msgs well below L1+TAIL_RESERVE, but
+    # transcript chars above the token-budget trigger threshold.
+    _msg_gap = max(PARTIAL_MIN + TAIL_RESERVE, 20)
+    bb._shared_seq_cache[cid] = _msg_gap
+    bb._pyramid_seq_cache[cid] = 0
+    bb._shared_unbucketed_rows_cache[cid] = _msg_gap
+    bb._transcript_chars_post_pyramid_cache[cid] = (
+        int(TAIL_TOKEN_BUDGET * 0.7 * 3.5) + 1000)  # over threshold
+
+    bb.maybe_trigger(cid, "uid")
+    # Token-trigger fires even though seq_gap << L1_TRIGGER + TAIL_RESERVE
+    assert len(submitted) == 1
+    bb._executor.shutdown(wait=False)
+
+
+def test_no_trigger_below_both_thresholds(tmp_path, monkeypatch):
+    """Both triggers below threshold → no submit."""
+    bb = BgBucketBuilder(max_workers=1)
+    submitted: List[str] = []
+    monkeypatch.setattr(
+        bb._executor, "submit",
+        lambda *a, **kw: submitted.append(a) or None)
+    bb.set_summarizer_resolver(
+        lambda uid: (_fake_client(), 128000, "svc"))
+
+    cid = "cid_no_trigger"
+    bb._shared_seq_cache[cid] = TAIL_RESERVE + PARTIAL_MIN + 1
+    bb._pyramid_seq_cache[cid] = 0
+    bb._shared_unbucketed_rows_cache[cid] = TAIL_RESERVE + PARTIAL_MIN + 1
+    bb._transcript_chars_post_pyramid_cache[cid] = 100  # tiny
+
+    bb.maybe_trigger(cid, "uid")
+    assert submitted == []
+    bb._executor.shutdown(wait=False)
+
+
+def test_note_transcript_bytes_appended_accumulates(tmp_path):
+    """note_transcript_bytes_appended adds to the cache entry; cold
+    cache (no key yet) is left alone — _seed populates it later.
+    """
+    bb = BgBucketBuilder(max_workers=1)
+    cid = "cid_chars_test"
+    # Cold cache: note is no-op (will be populated by _seed)
+    bb.note_transcript_bytes_appended(cid, 1234)
+    assert cid not in bb._transcript_chars_post_pyramid_cache
+
+    # Warm: accumulates
+    bb._transcript_chars_post_pyramid_cache[cid] = 0
+    bb.note_transcript_bytes_appended(cid, 1000)
+    bb.note_transcript_bytes_appended(cid, 500)
+    assert bb._transcript_chars_post_pyramid_cache[cid] == 1500
+
+    # Decrement (when bucket lands)
+    bb.note_pyramid_chars_bucketed(cid, 800)
+    assert bb._transcript_chars_post_pyramid_cache[cid] == 700
+
+    # Floor at 0
+    bb.note_pyramid_chars_bucketed(cid, 99999)
+    assert bb._transcript_chars_post_pyramid_cache[cid] == 0
+    bb._executor.shutdown(wait=False)

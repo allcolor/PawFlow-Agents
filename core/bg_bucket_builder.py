@@ -33,7 +33,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from core.bucket_store import (
     BUCKET_OUTPUT_TARGET, HEADER_BUDGET, L1_TRIGGER_MSGS,
-    ROLLUP_TRIGGER_COUNT, TAIL_RESERVE, BucketStore,
+    ROLLUP_TRIGGER_COUNT, TAIL_RESERVE, TAIL_TOKEN_BUDGET, BucketStore,
 )
 from core.tool_activity_digest import (
     extract_tool_activity, format_activity_digest, is_empty, merge_traces,
@@ -106,10 +106,13 @@ class BgBucketBuilder:
     # oversize input — we only choose the slice.
     _BULK_CATCHUP_MULTIPLIER = 5  # gap > N × L1_TRIGGER_MSGS → bulk mode
 
-    # Minimum size for a partial bucket (flushed in sync mode when the
-    # caller forces a compact with msgs still "in progress"). Below
-    # this, the gap is small enough to stay in the agent's tail cheaply.
-    _PARTIAL_MIN = L1_TRIGGER_MSGS // 4  # ≈ 37 msgs
+    # Minimum size for a partial bucket. With token-based triggering,
+    # bg fires whenever transcript expansion threatens to bust the
+    # /compact tail budget — we want to be able to flush even small
+    # shared msg counts (5-10) when the underlying transcript has
+    # ballooned with tool I/O. Floor stays > 0 so we don't pay the
+    # LLM cost for trivial chunks.
+    _PARTIAL_MIN = 5
 
     @classmethod
     def instance(cls) -> "BgBucketBuilder":
@@ -145,6 +148,16 @@ class BgBucketBuilder:
         self._shared_seq_cache: Dict[str, int] = {}
         self._pyramid_seq_cache: Dict[str, int] = {}
         self._shared_unbucketed_rows_cache: Dict[str, int] = {}
+        # Transcript-side token estimate accumulated since last pyramid
+        # advance. The /compact tail budget is measured in transcript
+        # tokens (it includes tool_use/tool_result/msg_patch rows that
+        # never reach shared.jsonl). When this estimate threatens
+        # TAIL_TOKEN_BUDGET we fire a bucket build asynchronously so
+        # the agent's hot-path compact stays deterministic.
+        # Stored in chars (cheap to accumulate); converted to tokens
+        # via /3.5 at decision time. Decremented when a bucket lands
+        # (proportionally to that bucket's transcript char weight).
+        self._transcript_chars_post_pyramid_cache: Dict[str, int] = {}
         self._seq_cache_lock = threading.Lock()
         # Diagnostic: throttle maybe_trigger log spam. Track last
         # (reason, state) logged per cid so we only log when the
@@ -201,6 +214,47 @@ class BgBucketBuilder:
                 self._shared_unbucketed_rows_cache[cid] += n
             # Cold cache: _seed_seq_caches will populate it from disk.
 
+    def note_transcript_bytes_appended(self, cid: str, n_chars: int) -> None:
+        """O(1) hint that n_chars of transcript content were appended.
+
+        Called from ConversationStore._append_ctx_file (the WRITER for
+        transcript.jsonl) — that path already iterates each row, so
+        summing payload chars is essentially free.
+
+        These chars are tool_use / tool_result / msg_patch /
+        trace_update payloads, NOT shared.jsonl conversational content
+        (that has its own counter via note_shared_seq /
+        note_shared_rows_appended). Conversational content also writes
+        to transcript so it gets counted here too — fine, the tail
+        budget is on transcript total.
+
+        Decremented (never reset) by note_pyramid_chars_bucketed when
+        a bucket lands; the bucket builder estimates the transcript
+        chars covered by each chunk via _extract_trace + activity
+        digest size.
+        """
+        if not cid or not isinstance(n_chars, int) or n_chars <= 0:
+            return
+        with self._seq_cache_lock:
+            if cid in self._transcript_chars_post_pyramid_cache:
+                self._transcript_chars_post_pyramid_cache[cid] += n_chars
+            # Cold cache: _seed_seq_caches will populate from disk.
+
+    def note_pyramid_chars_bucketed(self, cid: str, n_chars: int) -> None:
+        """O(1) decrement after a bucket absorbs transcript content.
+
+        Mirrors note_pyramid_rows_bucketed but for the chars counter.
+        Called from _build_one_bucket with the chunk's transcript
+        char-weight estimate.
+        """
+        if not cid or not isinstance(n_chars, int) or n_chars <= 0:
+            return
+        with self._seq_cache_lock:
+            if cid in self._transcript_chars_post_pyramid_cache:
+                self._transcript_chars_post_pyramid_cache[cid] = max(
+                    0,
+                    self._transcript_chars_post_pyramid_cache[cid] - n_chars)
+
     def note_pyramid_seq(self, cid: str, seq: int) -> None:
         """O(1) hint that the pyramid now covers up to this seq.
 
@@ -234,32 +288,32 @@ class BgBucketBuilder:
 
     def maybe_trigger(self, cid: str, user_id: str) -> None:
         """Fast O(1) check + async enqueue. Called from
-        ConversationStore._append_shared_ctx after each shared write,
-        WHILE THE CONV LOCK IS HELD.
+        ConversationStore._append_shared_ctx and _append_ctx_file after
+        each write, WHILE THE CONV LOCK IS HELD.
 
         CRITICAL: this method must NEVER touch disk. The caller holds
         ConversationStore._get_conv_lock(cid) and any file I/O here
-        would stall every other write on that conv. The gap check
-        uses two in-memory caches:
+        would stall every other write on that conv. All decisions use
+        in-memory caches fed by note_* hooks.
 
-          _shared_seq_cache[cid]  — latest seq appended to shared
-                                    (updated by note_shared_seq from
-                                    _append_shared_ctx).
-          _pyramid_seq_cache[cid] — latest seq covered by the pyramid
-                                    (updated by note_pyramid_seq from
-                                    _build_one_bucket).
-
-        On process start neither cache is populated. The first few
-        writes see cache=0, which would naively false-trigger. We
-        guard with a one-time disk fallback per cid: if we're about
-        to enqueue AND haven't populated the cache yet, walk shared
-        once to seed both caches (on the caller's thread — still
-        under conv lock, but only happens once per cid per process).
+        Trigger conditions (any of):
+          1. Token-budget breach: estimated transcript-tokens-since-
+             pyramid > TAIL_TOKEN_BUDGET × 0.7. This is the primary
+             trigger — the agent's hot-path /compact tail budget is
+             measured in transcript tokens (which include tool I/O),
+             so we eagerly flush before /compact would otherwise have
+             to digest-tail at hot path. Tool-heavy turns trip this
+             with a small shared-msg gap; fine, the bucket is small
+             but covers a lot of expansion.
+          2. Shared-msg gap: shared_seq - pyramid_seq >= L1_TRIGGER +
+             TAIL_RESERVE. Legacy gate — useful for low-tool sessions
+             where transcript chars accumulate slowly, but a full L1
+             worth of conversational content has built up.
 
         No-op if:
           - resolver not injected (no summarizer);
           - a job for this cid is already in flight;
-          - shared_seq - pyramid_seq < L1_TRIGGER + TAIL_RESERVE.
+          - neither trigger condition met.
         """
         if not cid or not user_id:
             return
@@ -281,15 +335,11 @@ class BgBucketBuilder:
             shared_seq = self._shared_seq_cache.get(cid)
             pyramid_seq = self._pyramid_seq_cache.get(cid)
             unbucketed_rows = self._shared_unbucketed_rows_cache.get(cid)
-
-        activity_threshold = L1_TRIGGER_MSGS + TAIL_RESERVE  # 300 seqs
-        # _pick_chunk needs at least _PARTIAL_MIN rows AFTER reserving
-        # TAIL_RESERVE. Any fewer → it returns [] and the job no-ops.
-        buildable_threshold = TAIL_RESERVE + self._PARTIAL_MIN  # 187 rows
+            transcript_chars = self._transcript_chars_post_pyramid_cache.get(cid)
 
         # Cold path: seed all caches from disk on first access.
         if (shared_seq is None or pyramid_seq is None
-                or unbucketed_rows is None):
+                or unbucketed_rows is None or transcript_chars is None):
             try:
                 self._seed_seq_caches(cid)
             except Exception:
@@ -300,26 +350,43 @@ class BgBucketBuilder:
                 shared_seq = self._shared_seq_cache.get(cid, 0)
                 pyramid_seq = self._pyramid_seq_cache.get(cid, 0)
                 unbucketed_rows = self._shared_unbucketed_rows_cache.get(cid, 0)
+                transcript_chars = self._transcript_chars_post_pyramid_cache.get(cid, 0)
 
         seq_gap = shared_seq - pyramid_seq
+        # 3.5 chars/token matches agent_compaction default (chars_per_token).
+        transcript_tokens_est = int(transcript_chars / 3.5)
 
-        # Gate 1: activity threshold (transcript seq gap). Below this,
-        # not enough has happened to bucket.
-        if seq_gap < activity_threshold:
-            _log_once(
-                f"gap too small ({seq_gap} < {activity_threshold} seqs): "
-                f"shared_seq={shared_seq} pyramid_seq={pyramid_seq}")
-            return
+        # Need at least a few unbucketable shared rows for _pick_chunk
+        # to return non-[] (TAIL_RESERVE + _PARTIAL_MIN).
+        buildable_threshold = TAIL_RESERVE + self._PARTIAL_MIN
 
-        # Gate 2: buildable threshold (unbucketed shared rows). Above
-        # activity but below this → _pick_chunk would return [], job
-        # no-ops, submit-storm. Wait for shared to catch up.
         if unbucketed_rows < buildable_threshold:
             _log_once(
-                f"seq_gap={seq_gap} crossed activity threshold but only "
-                f"{unbucketed_rows} unbucketed shared rows < "
+                f"only {unbucketed_rows} unbucketed shared rows < "
                 f"{buildable_threshold} needed — _pick_chunk would "
-                f"return []; waiting for shared catch-up")
+                f"return []; waiting for shared catch-up "
+                f"(transcript_tokens_est={transcript_tokens_est})")
+            return
+
+        # Trigger A: transcript token budget. When the gap-since-pyramid
+        # in transcript tokens passes 70% of TAIL_TOKEN_BUDGET, fire so
+        # the next agent /compact finds the tail already small.
+        token_threshold = int(TAIL_TOKEN_BUDGET * 0.7)
+        token_trigger = transcript_tokens_est >= token_threshold
+
+        # Trigger B: shared-msg gap (legacy). For low-tool sessions
+        # where transcript accumulates slowly, fire when an L1 worth
+        # of conversational content sits unbucketed past the tail
+        # reserve. With small TAIL_RESERVE this still requires
+        # ~L1_TRIGGER_MSGS shared msgs of conversation.
+        msg_threshold = L1_TRIGGER_MSGS + TAIL_RESERVE
+        msg_trigger = seq_gap >= msg_threshold
+
+        if not (token_trigger or msg_trigger):
+            _log_once(
+                f"below both triggers: seq_gap={seq_gap}<{msg_threshold} "
+                f"AND transcript_tokens_est={transcript_tokens_est}<"
+                f"{token_threshold}")
             return
 
         with self._pending_lock:
@@ -330,10 +397,14 @@ class BgBucketBuilder:
 
         try:
             self._executor.submit(self._run_job, cid, user_id)
+            _trigger_kind = ("token" if token_trigger else "") + (
+                ("+msg" if msg_trigger and token_trigger
+                 else "msg" if msg_trigger else ""))
             _log_once(
-                f"submitted job: shared_seq={shared_seq} "
+                f"submitted job ({_trigger_kind}): shared_seq={shared_seq} "
                 f"pyramid_seq={pyramid_seq} seq_gap={seq_gap} "
-                f"unbucketed_rows={unbucketed_rows}")
+                f"unbucketed_rows={unbucketed_rows} "
+                f"transcript_tokens_est={transcript_tokens_est}")
         except RuntimeError as _e:
             # Executor has been shutdown (e.g. test teardown)
             with self._pending_lock:
@@ -450,15 +521,18 @@ class BgBucketBuilder:
     # ── Internals ─────────────────────────────────────────────────
 
     def _seed_seq_caches(self, cid: str) -> None:
-        """One-shot seed of shared/pyramid caches for a cid on first
-        access per process. Subsequent writes feed the caches via
-        note_* — so this runs AT MOST once per cid per process.
+        """One-shot seed of shared/pyramid/transcript caches for a cid
+        on first access per process. Subsequent writes feed the caches
+        via note_* — so this runs AT MOST once per cid per process.
 
         - Pyramid last_seq: meta.json read (one small file).
         - Shared max seq: last-line read (O(1) in file size).
         - Unbucketed shared rows: count of lines in shared.jsonl with
           seq > pyramid last_seq. One scan, proportional to file size,
           but runs at most once per cid per process.
+        - Transcript chars post-pyramid: sum of payload chars in
+          transcript.jsonl with seq > pyramid last_seq. Same one-shot
+          scan policy.
         """
         from core.conversation_store import ConversationStore
         cs = ConversationStore.instance()
@@ -475,11 +549,63 @@ class BgBucketBuilder:
         # Unbucketed rows: count shared rows with seq > pyramid last_seq.
         unbucketed = self._count_rows_since(shared_path, pyramid_seq)
 
+        # Transcript chars post-pyramid: sum payload chars (one scan).
+        transcript_path = conv_dir / "transcript.jsonl"
+        transcript_chars = self._sum_chars_since(transcript_path, pyramid_seq)
+
         with self._seq_cache_lock:
             # Don't clobber if another thread populated via note_* already
             self._shared_seq_cache.setdefault(cid, shared_seq)
             self._pyramid_seq_cache.setdefault(cid, pyramid_seq)
             self._shared_unbucketed_rows_cache.setdefault(cid, unbucketed)
+            self._transcript_chars_post_pyramid_cache.setdefault(
+                cid, transcript_chars)
+
+    @staticmethod
+    def _sum_chars_since(path, after_seq: int) -> int:
+        """Sum of `content` (str) char counts in JSONL rows with
+        seq > after_seq. 0 if file missing.
+
+        Used at cold-cache seed only. Hot path uses note_* cache.
+        """
+        return BgBucketBuilder._sum_chars_in_range(
+            path, after_seq + 1, 1 << 62)
+
+    @staticmethod
+    def _sum_chars_in_range(path, first_seq: int, last_seq: int) -> int:
+        """Sum of payload char counts in JSONL rows with
+        first_seq ≤ seq ≤ last_seq. 0 if file missing.
+        """
+        if not path.exists():
+            return 0
+        import json as _json
+        total = 0
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        d = _json.loads(line)
+                    except _json.JSONDecodeError:
+                        continue
+                    s = int(d.get("seq") or 0)
+                    if s < first_seq or s > last_seq:
+                        continue
+                    c = d.get("content")
+                    if isinstance(c, str):
+                        total += len(c)
+                    elif isinstance(c, list):
+                        for p in c:
+                            if isinstance(p, dict):
+                                t = p.get("text") or ""
+                                if isinstance(t, str):
+                                    total += len(t)
+        except Exception:
+            logger.debug("[bg-bucket] _sum_chars_in_range failed",
+                          exc_info=True)
+        return total
 
     @staticmethod
     def _count_rows_since(path, after_seq: int) -> int:
@@ -807,6 +933,24 @@ class BgBucketBuilder:
         # reflect the new pyramid coverage without re-reading meta.json.
         self.note_pyramid_seq(cid, last_seq)
         self.note_pyramid_rows_bucketed(cid, len(chunk))
+        # Decrement transcript-chars counter by the chars-weight covered
+        # by [first_seq..last_seq]. We compute this from the same
+        # transcript scan _extract_trace already paid for, so no extra
+        # I/O. The estimate is rough (sum of payload chars in covered
+        # rows) — accurate enough to keep the token-budget trigger
+        # honest without paying tokenizer cost in the bg path.
+        try:
+            from core.conversation_store import ConversationStore
+            _conv_dir = ConversationStore.instance()._conv_dir(cid)
+            _tp = _conv_dir / "transcript.jsonl"
+            _covered_chars = self._sum_chars_in_range(
+                _tp, first_seq, last_seq)
+            if _covered_chars:
+                self.note_pyramid_chars_bucketed(cid, _covered_chars)
+        except Exception:
+            logger.debug(
+                "[bg-bucket] chars-bucketed decrement failed cid=%s",
+                cid[:8], exc_info=True)
         logger.info(
             "[bg-bucket] built bucket cid=%s seq %d..%d (%d msgs, "
             "summary=%d chars)",

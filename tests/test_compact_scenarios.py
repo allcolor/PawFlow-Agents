@@ -27,10 +27,11 @@ import pytest
 
 from core.bucket_store import (
     BucketStore, L1_TRIGGER_MSGS, ROLLUP_TRIGGER_COUNT, HEADER_BUDGET,
+    TAIL_RESERVE,
 )
 from tests.test_bg_bucket_builder import (
     _FakeBuilder, _fake_client, _shared_msg, _write_shared,
-    _make_summarize_fn,
+    _make_summarize_fn, PARTIAL_MIN,
 )
 
 
@@ -57,10 +58,13 @@ def _wire(builder, summarize_output: str = "ok summary with enough chars to pass
 
 
 def test_young_conv_no_bucket_no_pyramid(fake_builder):
-    """Fewer than L1_TRIGGER msgs → async bg no-op, pyramid stays empty."""
-    _write_shared(fake_builder._shared_path, 50)
+    """Few enough msgs that async build_now_sync(allow_partial=False)
+    has no L1-sized chunk to flush, and the pyramid stays empty."""
+    # Below L1_TRIGGER → no L1 chunk is buildable; with
+    # allow_partial=False a partial flush isn't allowed either.
+    n = max(0, L1_TRIGGER_MSGS - 1)
+    _write_shared(fake_builder._shared_path, n)
     fn, calls = _wire(fake_builder)
-    # Async path (maybe_trigger equivalent): gap=50 < 150 → no-op
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=False)
     assert result["buckets_built"] == 0
     store = BucketStore.get(fake_builder._conv_dir)
@@ -75,32 +79,33 @@ def test_young_conv_no_bucket_no_pyramid(fake_builder):
 def test_bulk_catchup_absorbs_bulk_and_preserves_tail(fake_builder):
     """pyramid empty + gap >> L1: bulk absorbs all pre-tail, last
     TAIL_RESERVE msgs stay un-bucketed as the recent window."""
-    n = L1_TRIGGER_MSGS * 7  # 1050 msgs, well past bulk_threshold (750)
+    n = L1_TRIGGER_MSGS * 7  # well past bulk_threshold (L1×5)
     _write_shared(fake_builder._shared_path, n)
     fn, calls = _wire(fake_builder)
 
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=False)
     assert result["buckets_built"] == 1  # only the bulk bucket
-    assert calls[0]["n_msgs"] == n - L1_TRIGGER_MSGS  # all but tail reserve
+    assert calls[0]["n_msgs"] == n - TAIL_RESERVE  # all but tail reserve
 
     store = BucketStore.get(fake_builder._conv_dir)
     assert store.object_count == 1
     # Last TAIL_RESERVE msgs stay uncovered — they are the tail
-    assert store.last_seq == n - L1_TRIGGER_MSGS
+    assert store.last_seq == n - TAIL_RESERVE
 
 
 def test_bulk_not_fired_with_preexisting_pyramid(fake_builder):
     """Mid-conv compact shouldn't bulk — pyramid already seeded.
-    450 new msgs → available = 300 → 2 × L1 chunks, then tail reserve."""
+    Pick gap so that available = 2×L1 + leftover<L1 → 2 L1 chunks, no
+    bulk."""
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="seed")
 
-    n_new = L1_TRIGGER_MSGS * 3  # 450 new msgs
+    # 2 L1 chunks worth + tail reserve
+    n_new = 2 * L1_TRIGGER_MSGS + TAIL_RESERVE
     _write_shared(fake_builder._shared_path, n_new, start_seq=101)
     fn, calls = _wire(fake_builder)
 
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=False)
-    # available = 450 - TAIL_RESERVE(150) = 300 → 2 L1 chunks
     for c in calls:
         assert c["n_msgs"] == L1_TRIGGER_MSGS
     assert result["buckets_built"] == 2
@@ -110,26 +115,29 @@ def test_bulk_not_fired_with_preexisting_pyramid(fake_builder):
 
 
 def test_partial_flush_when_allowed_and_above_min(fake_builder):
-    """gap=200, pyramid non-empty → available=50 (in [PARTIAL_MIN, L1))
-    → one partial bucket of 50 msgs; tail = last 150."""
+    """available in [PARTIAL_MIN, L1) → one partial bucket; tail
+    reserve preserved."""
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="seed")
-    _write_shared(fake_builder._shared_path, 200, start_seq=101)
+    _avail = max(PARTIAL_MIN, L1_TRIGGER_MSGS // 3)
+    n = _avail + TAIL_RESERVE
+    _write_shared(fake_builder._shared_path, n, start_seq=101)
 
     fn, calls = _wire(fake_builder)
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=True)
     assert result["buckets_built"] == 1
-    assert calls[0]["n_msgs"] == 50  # 200 - TAIL_RESERVE(150)
+    assert calls[0]["n_msgs"] == _avail
 
 
 # ── F. Gap ≤ TAIL_RESERVE → no bucket (everything is tail) ─────────
 
 
 def test_gap_below_tail_reserve_leaves_all_uncovered(fake_builder):
-    """gap ≤ TAIL_RESERVE → available ≤ 0 → no bucket, everything is tail."""
+    """gap ≤ TAIL_RESERVE → available ≤ 0 → no bucket."""
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="seed")
-    _write_shared(fake_builder._shared_path, 100, start_seq=101)
+    # write exactly TAIL_RESERVE rows past the seed: available = 0
+    _write_shared(fake_builder._shared_path, TAIL_RESERVE, start_seq=101)
 
     fn, calls = _wire(fake_builder)
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=True)
@@ -139,16 +147,17 @@ def test_gap_below_tail_reserve_leaves_all_uncovered(fake_builder):
     assert store.last_seq == 100  # unchanged
 
 
-# ── E. Mid-conv /compact with gap > 2×L1 ───────────────────────────
+# ── E. Mid-conv /compact with multi-L1 gap ─────────────────────────
 
 
 def test_midconv_compact_chunks_l1_sized(fake_builder):
-    """Normal mid-conv /compact builds L1-sized chunks + preserves tail.
-    Gap=470: available=320 → 2 L1 chunks + 20 leftover < PARTIAL_MIN
-    stays uncovered (absorbed into tail along with reserved 150)."""
+    """Normal mid-conv /compact builds L1-sized chunks + preserves tail."""
     store = BucketStore.get(fake_builder._conv_dir)
     store.add_bucket(1, 100, 0.0, 1.0, summary="seed")
-    _write_shared(fake_builder._shared_path, 470, start_seq=101)
+    # 2 full L1 chunks + small leftover < PARTIAL_MIN + tail reserve
+    leftover = max(0, PARTIAL_MIN - 1)
+    n = 2 * L1_TRIGGER_MSGS + leftover + TAIL_RESERVE
+    _write_shared(fake_builder._shared_path, n, start_seq=101)
 
     fn, calls = _wire(fake_builder)
     result = fake_builder.build_now_sync("cid", "uid", allow_partial=True)
@@ -169,7 +178,8 @@ def test_rollup_fires_on_object_count_threshold(fake_builder):
                           float(i), float(i) + 1,
                           summary=f"phase {i} " * 10)
     # Need gap ≥ L1 + TAIL_RESERVE to trigger one new L1 bucket
-    _write_shared(fake_builder._shared_path, 2 * L1_TRIGGER_MSGS,
+    _write_shared(fake_builder._shared_path,
+                   L1_TRIGGER_MSGS + TAIL_RESERVE,
                    start_seq=ROLLUP_TRIGGER_COUNT * 10 + 1)
 
     fn, calls = _wire(fake_builder)
@@ -200,8 +210,9 @@ def test_memory_extractor_called_per_bucket(fake_builder, monkeypatch):
     monkeypatch.setattr("core.memory_auto_extract.auto_extract_memories",
                          _fake_extract)
 
-    # Gap ≥ 3×L1 to have 2 L1 chunks to bucket (plus tail reserve)
-    _write_shared(fake_builder._shared_path, L1_TRIGGER_MSGS * 3)
+    # 2 L1 chunks worth + tail reserve, no leftover
+    _write_shared(fake_builder._shared_path,
+                   2 * L1_TRIGGER_MSGS + TAIL_RESERVE)
     fn, _ = _wire(fake_builder, summarize_output="detailed summary " * 10)
     fake_builder.build_now_sync("cid", "uid", allow_partial=False)
 
@@ -217,8 +228,9 @@ def test_memory_extractor_called_per_bucket(fake_builder, monkeypatch):
 
 def test_bucket_doc_carries_tool_trace(fake_builder):
     """Shared-scan + transcript extract populates tool_trace on the bucket."""
-    # Need gap ≥ L1 + TAIL_RESERVE = 2×L1 for a bucket to be built
-    _write_shared(fake_builder._shared_path, 2 * L1_TRIGGER_MSGS)
+    # Need gap ≥ L1 + TAIL_RESERVE for a bucket to be built
+    _write_shared(fake_builder._shared_path,
+                   L1_TRIGGER_MSGS + TAIL_RESERVE)
     # Inject an edit tool_call on a transcript msg in-range
     with open(fake_builder._transcript_path, "w", encoding="utf-8") as f:
         f.write(json.dumps({
@@ -404,46 +416,84 @@ def test_maybe_trigger_is_o1_no_full_scan(fake_builder, monkeypatch):
     assert read_calls == []
 
 
-def test_agent_compact_does_not_write_buckets(fake_builder, monkeypatch):
-    """Simulate a hot-path compact and assert add_bucket isn't invoked."""
-    add_bucket_calls = []
-    _orig_add = BucketStore.add_bucket
-
-    def _tracked_add(self, *args, **kwargs):
-        add_bucket_calls.append((args, kwargs))
-        return _orig_add(self, *args, **kwargs)
-
-    monkeypatch.setattr(BucketStore, "add_bucket", _tracked_add)
-
-    # build_now_sync IS allowed to call add_bucket (it's the writer path).
-    # What we verify here is that _compact's own helpers (_digest_oldest_tail,
-    # _compress_pyramid_header_for_agent) don't call add_bucket.
-    # Import the mixin and exercise the two helpers directly.
+def test_compact_force_calls_build_now_sync(monkeypatch):
+    """Forced /compact (manual or compact_boundary) always asks bg to
+    flush partials synchronously, so the pyramid is caught up before
+    the agent assembles. With the new TAIL_TOKEN_BUDGET trigger
+    keeping the tail bounded, this sync call typically completes fast
+    (≤ 1 small partial bucket to flush)."""
     from tasks.ai.agent_compaction import AgentCompactionMixin
     from core.llm_client import LLMMessage
+    from core import bg_bucket_builder as _bb_mod
+    from core import bucket_store as _bs_mod
 
-    class _Dummy(AgentCompactionMixin):
-        def _summarize_messages(self, msgs, client, **kwargs):
-            return "compacted summary " * 10
+    sync_calls = []
 
-        def _call_summarize(self, client, text, **kwargs):
-            return "compacted header " * 10
+    class _StubBB:
+        @classmethod
+        def instance(cls):
+            return cls()
 
-    d = _Dummy()
-    tail = [LLMMessage(role="user", content=f"msg {i}",
-                        conversation_id="cid") for i in range(20)]
-    # step 2b
-    digest, kept = d._digest_oldest_tail(
-        tail, _fake_client(), cap=1000,
-        user_id="uid", conversation_id="cid", keep=6)
-    assert digest is not None
-    assert len(kept) == 6
-    assert digest.source["type"] == "private_compaction"
-    # step 2c
-    header = d._compress_pyramid_header_for_agent(
-        "x" * 5000, _fake_client(), cap=1000,
-        user_id="uid", conversation_id="cid")
-    assert header  # non-empty
+        def build_now_sync(self, conversation_id, user_id,
+                            allow_partial=True):
+            sync_calls.append({
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "allow_partial": allow_partial,
+            })
+            return {"buckets_built": 0, "rollups_fired": 0,
+                     "final_object_count": 0, "final_last_seq": 0}
 
-    # Neither step wrote a bucket
-    assert add_bucket_calls == []
+        def maybe_trigger(self, *a, **kw):
+            pass
+
+    class _StubBS:
+        @classmethod
+        def get(cls, conv_dir):
+            return cls()
+
+        @property
+        def last_seq(self):
+            return 0  # empty pyramid → no pre-filter, no header bridge
+
+        @property
+        def object_count(self):
+            return 0
+
+        def assemble_summary_header(self):
+            return ""
+
+    monkeypatch.setattr(_bb_mod, "BgBucketBuilder", _StubBB)
+    monkeypatch.setattr(_bs_mod, "BucketStore", _StubBS)
+
+    # _compact uses several mixin helpers (estimate_tokens, persist,
+    # serialize, ...). Patch the strict minimum on a Dummy that
+    # inherits from the FULL stack so all helpers exist.
+    from tasks.ai.agent_loop import AgentLoopTask
+    instance = AgentLoopTask.__new__(AgentLoopTask)
+
+    # No tools, tiny tail → assembled output well under cap; the
+    # truncate/force_fit branches stay dormant. The point is just to
+    # verify the build_now_sync invocation, which happens BEFORE any
+    # of those.
+    msgs = [LLMMessage(role="system", content="sys",
+                        conversation_id="cid", seq=1)]
+    msgs += [LLMMessage(role="user", content="hi",
+                          conversation_id="cid", seq=10)]
+
+    class _C:
+        api_key = ""
+        base_url = ""
+    out = instance._compact(
+        list(msgs), _C(),
+        max_tokens=200_000,
+        target_fraction=0.25,
+        force=True,
+        conversation_id="cid_test",
+        agent_name="claude",
+        user_id="uid",
+    )
+    assert out is not None
+    assert len(sync_calls) == 1
+    assert sync_calls[0]["allow_partial"] is True
+    assert sync_calls[0]["user_id"] == "uid"

@@ -52,15 +52,24 @@ HEADER_BUDGET = 30000
 ROLLUP_TRIGGER_COUNT = 30
 
 # The last TAIL_RESERVE shared msgs are NEVER bucketed — they stay as
-# the "recent window" that every post-compact context carries. The
-# only way they shrink below this count is force_fit (step 2d), when
-# the assembled output still busts cap even after tool-truncate +
-# private digest + header compression.
+# the "recent window" that every post-compact context carries.
 #
-# Set equal to L1_TRIGGER_MSGS so the bg trigger cadence (ping when
-# L1_TRIGGER new msgs exist past the pyramid) matches exactly one
-# bucket's worth of work while keeping one L1's worth as tail.
-TAIL_RESERVE = L1_TRIGGER_MSGS
+# Small reserve: just enough to cover "the conversational turn in
+# progress" (a handful of shared msgs). The real bound on how big the
+# tail can grow is now token-based (TAIL_TOKEN_BUDGET below), enforced
+# by bg_bucket_builder eagerly firing partial buckets when transcript
+# token gap dominates. Keeping TAIL_RESERVE small means the agent's
+# /compact never has to digest-tail at hot path — bg already absorbed
+# the older transcript rows into a partial L1 bucket.
+TAIL_RESERVE = 10
+
+# Maximum estimated tokens of transcript-rows-since-last-pyramid we
+# tolerate before bg_bucket_builder fires a partial bucket. Sized to
+# fit the agent's compact tail budget: cap_min - HEADER_BUDGET, where
+# cap_min = max_tokens × 0.25 (target_fraction default) for a 200k
+# model = 50k → tail budget = 20k. Keep some margin so the trigger
+# fires *before* /compact would otherwise have to step 2b/2c.
+TAIL_TOKEN_BUDGET = 15000
 
 
 class BucketStore:

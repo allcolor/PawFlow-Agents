@@ -582,6 +582,60 @@ class ConversationStore:
 
     # ── Context file helpers ──────────────────────────────────────────
 
+    @staticmethod
+    def _row_payload_chars(row: Dict) -> int:
+        """Char weight of a transcript row's payload — content + tool I/O.
+
+        Used to feed bg_bucket_builder's transcript-token cache. Rough
+        estimate (raw chars, no tokenizer); /3.5 gives the bg-side
+        token-budget metric. Counts:
+          - row['content'] (str or list of {type,text} blocks)
+          - row['tool_calls'] (list of dicts → arguments json size)
+          - row['trace'] (list of dicts → string repr)
+          - row['content_update'] (str)
+
+        Anything else (metadata, ids, timestamps) is constant overhead
+        and ignored — we want growth to track real LLM-visible payload.
+        """
+        total = 0
+        c = row.get("content")
+        if isinstance(c, str):
+            total += len(c)
+        elif isinstance(c, list):
+            for p in c:
+                if isinstance(p, dict):
+                    t = p.get("text") or ""
+                    if isinstance(t, str):
+                        total += len(t)
+        for tc in (row.get("tool_calls") or []):
+            if isinstance(tc, dict):
+                args = tc.get("arguments") or tc.get("function", {}).get("arguments") or ""
+                if isinstance(args, str):
+                    total += len(args)
+                elif isinstance(args, dict):
+                    try:
+                        total += len(json.dumps(args, ensure_ascii=False))
+                    except Exception:
+                        pass
+        cu = row.get("content_update")
+        if isinstance(cu, str):
+            total += len(cu)
+        return total
+
+    @staticmethod
+    def _notify_bg_transcript_chars(cid: str, n_chars: int):
+        """Best-effort hook to feed bg_bucket_builder. Failures swallowed:
+        the trigger logic falls back to seq-gap if the cache stays cold.
+        """
+        if n_chars <= 0:
+            return
+        try:
+            from core.bg_bucket_builder import BgBucketBuilder
+            BgBucketBuilder.instance().note_transcript_bytes_appended(
+                cid, n_chars)
+        except Exception:
+            logger.debug("bg transcript-chars hint failed", exc_info=True)
+
     def _append_ctx_file(self, cid: str, agent: str, messages: List[Dict]):
         """Append messages to an agent's context file.
 
@@ -1141,6 +1195,11 @@ class ConversationStore:
                 with open(self._transcript_path(cid), "a",
                           encoding="utf-8") as f:
                     f.write(json.dumps(line, ensure_ascii=False) + "\n")
+                # Feed bg_bucket_builder's token-budget trigger so it
+                # can fire a partial bucket BEFORE the agent's hot-path
+                # /compact has to digest-tail at runtime.
+                self._notify_bg_transcript_chars(
+                    cid, self._row_payload_chars(line))
 
             if display_only:
                 pass  # transcript only, no context files
@@ -1845,6 +1904,8 @@ class ConversationStore:
             })
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            self._notify_bg_transcript_chars(
+                cid, self._row_payload_chars(line))
 
     def message_count(self, cid: str) -> int:
         return self._load_cache(cid).get("msg_count", 0)
@@ -2319,6 +2380,8 @@ class ConversationStore:
             })
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            self._notify_bg_transcript_chars(
+                cid, self._row_payload_chars(line))
         return True
 
     def append_display_trace(self, cid: str, trace_id: str,
@@ -2334,6 +2397,8 @@ class ConversationStore:
             })
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            self._notify_bg_transcript_chars(
+                cid, self._row_payload_chars(line))
         return True
 
     # ── Cleanup ───────────────────────────────────────────────────────

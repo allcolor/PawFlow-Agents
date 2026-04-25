@@ -944,6 +944,20 @@ class AgentCoreMixin:
                                 # reconstructs tool_call/tool_result from LLM context messages
 
                     def _llm_call(msgs, ps=poll_silent):
+                        # Per-call identity passed explicitly. Concurrent
+                        # compact / memory-extract / sub-agent streams
+                        # share the same client instance; mutating
+                        # self._user_id / self._conversation_id / etc.
+                        # via try/finally save-restore would race with
+                        # this call. Passing kwargs makes the per-call
+                        # scope private and impossible to clobber.
+                        _call_kwargs = {
+                            "call_user_id": user_id,
+                            "call_conversation_id": conversation_id,
+                            "call_agent_name": ctx.get("active_agent_name", ""),
+                            "call_event_cid": ctx.get("_event_cid", conversation_id),
+                            "call_ephemeral_stream": False,
+                        }
                         if emitter.is_streaming:
                             return client.complete_stream(
                                 messages=msgs, model=model or None,
@@ -952,11 +966,13 @@ class AgentCoreMixin:
                                 callback=emitter.get_token_callback(ps),
                                 thinking_budget=_tb,
                                 thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None,
-                                turn_callback=_claude_code_turn_callback if _is_claude_code else None)
+                                turn_callback=_claude_code_turn_callback if _is_claude_code else None,
+                                **_call_kwargs)
                         return client.complete(
                             messages=msgs, model=model or None,
                             temperature=ctx["temperature"], max_tokens=ctx["max_tokens"],
-                            tools=tool_defs if tool_defs else None, thinking_budget=_tb)
+                            tools=tool_defs if tool_defs else None, thinking_budget=_tb,
+                            **_call_kwargs)
 
                     # Claude-code with existing session: send only the latest
                     # user message (session has full context via --resume)

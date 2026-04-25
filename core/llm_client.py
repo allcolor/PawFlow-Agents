@@ -538,6 +538,12 @@ class LLMClient(
         response_format: Optional[str] = None,
         tools: Optional[List[LLMToolDefinition]] = None,
         thinking_budget: int = 0,
+        *,
+        call_user_id: Optional[str] = None,
+        call_conversation_id: Optional[str] = None,
+        call_agent_name: Optional[str] = None,
+        call_event_cid: Optional[str] = None,
+        call_ephemeral_stream: Optional[bool] = None,
     ) -> LLMResponse:
         """Send a completion request to the LLM.
 
@@ -548,6 +554,13 @@ class LLMClient(
             max_tokens: Max response tokens.
             response_format: "json" for JSON mode (OpenAI only).
             tools: Tool definitions for function calling / tool_use.
+            call_user_id, call_conversation_id, call_agent_name,
+            call_event_cid, call_ephemeral_stream: per-call identity for
+                providers that need it (currently CC). Pass these from
+                the call site rather than mutating shared client state —
+                concurrent compact / memory-extract / sub-agent streams
+                on the same client instance would otherwise race via
+                try/finally save-restore on `self.*`.
 
         Returns:
             LLMResponse with content and/or tool_calls populated.
@@ -572,6 +585,11 @@ class LLMClient(
                 # text + tool_calls.
                 result = self._stream_claude_code(
                     messages, mdl, temperature, max_tokens, tools,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream,
                 )
             else:
                 result = self._complete_anthropic(messages, mdl, temperature, max_tokens, tools, thinking_budget=thinking_budget)
@@ -702,6 +720,12 @@ class LLMClient(
         thinking_callback=None,
         turn_callback=None,
         block_callback=None,
+        *,
+        call_user_id: Optional[str] = None,
+        call_conversation_id: Optional[str] = None,
+        call_agent_name: Optional[str] = None,
+        call_event_cid: Optional[str] = None,
+        call_ephemeral_stream: Optional[bool] = None,
     ) -> LLMResponse:
         """Streaming completion — calls callback(token: str) for each token.
 
@@ -727,7 +751,12 @@ class LLMClient(
             elif self.provider == "claude-code":
                 result = self._stream_claude_code(messages, mdl, temperature, max_tokens, tools, callback,
                                                   turn_callback=turn_callback,
-                                                  block_callback=block_callback)
+                                                  block_callback=block_callback,
+                                                  call_user_id=call_user_id,
+                                                  call_conversation_id=call_conversation_id,
+                                                  call_agent_name=call_agent_name,
+                                                  call_event_cid=call_event_cid,
+                                                  call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "anthropic":
                 result = self._stream_anthropic(messages, mdl, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
             else:

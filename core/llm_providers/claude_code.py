@@ -757,7 +757,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             return ""
 
     def _spawn_cc_stream(self, workdir: str, user_id: str, conv_id: str,
-                         agent_name: str, session_id: str, model):
+                         agent_name: str, session_id: str, model,
+                         *, ephemeral_stream: bool = False):
         """Spawn a fresh Claude Code subprocess (CC container exec + CLI).
 
         Extracted from _stream_claude_code so the live-session reuse path
@@ -857,7 +858,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             )
             # Ephemeral streams (btw) don't register proc — they don't
             # need preempt/cancel and must not overwrite the main agent's proc.
-            if not getattr(self, '_ephemeral_stream', False):
+            if not ephemeral_stream:
                 self._claude_proc = proc
             # Per-stream session info pinned on the proc object. The
             # provider instance is a SINGLETON shared across concurrent
@@ -932,6 +933,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     def _stream_claude_code(
         self, messages, model, temperature, max_tokens, tools, callback=None,
         turn_callback=None, block_callback=None, _is_auth_retry=False,
+        *,
+        call_user_id: Optional[str] = None,
+        call_conversation_id: Optional[str] = None,
+        call_agent_name: Optional[str] = None,
+        call_event_cid: Optional[str] = None,
+        call_ephemeral_stream: Optional[bool] = None,
     ):
         """Stream from claude CLI using bidirectional stream-json.
 
@@ -943,12 +950,35 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         assistant turn = one message in the conversation.
 
         Claude Code uses MCP for tool calls — tools param is ignored.
+
+        Per-call identity (user_id / conversation_id / agent_name /
+        event_cid / ephemeral_stream) MUST be passed via the call_*
+        kwargs by every caller. The shared client instance no longer
+        carries these as state — the previous self._user_id /
+        self._conversation_id / etc. pattern was a footgun: concurrent
+        compact / memory-extract / sub-agent streams would clobber
+        each other's identity via try/finally save-restore on the
+        same instance, leaving the values empty for whichever stream
+        won the race. Each call now passes its own scope explicitly.
         """
         from core.llm_client import LLMClientError, LLMResponse
 
-        user_id = getattr(self, '_user_id', "")
-        conv_id = getattr(self, '_conversation_id', "")
-        agent_name = getattr(self, '_agent_name', "")
+        # Resolve per-call identity. Fall back to self.* only as a
+        # transitional safety net so a caller that hasn't yet been
+        # updated to pass kwargs doesn't crash; the goal is for every
+        # call site to pass these explicitly, at which point the
+        # fallback can be tightened to raise.
+        user_id = (call_user_id if call_user_id is not None
+                    else getattr(self, '_user_id', ""))
+        conv_id = (call_conversation_id if call_conversation_id is not None
+                    else getattr(self, '_conversation_id', ""))
+        agent_name = (call_agent_name if call_agent_name is not None
+                       else getattr(self, '_agent_name', ""))
+        _is_ephemeral = (bool(call_ephemeral_stream)
+                          if call_ephemeral_stream is not None
+                          else bool(getattr(self, '_ephemeral_stream', False)))
+        _raw_event_cid = (call_event_cid if call_event_cid is not None
+                           else getattr(self, '_event_cid', ''))
 
         # Extract images BEFORE serialization (they'll be sent as content blocks).
         # user_id + conv_id are REQUIRED — FileStore enforces owner×conv
@@ -1033,7 +1063,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # mode: _setup_credentials early-returns before assigning the
         # attr).
         _svc_pool_idx = int(getattr(self, '_current_pool_index', -1))
-        _is_ephemeral = bool(getattr(self, '_ephemeral_stream', False))
+        # _is_ephemeral resolved earlier at function entry from
+        # call_ephemeral_stream (with self._ephemeral_stream fallback).
         _live_reg = LiveSessionRegistry.instance()
         _live_key = None
         _live_session: Optional[CCLiveSession] = None
@@ -1077,7 +1108,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             _owns_turn_lock = False
             proc, self._pool_container_name, _mcp_internal_token = (
                 self._spawn_cc_stream(workdir, user_id, conv_id, agent_name,
-                                      session_id, model))
+                                      session_id, model,
+                                      ephemeral_stream=_is_ephemeral))
 
         # Multi-agent catch-up: when resuming a session, inject messages
         # from other agents that CC hasn't seen (arrived after CC's last turn)
@@ -1126,7 +1158,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         #   SubAgentExecutor to re-emit CC's tool_call/tool_result as
         #   sub_agent_tool/sub_agent_tool_result so they land in the
         #   delegate sub-block instead of the main chat.
-        _raw_event_cid = getattr(self, '_event_cid', '')
+        # _raw_event_cid resolved earlier at function entry from
+        # call_event_cid (with self._event_cid fallback).
         if _raw_event_cid is None:
             _event_cid = ""
         else:

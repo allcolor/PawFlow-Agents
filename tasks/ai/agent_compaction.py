@@ -433,46 +433,31 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 "Return 0-5 items. If nothing is worth remembering, return [].\n\n"
                 f"SUMMARY:\n{summary[:4000]}"
             )
-            # Isolate this LLM call from the user's conversation. Without
-            # this, CC's client.complete would resume the live conv session
-            # (conv_id is still set on the shared client instance) and the
-            # extract prompt + model's answer would leak into the user's
-            # chat as rogue turns. Full save/restore of singleton tracking
-            # state (same pattern as _summarize_via_cc): without
-            # _ephemeral_stream + proc/pool/pool_idx preservation, spawning
-            # the memory-extract CC clobbers the main's cc-live key state
-            # and the main's next turn computes a mismatched key → REUSE
-            # misses and CC spawns a fresh container it shouldn't have.
+            # Per-call identity via call_* kwargs (no mutation of shared
+            # client state for those 5 fields). Pool-tracking state
+            # still lives on the client and is overwritten by spawn/
+            # cleanup of this memory-extract stream — save/restore so
+            # main's send_user_message + cc-live registry survive.
             _inner = getattr(client, "_client", client)
-            _saved_conv = getattr(_inner, "_conversation_id", "")
-            _saved_agent = getattr(_inner, "_agent_name", "")
-            _saved_user = getattr(_inner, "_user_id", "")
-            _saved_event_cid = getattr(_inner, "_event_cid", "")
-            _saved_ephemeral = getattr(_inner, "_ephemeral_stream", False)
             _saved_claude_proc = getattr(_inner, "_claude_proc", None)
             _saved_pool_name = getattr(_inner, "_pool_container_name", None)
             _saved_cc_pid = getattr(_inner, "_cc_container_pid", 0)
             _saved_pool_idx = getattr(_inner, "_current_pool_index", -1)
             _saved_session_id = getattr(_inner, "_current_session_id", "")
             _saved_result_emitted = getattr(_inner, "_result_emitted", False)
-            _inner._conversation_id = "_memory_extract"
-            _inner._agent_name = "memory"
-            _inner._user_id = user_id
-            _inner._event_cid = ""
-            _inner._ephemeral_stream = True
             try:
                 resp = client.complete(
                     messages=[LLMMessage(role="user", content=prompt,
                                           conversation_id="_memory_extract")],
                     temperature=0.3,
                     max_tokens=1000,
+                    call_user_id=user_id,
+                    call_conversation_id="_memory_extract",
+                    call_agent_name="memory",
+                    call_event_cid="",
+                    call_ephemeral_stream=True,
                 )
             finally:
-                _inner._conversation_id = _saved_conv
-                _inner._agent_name = _saved_agent
-                _inner._user_id = _saved_user
-                _inner._event_cid = _saved_event_cid
-                _inner._ephemeral_stream = _saved_ephemeral
                 if _saved_claude_proc is not None:
                     _inner._claude_proc = _saved_claude_proc
                 if _saved_pool_name:

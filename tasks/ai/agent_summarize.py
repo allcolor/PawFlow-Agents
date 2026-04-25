@@ -641,38 +641,24 @@ class AgentSummarizeMixin:
                 "BUG: user_id is required for CC-based summarization "
                 "(every conversation belongs to a user)")
 
-        # Save and clear session — compact uses a dedicated workdir per user
-        # so CC's _get_session_workdir doesn't raise on empty conv_id.
+        # Identity for this compact: passed via call_* kwargs to
+        # complete_stream — no longer mutates the shared client. The
+        # only state still on `self` for the duration of the compact
+        # is pool-tracking (proc/container name/PID) which the cleanup
+        # path resets to None/0; we save/restore those so main's
+        # send_user_message and force-stop discovery survive.
         _inner = getattr(client, '_client', client)
-        _saved_conv = getattr(_inner, '_conversation_id', '')
-        _saved_agent = getattr(_inner, '_agent_name', '')
-        _saved_user = getattr(_inner, '_user_id', '')
-        _saved_event_cid = getattr(_inner, '_event_cid', '')
-        # Shared-pyramid compact runs on the MAIN agent's provider (same
-        # llm_service as the agent itself). Without the save/restore below,
-        # spawning the compact's CC inside `_stream_claude_code` clobbers
-        # the in-flight main stream's tracking on `self`:
-        #   - `_claude_proc` ← compact_proc (then None after compact cleanup)
-        #   - `_pool_container_name` ← None, then compact's, then None
-        #   - `_cc_container_pid` ← 0, then compact's, then 0
-        # Result: `send_user_message` sees `_claude_proc=None` and routes
-        # the user's next message to PendingQueue ("No running Claude Code
-        # process to send message to"), _inject_catchup injects to compact
-        # stdin, and force-stop targets nothing. The main agent looks dead
-        # from the outside even while its stream thread is still alive.
-        # Mark the compact as ephemeral (same flag `btw` uses) so
-        # `_stream_claude_code` skips `self._claude_proc = proc`, and
-        # save/restore the other pool-tracking attrs around the call so
-        # main's values survive compact's spawn/cleanup.
-        _saved_ephemeral = getattr(_inner, '_ephemeral_stream', False)
         _saved_claude_proc = getattr(_inner, '_claude_proc', None)
         _saved_pool_name = getattr(_inner, '_pool_container_name', None)
         _saved_cc_pid = getattr(_inner, '_cc_container_pid', 0)
-        _inner._conversation_id = '_compact'
-        _inner._agent_name = 'compact'
-        _inner._user_id = user_id
-        _inner._event_cid = ''
-        _inner._ephemeral_stream = True
+
+        _compact_call_kwargs = {
+            "call_user_id": user_id,
+            "call_conversation_id": "_compact",
+            "call_agent_name": "compact",
+            "call_event_cid": "",
+            "call_ephemeral_stream": True,
+        }
 
         try:
             for attempt in range(1, max_retries + 1):
@@ -693,6 +679,7 @@ class AgentSummarizeMixin:
                         messages=[LLMMessage(role="user", content=prompt,
                                                conversation_id="_compact")],
                         max_tokens=min(target_tokens * 3, 8000),
+                        **_compact_call_kwargs,
                     )
                 except Exception as e:
                     # Don't treat this as fatal YET. We deliberately kill
@@ -765,11 +752,6 @@ class AgentSummarizeMixin:
 
             raise RuntimeError("Claude Code failed to call compact_result after retries")
         finally:
-            _inner._conversation_id = _saved_conv
-            _inner._agent_name = _saved_agent
-            _inner._user_id = _saved_user
-            _inner._event_cid = _saved_event_cid
-            _inner._ephemeral_stream = _saved_ephemeral
             # Restore main-agent pool tracking that compact's _cleanup_proc
             # wiped to None/0. Only restore if main actually had something —
             # compact running as the first stream ever would have None here

@@ -73,9 +73,11 @@ class AgentSideChannelsMixin:
             # The CC session lives only for this btw call, then is destroyed.
             # _ephemeral_stream prevents btw from overwriting _claude_proc.
             # Per-client lock serializes concurrent btw CC calls (e.g. /btw @ALL).
+            # Per-call identity passed via call_* kwargs to complete_stream
+            # below — the shared client's _conversation_id / _user_id /
+            # _agent_name / _ephemeral_stream stay untouched.
             _is_cc = hasattr(client, 'cancel_claude_code')
             _btw_conv_id = f"{conversation_id}::btw::{agent_name}"
-            _saved_conv_id = None
             _cc_lock = None
             if _is_cc:
                 import threading as _btw_threading
@@ -83,11 +85,6 @@ class AgentSideChannelsMixin:
                     client._btw_lock = _btw_threading.Lock()
                 _cc_lock = client._btw_lock
                 _cc_lock.acquire()
-                _saved_conv_id = getattr(client, '_conversation_id', '')
-                client._conversation_id = _btw_conv_id
-                client._agent_name = agent_name
-                client._user_id = user_id
-                client._ephemeral_stream = True
 
             # 2. Build lightweight context: system + last N messages (truncated)
             raw = store.load(conversation_id) or []
@@ -137,23 +134,29 @@ class AgentSideChannelsMixin:
                 "agent_name": agent_name,
             })
 
+            _btw_call_kwargs = {
+                "call_user_id": user_id,
+                "call_conversation_id": _btw_conv_id,
+                "call_agent_name": agent_name,
+                "call_event_cid": conversation_id,  # publish to parent conv
+                "call_ephemeral_stream": True,
+            } if _is_cc else {}
             response = client.complete_stream(
                 messages=btw_messages,
                 tools=None,
                 temperature=0.5,
                 max_tokens=1024,
                 callback=None,
+                **_btw_call_kwargs,
             )
 
             # 3b. Cleanup transient CC session (like task cleanup)
             if _is_cc:
-                client._ephemeral_stream = False
                 try:
                     store.invalidate_claude_sessions(_btw_conv_id)
                     store.delete(_btw_conv_id)
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
-                client._conversation_id = _saved_conv_id or conversation_id
                 if _cc_lock:
                     _cc_lock.release()
 
@@ -193,13 +196,11 @@ class AgentSideChannelsMixin:
             logger.error(f"[btw:{conversation_id[:8]}] error: {e}", exc_info=True)
             # Cleanup CC state on error too
             if _is_cc:
-                client._ephemeral_stream = False
                 try:
                     store.invalidate_claude_sessions(_btw_conv_id)
                     store.delete(_btw_conv_id)
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)
-                client._conversation_id = _saved_conv_id or conversation_id
                 if _cc_lock:
                     try:
                         _cc_lock.release()

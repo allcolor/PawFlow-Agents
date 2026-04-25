@@ -53,6 +53,14 @@ class CCLiveSession:
     workdir: str
     service_id: str
     svc_pool_idx: int
+    # CC-reported session_id (e.g. "41234702-dea1-…"). Pinned at spawn
+    # time when CC's `init` event fires. Used to locate the session
+    # jsonl file for post-result preempt-visibility checks. Source of
+    # truth — never reads from ConversationStore extras (volatile, can
+    # be cleared by other code paths) or LLMClient.self (singleton
+    # state shared across concurrent streams). Required for any
+    # downstream code that needs to inspect CC's actual session file.
+    session_id: str = ""
     # MCP internal-auth token minted at spawn time. CC keeps using it
     # across turns, so its lifetime is tied to the live session, not the
     # turn. Revoked in teardown to avoid token accumulation.
@@ -137,13 +145,25 @@ class LiveSessionRegistry:
                 return None
             return session
 
-    def touch(self, key: LiveKey) -> None:
-        """Mark a session as reused this turn."""
+    def touch(self, key: LiveKey, bump_reuse: bool = True) -> None:
+        """Bump ``last_used`` so the sweeper sees the session as active.
+
+        bump_reuse=True (default) — also increments ``reuse_count``. Used
+        on stream-call resume (the historical semantics of touch).
+
+        bump_reuse=False — last_used only. Used per-turn during a long
+        stream call to keep the idle timer fresh; the previous behaviour
+        (touch only at end-of-stream) let the sweeper evict an active
+        session mid-stream after idle_ttl, breaking the agent context.
+        Bumping reuse_count per turn would also pollute the counter
+        (it would conflate turns with stream-call reuses).
+        """
         with self._lock:
             session = self._sessions.get(key)
             if session is not None:
                 session.last_used = time.monotonic()
-                session.reuse_count += 1
+                if bump_reuse:
+                    session.reuse_count += 1
 
     def evict(self, key: LiveKey, reason: str) -> Optional[CCLiveSession]:
         """Remove from registry without killing. Returns the evicted entry."""

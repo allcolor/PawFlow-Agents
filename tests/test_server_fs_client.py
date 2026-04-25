@@ -9,7 +9,10 @@ import threading
 import time
 import unittest
 
-from pawflow_relay.server_fs_client import ServerFsClient
+from pawflow_relay.server_fs_client import (
+    ServerFsClient,
+    SwappableServerFsClient,
+)
 
 
 class TestEnvelopeShape(unittest.TestCase):
@@ -166,6 +169,116 @@ class TestErrorPropagation(unittest.TestCase):
         self.assertEqual(results['r'], {
             'error': 'ENOENT', 'errno': 2, 'message': 'not found',
         })
+
+
+class TestSwappableServerFsClient(unittest.TestCase):
+    """The swappable handle is what the FUSE mount holds for its lifetime.
+
+    Without it, every WS reconnect would unmount + remount the FUSE,
+    invalidating kernel inodes and breaking bind-mounts in downstream
+    containers (e.g. CC docker bind of /cc_sessions).
+    """
+
+    def test_request_with_no_inner_returns_eio(self):
+        swap = SwappableServerFsClient()
+        r = swap.request('sfs.getattr', {'path': 'foo'}, timeout=0.5)
+        self.assertEqual(r['error'], 'EIO')
+        self.assertEqual(r['errno'], 5)
+        self.assertIn('reconnecting', r['message'])
+
+    def test_set_inner_then_request_forwards(self):
+        sent = []
+        cli = ServerFsClient(send_callable=sent.append)
+        swap = SwappableServerFsClient()
+        swap.set_inner(cli)
+
+        results = {}
+
+        def _req():
+            results['r'] = swap.request(
+                'sfs.getattr', {'path': 'foo'}, timeout=2.0)
+
+        t = threading.Thread(target=_req)
+        t.start()
+        deadline = time.time() + 1.0
+        while not sent and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(len(sent), 1)
+        env = json.loads(sent[0].decode())
+        cli.dispatch_response({
+            'type': 'relay_response',
+            'request_id': env['request_id'],
+            'data': {'st_size': 7},
+        })
+        t.join(timeout=2.0)
+        self.assertEqual(results['r'], {'data': {'st_size': 7}})
+
+    def test_clear_inner_then_request_returns_eio(self):
+        cli = ServerFsClient(send_callable=lambda b: None)
+        swap = SwappableServerFsClient()
+        swap.set_inner(cli)
+        swap.clear_inner()
+        r = swap.request('sfs.getattr', {'path': 'foo'}, timeout=0.5)
+        self.assertEqual(r['error'], 'EIO')
+
+    def test_swap_old_to_new_routes_subsequent_requests_to_new(self):
+        sent_old = []
+        sent_new = []
+        cli_old = ServerFsClient(send_callable=sent_old.append)
+        cli_new = ServerFsClient(send_callable=sent_new.append)
+        swap = SwappableServerFsClient()
+        swap.set_inner(cli_old)
+
+        # First request goes through old
+        def _req(out):
+            out['r'] = swap.request('sfs.getattr', {'p': 1}, timeout=2.0)
+
+        h1 = {}
+        t1 = threading.Thread(target=_req, args=(h1,))
+        t1.start()
+        deadline = time.time() + 1.0
+        while not sent_old and time.time() < deadline:
+            time.sleep(0.01)
+        env_old = json.loads(sent_old[0].decode())
+        cli_old.dispatch_response({
+            'type': 'relay_response',
+            'request_id': env_old['request_id'],
+            'data': {'tag': 'old'},
+        })
+        t1.join(timeout=2.0)
+        self.assertEqual(h1['r']['data']['tag'], 'old')
+
+        # Swap to new client; pending requests on old should be cancelled
+        # by the worker (cancel_all). Future requests go to new.
+        cli_old.cancel_all('reconnecting')
+        swap.set_inner(cli_new)
+
+        h2 = {}
+        t2 = threading.Thread(target=_req, args=(h2,))
+        t2.start()
+        deadline = time.time() + 1.0
+        while not sent_new and time.time() < deadline:
+            time.sleep(0.01)
+        # Only the new client should have seen the second request.
+        self.assertEqual(len(sent_new), 1)
+        self.assertEqual(len(sent_old), 1)  # unchanged
+        env_new = json.loads(sent_new[0].decode())
+        cli_new.dispatch_response({
+            'type': 'relay_response',
+            'request_id': env_new['request_id'],
+            'data': {'tag': 'new'},
+        })
+        t2.join(timeout=2.0)
+        self.assertEqual(h2['r']['data']['tag'], 'new')
+
+    def test_get_inner_reflects_current_state(self):
+        swap = SwappableServerFsClient()
+        self.assertIsNone(swap.get_inner())
+        cli = ServerFsClient(send_callable=lambda b: None)
+        swap.set_inner(cli)
+        self.assertIs(swap.get_inner(), cli)
+        swap.clear_inner()
+        self.assertIsNone(swap.get_inner())
 
 
 if __name__ == '__main__':

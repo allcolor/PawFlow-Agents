@@ -143,3 +143,44 @@ class ServerFsClient:
             holder['message'] = error
             evt.set()
         return len(entries)
+
+
+class SwappableServerFsClient:
+    """Stable client handle whose underlying ServerFsClient can be swapped.
+
+    The FUSE proxy (ServerFsMount / ServerFsOperations) holds this object
+    by reference for the entire mount lifetime. The relay worker creates
+    a new ServerFsClient on each WS connect and sets it via set_inner();
+    on disconnect it clears it via clear_inner(). Requests issued while
+    no inner is set return EIO immediately, mimicking the WS-disconnected
+    state without unmounting the FUSE.
+
+    Without this indirection, the FUSE mount would have to be torn down
+    and recreated on every WS reconnect, which invalidates kernel-side
+    inodes and breaks bind-mounts in downstream containers (e.g. CC).
+    """
+
+    def __init__(self):
+        self._inner: Optional[ServerFsClient] = None
+        self._lock = threading.Lock()
+
+    def set_inner(self, client: ServerFsClient) -> None:
+        with self._lock:
+            self._inner = client
+
+    def clear_inner(self) -> None:
+        with self._lock:
+            self._inner = None
+
+    def get_inner(self) -> Optional[ServerFsClient]:
+        with self._lock:
+            return self._inner
+
+    def request(self, method: str, args: Dict[str, Any],
+                timeout: Optional[float] = None) -> Dict[str, Any]:
+        with self._lock:
+            cli = self._inner
+        if cli is None:
+            return {'error': 'EIO', 'errno': 5,
+                    'message': 'WS not connected (relay reconnecting)'}
+        return cli.request(method, args, timeout)

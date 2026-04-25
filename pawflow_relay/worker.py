@@ -1406,6 +1406,53 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # ── FUSE mounts (one-shot, survive WS reconnects) ────────────────
+    # Create the FUSE mounts BEFORE entering the reconnect loop and
+    # tear them down only on final exit. Each WS reconnect swaps the
+    # underlying ServerFsClient via SwappableServerFsClient.set_inner;
+    # the kernel-side mount and inode allocations stay stable, so
+    # bind-mounts of /cc_sessions and /filestore in downstream
+    # containers (notably CC) keep working across relay reconnects.
+    _server_fs_swap = None
+    _server_fs_mount = None
+    _filestore_fs_swap = None
+    _filestore_fs_mount = None
+    if server_mount or filestore_mount:
+        from pawflow_relay.server_fs_client import SwappableServerFsClient
+        from pawflow_relay.server_fs_mount import ServerFsMount
+        if server_mount:
+            _server_fs_swap = SwappableServerFsClient()
+            try:
+                _server_fs_mount = ServerFsMount(
+                    _server_fs_swap, server_mount)
+                _server_fs_mount.start()
+                sys.stderr.write(
+                    f"[FSRelay] server-fs mounted at {server_mount}\n")
+            except Exception as _smerr:
+                sys.stderr.write(
+                    f"[FSRelay] server-fs mount FAILED: {_smerr}\n"
+                    "  Likely cause: missing pyfuse3 / libfuse3, or no "
+                    "CAP_SYS_ADMIN. Continuing without server-fs.\n")
+                _server_fs_mount = None
+                _server_fs_swap = None
+        if filestore_mount:
+            _filestore_fs_swap = SwappableServerFsClient()
+            try:
+                _filestore_fs_mount = ServerFsMount(
+                    _filestore_fs_swap, filestore_mount,
+                    method_prefix='ffs.',
+                    fsname='pawflow-filestore-fs')
+                _filestore_fs_mount.start()
+                sys.stderr.write(
+                    f"[FSRelay] filestore-fs mounted at {filestore_mount}\n")
+            except Exception as _fmerr:
+                sys.stderr.write(
+                    f"[FSRelay] filestore-fs mount FAILED: {_fmerr}\n"
+                    "  Likely cause: missing pyfuse3 / libfuse3, or no "
+                    "CAP_SYS_ADMIN. Continuing without filestore-fs.\n")
+                _filestore_fs_mount = None
+                _filestore_fs_swap = None
+
     reconnect_delay = 1
 
     while True:
@@ -1523,62 +1570,27 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _child_relays = {}  # relay_id → thread (child relay instances)
             _terminal_sessions = {}  # session_id → {master_fd, pid, reader}
 
-            # ── Server-FS FUSE mount (relay→server inverse direction) ──
-            # Borrows (sock, _send_lock) from the WS we just registered.
-            # Lives until the connection drops; cancel_all() unblocks any
-            # in-flight FUSE callback with EIO so the kernel doesn't hang.
+            # ── Per-WS-connection FUSE clients ──────────────────────────
+            # The FUSE mounts themselves were created once before the
+            # reconnect loop; here we just build a fresh ServerFsClient
+            # bound to THIS sock and swap it into the swappable handle
+            # the mount is holding. The kernel-side mount stays live
+            # across WS reconnects so downstream container bind-mounts
+            # of /cc_sessions and /filestore remain valid.
+            from pawflow_relay.server_fs_client import ServerFsClient
             _server_fs_client = None
-            _server_fs_mount = None
-            if server_mount:
-                from pawflow_relay.server_fs_client import ServerFsClient
-                from pawflow_relay.server_fs_mount import ServerFsMount
+            if _server_fs_swap is not None:
                 _server_fs_client = ServerFsClient(
                     send_callable=lambda b: _ws_frame_send(sock, b),
                     send_lock=_send_lock)
-                try:
-                    _server_fs_mount = ServerFsMount(
-                        _server_fs_client, server_mount)
-                    _server_fs_mount.start()
-                    sys.stderr.write(
-                        f"[FSRelay] server-fs mounted at {server_mount}\n")
-                except Exception as _smerr:
-                    sys.stderr.write(
-                        f"[FSRelay] server-fs mount FAILED: {_smerr}\n"
-                        "  Likely cause: missing pyfuse3 / libfuse3, or no "
-                        "CAP_SYS_ADMIN. Continuing without server-fs.\n")
-                    _server_fs_mount = None
-                    if _server_fs_client is not None:
-                        _server_fs_client.cancel_all('mount failed')
-                        _server_fs_client = None
+                _server_fs_swap.set_inner(_server_fs_client)
 
-            # ── FileStore FUSE mount (ffs.* protocol, RO virtualized view) ──
-            # Independent client so cleanup is symmetric with server-fs;
-            # both share the same WS tunnel via _ws_frame_send/_send_lock.
             _filestore_fs_client = None
-            _filestore_fs_mount = None
-            if filestore_mount:
-                from pawflow_relay.server_fs_client import ServerFsClient
-                from pawflow_relay.server_fs_mount import ServerFsMount
+            if _filestore_fs_swap is not None:
                 _filestore_fs_client = ServerFsClient(
                     send_callable=lambda b: _ws_frame_send(sock, b),
                     send_lock=_send_lock)
-                try:
-                    _filestore_fs_mount = ServerFsMount(
-                        _filestore_fs_client, filestore_mount,
-                        method_prefix='ffs.',
-                        fsname='pawflow-filestore-fs')
-                    _filestore_fs_mount.start()
-                    sys.stderr.write(
-                        f"[FSRelay] filestore-fs mounted at {filestore_mount}\n")
-                except Exception as _fmerr:
-                    sys.stderr.write(
-                        f"[FSRelay] filestore-fs mount FAILED: {_fmerr}\n"
-                        "  Likely cause: missing pyfuse3 / libfuse3, or no "
-                        "CAP_SYS_ADMIN. Continuing without filestore-fs.\n")
-                    _filestore_fs_mount = None
-                    if _filestore_fs_client is not None:
-                        _filestore_fs_client.cancel_all('mount failed')
-                        _filestore_fs_client = None
+                _filestore_fs_swap.set_inner(_filestore_fs_client)
 
             def _open_terminal(cols=80, rows=24, shell=None):
                 import uuid as _uuid_term
@@ -1885,6 +1897,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         except KeyboardInterrupt:
             sys.stderr.write("\n[FSRelay] Shutting down.\n")
             _close_all_terminals()
+            # Final exit — unmount the FUSE filesystems before returning so
+            # we don't leave dangling pyfuse3 mounts pointing at a dead WS.
+            for _name, _mref in (('_server_fs_mount', _server_fs_mount),
+                                    ('_filestore_fs_mount', _filestore_fs_mount)):
+                if _mref is not None:
+                    try:
+                        _mref.stop()
+                    except Exception as _se:
+                        sys.stderr.write(f"[FSRelay] {_name} stop: {_se}\n")
             try:
                 sock.close()
             except Exception:
@@ -1898,15 +1919,16 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _ct = locals().get('_close_all_terminals')
             if _ct:
                 _ct()
-            # Tear down server-fs FUSE mount + unblock pending FUSE waiters
-            # so the kernel doesn't hang on a now-dead WebSocket.
-            for _name in ('_server_fs_mount', '_filestore_fs_mount'):
-                _m = locals().get(_name)
-                if _m is not None:
+            # Detach the per-WS ServerFsClient from the FUSE mount and
+            # cancel its pending requests with EIO so the kernel doesn't
+            # hang on the dead socket. The FUSE mount itself stays up
+            # across reconnects — see the one-shot setup before this loop.
+            for _swap in (_server_fs_swap, _filestore_fs_swap):
+                if _swap is not None:
                     try:
-                        _m.stop()
-                    except Exception as _se:
-                        sys.stderr.write(f"[FSRelay] {_name} stop: {_se}\n")
+                        _swap.clear_inner()
+                    except Exception:
+                        pass
             for _name in ('_server_fs_client', '_filestore_fs_client'):
                 _c = locals().get(_name)
                 if _c is not None:

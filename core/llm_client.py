@@ -577,7 +577,9 @@ class LLMClient(
         def _do_complete(mdl):
             start = time.time()
             if self.provider == "openai":
-                result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools)
+                result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools,
+                                                call_user_id=call_user_id or "",
+                                                call_conversation_id=call_conversation_id or "")
             elif self.provider == "claude-code":
                 # CC only has stream-json mode — complete() and stream()
                 # share the same path; complete() simply doesn't pass a
@@ -592,7 +594,9 @@ class LLMClient(
                     call_ephemeral_stream=call_ephemeral_stream,
                 )
             else:
-                result = self._complete_anthropic(messages, mdl, temperature, max_tokens, tools, thinking_budget=thinking_budget)
+                result = self._complete_anthropic(messages, mdl, temperature, max_tokens, tools, thinking_budget=thinking_budget,
+                                                   call_user_id=call_user_id or "",
+                                                   call_conversation_id=call_conversation_id or "")
             result.duration_ms = (time.time() - start) * 1000
             if not result.tokens_in and messages:
                 result.tokens_in = sum(
@@ -747,7 +751,9 @@ class LLMClient(
             start = time.time()
             if self.provider == "openai":
                 result = self._stream_openai(messages, mdl, temperature, max_tokens, tools, callback,
-                                              thinking_callback=thinking_callback)
+                                              thinking_callback=thinking_callback,
+                                              call_user_id=call_user_id or "",
+                                              call_conversation_id=call_conversation_id or "")
             elif self.provider == "claude-code":
                 result = self._stream_claude_code(messages, mdl, temperature, max_tokens, tools, callback,
                                                   turn_callback=turn_callback,
@@ -758,7 +764,9 @@ class LLMClient(
                                                   call_event_cid=call_event_cid,
                                                   call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "anthropic":
-                result = self._stream_anthropic(messages, mdl, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
+                result = self._stream_anthropic(messages, mdl, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback,
+                                                 call_user_id=call_user_id or "",
+                                                 call_conversation_id=call_conversation_id or "")
             else:
                 raise LLMClientError(f"Unknown provider '{self.provider}'")
             result.duration_ms = (time.time() - start) * 1000

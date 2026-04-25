@@ -24,11 +24,15 @@ class LLMAnthropicMixin:
             self._cache_detector = CacheBreakDetector()
         return self._cache_detector
 
-    def _stream_anthropic(self, messages, model, temperature, max_tokens, tools, callback, thinking_budget: int = 0, thinking_callback=None):
+    def _stream_anthropic(self, messages, model, temperature, max_tokens, tools, callback, thinking_budget: int = 0, thinking_callback=None,
+                           *, call_user_id: str = "", call_conversation_id: str = ""):
         """Anthropic streaming: reads SSE events from the API."""
         from core.llm_client import LLMClientError, LLMResponse, LLMToolCall
 
-        system_text, api_messages = self._build_anthropic_messages(messages)
+        system_text, api_messages = self._build_anthropic_messages(
+            messages,
+            user_id=call_user_id,
+            conversation_id=call_conversation_id)
 
         # Add cache_control breakpoints for KV cache optimization
         self._apply_anthropic_cache_control(api_messages)
@@ -239,7 +243,8 @@ class LLMAnthropicMixin:
         finally:
             conn.close()
 
-    def _build_anthropic_messages(self, messages) -> tuple:
+    def _build_anthropic_messages(self, messages, *,
+                                   user_id: str, conversation_id: str) -> tuple:
         """Convert LLMMessage list to Anthropic API format.
 
         Returns (system_text, api_messages).
@@ -247,6 +252,11 @@ class LLMAnthropicMixin:
         Messages are regrouped first so the split (assistant text / assistant
         tool_calls) pair emitted by agent_core.persist is fused into the
         single assistant message Anthropic expects.
+
+        user_id + conversation_id are required call-scoped identity
+        used to resolve image_ref attachments. Passed through from
+        complete / complete_stream rather than read from self.* —
+        same rationale as the CC call_* refactor.
         """
         from core.llm_message_regroup import regroup_split_assistant_messages
         messages = regroup_split_assistant_messages(messages)
@@ -284,8 +294,8 @@ class LLMAnthropicMixin:
                                     "image_ref block missing file_id — producer bug")
                             _fname, _data, _ct = FileStore.instance().get_required(
                                 _fid,
-                                user_id=getattr(self, '_user_id', ''),
-                                conversation_id=getattr(self, '_conversation_id', ''))
+                                user_id=user_id,
+                                conversation_id=conversation_id)
                             _data_b64 = _b64.b64encode(_data).decode("ascii")
                             mime = part.get("mime_type", _ct) or "image/png"
                             blocks.append({
@@ -355,8 +365,8 @@ class LLMAnthropicMixin:
                                 "image_ref block missing file_id — producer bug")
                         _fname, _data, _ct = FileStore.instance().get_required(
                             _fid,
-                            user_id=getattr(self, '_user_id', ''),
-                            conversation_id=getattr(self, '_conversation_id', ''))
+                            user_id=user_id,
+                            conversation_id=conversation_id)
                         _data_b64 = _b64.b64encode(_data).decode("ascii")
                         mime = part.get("mime_type", _ct) or "image/png"
                         content_blocks.append({
@@ -438,11 +448,15 @@ class LLMAnthropicMixin:
             if deep_idx < last_user_idx - 1:
                 _set_cache(api_messages[deep_idx])
 
-    def _complete_anthropic(self, messages, model, temperature, max_tokens, tools=None, thinking_budget: int = 0):
+    def _complete_anthropic(self, messages, model, temperature, max_tokens, tools=None, thinking_budget: int = 0,
+                             *, call_user_id: str = "", call_conversation_id: str = ""):
         """Send a non-streaming completion to the Anthropic API."""
         from core.llm_client import LLMResponse, LLMToolCall
 
-        system_text, api_messages = self._build_anthropic_messages(messages)
+        system_text, api_messages = self._build_anthropic_messages(
+            messages,
+            user_id=call_user_id,
+            conversation_id=call_conversation_id)
 
         # Add cache_control breakpoints for KV cache optimization
         self._apply_anthropic_cache_control(api_messages)

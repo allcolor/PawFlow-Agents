@@ -14,13 +14,18 @@ class LLMOpenaiMixin:
     """OpenAI provider methods: complete, stream, message building."""
 
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback,
-                        thinking_callback=None):
+                        thinking_callback=None, *,
+                        call_user_id: str = "",
+                        call_conversation_id: str = ""):
         """OpenAI streaming: reads SSE chunks from the API."""
         from core.llm_client import LLMClientError, LLMResponse, LLMToolCall
 
         body = {
             "model": model,
-            "messages": self._build_openai_messages(messages),
+            "messages": self._build_openai_messages(
+                messages,
+                user_id=call_user_id,
+                conversation_id=call_conversation_id),
             "stream": True,
         }
         if temperature is not None:
@@ -208,22 +213,22 @@ class LLMOpenaiMixin:
         finally:
             conn.close()
 
-    def _resolve_image_ref(self, block: dict) -> dict:
+    def _resolve_image_ref(self, block: dict, *,
+                           user_id: str, conversation_id: str) -> dict:
         """Resolve an image_ref block to an image_url block by loading from FileStore.
 
-        user_id + conversation_id are REQUIRED (pulled from self). A missing
-        identifier or an unreadable file raises — silently dropping an image
-        the user explicitly attached is never acceptable.
+        user_id + conversation_id are REQUIRED kwargs (per-call, never
+        read from self.*). Concurrent calls would otherwise race on
+        shared client state — see the call_* refactor in
+        LLMClient.complete / complete_stream.
         """
         from core.file_store import FileStore
         import base64 as _b64
         _fid = block.get("file_id", "")
         if not _fid:
             raise ValueError("image_ref block missing file_id — producer bug")
-        _uid = getattr(self, '_user_id', '')
-        _cid = getattr(self, '_conversation_id', '')
         _fname, _data, _ct = FileStore.instance().get_required(
-            _fid, user_id=_uid, conversation_id=_cid)
+            _fid, user_id=user_id, conversation_id=conversation_id)
         _data_b64 = _b64.b64encode(_data).decode("ascii")
         mime = block.get("mime_type", _ct) or "image/png"
         return {
@@ -231,12 +236,18 @@ class LLMOpenaiMixin:
             "image_url": {"url": f"data:{mime};base64,{_data_b64}"},
         }
 
-    def _build_openai_messages(self, messages) -> List[Dict[str, Any]]:
+    def _build_openai_messages(self, messages, *,
+                                user_id: str, conversation_id: str) -> List[Dict[str, Any]]:
         """Convert LLMMessage list to OpenAI API message format.
 
         Messages are regrouped first so the split (assistant text / assistant
         tool_calls) pair emitted by agent_core.persist is fused into the
         single assistant message OpenAI expects (content + tool_calls).
+
+        user_id + conversation_id are required call-scoped identity
+        used to resolve image_ref attachments. Passed through from
+        complete / complete_stream rather than read from self.* —
+        same rationale as the CC call_* refactor.
         """
         from core.llm_message_regroup import regroup_split_assistant_messages
         messages = regroup_split_assistant_messages(messages)
@@ -276,7 +287,9 @@ class LLMOpenaiMixin:
                         if p.get("type") == "image_url":
                             img_parts.append(p)
                         elif p.get("type") == "image_ref":
-                            img_parts.append(self._resolve_image_ref(p))
+                            img_parts.append(self._resolve_image_ref(
+                                p, user_id=user_id,
+                                conversation_id=conversation_id))
                     if img_parts:
                         api_messages.append({
                             "role": "user",
@@ -312,7 +325,9 @@ class LLMOpenaiMixin:
                             "text": f"[Document: {part.get('filename', 'file')}]\n{part.get('text', '')}",
                         })
                     elif pt == "image_ref":
-                        parts.append(self._resolve_image_ref(part))
+                        parts.append(self._resolve_image_ref(
+                            part, user_id=user_id,
+                            conversation_id=conversation_id))
                     elif pt == "file_ref":
                         parts.append({"type": "text", "text": f"[file: {part.get('filename', '?')}]"})
                     else:
@@ -338,13 +353,17 @@ class LLMOpenaiMixin:
             return "max_completion_tokens"
         return "max_tokens"
 
-    def _complete_openai(self, messages, model, temperature, max_tokens, response_format, tools=None):
+    def _complete_openai(self, messages, model, temperature, max_tokens, response_format, tools=None,
+                          *, call_user_id: str = "", call_conversation_id: str = ""):
         """Send a non-streaming completion to an OpenAI-compatible API."""
         from core.llm_client import LLMResponse, LLMToolCall
 
         body = {
             "model": model,
-            "messages": self._build_openai_messages(messages),
+            "messages": self._build_openai_messages(
+                messages,
+                user_id=call_user_id,
+                conversation_id=call_conversation_id),
         }
         if temperature is not None:
             body["temperature"] = temperature

@@ -360,17 +360,42 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         return 'done'
 
     def _cleanup_proc(self, proc) -> str:
-        """Clean up a Claude Code subprocess. Returns captured stderr."""
-        self._claude_proc = None
-        # Session is over — drop the tracked PID and session id so a
-        # later force-stop doesn't kill into a stale/reused container.
-        self._current_session_id = ""
-        self._cc_container_pid = 0
-        # Pool mode: release slot (don't kill the container)
-        _pool_name = getattr(self, '_pool_container_name', None)
+        """Clean up a Claude Code subprocess. Returns captured stderr.
+
+        Pool/proc state pinned to `proc` (via _pf_container set at spawn)
+        is the authoritative source — `self._pool_container_name` /
+        `self._claude_proc` / `self._current_session_id` /
+        `self._cc_container_pid` are SINGLETON state on a shared
+        provider used by concurrent streams (main agent, compact,
+        memory-extract, btw, sub-agent). Reading the pool name from
+        `self` would race: a concurrent _spawn_cc_stream that just
+        clobbered self._pool_container_name with ITS container would
+        steer this cleanup to release the wrong slot. Read from proc.
+        """
+        # Release pool slot from proc-pinned container (race-safe).
+        _pool_name = getattr(proc, '_pf_container', '') or ''
         if _pool_name:
             self._pool_release(_pool_name)
+        # Clear self.* mirrors only if they still point at THIS stream's
+        # values — leave another concurrent stream's mirror intact.
+        if getattr(self, '_claude_proc', None) is proc:
+            self._claude_proc = None
+        if (getattr(self, '_pool_container_name', None) == _pool_name
+                and _pool_name):
             self._pool_container_name = None
+        try:
+            _self_pid = int(getattr(self, '_cc_container_pid', 0) or 0)
+        except (TypeError, ValueError):
+            _self_pid = 0
+        try:
+            _proc_pid = int(getattr(proc, '_pf_pid', 0) or 0)
+        except (TypeError, ValueError):
+            _proc_pid = 0
+        if _self_pid and _self_pid == _proc_pid:
+            self._cc_container_pid = 0
+            # Session id is paired with this PID — drop it too only
+            # when we owned the slot.
+            self._current_session_id = ""
         # Kill process FIRST so pipes become readable (no more blocking)
         try:
             proc.kill()

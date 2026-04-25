@@ -11,12 +11,18 @@ import base64
 import hashlib
 import json
 import os
-import platform
 import sys
 from pathlib import Path
 from typing import Optional
 
-_SYSTEM = platform.system()
+# `platform.system()` triggers `_win32_ver` → `_wmi_query` on
+# Python 3.14 Windows, which hangs indefinitely when WMI misbehaves.
+# `sys.platform` is a constant string baked at interpreter startup —
+# no syscall, instant. The exact mapping we need is "Windows" vs not,
+# so derive it from `sys.platform` instead.
+_SYSTEM = ("Windows" if sys.platform.startswith("win")
+            else "Darwin" if sys.platform == "darwin"
+            else "Linux")
 
 
 # ── Windows DPAPI ─────────────────────────────────────────────────
@@ -71,11 +77,15 @@ def _dpapi_decrypt(data: bytes) -> bytes:
 
 def _derive_key() -> bytes:
     """Derive a machine-scoped encryption key."""
-    # Combine machine-specific identifiers
+    import socket
+    # Combine machine-specific identifiers. Use socket.gethostname()
+    # rather than `platform.node()` — same value, but avoids importing
+    # the `platform` module which is unsafe to load on Python 3.14
+    # Windows (see _SYSTEM comment above).
     parts = [
         os.getlogin(),
         str(Path.home()),
-        platform.node(),
+        socket.gethostname(),
     ]
     # On Linux, add machine-id if available
     for mid_path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):

@@ -959,7 +959,7 @@ class PawCode:
         self.relay.start()
         _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""
         self.renderer.print_system(
-            f"Relay '{self.relay.relay_id}' connected on port {self.relay.port}{_mode}")
+            f"Relay '{self.relay.relay_id}' connected{_mode}")
 
     def _cleanup(self):
         if self.sse:

@@ -1118,12 +1118,32 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 # spawn path's self._claude_proc assignment so preempt /
                 # cancel_claude_code targets the reused process.
                 self._claude_proc = proc
+                # Sync session_id on self for downstream code that
+                # reads `self._current_session_id` (preempt-loss check
+                # at line 2629, etc.). REUSE path doesn't get a fresh
+                # init event from CC, so the system-event handler at
+                # line 1908 won't fire — without this sync the field
+                # stays empty (or worse, holds a stale id from a prior
+                # cleared turn) and downstream logic that builds a
+                # jsonl path from it ends up reading an empty file.
+                self._current_session_id = session_id
+                # Same for container PID — pinned on proc by the spawn
+                # that created this live session, which the live entry
+                # carries forward. Without this, _cleanup_proc's "match
+                # before clear" guard would skip clearing on legitimate
+                # teardowns because the pid doesn't match self.
+                try:
+                    self._cc_container_pid = int(getattr(
+                        proc, '_pf_pid', 0) or 0)
+                except (TypeError, ValueError):
+                    pass
                 logger.info(
                     "[cc-live] REUSE %s/%s/%s@%s#%d (reuse_count=%d, "
-                    "lived=%.1fs)",
+                    "lived=%.1fs, session=%s)",
                     user_id[:6], conv_id[:8], agent_name or 'default',
                     _svc_id, _svc_pool_idx, _live_session.reuse_count,
-                    time.monotonic() - _live_session.spawn_at)
+                    time.monotonic() - _live_session.spawn_at,
+                    session_id[:12] if session_id else "?")
             except BaseException:
                 if _owns_turn_lock:
                     try: _live_session.turn_lock.release()
@@ -2626,11 +2646,50 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     #      re-trigger on the next turn.
                     if getattr(self, '_preempt_pending', 0) > 0:
                         _sent = list(getattr(self, '_sent_preempt_texts', []))
-                        _sid = getattr(self, '_current_session_id', '') or ''
+                        # Prefer the persistent session_id read from
+                        # ConversationStore extras at stream entry over
+                        # self._current_session_id. Reasons:
+                        #   - REUSE path never updates self._current_
+                        #     session_id (no new init event from CC, so
+                        #     line 1908's system handler doesn't fire);
+                        #     the lines 1102-1131 copy proc / pool /
+                        #     mcp_token from _live_session but NOT the
+                        #     session id.
+                        #   - _cleanup_proc clears self._current_session
+                        #     _id when a previous turn's pid matches —
+                        #     a concurrent or earlier teardown can leave
+                        #     it empty even though CC is alive and using
+                        #     the same session.
+                        # Effect of reading from self alone: _sid="",
+                        # _jsonl="", _check_preempt_in_jsonl returns
+                        # 'unknown', poll 3s never resolves (empty path
+                        # is never readable), warning "preempt likely
+                        # lost" fires even though CC has correctly
+                        # integrated the preempt in its real jsonl.
+                        # Local `session_id` is from
+                        # ConversationStore.get_extra(claude_session:
+                        # agent) — the persistent source of truth, set
+                        # by every successful previous turn's result
+                        # event, and exactly what CC is resuming under.
+                        _sid = (session_id
+                                or getattr(self, '_current_session_id', '')
+                                or last_data.get('session_id', '')
+                                or '')
                         _jsonl = os.path.join(
                             workdir, 'projects',
                             self._cc_project_key(workdir),
                             f"{_sid}.jsonl") if _sid else ''
+                        if not _sid:
+                            logger.warning(
+                                "[claude-code] preempt-check has NO "
+                                "session_id (extras=%r self=%r "
+                                "last_data=%r); jsonl path empty, "
+                                "check would falsely declare 'lost' — "
+                                "treating as 'pending' and keeping "
+                                "stream open instead.",
+                                session_id,
+                                getattr(self, '_current_session_id', ''),
+                                last_data.get('session_id', ''))
                         _pstatus = self._check_preempt_in_jsonl(_jsonl, _sent)
                         # CC writes a stdin preempt to its session jsonl
                         # the moment it reads from stdin, which can happen

@@ -209,3 +209,48 @@ def _reset_seq_state():
     _lc._msg_seq_persisted.clear()
     yield
     _lc._msg_seq_persisted.clear()
+
+
+# Per-test isolation of the BgBucketBuilder singleton. AgentLoopTask.
+# initialize() wires the production summarizer (`_summarize_messages`,
+# which calls `client.complete(...)` via `_call_summarize`) into the
+# bg-builder. In tests the client is a MagicMock that returns Mock
+# objects rather than strings — `_summarize_messages` then takes the
+# slow chunked path before failing, costing real wall time on every
+# auto-/manual-compact.
+#
+# Mocks must NEVER take time. Force every test to start with bg-builder
+# wired to NO-ops (resolver=None / summarize_fn=None), so any code
+# path that touches `maybe_trigger` or `build_now_sync` early-returns
+# without invoking the summarizer at all. Tests that need the real
+# wiring (e.g. test_bg_bucket_builder) re-wire explicitly via
+# `set_summarizer_resolver` / `set_summarize_fn`. Per-test in-memory
+# caches are cleared too so a stale entry from one test (cid X has
+# 50k transcript chars) doesn't leak into the next.
+@pytest.fixture(autouse=True)
+def _isolate_bg_bucket_builder():
+    try:
+        from core.bg_bucket_builder import BgBucketBuilder
+        bb = BgBucketBuilder.instance()
+    except Exception:
+        yield
+        return
+    # Snapshot — restore at teardown so a test that wires real
+    # production callbacks (very rare) doesn't leak them either.
+    _saved_resolver = bb._summarizer_resolver
+    _saved_fn = bb._summarize_fn
+    bb._summarizer_resolver = None
+    bb._summarize_fn = None
+    bb._shared_seq_cache.clear()
+    bb._pyramid_seq_cache.clear()
+    bb._shared_unbucketed_rows_cache.clear()
+    bb._transcript_chars_post_pyramid_cache.clear()
+    bb._last_trigger_log.clear()
+    yield
+    bb._summarizer_resolver = _saved_resolver
+    bb._summarize_fn = _saved_fn
+    bb._shared_seq_cache.clear()
+    bb._pyramid_seq_cache.clear()
+    bb._shared_unbucketed_rows_cache.clear()
+    bb._transcript_chars_post_pyramid_cache.clear()
+    bb._last_trigger_log.clear()

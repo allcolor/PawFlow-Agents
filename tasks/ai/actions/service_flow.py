@@ -2391,7 +2391,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
             image = "pawflow-claude-code:latest"
             logger.info("[codex-login] Creating session %s (port %d)", session_id, free_port)
-            from services.vnc_proxy import register_session
+            from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
             register_session(session_id, free_port,
                              container=container_name, service_id=service_id,
                              user_id=user_id, volume=volume_name,
@@ -2613,7 +2613,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
             image = "pawflow-claude-code:latest"
             logger.info("[gemini-login] Creating session %s (port %d)", session_id, free_port)
-            from services.vnc_proxy import register_session
+            from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
             register_session(session_id, free_port,
                              container=container_name, service_id=service_id,
                              user_id=user_id, volume=volume_name,

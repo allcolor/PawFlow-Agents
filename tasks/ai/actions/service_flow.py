@@ -751,7 +751,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         try:
             import uuid as _uuid
-            from core.server_relay_manager import _find_free_port
+            from pawflow_relay.utils import find_free_port as _find_free_port
 
             session_id = _uuid.uuid4().hex[:12]
             free_port = _find_free_port()
@@ -848,6 +848,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 conversation_id, "vnc_login_ready", {
                     "session_id": session_id,
                     "service_id": service_id,
+                    "cli": "claude",
                 })
 
         _conv_id = conversation_id
@@ -2377,7 +2378,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         try:
             import uuid as _uuid
-            from core.server_relay_manager import _find_free_port
+            from pawflow_relay.utils import find_free_port as _find_free_port
             session_id = _uuid.uuid4().hex[:12]
             free_port = _find_free_port()
             container_name = f"pawflow-codex-login-{session_id}"
@@ -2439,6 +2440,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             ConversationEventBus.instance().publish_event(
                 conversation_id, "vnc_login_ready", {
                     "session_id": session_id, "service_id": service_id,
+                    "cli": "codex",
                 })
 
         _conv_id = conversation_id
@@ -2567,7 +2569,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         try:
             import uuid as _uuid
-            from core.server_relay_manager import _find_free_port
+            from pawflow_relay.utils import find_free_port as _find_free_port
             session_id = _uuid.uuid4().hex[:12]
             free_port = _find_free_port()
             container_name = f"pawflow-gemini-login-{session_id}"
@@ -2629,6 +2631,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             ConversationEventBus.instance().publish_event(
                 conversation_id, "vnc_login_ready", {
                     "session_id": session_id, "service_id": service_id,
+                    "cli": "gemini",
                 })
 
         _conv_id = conversation_id

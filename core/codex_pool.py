@@ -90,12 +90,11 @@ class CodexPool:
         """
         import atexit, signal, sys
         def _kill_all(*_args, **_kwargs):
-            # Kill live CC sessions FIRST so revoke_token has a chance
-            # to run before the containers are nuked — once docker rm -f
-            # fires, the proc is gone and the MCP bridge with it.
+            # Kill live codex containers FIRST so the registry can release
+            # them via this same pool before the pool tears them down.
             try:
-                from core.cc_live_registry import LiveSessionRegistry
-                LiveSessionRegistry.instance().shutdown_all()
+                from core.codex_live_registry import CodexLiveRegistry
+                CodexLiveRegistry.instance().shutdown_all()
             except Exception:
                 pass
             try:

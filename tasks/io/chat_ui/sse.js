@@ -1376,7 +1376,9 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('vnc_login_ready', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    _openVncLoginDialog(data.session_id, data.service_id, null);
+    // `cli` is one of 'claude' | 'codex' | 'gemini' — picks the right
+    // server status/cleanup action namespace inside the dialog.
+    _openVncLoginDialog(data.session_id, data.service_id, null, data.cli || 'claude');
   });
 
   eventSource.addEventListener('notification', (e) => {

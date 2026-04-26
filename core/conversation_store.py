@@ -2001,8 +2001,8 @@ class ConversationStore:
         except Exception as _e:
             logger.debug("invalidate_claude_sessions disk prune failed for %s: %s",
                          cid[:8], _e)
-        # Kill any warm CC session running in this conv — its view of
-        # history is now stale (edit/compact/branch-switch).
+        # Kill any warm CC / codex / gemini session running in this conv
+        # — its view of history is now stale (edit/compact/branch-switch).
         try:
             from core.cc_live_registry import LiveSessionRegistry
             n = LiveSessionRegistry.instance().kill_and_evict_by_conv(
@@ -2014,6 +2014,30 @@ class ConversationStore:
         except Exception as _e:
             logger.debug(
                 "invalidate_claude_sessions live-evict failed for %s: %s",
+                cid[:8], _e)
+        try:
+            from core.codex_live_registry import CodexLiveRegistry
+            n = CodexLiveRegistry.instance().kill_and_evict_by_conv(
+                cid, reason="invalidate_claude_sessions")
+            if n:
+                logger.info(
+                    "Invalidated %d live codex container(s) for conv %s",
+                    n, cid[:8])
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_sessions codex-evict failed for %s: %s",
+                cid[:8], _e)
+        try:
+            from core.gemini_live_registry import GeminiLiveRegistry
+            n = GeminiLiveRegistry.instance().kill_and_evict_by_conv(
+                cid, reason="invalidate_claude_sessions")
+            if n:
+                logger.info(
+                    "Invalidated %d live gemini container(s) for conv %s",
+                    n, cid[:8])
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_sessions gemini-evict failed for %s: %s",
                 cid[:8], _e)
 
     def invalidate_claude_session_for_agent(self, cid: str,

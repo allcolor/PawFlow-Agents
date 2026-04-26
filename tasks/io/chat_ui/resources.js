@@ -2193,7 +2193,26 @@ function cmdClaudeLoginCredentials(text, parts) {
   return true;
 }
 
-function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
+// `cli` is one of: 'claude' | 'codex' | 'gemini' — picks the right server
+// status/cleanup actions (each CLI has its own dedicated namespace).
+function _openVncLoginDialog(sessionId, serviceId, triggerBtn, cli) {
+  cli = cli || 'claude';
+  const _statusAction = {
+    'claude': 'claude_code_server_login_status',
+    'codex':  'codex_server_login_status',
+    'gemini': 'gemini_server_login_status',
+  }[cli] || 'claude_code_server_login_status';
+  const _cleanupAction = {
+    'claude': 'claude_code_server_login_cleanup',
+    'codex':  'codex_server_login_cleanup',
+    'gemini': 'gemini_server_login_cleanup',
+  }[cli] || 'claude_code_server_login_cleanup';
+  const _title = {
+    'claude': 'Claude Code Login',
+    'codex':  'Codex Login',
+    'gemini': 'Gemini Login',
+  }[cli] || 'Login';
+
   window._clsLoginPending = false;
   // Create overlay dialog 80%x80%
   const overlay = document.createElement('div');
@@ -2202,7 +2221,7 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
   dialog.style.cssText = 'width:80%;height:80%;background:#1a1a2e;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;';
   const header = document.createElement('div');
   header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:#16213e;';
-  header.innerHTML = '<span style="color:#aaa;font-size:13px;">Claude Code Login</span>'
+  header.innerHTML = '<span style="color:#aaa;font-size:13px;">' + _title + '</span>'
     + '<button id="vnc-dialog-close" style="background:none;border:none;color:#e94560;font-size:18px;cursor:pointer;">&times;</button>';
   const vncUrl = '/vnc/' + sessionId + '/vnc.html?autoconnect=true&resize=scale'
     + '&path=vnc/' + sessionId + '/websockify';
@@ -2229,19 +2248,19 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
       triggerBtn.style.display = '';
     }
     if (msg) addMsg('system', msg);
-    // Tell server to cleanup the Docker container
-    fireAction('claude_code_server_login_cleanup', { session_id: sessionId });
+    // Tell server to cleanup the Docker container (per-CLI action namespace)
+    fireAction(_cleanupAction, { session_id: sessionId });
   }
 
   document.getElementById('vnc-dialog-close').onclick = () => closeDialog(null);
   overlay.onclick = (e) => { if (e.target === overlay) closeDialog(null); };
 
-  // Poll for completion
+  // Poll for completion (per-CLI status action)
   const pollInterval = setInterval(async () => {
     try {
-      const st = await rxjs.firstValueFrom(action$('claude_code_server_login_status', {
+      const st = await rxjs.firstValueFrom(action$(_statusAction, {
         session_id: sessionId, service_id: serviceId }));
-      if (st.ok) { closeDialog(st.message || 'Claude Code login successful!'); }
+      if (st.ok) { closeDialog(st.message || (_title + ' successful!')); }
       else if (st.error) { closeDialog('Login error: ' + st.error); }
       else if (st.status === 'starting') { status.textContent = 'Starting container...'; }
       else if (st.status === 'pending') { status.textContent = 'Waiting for authorization...'; }
@@ -2249,20 +2268,42 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
   }, 3000);
 }
 
-function _startRelayLogin(serviceId, relayId) {
-  addMsg('system', 'Starting Claude Code login via relay — authorize in the browser...');
-  fireAction('claude_code_relay_login', { service_id: serviceId, relay_id: relayId });
+// Per-CLI relay-login action namespace.
+function _resolveRelayLoginAction(cli) {
+  return ({
+    'claude': 'claude_code_relay_login',
+    'codex':  'codex_relay_login',
+    'gemini': 'gemini_relay_login',
+  })[cli] || 'claude_code_relay_login';
+}
+
+function _startRelayLogin(serviceId, relayId, cli) {
+  cli = cli || 'claude';
+  const _label = ({ 'claude': 'Claude Code', 'codex': 'Codex', 'gemini': 'Gemini' })[cli] || 'Claude Code';
+  addMsg('system', 'Starting ' + _label + ' login via relay — authorize in the browser...');
+  fireAction(_resolveRelayLoginAction(cli), { service_id: serviceId, relay_id: relayId });
+}
+
+// Map a flow id (set in services/llm_connection.py get_service_actions) to the
+// CLI label used by the dialog + per-CLI action selectors. Keeps the code
+// shape identical across CLIs (claude/codex/gemini) while routing each one to
+// its dedicated server action namespace.
+function _flowToCli(flow) {
+  if (flow.indexOf('codex_') === 0) return 'codex';
+  if (flow.indexOf('gemini_') === 0) return 'gemini';
+  return 'claude';
 }
 
 async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   const btn = event && event.target ? event.target : null;
-  if (flow === 'claude_login_server') {
+  const _cli = _flowToCli(flow);
+  if (flow === 'claude_login_server' || flow === 'codex_login_server' || flow === 'gemini_login_server') {
     try {
       if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
       fireAction(serverAction, { service_id: serviceId });
-      // Dialog opens when SSE vnc_login_ready arrives
+      // Dialog opens when SSE vnc_login_ready arrives (with `cli` field)
     } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
-  } else if (flow === 'claude_login_relay') {
+  } else if (flow === 'claude_login_relay' || flow === 'codex_login_relay' || flow === 'gemini_login_relay') {
     try {
       // Step 1: list relays
       const resp = await rxjs.firstValueFrom(action$(serverAction, { service_id: serviceId }));
@@ -2275,7 +2316,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
       // Single relay → skip selector, start directly
       if (relays.length === 1) {
         if (btn) { btn.disabled = true; btn.textContent = 'Waiting for authorization...'; }
-        await _startRelayLogin(serviceId, relays[0].relay_id);
+        await _startRelayLogin(serviceId, relays[0].relay_id, _cli);
         if (btn) { btn.disabled = false; btn.textContent = 'Login via relay'; }
         return;
       }
@@ -2304,7 +2345,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         loginBtn.textContent = 'Waiting for authorization...';
         statusEl.textContent = 'A browser window should open on the relay machine. Authorize there.';
 
-        fireAction('claude_code_relay_login', {
+        fireAction(_resolveRelayLoginAction(_cli), {
           service_id: serviceId,
           relay_id: relayId,
         });

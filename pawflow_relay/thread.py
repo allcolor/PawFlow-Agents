@@ -639,8 +639,17 @@ class RelayThread:
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
 
-        if action == "claude_auth_login":
-            from pawflow_relay import _claude_auth_login
+        if action in ("claude_auth_login", "codex_auth_login", "gemini_auth_login"):
+            from pawflow_relay.auth import (
+                claude_auth_login as _claude_auth_login,
+                codex_auth_login as _codex_auth_login,
+                gemini_auth_login as _gemini_auth_login,
+            )
+            _login_fn = {
+                "claude_auth_login": _claude_auth_login,
+                "codex_auth_login": _codex_auth_login,
+                "gemini_auth_login": _gemini_auth_login,
+            }[action]
 
             def _send_progress(data):
                 try:
@@ -649,7 +658,7 @@ class RelayThread:
                 except Exception:
                     pass
 
-            result = _claude_auth_login(req, send_progress=_send_progress)
+            result = _login_fn(req, send_progress=_send_progress)
             resp = json.dumps({"type": "result", "data": result}) + "\n"
             conn.sendall(resp.encode("utf-8"))
 

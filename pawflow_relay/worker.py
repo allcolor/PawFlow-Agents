@@ -40,6 +40,10 @@ from fs_common import (
 from pawflow_relay.auth import (
     find_claude_binary as _find_claude_binary,
     claude_auth_login as _claude_auth_login,
+    find_codex_binary as _find_codex_binary,
+    codex_auth_login as _codex_auth_login,
+    find_gemini_binary as _find_gemini_binary,
+    gemini_auth_login as _gemini_auth_login,
     forward_to_host_helper as _forward_to_host_helper,
 )
 
@@ -369,15 +373,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         if abs_path is None:
             return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}
 
-        # Host-level action: claude auth login
-        # If in Docker → forward to host helper; if native → run directly
-        if action == "claude_auth_login":
+        # Host-level action: per-CLI auth login (claude / codex / gemini).
+        # If in Docker → forward to host helper; if native → run directly.
+        # The 3 actions share the same dispatch shape: pick the matching
+        # auth helper, stream URL via send_progress, return the credentials.
+        if action in ("claude_auth_login", "codex_auth_login", "gemini_auth_login"):
             host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
             if host_helper:
-                # Forward to host helper (CLI process on the host machine)
                 return _forward_to_host_helper(host_helper, msg, ws_sock_ref[0], _ws_frame_send)
             else:
-                # Native relay (no Docker) → run directly
                 def _send_progress(data):
                     if ws_sock_ref[0]:
                         progress = json.dumps({
@@ -389,9 +393,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             _ws_frame_send(ws_sock_ref[0], progress)
                         except Exception:
                             pass
-
+                _login_fn = {
+                    "claude_auth_login": _claude_auth_login,
+                    "codex_auth_login": _codex_auth_login,
+                    "gemini_auth_login": _gemini_auth_login,
+                }[action]
                 try:
-                    result = _claude_auth_login(msg, send_progress=_send_progress)
+                    result = _login_fn(msg, send_progress=_send_progress)
                     if "error" in result:
                         return {"ok": False, "error": result["error"]}
                     return {"ok": True, "data": result}

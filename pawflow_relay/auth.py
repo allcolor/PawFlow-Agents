@@ -1,8 +1,12 @@
-"""PawFlow relay — host-side Claude authentication + host-helper bridge.
+"""PawFlow relay — host-side CLI authentication + host-helper bridge.
 
 Exported:
     find_claude_binary()
     claude_auth_login(req, *, send_progress=None)
+    find_codex_binary()
+    codex_auth_login(req, *, send_progress=None)
+    find_gemini_binary()
+    gemini_auth_login(req, *, send_progress=None)
     forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn)
 
 All stdlib-only so the module loads inside the relay container.
@@ -125,6 +129,249 @@ def claude_auth_login(req, *, send_progress=None):
         return {"error": f"Failed to read credentials: {e}"}
 
     return {"credentials": credentials}
+
+
+def find_codex_binary():
+    """Find the codex binary in known installation locations."""
+    if sys.platform == "win32":
+        home = os.environ.get("USERPROFILE", os.environ.get("HOME", ""))
+        candidates = [
+            os.path.join(home, ".local", "bin", "codex.exe"),
+            os.path.join(home, "AppData", "Roaming", "npm", "codex.cmd"),
+            os.path.join(home, "AppData", "Roaming", "npm", "codex"),
+            os.path.join(home, ".npm-global", "bin", "codex.cmd"),
+        ]
+    else:
+        home = os.path.expanduser("~")
+        candidates = [
+            os.path.join(home, ".local", "bin", "codex"),
+            os.path.join(home, ".npm-global", "bin", "codex"),
+            "/usr/local/bin/codex",
+            "/usr/bin/codex",
+        ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    found = shutil.which("codex")
+    if found:
+        return found
+    return None
+
+
+def codex_auth_login(req, *, send_progress=None):
+    r"""Launch `codex login` on the host, intercept URL, return ~/.codex/auth.json.
+
+    Mirror of claude_auth_login but for codex CLI. The OAuth PKCE URL on
+    auth.openai.com matches /^https:\/\/auth\.openai\.com\/.*$/, captured
+    from stdout and forwarded via send_progress so the user can open it.
+    Once the flow completes, ~/.codex/auth.json is read and returned.
+    """
+    codex_path = find_codex_binary()
+    if not codex_path:
+        return {"error": "Codex binary not found. Install Codex CLI first: "
+                         "npm install -g @openai/codex"}
+
+    sys.stderr.write(f"[Relay] codex login: {codex_path}\n")
+    _launch_time = time.time()
+
+    try:
+        proc = subprocess.Popen(
+            [codex_path, "login"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except FileNotFoundError:
+        return {"error": f"Codex binary not found: {codex_path}"}
+    except Exception as e:
+        return {"error": f"Failed to start codex: {e}"}
+
+    url_pattern = re.compile(r'https://auth\.openai\.com\S+')
+    url_found = None
+    all_output = []
+
+    for line in proc.stdout:
+        line = line.rstrip()
+        all_output.append(line)
+        sys.stderr.write(f"[Relay] codex> {line}\n")
+        m = url_pattern.search(line)
+        if m and not url_found:
+            url_found = m.group(0)
+            sys.stderr.write("[Relay] Codex auth URL found\n")
+            if send_progress:
+                send_progress({"url": url_found})
+
+    proc.wait()
+    sys.stderr.write(f"[Relay] codex login exited: {proc.returncode}\n")
+
+    if proc.returncode != 0 and not url_found:
+        output = "\n".join(all_output[-10:])
+        return {"error": f"codex login failed (exit {proc.returncode}):\n{output}"}
+
+    if sys.platform == "win32":
+        creds_path = os.path.join(
+            os.environ.get("USERPROFILE", os.environ.get("HOME", "")),
+            ".codex", "auth.json")
+    else:
+        creds_path = os.path.expanduser("~/.codex/auth.json")
+
+    if not os.path.exists(creds_path):
+        return {"error": f"Codex credentials file not found: {creds_path}"}
+
+    _max_wait = 180
+    _waited = 0
+    while _waited < _max_wait:
+        try:
+            if os.path.getmtime(creds_path) >= _launch_time:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+        _waited += 1
+
+    if _waited >= _max_wait:
+        return {"error": "Timeout: codex auth.json was not updated after authorization"}
+
+    try:
+        with open(creds_path, "r", encoding="utf-8") as f:
+            credentials = json.load(f)
+    except Exception as e:
+        return {"error": f"Failed to read codex credentials: {e}"}
+
+    return {"credentials": credentials}
+
+
+def find_gemini_binary():
+    """Find the gemini binary in known installation locations."""
+    if sys.platform == "win32":
+        home = os.environ.get("USERPROFILE", os.environ.get("HOME", ""))
+        candidates = [
+            os.path.join(home, ".local", "bin", "gemini.exe"),
+            os.path.join(home, "AppData", "Roaming", "npm", "gemini.cmd"),
+            os.path.join(home, "AppData", "Roaming", "npm", "gemini"),
+            os.path.join(home, ".npm-global", "bin", "gemini.cmd"),
+        ]
+    else:
+        home = os.path.expanduser("~")
+        candidates = [
+            os.path.join(home, ".local", "bin", "gemini"),
+            os.path.join(home, ".npm-global", "bin", "gemini"),
+            "/usr/local/bin/gemini",
+            "/usr/bin/gemini",
+        ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    found = shutil.which("gemini")
+    if found:
+        return found
+    return None
+
+
+def gemini_auth_login(req, *, send_progress=None):
+    """Launch interactive `gemini` on the host, intercept the OAuth URL,
+    return ~/.gemini/oauth_creds.json.
+
+    Gemini does not have a dedicated `login` subcommand: launching the CLI
+    interactively with selectedAuthType=oauth-personal triggers the Google
+    OAuth dance. We seed ~/.gemini/settings.json before spawning so the
+    auth-type prompt doesn't block the headless host helper.
+    """
+    gemini_path = find_gemini_binary()
+    if not gemini_path:
+        return {"error": "Gemini binary not found. Install Gemini CLI first: "
+                         "npm install -g @google/gemini-cli"}
+
+    if sys.platform == "win32":
+        gemini_dir = os.path.join(
+            os.environ.get("USERPROFILE", os.environ.get("HOME", "")),
+            ".gemini")
+    else:
+        gemini_dir = os.path.expanduser("~/.gemini")
+    os.makedirs(gemini_dir, exist_ok=True)
+    settings_path = os.path.join(gemini_dir, "settings.json")
+    if not os.path.exists(settings_path):
+        try:
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump({"theme": "Default", "selectedAuthType": "oauth-personal"}, f)
+        except Exception:
+            pass
+
+    sys.stderr.write(f"[Relay] gemini login: {gemini_path}\n")
+    _launch_time = time.time()
+
+    try:
+        proc = subprocess.Popen(
+            [gemini_path],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except FileNotFoundError:
+        return {"error": f"Gemini binary not found: {gemini_path}"}
+    except Exception as e:
+        return {"error": f"Failed to start gemini: {e}"}
+
+    # Send /exit to break out of the TUI as soon as the OAuth dance lands.
+    try:
+        proc.stdin.write("/exit\n")
+        proc.stdin.flush()
+    except Exception:
+        pass
+
+    url_pattern = re.compile(r'https://accounts\.google\.com/o/oauth2/\S+')
+    url_found = None
+    all_output = []
+
+    for line in proc.stdout:
+        line = line.rstrip()
+        all_output.append(line)
+        sys.stderr.write(f"[Relay] gemini> {line}\n")
+        m = url_pattern.search(line)
+        if m and not url_found:
+            url_found = m.group(0)
+            sys.stderr.write("[Relay] Gemini auth URL found\n")
+            if send_progress:
+                send_progress({"url": url_found})
+
+    proc.wait()
+    sys.stderr.write(f"[Relay] gemini login exited: {proc.returncode}\n")
+
+    creds_path = os.path.join(gemini_dir, "oauth_creds.json")
+    if not os.path.exists(creds_path):
+        return {"error": f"Gemini credentials file not found: {creds_path}"}
+
+    _max_wait = 180
+    _waited = 0
+    while _waited < _max_wait:
+        try:
+            if os.path.getmtime(creds_path) >= _launch_time:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+        _waited += 1
+
+    if _waited >= _max_wait:
+        return {"error": "Timeout: gemini oauth_creds.json was not updated"}
+
+    try:
+        with open(creds_path, "r", encoding="utf-8") as f:
+            credentials = json.load(f)
+        # Also try to bundle google_accounts.json so the server can record
+        # the Google account label alongside the access tokens.
+        accounts = {}
+        accounts_path = os.path.join(gemini_dir, "google_accounts.json")
+        if os.path.exists(accounts_path):
+            try:
+                with open(accounts_path, "r", encoding="utf-8") as f:
+                    accounts = json.load(f)
+            except Exception:
+                pass
+    except Exception as e:
+        return {"error": f"Failed to read gemini credentials: {e}"}
+
+    return {"credentials": credentials, "accounts": accounts}
 
 
 def forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):

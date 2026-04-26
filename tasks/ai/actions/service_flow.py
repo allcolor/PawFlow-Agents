@@ -599,6 +599,129 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    # ── Codex login via relay ─────────────────────────────────
+    if action == "codex_relay_login":
+        """Launch `codex login` on a relay — async, result via SSE."""
+        service_id = body.get("service_id", "")
+        relay_id = body.get("relay_id", "")
+        conversation_id = body.get("conversation_id", "")
+        if not service_id or not relay_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id or relay_id"}).encode())
+            return [flowfile]
+        relay_svc = None
+        if hasattr(self, '_services'):
+            relay_svc = self._services.get(relay_id)
+        if not relay_svc and user_id:
+            try:
+                from core.service_registry import ServiceRegistry
+                relay_svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id)
+            except Exception:
+                pass
+        if not relay_svc:
+            flowfile.set_content(json.dumps({"error": f"Relay service '{relay_id}' not found"}).encode())
+            return [flowfile]
+
+        def _bg_codex_relay_login():
+            try:
+                logger.info("[codex-relay-login] Starting auth via relay %s", relay_id)
+                result = relay_svc._request_with_progress(
+                    "codex_auth_login", timeout=300)
+            except Exception as e:
+                logger.error("[codex-relay-login] Failed: %s", e)
+                _publish_command_result(conversation_id, {"error": str(e)})
+                return
+            if not result or (isinstance(result, dict) and "error" in result):
+                error = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
+                _publish_command_result(conversation_id, {"error": error})
+                return
+            credentials = result.get("credentials", {}) if isinstance(result, dict) else {}
+            if not credentials:
+                _publish_command_result(conversation_id, {"error": "No credentials returned"})
+                return
+            from core.llm_providers.codex_session import parse_auth_json
+            parsed = parse_auth_json(json.dumps(credentials))
+            access_token = parsed.get("access_token", "")
+            refresh_token = parsed.get("refresh_token", "")
+            expires_at = parsed.get("expires_at", 0)
+            account = parsed.get("account", "")
+            if not access_token:
+                _publish_command_result(conversation_id, {"error": "No access_token in codex auth.json"})
+                return
+            _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+            logger.info("[codex-relay-login] Credentials saved for %s", service_id)
+            _publish_command_result(conversation_id, {
+                "ok": True, "message": "Codex credentials saved!"})
+
+        import threading as _threading  # noqa: F811
+        _threading.Thread(target=_bg_codex_relay_login, daemon=True,
+                           name=f"codex-relay-login-{relay_id}").start()
+        flowfile.set_content(json.dumps({
+            "ok": True, "message": "Codex login started — authorize in the browser that opens on the relay."
+        }).encode())
+        return [flowfile]
+
+    # ── Gemini login via relay ─────────────────────────────────
+    if action == "gemini_relay_login":
+        """Launch interactive `gemini` (OAuth dance) on a relay — async, SSE result."""
+        service_id = body.get("service_id", "")
+        relay_id = body.get("relay_id", "")
+        conversation_id = body.get("conversation_id", "")
+        if not service_id or not relay_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id or relay_id"}).encode())
+            return [flowfile]
+        relay_svc = None
+        if hasattr(self, '_services'):
+            relay_svc = self._services.get(relay_id)
+        if not relay_svc and user_id:
+            try:
+                from core.service_registry import ServiceRegistry
+                relay_svc = ServiceRegistry.get_instance().resolve(relay_id, user_id=user_id)
+            except Exception:
+                pass
+        if not relay_svc:
+            flowfile.set_content(json.dumps({"error": f"Relay service '{relay_id}' not found"}).encode())
+            return [flowfile]
+
+        def _bg_gemini_relay_login():
+            try:
+                logger.info("[gemini-relay-login] Starting auth via relay %s", relay_id)
+                result = relay_svc._request_with_progress(
+                    "gemini_auth_login", timeout=300)
+            except Exception as e:
+                logger.error("[gemini-relay-login] Failed: %s", e)
+                _publish_command_result(conversation_id, {"error": str(e)})
+                return
+            if not result or (isinstance(result, dict) and "error" in result):
+                error = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
+                _publish_command_result(conversation_id, {"error": error})
+                return
+            credentials = result.get("credentials", {}) if isinstance(result, dict) else {}
+            accounts = result.get("accounts", {}) if isinstance(result, dict) else {}
+            if not credentials:
+                _publish_command_result(conversation_id, {"error": "No credentials returned"})
+                return
+            from core.llm_providers.gemini_session import parse_oauth_creds_json
+            parsed = parse_oauth_creds_json(json.dumps(credentials))
+            access_token = parsed.get("access_token", "")
+            refresh_token = parsed.get("refresh_token", "")
+            expires_at = parsed.get("expires_at", 0)
+            account = next(iter(accounts.keys()), "") if isinstance(accounts, dict) and accounts else ""
+            if not access_token:
+                _publish_command_result(conversation_id, {"error": "No access_token in gemini oauth_creds.json"})
+                return
+            _store_gemini_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+            logger.info("[gemini-relay-login] Credentials saved for %s", service_id)
+            _publish_command_result(conversation_id, {
+                "ok": True, "message": "Gemini credentials saved!"})
+
+        import threading as _threading  # noqa: F811
+        _threading.Thread(target=_bg_gemini_relay_login, daemon=True,
+                           name=f"gemini-relay-login-{relay_id}").start()
+        flowfile.set_content(json.dumps({
+            "ok": True, "message": "Gemini login started — authorize in the browser that opens on the relay."
+        }).encode())
+        return [flowfile]
+
     # ── Claude Code login via server (noVNC) ───────────────────────
 
     if action == "claude_code_server_login":
@@ -883,6 +1006,167 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 "(macOS/Linux) or %USERPROFILE%\\.claude\\.credentials.json (Windows)"
             ),
         }).encode())
+        return [flowfile]
+
+    # ── Codex set credentials (paste) ─────────────────────────────
+
+    if action == "codex_login_url":
+        flowfile.set_content(json.dumps({
+            "flow": "paste_credentials",
+            "message": (
+                "Run on your machine:\n\n"
+                "  codex login\n\n"
+                "Then paste the content of:\n\n"
+                "  ~/.codex/auth.json\n\n"
+                "(macOS/Linux) or %USERPROFILE%\\.codex\\auth.json (Windows)"
+            ),
+        }).encode())
+        return [flowfile]
+
+    if action in ("codex_login_code", "codex_auth"):
+        service_id = body.get("service_id", "")
+        credentials_json = body.get("credentials", "").strip()
+        if not service_id or not credentials_json:
+            flowfile.set_content(json.dumps({"error": "Missing service_id or credentials"}).encode())
+            return [flowfile]
+        try:
+            from core.llm_providers.codex_session import parse_auth_json
+            parsed = parse_auth_json(credentials_json)
+            access_token = parsed.get("access_token", "")
+            refresh_token = parsed.get("refresh_token", "")
+            expires_at = parsed.get("expires_at", 0)
+            account = parsed.get("account", "")
+            if not access_token:
+                flowfile.set_content(json.dumps({
+                    "error": (
+                        "Invalid credentials: no access_token found. "
+                        "Expected format: {\"tokens\": {\"access_token\": \"...\", \"refresh_token\": \"...\"}}"
+                    ),
+                }).encode())
+                return [flowfile]
+            from core.service_registry import ServiceRegistry
+            greg = ServiceRegistry.get_instance()
+            sdef = greg.get_definition("global", "", service_id)
+            _stored = False
+            if sdef:
+                _roles = flowfile.get_attribute("http.auth.roles") or ""
+                if action == "codex_auth" and "admin" not in _roles:
+                    flowfile.set_content(json.dumps({
+                        "error": f"Admin permission required for global service '{service_id}'"
+                    }).encode())
+                    flowfile.set_attribute("http.response.status", "403")
+                    return [flowfile]
+                if (getattr(sdef, "config", {}) or {}).get("provider") != "codex":
+                    flowfile.set_content(json.dumps({
+                        "error": f"Service '{service_id}' is not a codex provider"
+                    }).encode())
+                    return [flowfile]
+                _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+                _stored = True
+            if not _stored:
+                try:
+                    usdef = greg.get_definition("user", user_id, service_id)
+                    if usdef:
+                        if (getattr(usdef, "config", {}) or {}).get("provider") != "codex":
+                            flowfile.set_content(json.dumps({
+                                "error": f"Service '{service_id}' is not a codex provider"
+                            }).encode())
+                            return [flowfile]
+                        _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+                        _stored = True
+                except Exception:
+                    pass
+            if not _stored:
+                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
+                return [flowfile]
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Codex credentials saved for '{service_id}'",
+            }).encode())
+        except json.JSONDecodeError:
+            flowfile.set_content(json.dumps({"error": "Invalid JSON. Paste the raw content of ~/.codex/auth.json"}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    # ── Gemini set credentials (paste) ────────────────────────────
+
+    if action == "gemini_login_url":
+        flowfile.set_content(json.dumps({
+            "flow": "paste_credentials",
+            "message": (
+                "Run on your machine:\n\n"
+                "  gemini       (first launch triggers OAuth)\n\n"
+                "Then paste the content of:\n\n"
+                "  ~/.gemini/oauth_creds.json\n\n"
+                "(macOS/Linux) or %USERPROFILE%\\.gemini\\oauth_creds.json (Windows)"
+            ),
+        }).encode())
+        return [flowfile]
+
+    if action in ("gemini_login_code", "gemini_auth"):
+        service_id = body.get("service_id", "")
+        credentials_json = body.get("credentials", "").strip()
+        if not service_id or not credentials_json:
+            flowfile.set_content(json.dumps({"error": "Missing service_id or credentials"}).encode())
+            return [flowfile]
+        try:
+            from core.llm_providers.gemini_session import parse_oauth_creds_json
+            parsed = parse_oauth_creds_json(credentials_json)
+            access_token = parsed.get("access_token", "")
+            refresh_token = parsed.get("refresh_token", "")
+            expires_at = parsed.get("expires_at", 0)
+            if not access_token:
+                flowfile.set_content(json.dumps({
+                    "error": (
+                        "Invalid credentials: no access_token found. "
+                        "Expected format: {\"access_token\": \"...\", \"refresh_token\": \"...\", \"expiry_date\": ...}"
+                    ),
+                }).encode())
+                return [flowfile]
+            from core.service_registry import ServiceRegistry
+            greg = ServiceRegistry.get_instance()
+            sdef = greg.get_definition("global", "", service_id)
+            _stored = False
+            if sdef:
+                _roles = flowfile.get_attribute("http.auth.roles") or ""
+                if action == "gemini_auth" and "admin" not in _roles:
+                    flowfile.set_content(json.dumps({
+                        "error": f"Admin permission required for global service '{service_id}'"
+                    }).encode())
+                    flowfile.set_attribute("http.response.status", "403")
+                    return [flowfile]
+                if (getattr(sdef, "config", {}) or {}).get("provider") != "gemini":
+                    flowfile.set_content(json.dumps({
+                        "error": f"Service '{service_id}' is not a gemini provider"
+                    }).encode())
+                    return [flowfile]
+                _store_gemini_tokens(service_id, access_token, refresh_token, expires_at)
+                _stored = True
+            if not _stored:
+                try:
+                    usdef = greg.get_definition("user", user_id, service_id)
+                    if usdef:
+                        if (getattr(usdef, "config", {}) or {}).get("provider") != "gemini":
+                            flowfile.set_content(json.dumps({
+                                "error": f"Service '{service_id}' is not a gemini provider"
+                            }).encode())
+                            return [flowfile]
+                        _store_gemini_tokens(service_id, access_token, refresh_token, expires_at)
+                        _stored = True
+                except Exception:
+                    pass
+            if not _stored:
+                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
+                return [flowfile]
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Gemini credentials saved for '{service_id}'",
+            }).encode())
+        except json.JSONDecodeError:
+            flowfile.set_content(json.dumps({"error": "Invalid JSON. Paste the raw content of ~/.gemini/oauth_creds.json"}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
     if action in ("claude_code_login_code", "claude_code_auth"):

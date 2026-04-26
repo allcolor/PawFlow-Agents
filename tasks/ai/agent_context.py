@@ -1222,12 +1222,27 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Inject project-graph digest (codebase structure summary)
         # for the current conv. Empty when no graph has been built
         # — the agent learns the tool exists via the cognitive-tools
-        # block below in any case.
+        # block below in any case. We append explicit usage triggers
+        # because without them the agent defaults to read+grep instead
+        # of leveraging the indexed graph.
         try:
             from core.project_graph_digest import build_project_graph_digest
             _pg = build_project_graph_digest(user_id, conversation_id or "")
             if _pg:
-                system_prompt += f"\n\n## Project structure\n{_pg}"
+                system_prompt += (
+                    f"\n\n## Project structure\n{_pg}"
+                    "\n\n**Reach for `project_graph` BEFORE read/grep when:**"
+                    "\n- User mentions a function/class/module by name"
+                    " → `project_graph(action='node', question='X')` for location + neighbours."
+                    "\n- 'where is X used', 'what calls Y', 'what depends on Z'"
+                    " → `project_graph(action='query', question='X')` returns AST call sites"
+                    " (no false matches in comments/strings)."
+                    "\n- Refactor/rename touching a public API → query first to scope blast radius."
+                    "\n- Onboarding to an unfamiliar area → `action='report'` for god nodes + stats."
+                    "\n**Skip it for:** single-file edit you already have open, text/comment search,"
+                    " non-code files (md/json/yaml), scopes <5 files, or when the graph is stale"
+                    " (rebuild via UI ‘+’ menu → Project Graph)."
+                )
         except Exception:
             pass
 

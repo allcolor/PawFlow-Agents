@@ -42,9 +42,12 @@ class TestProjectGraphDigest(unittest.TestCase):
     def test_basic_summary(self):
         self._seed_graph("u", "c", {
             "nodes": [
-                {"id": "a", "label": "foo()", "language": "python"},
-                {"id": "b", "label": "bar()", "language": "python"},
-                {"id": "c", "label": "Baz", "language": "javascript"},
+                {"id": "a", "label": "foo()", "language": "python",
+                 "source_file": "a.py"},
+                {"id": "b", "label": "bar()", "language": "python",
+                 "source_file": "b.py"},
+                {"id": "c", "label": "Baz", "language": "javascript",
+                 "source_file": "c.js"},
             ],
             "edges": [
                 {"source": "a", "target": "b"},
@@ -56,13 +59,17 @@ class TestProjectGraphDigest(unittest.TestCase):
         self.assertIn("Codebase indexed: 3 entities, 3 edges", out)
         self.assertIn("python (2)", out)
         self.assertIn("javascript (1)", out)
+        self.assertIn("Top files", out)
+        self.assertIn("a.py", out)
         self.assertIn("God nodes", out)
 
     def test_god_nodes_use_label(self):
         self._seed_graph("u", "c", {
             "nodes": [
-                {"id": "node_x", "label": "my_function()"},
-                {"id": "node_y", "label": "helper()"},
+                {"id": "node_x", "label": "my_function()",
+                 "source_file": "x.py"},
+                {"id": "node_y", "label": "helper()",
+                 "source_file": "y.py"},
             ],
             "edges": [
                 {"source": "node_x", "target": "node_y"},
@@ -74,6 +81,72 @@ class TestProjectGraphDigest(unittest.TestCase):
         # The id should NOT leak into the visible god-nodes section
         # when a label is available.
         self.assertNotIn("node_x (", out)
+
+    def test_languages_inferred_from_extension(self):
+        # No language metadata on nodes — the digest should derive it
+        # from the source_file extension instead of saying 'unknown'.
+        self._seed_graph("u", "c", {
+            "nodes": [
+                {"id": "a", "label": "f", "source_file": "core/a.py"},
+                {"id": "b", "label": "g", "source_file": "ui/b.ts"},
+            ],
+            "edges": [{"source": "a", "target": "b"}],
+        })
+        out = build_project_graph_digest("u", "c")
+        self.assertIn("python (1)", out)
+        self.assertIn("typescript (1)", out)
+        self.assertNotIn("unknown", out)
+
+    def test_builtin_noise_filtered_from_god_nodes(self):
+        # `.get` and `str` dominate the connection count but are noise.
+        # The actual project node `MyClass` (lower count) should still
+        # surface as the top displayed god node.
+        self._seed_graph("u", "c", {
+            "nodes": [
+                {"id": ".get", "label": ".get", "source_file": ""},
+                {"id": "str", "label": "str", "source_file": ""},
+                {"id": "MyClass", "label": "MyClass",
+                 "source_file": "core/x.py"},
+                {"id": "helper", "label": "helper",
+                 "source_file": "core/y.py"},
+            ],
+            "edges": [
+                # .get hit 100 times — should be filtered out
+                *[{"source": "x" + str(i), "target": ".get"}
+                  for i in range(100)],
+                # str hit 50 times — also filtered
+                *[{"source": "y" + str(i), "target": "str"}
+                  for i in range(50)],
+                # MyClass hit 5 times — the real signal
+                *[{"source": "helper", "target": "MyClass"}
+                  for i in range(5)],
+            ],
+        })
+        out = build_project_graph_digest("u", "c")
+        self.assertIn("MyClass", out)
+        # Builtin noise should NOT appear in the god-nodes section.
+        # (We accept they may appear inside Top files if the file
+        # itself is named that, but that's unrelated.)
+        god_section = out.split("God nodes:", 1)[-1] if "God nodes:" in out else ""
+        self.assertNotIn(".get", god_section)
+        self.assertNotIn("str (", god_section)
+
+    def test_top_files_section(self):
+        # File a.py has 3 entities, b.py has 2, c.py has 1
+        self._seed_graph("u", "c", {
+            "nodes": [
+                {"id": "a1", "label": "one", "source_file": "a.py"},
+                {"id": "a2", "label": "two", "source_file": "a.py"},
+                {"id": "a3", "label": "three", "source_file": "a.py"},
+                {"id": "b1", "label": "four", "source_file": "b.py"},
+                {"id": "b2", "label": "five", "source_file": "b.py"},
+                {"id": "c1", "label": "six", "source_file": "c.py"},
+            ],
+            "edges": [{"source": "a1", "target": "b1"}],
+        })
+        out = build_project_graph_digest("u", "c")
+        self.assertIn("Top files: a.py (3)", out)
+        self.assertIn("b.py (2)", out)
 
     def test_unknown_languages_default(self):
         self._seed_graph("u", "c", {

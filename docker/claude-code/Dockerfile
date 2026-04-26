@@ -6,8 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb x11vnc novnc websockify chromium dbus-x11 xterm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
+# Install agent CLIs (Claude Code + Codex + Gemini) — single image hosts all three;
+# the pool decides which binary to exec per-spawn so they share base layers + caches.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli
 
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 # node:22-slim has UID 1000 as 'node' — rename to 'pawflow' for consistency

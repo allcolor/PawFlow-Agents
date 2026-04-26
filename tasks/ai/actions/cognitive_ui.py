@@ -121,6 +121,54 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
 
     # ── Project Graph ──────────────────────────────────────────────
 
+    if action == "project_graph_build":
+        # Synchronous build path for the UI 'Build' button. Goes
+        # through the same ProjectGraph.build_from_relay logic the
+        # agent's project_graph(action='build') tool uses, but skips
+        # the agent loop — the panel needs the actual result, not the
+        # async 'accepted' ack that call_tool returns.
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.relay_bindings import get_default, get_bindings
+            relay_id = get_default(conv_id) or ""
+            if not relay_id:
+                _bindings = get_bindings(conv_id) or {}
+                _linked = _bindings.get("linked", []) or []
+                relay_id = _linked[0] if _linked else ""
+            if not relay_id:
+                flowfile.set_content(json.dumps({
+                    "error": ("No relay linked to this conversation. "
+                              "Link a relay before building the project graph."),
+                }).encode())
+                return [flowfile]
+            from core.service_registry import ServiceRegistry
+            greg = ServiceRegistry.get_instance()
+            svc = greg.get_live_instance("global", "", relay_id)
+            if svc is None and user_id:
+                try:
+                    _ureg = ServiceRegistry.get_user_instance(user_id)
+                    if _ureg:
+                        svc = _ureg.get_live_instance("user", user_id, relay_id)
+                except (AttributeError, Exception):
+                    pass
+            if svc is None:
+                flowfile.set_content(json.dumps({
+                    "error": f"Relay '{relay_id}' is not connected.",
+                }).encode())
+                return [flowfile]
+            from core.project_graph import ProjectGraph
+            pg = ProjectGraph.for_conversation(user_id, conv_id)
+            path = body.get("path", ".") or "."
+            result = pg.build_from_relay(svc, path)
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+        except Exception as e:
+            logger.exception("project_graph_build failed")
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "project_graph_report":
         conv_id = body.get("conversation_id", "")
         if not conv_id:

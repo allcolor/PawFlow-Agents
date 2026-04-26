@@ -42,19 +42,42 @@ function pgBuild() {
       + '<style>@keyframes pgSpin { to { transform: rotate(360deg); } }</style>'
       + '</div>';
   }
-  action$('call_tool', {
-    tool_name: 'project_graph',
-    arguments: { action: 'build' },
-    positional_args: [],
-  }).subscribe({
+  // Synchronous server-side build (cognitive_ui.project_graph_build).
+  // The previous 'call_tool' path dispatched via the agent loop and
+  // returned {status:'accepted'} immediately — the panel was stuck on
+  // that ack forever.
+  action$('project_graph_build', {}).subscribe({
     next: function(data) {
       if (data.error) {
         _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(data.error) + '</div>');
         return;
       }
-      // call_tool returns result as text
-      var text = typeof data === 'string' ? data : (data.result || data.message || JSON.stringify(data));
-      _pgSetContent('<div style="color:#52b788;padding:8px;white-space:pre-wrap">' + escapeHtml(text) + '</div>');
+      var status = data.status || 'unknown';
+      var nodes = data.nodes || 0;
+      var edges = data.edges || 0;
+      var files = data.files || 0;
+      var reparsed = data.reparsed;
+      var removed = data.removed;
+      var msg;
+      if (status === 'unchanged') {
+        msg = 'Up to date — ' + nodes + ' nodes, ' + edges
+          + ' edges, ' + files + ' files (no changes detected)';
+      } else if (status === 'built' || status === 'built_fallback') {
+        msg = (status === 'built_fallback' ? 'Built (fallback) — ' : 'Built — ')
+          + nodes + ' nodes, ' + edges + ' edges, ' + files + ' files';
+        if (reparsed !== undefined || removed !== undefined) {
+          msg += ' (reparsed=' + (reparsed || 0) + ', removed=' + (removed || 0) + ')';
+        }
+      } else if (status === 'skipped') {
+        msg = 'Skipped — ' + (data.reason || 'no reason given');
+      } else if (status === 'error') {
+        msg = 'Error — ' + (data.reason || 'unknown error');
+      } else {
+        msg = JSON.stringify(data);
+      }
+      var color = (status === 'error') ? '#e74c3c' : '#52b788';
+      _pgSetContent('<div style="color:' + color
+        + ';padding:8px;white-space:pre-wrap">' + escapeHtml(msg) + '</div>');
     },
     error: function(e) {
       _pgSetContent('<div style="color:#e74c3c;padding:8px">Build failed: ' + escapeHtml(e.message) + '</div>');

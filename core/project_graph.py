@@ -99,12 +99,20 @@ if not to_parse and not removed:
 
 files = to_parse  # only re-parse the changed ones
 
+# graphify.extract prints progress lines ("AST extraction: 100/500
+# files (20%)") to stdout. We use stdout for the final JSON result
+# so we redirect graphify's output to stderr while it runs — the
+# server parses our last `print(json.dumps(...))` and would choke
+# on the progress prefix.
+import contextlib, io as _io_pg
+
 # Try tree-sitter extraction (graphify must be installed on the relay)
 try:
     from graphify.extract import extract
     from graphify.build import build
-    extraction = extract(files) if files else []
-    G = build([extraction]) if extraction else None
+    with contextlib.redirect_stdout(sys.stderr):
+        extraction = extract(files) if files else []
+        G = build([extraction]) if extraction else None
 
     nodes = []
     if G is not None:

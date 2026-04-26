@@ -183,24 +183,39 @@ function updateActivePanel() {
     if (ctxMax > 0) {
       ctxHtml = renderCtxGauge({ used: ctxUsed, max: ctxMax, pct: ctxPct }, { width: 60 });
     }
-    // Live-session badge + restart button: only shown when CC is reusing
-    // a warm process for this agent. Tooltip surfaces lived / reuse
-    // count so the user knows how much state is being preserved before
-    // they decide to restart.
+    // Live-session badge + restart button: shown when ANY supported CLI
+    // (claude code / codex / gemini) is reusing a warm container for this
+    // agent. The first match wins for the badge label/tooltip; the restart
+    // button targets the matching CLI's restart action.
     let liveBadge = '';
     let restartBtn = '';
-    if (info.ccLive) {
-      const lived = Math.round(info.ccLivedSeconds || 0);
+    const liveCli = info.ccLive ? 'cc'
+                  : info.codexLive ? 'codex'
+                  : info.geminiLive ? 'gemini' : '';
+    if (liveCli) {
+      const lived = Math.round(
+        liveCli === 'cc' ? (info.ccLivedSeconds || 0)
+        : liveCli === 'codex' ? (info.codexLivedSeconds || 0)
+        : (info.geminiLivedSeconds || 0));
+      const reuseCount =
+        liveCli === 'cc' ? (info.ccReuseCount || 0)
+        : liveCli === 'codex' ? (info.codexReuseCount || 0)
+        : (info.geminiReuseCount || 0);
       const livedStr = lived < 60 ? lived + 's'
         : Math.floor(lived / 60) + 'm' + (lived % 60) + 's';
-      const liveTitle = 'Claude Code reused (lived ' + livedStr
-        + ', reuse #' + (info.ccReuseCount || 0) + ')';
+      const cliLabel = liveCli === 'cc' ? 'Claude Code'
+                     : liveCli === 'codex' ? 'Codex' : 'Gemini';
+      const liveTitle = cliLabel + ' reused (lived ' + livedStr
+        + ', reuse #' + reuseCount + ')';
       liveBadge = '<span class="a-cc-live" title="' + liveTitle
         + '" style="display:inline-block;padding:1px 5px;margin-right:4px;'
         + 'font-size:9px;font-weight:bold;color:#0f0;border:1px solid #0f0;'
         + 'border-radius:3px;vertical-align:middle;">LIVE</span>';
-      restartBtn = '<button class="btn-cc-restart" title="Restart CC (kill warm session)"'
-        + ' onclick="ccRestartSingle(\'' + escapeHtml(apiName) + '\')"'
+      const restartFn = liveCli === 'cc' ? 'ccRestartSingle'
+                      : liveCli === 'codex' ? 'codexRestartSingle'
+                      : 'geminiRestartSingle';
+      restartBtn = '<button class="btn-cc-restart" title="Restart ' + cliLabel + ' (kill warm session)"'
+        + ' onclick="' + restartFn + '(\'' + escapeHtml(apiName) + '\')"'
         + '>&#x21BB;</button>';
     }
     return '<div class="active-row">'
@@ -265,13 +280,22 @@ function syncActiveFromServer() {
         contextUsed: existing ? existing.contextUsed : 0,
         contextMax: existing ? existing.contextMax : 0,
         contextPct: existing ? existing.contextPct : 0,
-        // Claude Code live-session reuse telemetry. Server enriches
-        // these fields when the warm CC proc for (conv, agent) is alive
-        // in the registry; absence means no live session.
+        // Per-CLI live-session reuse telemetry. Server enriches the
+        // matching block when the warm container for (conv, agent) is
+        // alive in the corresponding registry; absence means no live
+        // session. Only one CLI can be alive at a time for a given agent.
         ccLive: !!a.cc_live,
         ccReuseCount: a.cc_reuse_count || 0,
         ccLivedSeconds: a.cc_lived_seconds || 0,
         ccIdleSeconds: a.cc_idle_seconds || 0,
+        codexLive: !!a.codex_live,
+        codexReuseCount: a.codex_reuse_count || 0,
+        codexLivedSeconds: a.codex_lived_seconds || 0,
+        codexIdleSeconds: a.codex_idle_seconds || 0,
+        geminiLive: !!a.gemini_live,
+        geminiReuseCount: a.gemini_reuse_count || 0,
+        geminiLivedSeconds: a.gemini_lived_seconds || 0,
+        geminiIdleSeconds: a.gemini_idle_seconds || 0,
         updatedAt: now,
       };
       // Hydrate persistent cache from server's persisted context_usage so the
@@ -321,19 +345,29 @@ function stopSingle(agentName, taskId) {
   updateActivePanel();
 }
 
-// Kill the warm Claude Code subprocess for a specific agent in this
-// conv. Next turn will spawn fresh.
-function ccRestartSingle(agentName) {
+// Kill the warm CLI container for a specific agent in this conv. Next
+// turn will spawn fresh. _restartCliSingle is the per-CLI factory; the
+// public ccRestartSingle/codexRestartSingle/geminiRestartSingle wrappers
+// keep the inline onclick contract stable.
+function _restartCliSingle(cli, agentName) {
   if (!conversationId || !agentName) return;
-  fireAction('cc_restart', { agent_name: agentName });
+  const action = cli + '_restart';
+  fireAction(action, { agent_name: agentName });
   // Optimistically clear the live badge — the server poll will
   // authoritatively refresh it (to absent) within a few seconds.
   const key = agentKey(agentName);
   const info = activeInteractions[key];
   if (info) {
-    info.ccLive = false;
-    info.ccReuseCount = 0;
-    info.ccLivedSeconds = 0;
+    if (cli === 'cc') {
+      info.ccLive = false; info.ccReuseCount = 0; info.ccLivedSeconds = 0;
+    } else if (cli === 'codex') {
+      info.codexLive = false; info.codexReuseCount = 0; info.codexLivedSeconds = 0;
+    } else if (cli === 'gemini') {
+      info.geminiLive = false; info.geminiReuseCount = 0; info.geminiLivedSeconds = 0;
+    }
   }
   updateActivePanel();
 }
+function ccRestartSingle(agentName)     { _restartCliSingle('cc', agentName); }
+function codexRestartSingle(agentName)  { _restartCliSingle('codex', agentName); }
+function geminiRestartSingle(agentName) { _restartCliSingle('gemini', agentName); }

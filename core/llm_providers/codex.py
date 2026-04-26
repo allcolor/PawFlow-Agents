@@ -24,6 +24,7 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -388,6 +389,79 @@ class LLMCodexMixin:
         ctx_window = self._codex_context_window(model)
         compact_required = False
 
+        # Map codex item.id → (tool_name, args) so item.completed can emit
+        # tool_result with the same tc_id we pushed on item.started. Also
+        # used to dedupe in case codex retransmits.
+        items_in_flight: Dict[str, tuple] = {}
+
+        def _extract_tool_call(item: dict) -> Optional[tuple]:
+            """Return (tc_id, tool_name, args, result_or_none) or None.
+
+            Codex item types we surface as tool calls:
+              - mcp_tool_call: server + tool_name + arguments + result
+              - command_execution: command + cwd + output (treat as 'shell')
+            """
+            itype = item.get("type", "")
+            tc_id = item.get("id", "") or ""
+            if itype == "mcp_tool_call":
+                _server = item.get("server", "") or ""
+                _tool = item.get("tool_name", "") or item.get("tool", "")
+                name = f"{_server}.{_tool}" if _server and _tool else (_tool or _server)
+                args = item.get("arguments", {}) or item.get("args", {}) or {}
+                result = item.get("result", item.get("output", None))
+                return (tc_id, name, args, result)
+            if itype == "command_execution":
+                cmd = item.get("command", "") or ""
+                args = {"command": cmd, "cwd": item.get("cwd", "") or ""}
+                _out = item.get("output", item.get("result", None))
+                _ec = item.get("exit_code", None)
+                if _out is not None or _ec is not None:
+                    result = {"output": _out, "exit_code": _ec}
+                else:
+                    result = None
+                return (tc_id, "shell", args, result)
+            return None
+
+        def _emit_tool_use(tc_id: str, name: str, args: dict):
+            if not block_callback:
+                return
+            try:
+                block_callback("tool_use", {
+                    "id": tc_id,
+                    "name": name,
+                    "arguments": args,
+                    "thinking": "",
+                })
+            except Exception as e:
+                logger.warning("[codex] block_callback tool_use failed: %s", e)
+            # Pending registration: lets services.tool_relay_service match the
+            # MCP request that is about to come back through the bridge to
+            # this tc_id (for kill/cancel/background tracking). Without it,
+            # tool_relay logs `cc_tc MISS pending=[]` for every codex tool.
+            try:
+                from core.background_tool import enqueue_cc_tc, _args_hash
+                from core.llm_client import unwrap_mcp_tool
+                _mn, _ma = unwrap_mcp_tool(name, args or {})
+                enqueue_cc_tc(conv_id, agent_name, tc_id, _mn, _args_hash(_ma))
+            except Exception as e:
+                logger.debug("[codex] enqueue_cc_tc skipped: %s", e)
+
+        def _emit_tool_result(tc_id: str, name: str, result):
+            if not block_callback:
+                return
+            try:
+                if isinstance(result, (dict, list)):
+                    result_str = json.dumps(result, ensure_ascii=False, default=str)
+                else:
+                    result_str = str(result) if result is not None else ""
+                block_callback("tool_result", {
+                    "tc_id": tc_id,
+                    "tool": name,
+                    "result": result_str,
+                })
+            except Exception as e:
+                logger.warning("[codex] block_callback tool_result failed: %s", e)
+
         for line in proc.stdout:
             line = line.strip()
             if not line:
@@ -402,6 +476,15 @@ class LLMCodexMixin:
                 thread_id = event.get("thread_id", "") or thread_id
             elif etype == "turn.started":
                 turn_count += 1
+            elif etype == "item.started":
+                item = event.get("item", {}) or {}
+                tc = _extract_tool_call(item)
+                if tc is not None:
+                    tc_id, name, args, _ = tc
+                    if not tc_id:
+                        tc_id = f"codex-{uuid.uuid4().hex[:12]}"
+                    items_in_flight[item.get("id", tc_id)] = (tc_id, name)
+                    _emit_tool_use(tc_id, name, args)
             elif etype in ("item.completed", "item.updated"):
                 item = event.get("item", {}) or {}
                 itype = item.get("type", "")
@@ -423,23 +506,33 @@ class LLMCodexMixin:
                                 thinking_callback(chunk)
                             except Exception:
                                 pass
-                elif itype == "mcp_tool_call" and block_callback:
-                    try:
-                        block_callback({
-                            "type": "tool_call",
-                            "name": item.get("tool_name", "") or item.get("server", ""),
-                            "arguments": item.get("arguments", {}),
-                        })
-                    except Exception:
-                        pass
+                elif itype in ("mcp_tool_call", "command_execution"):
+                    tc = _extract_tool_call(item)
+                    if tc is not None:
+                        _native_id = item.get("id", "") or ""
+                        _, _, _, result = tc
+                        # Pair with the started-side tc_id; if codex skipped
+                        # item.started (rare), synthesize a matching pair now.
+                        prior = items_in_flight.pop(_native_id, None)
+                        if prior is None:
+                            tc_id, name, args = tc[0] or f"codex-{uuid.uuid4().hex[:12]}", tc[1], tc[2]
+                            _emit_tool_use(tc_id, name, args)
+                        else:
+                            tc_id, name = prior
+                        _emit_tool_result(tc_id, name, result)
             elif etype == "turn.completed":
                 _u = event.get("usage", {}) or {}
-                used = (int(_u.get("input_tokens", 0) or 0)
-                        + int(_u.get("cached_input_tokens", 0) or 0))
-                usage["input_tokens"] = int(_u.get("input_tokens", 0) or 0)
-                usage["cached_input_tokens"] = int(_u.get("cached_input_tokens", 0) or 0)
-                usage["output_tokens"] = int(_u.get("output_tokens", 0) or 0)
-                usage["_total_used"] = used
+                # OpenAI Responses semantics: cached_input_tokens is a SUBSET
+                # of input_tokens (the cached portion priced lower), not
+                # additive. Adding both double-counted the cached chunk.
+                _input = int(_u.get("input_tokens", 0) or 0)
+                _cached = int(_u.get("cached_input_tokens", 0) or 0)
+                _output = int(_u.get("output_tokens", 0) or 0)
+                usage["input_tokens"] = _input
+                usage["cached_input_tokens"] = _cached
+                usage["output_tokens"] = _output
+                usage["_total_used"] = _input  # gauge: full prompt size
+                used = _input
                 if ctx_window > 0 and used >= int(ctx_window * _PAWFLOW_COMPACT_THRESHOLD):
                     logger.warning(
                         "[codex] usage %d/%d crossed PawFlow compact threshold (%d%%) — will signal compact",
@@ -465,9 +558,11 @@ class LLMCodexMixin:
         if thread_id:
             self._codex_persist_session_id(conv_id, agent_name, thread_id)
 
+        # tokens_in = total prompt tokens for this turn (the cached_input_tokens
+        # field is the cached PORTION of input_tokens, not an additive bucket).
         response = LLMResponse(
             content="\n".join(text_chunks).strip(),
-            tokens_in=usage.get("input_tokens", 0) + usage.get("cached_input_tokens", 0),
+            tokens_in=usage.get("input_tokens", 0),
             tokens_out=usage.get("output_tokens", 0),
             finish_reason=finish_reason,
             model=model,

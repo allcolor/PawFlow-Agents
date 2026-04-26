@@ -13,6 +13,7 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -324,6 +325,8 @@ class LLMGeminiMixin:
         session_id = ""
         last_error: Optional[str] = None
         finish_reason = "stop"
+        # call_id → tool name, so tool_result events can carry the right name
+        tool_use_index: Dict[str, str] = {}
 
         ctx_window = self._gemini_context_window(model)
         compact_required = False
@@ -360,15 +363,45 @@ class LLMGeminiMixin:
                             thinking_callback(chunk)
                         except Exception:
                             pass
-            elif etype == "tool_use" and block_callback:
+            elif etype == "tool_use":
+                _tc_id = event.get("call_id", "") or event.get("id", "") or f"gemini-{uuid.uuid4().hex[:12]}"
+                _name = event.get("name", "") or ""
+                _args = event.get("args", {}) or event.get("arguments", {}) or {}
+                tool_use_index[_tc_id] = _name
+                if block_callback:
+                    try:
+                        block_callback("tool_use", {
+                            "id": _tc_id,
+                            "name": _name,
+                            "arguments": _args,
+                            "thinking": "",
+                        })
+                    except Exception as e:
+                        logger.warning("[gemini] block_callback tool_use failed: %s", e)
+                # Pending registration so tool_relay's cc_tc lookup can match.
                 try:
-                    block_callback({
-                        "type": "tool_call",
-                        "name": event.get("name", ""),
-                        "arguments": event.get("args", {}),
+                    from core.background_tool import enqueue_cc_tc, _args_hash
+                    from core.llm_client import unwrap_mcp_tool
+                    _mn, _ma = unwrap_mcp_tool(_name, _args or {})
+                    enqueue_cc_tc(conv_id, agent_name, _tc_id, _mn, _args_hash(_ma))
+                except Exception as e:
+                    logger.debug("[gemini] enqueue_cc_tc skipped: %s", e)
+            elif etype == "tool_result" and block_callback:
+                _tc_id = event.get("call_id", "") or event.get("id", "") or ""
+                _name = tool_use_index.pop(_tc_id, "") or event.get("name", "") or ""
+                _result = event.get("output", event.get("result", event.get("content", "")))
+                try:
+                    if isinstance(_result, (dict, list)):
+                        result_str = json.dumps(_result, ensure_ascii=False, default=str)
+                    else:
+                        result_str = str(_result) if _result is not None else ""
+                    block_callback("tool_result", {
+                        "tc_id": _tc_id,
+                        "tool": _name,
+                        "result": result_str,
                     })
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("[gemini] block_callback tool_result failed: %s", e)
             elif etype == "error":
                 last_error = json.dumps(event)[:500]
                 finish_reason = "error"
@@ -387,11 +420,13 @@ class LLMGeminiMixin:
                     sum_in = int(_u.get("input_tokens", 0) or 0)
                     sum_out = int(_u.get("output_tokens", 0) or 0)
                     sum_cached = int(_u.get("cached_input_tokens", 0) or 0)
-                used = sum_in + sum_cached
+                # cached_input_tokens is a subset of input_tokens (priced lower),
+                # not an additive bucket — don't add them when computing context use.
                 usage["input_tokens"] = sum_in
                 usage["cached_input_tokens"] = sum_cached
                 usage["output_tokens"] = sum_out
-                usage["_total_used"] = used
+                usage["_total_used"] = sum_in
+                used = sum_in
                 if ctx_window > 0 and used >= int(ctx_window * _PAWFLOW_COMPACT_THRESHOLD):
                     logger.warning(
                         "[gemini] usage %d/%d crossed PawFlow compact threshold (%d%%) — will signal compact",
@@ -411,9 +446,11 @@ class LLMGeminiMixin:
         if session_id:
             self._gemini_persist_session_id(conv_id, agent_name, session_id)
 
+        # tokens_in = total prompt tokens for this turn (cached_input_tokens is
+        # the cached portion of input_tokens, not additive).
         response = LLMResponse(
             content="".join(text_chunks).strip(),
-            tokens_in=usage.get("input_tokens", 0) + usage.get("cached_input_tokens", 0),
+            tokens_in=usage.get("input_tokens", 0),
             tokens_out=usage.get("output_tokens", 0),
             finish_reason=finish_reason,
             model=model,

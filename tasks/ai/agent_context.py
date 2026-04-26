@@ -333,10 +333,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 _early_agent = _early_target or _early_res.get("agent", "")
             except Exception:
                 pass
-            # Load dynamic tools for this conversation
-            from core.handlers.dynamic_tool import load_dynamic_tools
+            # Load dynamic tools (global + user + conv) for this user/conv.
+            from core.tool_loader import load_tools_into_registry
             _parent_cid = conversation_id.split("::task::")[0] if "::task::" in conversation_id else conversation_id
-            load_dynamic_tools(_parent_cid, registry)
+            load_tools_into_registry(
+                registry, _user_id_for_svc, _parent_cid)
         _context_agent = _early_agent
 
         # Per-agent override from conv_agents (max_depth = max iterations)

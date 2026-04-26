@@ -33,7 +33,7 @@ class ManageResourceHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Manage user resources (agents, skills, MCP servers, task definitions). Actions:\n"
+            "Manage user resources (agents, skills, MCP servers, task definitions, tools). Actions:\n"
             "- create: Create a new resource\n"
             "- update: Modify an existing resource\n"
             "- delete: Delete a resource\n"
@@ -41,12 +41,14 @@ class ManageResourceHandler(ToolHandler):
             "- get: Get details of a specific resource\n"
             "- activate: Activate a resource in the current conversation\n"
             "- deactivate: Deactivate a resource from the current conversation\n\n"
-            "Resource types: agent, skill, mcp, task_def\n\n"
+            "Resource types: agent, skill, mcp, task_def, tool\n\n"
             "Agent fields: prompt (required), model, tools (list), "
             "max_depth, timeout, description, llm_service\n"
             "Skill fields: prompt (required), description, parameters, extends\n"
             "MCP fields: url (required), auth (dict)\n"
-            "Task def fields: prompt (required), criteria, default_interval, description"
+            "Task def fields: prompt (required), criteria, default_interval, description\n"
+            "Tool fields: source (required — Python ToolHandler subclass), "
+            "description, parameters (JSON Schema). Source is sandbox-validated at create."
         )
 
     @property
@@ -62,7 +64,7 @@ class ManageResourceHandler(ToolHandler):
                 },
                 "resource_type": {
                     "type": "string",
-                    "enum": ["agent", "skill", "mcp", "task_def"],
+                    "enum": ["agent", "skill", "mcp", "task_def", "tool"],
                     "description": "Type of resource",
                 },
                 "name": {
@@ -113,6 +115,16 @@ class ManageResourceHandler(ToolHandler):
 
                 if rtype in ("agent", "skill") and self._agent_name:
                     data["_created_by"] = self._agent_name
+
+                if rtype == "tool":
+                    src = data.get("source", "") if isinstance(data, dict) else ""
+                    if not src:
+                        return "Error: tool source is required"
+                    from core.tool_validation import validate_and_load
+                    try:
+                        validate_and_load(src)
+                    except ValueError as ve:
+                        return f"Error: {ve}"
 
                 if scope == "conversation" and self._conversation_id:
                     if rtype == "task_def":

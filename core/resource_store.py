@@ -26,6 +26,7 @@ _TYPE_MAP = {
     "mcp": "mcps",
     "task_def": "tasks",
     "prompt": "prompts",
+    "tool": "tools",
 }
 
 
@@ -38,6 +39,7 @@ _REQUIRED_FIELDS = {
     "mcp": (),  # url or command required (validated in create)
     "task_def": ("prompt",),
     "prompt": ("prompt",),
+    "tool": ("source",),
 }
 
 # Default values per type
@@ -73,6 +75,12 @@ _DEFAULTS = {
         "category": "",
         "description": "",
         "parameters": {},
+    },
+    "tool": {
+        "source": "",
+        "description": "",
+        "parameters": {},
+        "checksum": "",
     },
 }
 

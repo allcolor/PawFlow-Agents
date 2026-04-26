@@ -161,7 +161,9 @@ def test_summarize_via_cc_kill_on_delivery_not_treated_as_failure(monkeypatch):
             self._agent_name = ""
             self._user_id = ""
             self._event_cid = ""
-        def complete_stream(self, messages, max_tokens):
+        def clone_for_call(self):
+            return self
+        def complete_stream(self, messages, max_tokens, **kwargs):
             # Simulate the compact_result handler firing mid-stream,
             # then the CC kill producing a non-zero exit.
             _cr._pending["CK_test"]["summary"] = "VALID SUMMARY " * 20

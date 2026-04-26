@@ -64,6 +64,9 @@ def make_client_mock(responses):
         return r
     client.complete = MagicMock(side_effect=_next)
     client.complete_stream = MagicMock(side_effect=_next)
+    # SubAgentExecutor calls clone_for_call() before every LLM call;
+    # return self so the mock chain stays addressable in tests.
+    client.clone_for_call = MagicMock(return_value=client)
     return client
 
 

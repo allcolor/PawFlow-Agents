@@ -162,51 +162,63 @@ class CreateToolHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         tool_name = arguments.get("tool_name", "").strip()
         tool_description = arguments.get("tool_description", "")
-        parameters = arguments.get("parameters", {})
+        parameters = arguments.get("parameters", {}) or {}
         code = arguments.get("code", "")
 
         if not tool_name:
             return "Error: tool_name is required"
         if not code:
             return "Error: code is required"
-        # Validate name
         if not tool_name.replace("_", "").isalnum():
             return "Error: tool_name must be alphanumeric with underscores"
 
-        # Create and register
-        handler = DynamicToolHandler(tool_name, tool_description,
-                                     parameters or {}, code)
+        # Static + sandbox validation — same gate every create path uses.
+        from core.tool_validation import validate_and_load
+        try:
+            validate_and_load(code)
+        except ValueError as e:
+            return f"Error: {e}"
+
         from core.tool_registry import ToolRegistry
         registry = ToolRegistry._live_registry
         if registry is None:
             return "Error: no active tool registry"
-        if registry.get(tool_name) and not getattr(registry.get(tool_name), '_is_dynamic', False):
+        existing = registry.get(tool_name)
+        if existing and not getattr(existing, "_is_dynamic", False):
             return f"Error: tool '{tool_name}' already exists (builtin — cannot override)"
+
+        # Persist to ResourceStore (conv-scoped — tools created at runtime
+        # belong to their conversation by default).
+        cid = getattr(self, "_conversation_id", "")
+        uid = getattr(self, "_user_id", "")
+        if not cid:
+            return "Error: no conversation context for create_tool"
+        try:
+            from core.resource_store import ResourceStore
+            data = {
+                "source": code,
+                "description": tool_description,
+                "parameters": parameters,
+            }
+            try:
+                ResourceStore.instance().create(
+                    "tool", tool_name, uid, data, conversation_id=cid)
+            except ValueError:
+                ResourceStore.instance().update(
+                    "tool", tool_name, uid, data, conversation_id=cid)
+        except Exception as e:
+            return f"Error: persist failed: {e}"
+
+        handler = DynamicToolHandler(tool_name, tool_description,
+                                       parameters, code)
+        handler._origin = "dynamic"
+        handler._origin_scope = "conversation"
         registry.register(handler)
 
-        # Persist to conversation
-        self._persist(tool_name, handler, arguments)
-
-        param_names = list((parameters or {}).keys())
+        param_names = list(parameters.keys())
         return (f"Tool '{tool_name}' created and registered. "
                 f"Parameters: {param_names or 'none'}. "
                 f"Available immediately for use.")
-
-    def _persist(self, tool_name: str, handler: DynamicToolHandler,
-                 arguments: Dict[str, Any]):
-        """Save to conversation extras for reload."""
-        try:
-            cid = getattr(self, '_conversation_id', '')
-            uid = getattr(self, '_user_id', '')
-            if not cid:
-                return
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            tools = store.get_extra(cid, "dynamic_tools") or {}
-            tools[tool_name] = handler.to_dict()
-            store.set_extra(cid, "dynamic_tools", tools, user_id=uid)
-        except Exception as e:
-            logger.warning("Failed to persist dynamic tool '%s': %s", tool_name, e)
 
 
 class DeleteToolHandler(ToolHandler):
@@ -261,37 +273,28 @@ class DeleteToolHandler(ToolHandler):
 
         registry.unregister(tool_name)
 
-        # Remove from conversation extras
+        # Remove from ResourceStore — search conv first (most likely
+        # location for runtime-created tools), then user. Global tools
+        # are not deletable via this path (use manage_resource).
+        cid = getattr(self, "_conversation_id", "")
+        uid = getattr(self, "_user_id", "")
         try:
-            cid = getattr(self, '_conversation_id', '')
-            uid = getattr(self, '_user_id', '')
-            if cid:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                tools = store.get_extra(cid, "dynamic_tools") or {}
-                tools.pop(tool_name, None)
-                store.set_extra(cid, "dynamic_tools", tools, user_id=uid)
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            removed = False
+            if cid and uid:
+                try:
+                    removed = rs.delete("tool", tool_name, uid,
+                                         conversation_id=cid)
+                except Exception:
+                    pass
+            if not removed and uid:
+                try:
+                    rs.delete("tool", tool_name, uid)
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning("Failed to remove dynamic tool '%s' from store: %s",
                            tool_name, e)
 
         return f"Tool '{tool_name}' deleted."
-
-
-def load_dynamic_tools(cid: str, registry):
-    """Load dynamic tools from conversation extras into the registry."""
-    try:
-        from core.conversation_store import ConversationStore
-        store = ConversationStore.instance()
-        tools = store.get_extra(cid, "dynamic_tools") or {}
-        loaded = 0
-        for name, data in tools.items():
-            if registry.get(name) and not getattr(registry.get(name), '_is_dynamic', False):
-                continue  # don't override builtins
-            handler = DynamicToolHandler.from_dict(data)
-            registry.register(handler)
-            loaded += 1
-        if loaded:
-            logger.info("[dynamic_tools] Loaded %d tool(s) for conv %s", loaded, cid[:8])
-    except Exception as e:
-        logger.warning("[dynamic_tools] Failed to load for conv %s: %s", cid[:8], e)

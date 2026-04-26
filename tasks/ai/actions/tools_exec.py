@@ -116,12 +116,25 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            from core.dynamic_tool_store import DynamicToolStore
-            result = DynamicToolStore.instance().install(user_id, filename, source)
-            # Reset tool registry so new tool is picked up
+            from core.tool_validation import validate_and_load
+            handler, tool_name = validate_and_load(source)
+            from core.resource_store import ResourceStore
+            data = {
+                "source": source,
+                "description": handler.description,
+                "parameters": handler.parameters_schema.get("properties", {}),
+            }
+            try:
+                ResourceStore.instance().create(
+                    "tool", tool_name, user_id, data)
+            except ValueError:
+                ResourceStore.instance().update(
+                    "tool", tool_name, user_id, data)
             self._tool_registry = None
             flowfile.set_content(json.dumps({
-                "installed": True, **result,
+                "installed": True,
+                "tool_name": tool_name,
+                "description": handler.description,
             }).encode())
         except (ValueError, PermissionError) as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -135,12 +148,9 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            from core.dynamic_tool_store import DynamicToolStore
-            is_admin = "admin" in (flowfile.get_attribute("http.auth.roles") or "")
-            removed = DynamicToolStore.instance().uninstall(
-                user_id, tool_name, is_admin=is_admin,
-            )
-            # Reset tool registry
+            from core.resource_store import ResourceStore
+            removed = ResourceStore.instance().delete(
+                "tool", tool_name, user_id)
             self._tool_registry = None
             flowfile.set_content(json.dumps({
                 "uninstalled": removed, "tool_name": tool_name,
@@ -178,11 +188,19 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
 
     if action == "list_tools":
         try:
-            from core.dynamic_tool_store import DynamicToolStore
-            is_admin = "admin" in (flowfile.get_attribute("http.auth.roles") or "")
-            tools = DynamicToolStore.instance().list_tools(
-                user_id=user_id, is_admin=is_admin,
-            )
+            from core.resource_store import ResourceStore
+            conv_id = (body.get("conversation_id", "") or
+                       flowfile.get_attribute("conversation_id") or "")
+            entries = ResourceStore.instance().list_all(
+                "tool", user_id, conversation_id=conv_id) or []
+            tools = [{
+                "tool_name": e.get("name", ""),
+                "description": e.get("description", ""),
+                "owner": user_id,
+                "installed_at": e.get("created_at", 0),
+                "scope": e.get("_scope", "user"),
+                "source": "dynamic",
+            } for e in entries]
             flowfile.set_content(json.dumps({
                 "tools": tools,
             }, ensure_ascii=False).encode())

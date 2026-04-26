@@ -823,8 +823,11 @@ class AgentUtilsMixin:
         except Exception as e:
             logger.warning(f"[cleanup] secret cleanup failed: {e}")
         try:
-            from core.dynamic_tool_store import DynamicToolStore
-            DynamicToolStore.instance().cleanup_conversation(conversation_id)
+            from core.conversation_store import ConversationStore
+            from core.tool_loader import cleanup_conversation_tools
+            uid = ConversationStore.instance()._cid_user.get(conversation_id, "")
+            if uid:
+                cleanup_conversation_tools(uid, conversation_id)
         except Exception as e:
             logger.warning(f"[cleanup] dynamic tool cleanup failed: {e}")
         # Stop and undeploy conversation-scoped flow instances

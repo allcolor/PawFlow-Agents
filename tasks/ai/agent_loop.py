@@ -234,17 +234,15 @@ class AgentLoopTask(
         Priority:
         1. Custom registry set via set_tool_registry()
         2. Default builtin registry
+
+        Dynamic tools are scope-aware (global/user/conv) and loaded by the
+        caller via core.tool_loader.load_tools_into_registry once user_id
+        and conversation_id are known. They MUST NOT be merged here — this
+        method has no auth context, so a global merge would leak across
+        users.
         """
         if self._tool_registry is None:
             self._tool_registry = create_default_registry()
-            # Merge dynamic user-uploaded tools
-            try:
-                from core.dynamic_tool_store import DynamicToolStore
-                for name, handler in DynamicToolStore.instance().get_all_handlers().items():
-                    if not self._tool_registry.get(name):
-                        self._tool_registry.register(handler)
-            except Exception as e:
-                logger.warning(f"Failed to load dynamic tools: {e}")
         return self._tool_registry
 
 

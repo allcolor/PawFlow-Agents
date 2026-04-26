@@ -468,14 +468,15 @@ class ToolRelayService(BaseService):
         from core.tool_registry import create_default_registry
         registry = create_default_registry()
 
-        # Load dynamic tools for this conversation
-        if conversation_id:
+        # Load dynamic tools (global + user + conv) for this user/conv.
+        if user_id:
             try:
-                from core.handlers.dynamic_tool import load_dynamic_tools
+                from core.tool_loader import load_tools_into_registry
                 _parent_cid = (conversation_id.split("::task::")[0]
-                               if "::task::" in conversation_id
-                               else conversation_id)
-                load_dynamic_tools(_parent_cid, registry)
+                               if conversation_id and "::task::" in conversation_id
+                               else (conversation_id or ""))
+                load_tools_into_registry(
+                    registry, user_id, _parent_cid)
             except Exception as e:
                 logger.warning("[tool-relay] Failed to load dynamic tools: %s", e)
 

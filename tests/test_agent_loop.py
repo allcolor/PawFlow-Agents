@@ -100,7 +100,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
             LLMMessage(role="system", content="You are helpful.", conversation_id="test_conv"),
             LLMMessage(role="user", content="Hi", conversation_id="test_conv"),
         ]
-        result = self.client._build_openai_messages(messages)
+        result = self.client._build_openai_messages(
+            messages, user_id="u", conversation_id="test_conv")
         assert len(result) == 2
         assert result[0] == {"role": "system", "content": "You are helpful."}
         assert result[1] == {"role": "user", "content": "Hi"}
@@ -108,7 +109,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
     def test_openai_tool_call_message(self):
         tc = LLMToolCall(id="call_1", name="search", arguments={"q": "test"})
         msg = LLMMessage(role="assistant", content="", tool_calls=[tc], conversation_id="test_conv")
-        result = self.client._build_openai_messages([msg])
+        result = self.client._build_openai_messages(
+            [msg], user_id="u", conversation_id="test_conv")
         assert result[0]["role"] == "assistant"
         assert len(result[0]["tool_calls"]) == 1
         assert result[0]["tool_calls"][0]["id"] == "call_1"
@@ -123,7 +125,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
             role="assistant", content="Let me search",
             tool_calls=[LLMToolCall(id="call_1", name="search", arguments={"q": "test"})], conversation_id="test_conv")
         tool_msg = LLMMessage(role="tool", content="result", tool_call_id="call_1", conversation_id="test_conv")
-        result = self.client._build_openai_messages([assistant_msg, tool_msg])
+        result = self.client._build_openai_messages(
+            [assistant_msg, tool_msg], user_id="u", conversation_id="test_conv")
         assert result[1]["role"] == "tool"
         assert result[1]["content"] == "result"
         assert result[1]["tool_call_id"] == "call_1"
@@ -131,7 +134,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
     def test_openai_orphan_tool_message_dropped(self):
         # Orphan tool message (no matching assistant tool_call) should be filtered out
         msg = LLMMessage(role="tool", content="result", tool_call_id="orphan_1", conversation_id="test_conv")
-        result = self.client._build_openai_messages([msg])
+        result = self.client._build_openai_messages(
+            [msg], user_id="u", conversation_id="test_conv")
         assert len(result) == 0
 
     def test_anthropic_simple_messages(self):
@@ -141,7 +145,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
             LLMMessage(role="user", content="Hello", conversation_id="test_conv"),
             LLMMessage(role="assistant", content="Hi!", conversation_id="test_conv"),
         ]
-        system_text, api_msgs = client._build_anthropic_messages(messages)
+        system_text, api_msgs = client._build_anthropic_messages(
+            messages, user_id="u", conversation_id="test_conv")
         assert system_text == "System prompt"
         assert len(api_msgs) == 2
         assert api_msgs[0] == {"role": "user", "content": "Hello"}
@@ -151,7 +156,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         tc = LLMToolCall(id="tu_1", name="calc", arguments={"x": 5})
         msg = LLMMessage(role="assistant", content="Let me calculate.", tool_calls=[tc], conversation_id="test_conv")
-        _, api_msgs = client._build_anthropic_messages([msg])
+        _, api_msgs = client._build_anthropic_messages(
+            [msg], user_id="u", conversation_id="test_conv")
         assert len(api_msgs) == 1
         content_blocks = api_msgs[0]["content"]
         assert content_blocks[0]["type"] == "text"
@@ -163,7 +169,8 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
     def test_anthropic_tool_result_message(self):
         client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         msg = LLMMessage(role="tool", content="result=10", tool_call_id="tu_1", conversation_id="test_conv")
-        _, api_msgs = client._build_anthropic_messages([msg])
+        _, api_msgs = client._build_anthropic_messages(
+            [msg], user_id="u", conversation_id="test_conv")
         assert api_msgs[0]["role"] == "user"
         content = api_msgs[0]["content"]
         assert content[0]["type"] == "tool_result"

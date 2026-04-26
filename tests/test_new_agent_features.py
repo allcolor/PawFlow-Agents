@@ -401,25 +401,34 @@ class GreeterHandler(ToolHandler):
 class TestCreateToolHandler(unittest.TestCase):
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        from core.dynamic_tool_store import DynamicToolStore
+        import core.paths as _paths
+        from pathlib import Path
         from core.tool_registry import ToolRegistry
-        DynamicToolStore.reset()
-        self.dts = DynamicToolStore(store_dir=self.tmp)
-        DynamicToolStore._instance = self.dts
+        from core.repository import ScopedRepository
+        from core.resource_store import ResourceStore
+        self.tmp = tempfile.mkdtemp()
+        self._old_repo = _paths.REPOSITORY_DIR
+        _paths.REPOSITORY_DIR = Path(self.tmp)
+        ScopedRepository.reset()
+        ResourceStore.reset()
         self._old_live = ToolRegistry._live_registry
         ToolRegistry._live_registry = ToolRegistry()
 
     def tearDown(self):
-        from core.dynamic_tool_store import DynamicToolStore
+        import core.paths as _paths
         from core.tool_registry import ToolRegistry
+        from core.repository import ScopedRepository
+        from core.resource_store import ResourceStore
         ToolRegistry._live_registry = self._old_live
-        DynamicToolStore.reset()
+        _paths.REPOSITORY_DIR = self._old_repo
+        ScopedRepository.reset()
+        ResourceStore.reset()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_create_tool_basic(self):
         h = CreateToolHandler()
         h.set_user_id("alice")
+        h.set_conversation_id("c1")
         result = h.execute({
             "tool_name": "greeter",
             "code": _VALID_TOOL_SOURCE, "tool_description": "Test tool",
@@ -429,41 +438,40 @@ class TestCreateToolHandler(unittest.TestCase):
 
     def test_create_tool_missing_fields(self):
         h = CreateToolHandler()
+        h.set_conversation_id("c1")
         result = h.execute({"tool_name": "", "code": "", "tool_description": "Test tool"})
         self.assertIn("Error", result)
 
-    def test_create_tool_bad_source(self):
+    def test_create_tool_bad_source_rejected(self):
         h = CreateToolHandler()
         h.set_user_id("alice")
+        h.set_conversation_id("c1")
         bad_source = "import os\nos.system('rm -rf /')\n"
         result = h.execute({
             "tool_name": "evil",
             "code": bad_source, "tool_description": "Test tool",
         })
-        # Dynamic tools are registered without source validation
-        # (validation happens at execution time in the sandbox)
-        self.assertIn("created and registered", result)
+        self.assertIn("Error", result)
 
-    def test_create_tool_no_handler(self):
+    def test_create_tool_no_handler_rejected(self):
         h = CreateToolHandler()
         h.set_user_id("alice")
-        source = "x = 42\n"
+        h.set_conversation_id("c1")
         result = h.execute({
             "tool_name": "nohandler",
-            "code": source, "tool_description": "Test tool",
+            "code": "x = 42\n", "tool_description": "Test tool",
         })
-        # Code without a handler class still registers (runs as script)
-        self.assertIn("created and registered", result)
+        self.assertIn("Error", result)
 
     def test_create_tool_user_isolation(self):
         from core.tool_registry import ToolRegistry
         h = CreateToolHandler()
         h.set_user_id("bob")
+        h.set_conversation_id("c1")
         h.execute({
             "tool_name": "mytool",
             "code": _VALID_TOOL_SOURCE, "tool_description": "Test tool",
         })
-        # Verify tool is registered in the live registry
         registry = ToolRegistry._live_registry
         self.assertIsNotNone(registry.get("mytool"))
 

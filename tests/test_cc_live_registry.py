@@ -166,6 +166,30 @@ def test_per_turn_touch_prevents_idle_eviction(reg):
     assert reg.get(key) is s
 
 
+def test_reuse_entry_touch_prevents_eviction_in_init_window(reg):
+    # Repro of the second sweeper eviction bug: a session whose previous
+    # stream ended >idle_ttl ago is REUSED (caller does get(key)) and
+    # the new stream needs >0s to emit its first turn (CC init, slow
+    # tool reply). If the caller does NOT touch at REUSE entry, the
+    # sweeper will fire in the init window and evict the still-alive
+    # session, surfacing as a hard-fail mid-stream.
+    #
+    # Contract under test: touch(key) at REUSE entry resets last_used
+    # AND bumps reuse_count, closing the race.
+    key = ("u", "c", "a", "svc", 0)
+    s = _mk_session(last_used_offset=1830.0)  # last touch 1830s ago
+    reg.register(key, s)
+    # The caller's REUSE flow: get + touch (bump_reuse=True default).
+    got = reg.get(key)
+    assert got is s
+    reg.touch(key)
+    # Sweeper ticks BEFORE any per-turn flush — must keep the session.
+    killed = reg.sweep_idle(idle_ttl_seconds=1800)
+    assert killed == 0
+    assert reg.get(key) is s
+    assert s.reuse_count == 1
+
+
 # ── evict / kill_and_evict ─────────────────────────────────────
 
 

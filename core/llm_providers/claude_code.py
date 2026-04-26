@@ -1097,6 +1097,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             _live_key = (user_id, conv_id, agent_name or 'default',
                          _svc_id, _svc_pool_idx)
             _live_session = _live_reg.get(_live_key)
+            if _live_session is not None:
+                # Bump reuse_count for the new stream call. The idle
+                # invariant is handled by the stdout reader daemon
+                # (per-line touch) so we don't need to bump last_used
+                # for that here — but touch() does it anyway, which
+                # closes the tiny window between get() and the first
+                # incoming line as a defence-in-depth.
+                _live_reg.touch(_live_key)
         _is_reuse = _live_session is not None
 
         if _is_reuse:
@@ -1546,20 +1554,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # EOF nudger in _stall_watchdog uses this as its silence
             # threshold anchor.
             _hb_state["last_turn_flush_ts"] = time.monotonic()
-            # Keep the cc-live idle timer fresh per-turn. Without this,
-            # the sweeper evicts active sessions whose last_used hadn't
-            # been bumped since stream-call start (touch is otherwise
-            # only called on REUSE entry / end-of-stream). bump_reuse=
-            # False so the per-turn keep-alive doesn't pollute the
-            # reuse counter. No-op for NEW path before end-of-stream
-            # register, which is fine — that path's register sets
-            # last_used = now anyway.
-            if _live_key is not None:
-                try:
-                    _live_reg.touch(_live_key, bump_reuse=False)
-                except Exception:
-                    logger.debug(
-                        "cc-live touch (per-turn) failed", exc_info=True)
+            # cc-live idle is reset by the stdout reader daemon on every
+            # line received — see the touch in _reader_daemon. No need
+            # for a per-turn touch here.
             # Phantom-only turn: CC emitted a tool_call we dropped at
             # phantom detection (typo in param name, empty bash command,
             # whitespace-only args) AND nothing else. Without `text` or
@@ -1882,6 +1879,21 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             break
                         _hb_state["stream_line_count"] += 1
                         _hb_state["last_event_ts"] = time.monotonic()
+                        # Reset cc-live idle on EVERY line received from
+                        # CC's stdout. This is the simplest correct
+                        # invariant: any byte coming back from CC means
+                        # the session is actively streaming — the idle
+                        # sweeper must not race with any in-flight
+                        # turn, init handshake, slow tool reply, long
+                        # thinking block, etc. bump_reuse=False because
+                        # one stream call is one logical reuse — the
+                        # counter is bumped at REUSE entry, not per
+                        # line.
+                        if _live_key is not None:
+                            try:
+                                _live_reg.touch(_live_key, bump_reuse=False)
+                            except Exception:
+                                pass
                         _line = _line.strip()
                         if not _line:
                             continue
@@ -2869,9 +2881,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 # Retain proc + reader + pool container for reuse. Skip
                 # _cleanup_proc / pool release / token revoke — those are
                 # lifecycle-scoped to the live session, not the turn.
+                # The reader daemon's per-line touch already keeps
+                # last_used fresh — no end-of-stream touch needed.
                 try:
                     if _is_reuse:
-                        _live_reg.touch(_live_key)
+                        pass  # nothing to do; reader keeps last_used fresh
                     else:
                         # CC's session_id captured during this stream's
                         # init event (line 1908) AND/OR returned in the

@@ -285,9 +285,12 @@ class LLMCodexMixin:
         codex_args: List[str] = ["exec"]
         if existing_sid:
             codex_args.extend(["resume", existing_sid])
+        # `--sandbox` is rejected by `codex exec resume` (which we use for
+        # warm-thread continuation). `--dangerously-bypass-approvals-and-sandbox`
+        # already disables the sandbox completely, so `--sandbox` is redundant
+        # in either path — drop it.
         codex_args.extend([
             "--json",
-            "--sandbox", "danger-full-access",
             "--skip-git-repo-check",
             "--dangerously-bypass-approvals-and-sandbox",
             "--model", model or self._codex_default_model_for_pool(),

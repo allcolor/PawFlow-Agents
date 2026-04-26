@@ -351,6 +351,7 @@ class LLMCodexMixin:
                 conv_id=conv_id, agent_name=agent_name,
                 callback=callback, thinking_callback=thinking_callback,
                 turn_callback=turn_callback, block_callback=block_callback,
+                prompt_chars=len(prompt_payload or ""),
             )
             # Successful turn — keep the container warm for the next one.
             live.register(live_key, container, host_workdir, service_id=service_id)
@@ -375,7 +376,8 @@ class LLMCodexMixin:
     def _consume_codex_stream(self, proc, *,
                                  model: str, conv_id: str, agent_name: str,
                                  callback, thinking_callback,
-                                 turn_callback, block_callback) -> "LLMResponse":
+                                 turn_callback, block_callback,
+                                 prompt_chars: int = 0) -> "LLMResponse":
         from core.llm_client import LLMResponse, LLMClientError, CCCompactDetected
 
         text_chunks: List[str] = []
@@ -522,17 +524,26 @@ class LLMCodexMixin:
                         _emit_tool_result(tc_id, name, result)
             elif etype == "turn.completed":
                 _u = event.get("usage", {}) or {}
-                # OpenAI Responses semantics: cached_input_tokens is a SUBSET
-                # of input_tokens (the cached portion priced lower), not
-                # additive. Adding both double-counted the cached chunk.
+                # Codex's `input_tokens` is the SUM of every internal
+                # iteration's prompt across the turn (each tool call replays
+                # the prompt, so 10 tool calls ≈ 10× the prompt size).
+                # Useful for billing, NOT a context-size signal — a 5-message
+                # conv shows 1.2M because of the iteration sum, not because
+                # the conv is huge. For the gauge we estimate context size
+                # from the prompt we sent (chars/3.5 ≈ tokens), which scales
+                # with the actual conversation history.
                 _input = int(_u.get("input_tokens", 0) or 0)
                 _cached = int(_u.get("cached_input_tokens", 0) or 0)
                 _output = int(_u.get("output_tokens", 0) or 0)
                 usage["input_tokens"] = _input
                 usage["cached_input_tokens"] = _cached
                 usage["output_tokens"] = _output
-                usage["_total_used"] = _input  # gauge: full prompt size
-                used = _input
+                usage["billing_input_tokens"] = _input  # for cost reporting
+                # Gauge basis: our serialized prompt size, with a small fixed
+                # overhead for codex's own system prompt + MCP tool registry.
+                _gauge_used = int(prompt_chars / 3.5) + 8000
+                usage["_total_used"] = _gauge_used
+                used = _gauge_used
                 if ctx_window > 0 and used >= int(ctx_window * _PAWFLOW_COMPACT_THRESHOLD):
                     logger.warning(
                         "[codex] usage %d/%d crossed PawFlow compact threshold (%d%%) — will signal compact",
@@ -558,11 +569,12 @@ class LLMCodexMixin:
         if thread_id:
             self._codex_persist_session_id(conv_id, agent_name, thread_id)
 
-        # tokens_in = total prompt tokens for this turn (the cached_input_tokens
-        # field is the cached PORTION of input_tokens, not an additive bucket).
+        # tokens_in feeds the context gauge — use our prompt-based estimate
+        # (`_total_used`), NOT codex's `input_tokens` which sums every internal
+        # iteration's prompt and overstates the actual context size by 5–10x.
         response = LLMResponse(
             content="\n".join(text_chunks).strip(),
-            tokens_in=usage.get("input_tokens", 0),
+            tokens_in=usage.get("_total_used", 0) or usage.get("input_tokens", 0),
             tokens_out=usage.get("output_tokens", 0),
             finish_reason=finish_reason,
             model=model,

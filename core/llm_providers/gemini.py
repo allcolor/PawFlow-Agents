@@ -295,6 +295,7 @@ class LLMGeminiMixin:
                 conv_id=conv_id, agent_name=agent_name,
                 callback=callback, thinking_callback=thinking_callback,
                 turn_callback=turn_callback, block_callback=block_callback,
+                prompt_chars=len(prompt_payload or ""),
             )
             live.register(live_key, container, host_workdir, service_id=service_id)
             live.touch(live_key, bump_reuse=True)
@@ -316,7 +317,8 @@ class LLMGeminiMixin:
     def _consume_gemini_stream(self, proc, *,
                                   model: str, conv_id: str, agent_name: str,
                                   callback, thinking_callback,
-                                  turn_callback, block_callback) -> "LLMResponse":
+                                  turn_callback, block_callback,
+                                  prompt_chars: int = 0) -> "LLMResponse":
         from core.llm_client import LLMResponse, LLMClientError, CCCompactDetected
 
         text_chunks: List[str] = []
@@ -420,13 +422,17 @@ class LLMGeminiMixin:
                     sum_in = int(_u.get("input_tokens", 0) or 0)
                     sum_out = int(_u.get("output_tokens", 0) or 0)
                     sum_cached = int(_u.get("cached_input_tokens", 0) or 0)
-                # cached_input_tokens is a subset of input_tokens (priced lower),
-                # not an additive bucket — don't add them when computing context use.
+                # Same caveat as codex: gemini's `input_tokens` here is the
+                # SUM across internal iterations, not a context-size signal.
+                # Estimate gauge from the prompt we sent + 8k overhead for
+                # gemini's own system prompt + MCP tool registry.
                 usage["input_tokens"] = sum_in
                 usage["cached_input_tokens"] = sum_cached
                 usage["output_tokens"] = sum_out
-                usage["_total_used"] = sum_in
-                used = sum_in
+                usage["billing_input_tokens"] = sum_in
+                _gauge_used = int(prompt_chars / 3.5) + 8000
+                usage["_total_used"] = _gauge_used
+                used = _gauge_used
                 if ctx_window > 0 and used >= int(ctx_window * _PAWFLOW_COMPACT_THRESHOLD):
                     logger.warning(
                         "[gemini] usage %d/%d crossed PawFlow compact threshold (%d%%) — will signal compact",
@@ -446,11 +452,11 @@ class LLMGeminiMixin:
         if session_id:
             self._gemini_persist_session_id(conv_id, agent_name, session_id)
 
-        # tokens_in = total prompt tokens for this turn (cached_input_tokens is
-        # the cached portion of input_tokens, not additive).
+        # tokens_in feeds the gauge — use our prompt-based estimate, not
+        # gemini's iteration-summed `input_tokens` (same reason as codex).
         response = LLMResponse(
             content="".join(text_chunks).strip(),
-            tokens_in=usage.get("input_tokens", 0),
+            tokens_in=usage.get("_total_used", 0) or usage.get("input_tokens", 0),
             tokens_out=usage.get("output_tokens", 0),
             finish_reason=finish_reason,
             model=model,

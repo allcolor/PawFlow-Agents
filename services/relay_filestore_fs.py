@@ -1,18 +1,32 @@
 """RelayFileStoreFs — virtualized read-only FUSE proxy for the FileStore.
 
-Maps the (content-addressed) FileStore to a hierarchical FS layout the
-relay can mount via FUSE:
+Maps the FileStore to a hierarchical FS layout the relay can mount via
+FUSE, organised conversation-first so each linked conv is its own
+sub-tree:
 
-    /                          → directory listing all file_ids the
-                                  relay's owner user can access.
-    /<file_id>                 → directory containing exactly one entry,
-                                  the file's original filename.
-    /<file_id>/<filename>      → the file content (read-only).
+    /                                       → directory listing every
+                                              conv_id that has at least
+                                              one file owned by the
+                                              relay's user.
+    /<conv_id>                              → directory listing every
+                                              file_id stored under that
+                                              conv (and accessible to
+                                              the user).
+    /<conv_id>/<file_id>                    → directory containing one
+                                              entry, the file's
+                                              original filename.
+    /<conv_id>/<file_id>/<filename>         → the file content
+                                              (read-only).
+
+The conv-first layout matches the on-disk FileStore layout
+(`data/runtime/files/<user_id>/<conv_id>/...`) and makes it cheap for
+downstream tools to bind-mount a single conv subtree if they only need
+one. Cross-conv access is still possible by walking up to the root.
 
 Write/create/unlink/rename/etc. all return EROFS — files are managed
 via the FileStore HTTP/MCP APIs, not via the FUSE mount. This avoids
-the ambiguity of "how do you cp into /<NEW_id>/foo when the id
-is assigned by FileStore.store()?".
+the ambiguity of "how do you cp into /<conv_id>/<NEW_id>/foo when the
+id is assigned by FileStore.store()?".
 
 Protocol (over the existing /ws/relay/<id> WebSocket, methods prefixed
 with `ffs.` to disambiguate from the cc-sessions sfs.* protocol):
@@ -101,28 +115,36 @@ class RelayFileStoreFs:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _split_path(path: str) -> Tuple[str, str]:
-        """Return (file_id, filename). Empty strings for upper levels.
+    def _split_path(path: str) -> Tuple[str, str, str]:
+        """Return (conv_id, file_id, filename). Empty strings for upper levels.
 
-        '/' → ('', '')           root
-        '/<fid>' → (fid, '')     file_id directory
-        '/<fid>/<name>' → (fid, name)  the file
+        '/' → ('', '', '')                    root
+        '/<conv>' → (conv, '', '')            conversation directory
+        '/<conv>/<fid>' → (conv, fid, '')     file_id directory
+        '/<conv>/<fid>/<name>' → (conv, fid, name)   the file
         Anything else → raises FileNotFoundError.
         """
         if path is None:
             raise FileNotFoundError("path is required")
         if not path or path == "/":
-            return ("", "")
+            return ("", "", "")
         parts = path.strip("/").split("/")
         if len(parts) == 1:
-            return (parts[0], "")
+            return (parts[0], "", "")
         if len(parts) == 2:
-            return (parts[0], parts[1])
+            return (parts[0], parts[1], "")
+        if len(parts) == 3:
+            return (parts[0], parts[1], parts[2])
         raise FileNotFoundError(f"path too deep: {path!r}")
 
-    def _entry_for(self, file_id: str) -> Optional[Dict[str, Any]]:
-        """Return the FileStore metadata if file_id is accessible, else None."""
-        if not file_id:
+    def _entry_for(self, conv_id: str, file_id: str) -> Optional[Dict[str, Any]]:
+        """Return metadata if file_id is accessible AND lives under conv_id.
+
+        The conv check is what gives us per-conv isolation: a file_id
+        from conv A surfaced through `/<convB>/<file_id>/...` returns
+        ENOENT instead of leaking the bytes.
+        """
+        if not conv_id or not file_id:
             return None
         fs = FileStore.instance()
         meta = fs.get_metadata(file_id)
@@ -130,13 +152,32 @@ class RelayFileStoreFs:
             return None
         if not fs.check_access(file_id, user_id=self._user_id):
             return None
+        if meta.get("conversation_id", "") != conv_id:
+            return None
         return meta
 
-    def _list_accessible_ids(self) -> list:
-        """Return sorted list of file_ids visible to the user."""
+    def _list_user_convs(self) -> list:
+        """Return sorted list of conv_ids that have at least one user file."""
         fs = FileStore.instance()
         rows = fs.list_files(user_id=self._user_id, include_internal=False)
+        return sorted({r.get("conversation_id", "") for r in rows
+                       if r.get("conversation_id", "")})
+
+    def _list_files_in_conv(self, conv_id: str) -> list:
+        """Return sorted list of file_ids in `conv_id` accessible to the user."""
+        if not conv_id:
+            return []
+        fs = FileStore.instance()
+        rows = fs.list_files(user_id=self._user_id,
+                              conversation_id=conv_id,
+                              include_internal=False)
         return sorted(r["file_id"] for r in rows)
+
+    def _total_user_file_count(self) -> int:
+        """Sum of files visible to the user, across every conv (for statfs)."""
+        fs = FileStore.instance()
+        rows = fs.list_files(user_id=self._user_id, include_internal=False)
+        return sum(1 for r in rows if r.get("conversation_id", ""))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -216,30 +257,46 @@ class RelayFileStoreFs:
         }
 
     def _op_getattr(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        file_id, filename = self._split_path(args.get("path", ""))
-        if not file_id:
+        conv_id, file_id, filename = self._split_path(args.get("path", ""))
+        if not conv_id:
+            # root
             return {"data": self._dir_attrs()}
-        entry = self._entry_for(file_id)
+        if not file_id:
+            # /<conv>
+            if conv_id not in self._list_user_convs():
+                raise FileNotFoundError(f"unknown conv_id={conv_id!r}")
+            return {"data": self._dir_attrs()}
+        entry = self._entry_for(conv_id, file_id)
         if entry is None:
-            raise FileNotFoundError(f"unknown file_id={file_id!r}")
+            raise FileNotFoundError(
+                f"unknown file_id={file_id!r} under conv={conv_id!r}")
         if not filename:
+            # /<conv>/<file_id>
             return {"data": self._dir_attrs(
                 mtime=float(entry.get("created_at", 0) or 0))}
         if filename != entry["filename"]:
             raise FileNotFoundError(
-                f"filename mismatch under {file_id}: "
+                f"filename mismatch under {conv_id}/{file_id}: "
                 f"got {filename!r}, expected {entry['filename']!r}")
         return {"data": self._file_attrs(entry)}
 
     def _op_readdir(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        file_id, filename = self._split_path(args.get("path", ""))
+        conv_id, file_id, filename = self._split_path(args.get("path", ""))
         if filename:
             raise NotADirectoryError(f"not a directory: {args.get('path')!r}")
+        if not conv_id:
+            # /
+            return {"data": {"entries": self._list_user_convs()}}
         if not file_id:
-            return {"data": {"entries": self._list_accessible_ids()}}
-        entry = self._entry_for(file_id)
+            # /<conv>
+            if conv_id not in self._list_user_convs():
+                raise FileNotFoundError(f"unknown conv_id={conv_id!r}")
+            return {"data": {"entries": self._list_files_in_conv(conv_id)}}
+        # /<conv>/<file_id>
+        entry = self._entry_for(conv_id, file_id)
         if entry is None:
-            raise FileNotFoundError(f"unknown file_id={file_id!r}")
+            raise FileNotFoundError(
+                f"unknown file_id={file_id!r} under conv={conv_id!r}")
         return {"data": {"entries": [entry["filename"]]}}
 
     def _op_open(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -247,15 +304,16 @@ class RelayFileStoreFs:
         if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC):
             return _errno_response(errno.EROFS,
                                     "FileStore FUSE is read-only")
-        file_id, filename = self._split_path(args.get("path", ""))
-        if not file_id or not filename:
+        conv_id, file_id, filename = self._split_path(args.get("path", ""))
+        if not conv_id or not file_id or not filename:
             raise FileNotFoundError(f"open: not a file path: {args.get('path')!r}")
-        entry = self._entry_for(file_id)
+        entry = self._entry_for(conv_id, file_id)
         if entry is None:
-            raise FileNotFoundError(f"unknown file_id={file_id!r}")
+            raise FileNotFoundError(
+                f"unknown file_id={file_id!r} under conv={conv_id!r}")
         if filename != entry["filename"]:
             raise FileNotFoundError(
-                f"filename mismatch under {file_id}: got {filename!r}")
+                f"filename mismatch under {conv_id}/{file_id}: got {filename!r}")
         disk_path = FileStore.instance().get_disk_path(
             file_id, user_id=self._user_id)
         if disk_path is None:
@@ -307,7 +365,7 @@ class RelayFileStoreFs:
             "f_blocks": 0,
             "f_bfree": 0,
             "f_bavail": 0,
-            "f_files": len(self._list_accessible_ids()),
+            "f_files": self._total_user_file_count(),
             "f_ffree": 0,
             "f_favail": 0,
             "f_namemax": 255,

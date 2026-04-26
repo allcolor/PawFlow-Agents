@@ -239,20 +239,32 @@ virtualized FUSE hierarchy. Methods come in with the `ffs.` prefix
 and `services/filesystem_service.py:_handle_relay_request` dispatches
 them to `RelayFileStoreFs` instead of `RelayServerFs`.
 
-Layout (read-only):
+Layout (read-only, conv-first):
 
 ```
-/                          → dir, lists every file_id visible to the
-                              relay's owner user.
-/<file_id>                 → dir containing one file.
-/<file_id>/<filename>      → the file content.
+/                                 → dir, lists every conv_id that has
+                                    at least one file owned by the
+                                    relay's user.
+/<conv_id>                        → dir, lists every file_id stored
+                                    under that conv (and accessible to
+                                    the user).
+/<conv_id>/<file_id>              → dir containing one file.
+/<conv_id>/<file_id>/<filename>   → the file content.
 ```
+
+The conv-first layout matches the on-disk FileStore (`data/runtime/
+files/<user_id>/<conv_id>/<bucket>/<file_id>_<filename>`). It gives
+per-conv isolation while keeping a single FUSE mount per relay — a
+relay can be linked to N conversations and each appears as its own
+sub-tree without spawning N mountpoints. A file_id from conv A
+surfaced through `/<convB>/<file_id>` returns ENOENT, even when both
+convs belong to the same user.
 
 Writes (`ffs.create`, `ffs.write`, `ffs.unlink`, ...) all return EROFS
 — the `file_id` would have to be assigned by `FileStore.store()`
 before the path could exist, so there is no sensible mapping for `cp
-foo.txt /filestore/<NEW>/`. Use the FileStore HTTP/MCP APIs for the
-write path.
+foo.txt /filestore/<conv>/<NEW>/`. Use the FileStore HTTP/MCP APIs
+for the write path.
 
 The relay-side mount is started by `pawflow_relay/worker.py` when
 `--filestore-mount /filestore` (or `PAWFLOW_FILESTORE_MOUNT`) is set,
@@ -266,7 +278,7 @@ relay docker startup in `pawflow_relay/thread.py` already passes
 - `services/relay_server_fs.py` — server handler (sfs.*)
 - `services/relay_filestore_fs.py` — server handler (ffs.*, RO virtualized)
 - `tests/test_relay_server_fs.py` — 24 sandbox/op tests
-- `tests/test_relay_filestore_fs.py` — 24 path/op/access-scope tests
+- `tests/test_relay_filestore_fs.py` — 35 path/op/access-scope tests (incl. per-conv isolation)
 - `services/filesystem_service.py:_handle_relay_request` — prefix dispatch
 - `pawflow_relay/server_fs_client.py` — relay-side request/response correlator
 - `pawflow_relay/server_fs_mount.py` — FUSE proxy (lazy pyfuse3 import,

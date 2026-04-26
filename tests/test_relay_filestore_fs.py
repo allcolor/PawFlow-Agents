@@ -1,12 +1,18 @@
 """Tests for RelayFileStoreFs — virtualized FileStore FUSE handler.
 
+Layout under test:
+    /                           → list of conv_ids
+    /<conv>                     → list of file_ids in that conv
+    /<conv>/<fid>               → dir holding [filename]
+    /<conv>/<fid>/<filename>    → file content
+
 Coverage:
-- Path parsing (root, /<fid>, /<fid>/<name>, deep paths refused)
-- Method allowlist (unknown / write methods refused with ENOSYS or EROFS)
-- Visibility scoped to the constructed user_id
-- Cross-user isolation (one user can't read another's files)
+- Path parsing across the four levels, deep paths refused
+- Method allowlist (unknown / write methods refused ENOSYS or EROFS)
+- Per-user scope (cross-user isolation)
+- Per-conv scope (a file_id from conv A is not reachable through conv B)
 - File open/read/release on real disk via FileStore.get_disk_path
-- statfs always succeeds with f_files = visible count
+- statfs always succeeds with f_files = total visible count
 """
 
 import base64
@@ -30,12 +36,16 @@ class _FsCase(unittest.TestCase):
         self.store = FileStore(base_dir=str(Path(self._tmp.name) / "files"))
         FileStore._instance = self.store
 
+        # alice has files in TWO convs to exercise the conv-first layout.
         self.alice_id_1 = self.store.store(
             "hello.txt", b"hello from alice", "text/plain",
             user_id="alice", conversation_id="convA")
         self.alice_id_2 = self.store.store(
             "data.bin", b"\x00\x01\x02", "application/octet-stream",
             user_id="alice", conversation_id="convA")
+        self.alice_id_other_conv = self.store.store(
+            "notes.md", b"# alice in convOther", "text/markdown",
+            user_id="alice", conversation_id="convOther")
         self.bob_id = self.store.store(
             "secret.txt", b"bob private", "text/plain",
             user_id="bob", conversation_id="convB")
@@ -58,22 +68,27 @@ class TestConstruction(unittest.TestCase):
 class TestPathParsing(unittest.TestCase):
 
     def test_root(self):
-        self.assertEqual(RelayFileStoreFs._split_path("/"), ("", ""))
-        self.assertEqual(RelayFileStoreFs._split_path(""), ("", ""))
+        self.assertEqual(RelayFileStoreFs._split_path("/"), ("", "", ""))
+        self.assertEqual(RelayFileStoreFs._split_path(""), ("", "", ""))
 
-    def test_one_level(self):
-        self.assertEqual(RelayFileStoreFs._split_path("/abc123"),
-                         ("abc123", ""))
-        self.assertEqual(RelayFileStoreFs._split_path("abc123"),
-                         ("abc123", ""))
+    def test_conv_level(self):
+        self.assertEqual(RelayFileStoreFs._split_path("/convA"),
+                         ("convA", "", ""))
+        self.assertEqual(RelayFileStoreFs._split_path("convA"),
+                         ("convA", "", ""))
 
-    def test_two_levels(self):
-        self.assertEqual(RelayFileStoreFs._split_path("/abc/foo.txt"),
-                         ("abc", "foo.txt"))
+    def test_file_id_level(self):
+        self.assertEqual(RelayFileStoreFs._split_path("/convA/abc123"),
+                         ("convA", "abc123", ""))
+
+    def test_file_leaf(self):
+        self.assertEqual(
+            RelayFileStoreFs._split_path("/convA/abc/foo.txt"),
+            ("convA", "abc", "foo.txt"))
 
     def test_deep_path_refused(self):
         with self.assertRaises(FileNotFoundError):
-            RelayFileStoreFs._split_path("/a/b/c")
+            RelayFileStoreFs._split_path("/a/b/c/d")
 
 
 class TestGetattr(_FsCase):
@@ -83,60 +98,107 @@ class TestGetattr(_FsCase):
         self.assertIn("data", r)
         self.assertTrue(_stat.S_ISDIR(r["data"]["st_mode"]))
 
+    def test_known_conv_is_dir(self):
+        r = self.fs.handle("ffs.getattr", {"path": "/convA"})
+        self.assertIn("data", r)
+        self.assertTrue(_stat.S_ISDIR(r["data"]["st_mode"]))
+
+    def test_unknown_conv_enoent(self):
+        r = self.fs.handle("ffs.getattr", {"path": "/no_such_conv"})
+        self.assertEqual(r.get("error"), "ENOENT")
+
     def test_known_file_id_is_dir(self):
-        r = self.fs.handle("ffs.getattr", {"path": f"/{self.alice_id_1}"})
+        r = self.fs.handle("ffs.getattr",
+                           {"path": f"/convA/{self.alice_id_1}"})
         self.assertIn("data", r)
         self.assertTrue(_stat.S_ISDIR(r["data"]["st_mode"]))
 
     def test_known_file_is_regular(self):
         r = self.fs.handle("ffs.getattr",
-                           {"path": f"/{self.alice_id_1}/hello.txt"})
+                           {"path": f"/convA/{self.alice_id_1}/hello.txt"})
         self.assertIn("data", r)
         self.assertTrue(_stat.S_ISREG(r["data"]["st_mode"]))
         self.assertEqual(r["data"]["st_size"], len(b"hello from alice"))
 
     def test_unknown_file_id_enoent(self):
-        r = self.fs.handle("ffs.getattr", {"path": "/zzzzzzzzzzzz"})
+        r = self.fs.handle("ffs.getattr",
+                           {"path": "/convA/zzzzzzzzzzzz"})
         self.assertEqual(r.get("error"), "ENOENT")
 
     def test_wrong_filename_enoent(self):
         r = self.fs.handle("ffs.getattr",
-                           {"path": f"/{self.alice_id_1}/wrong.txt"})
+                           {"path": f"/convA/{self.alice_id_1}/wrong.txt"})
+        self.assertEqual(r.get("error"), "ENOENT")
+
+    def test_other_users_conv_invisible(self):
+        r = self.fs.handle("ffs.getattr", {"path": "/convB"})
         self.assertEqual(r.get("error"), "ENOENT")
 
     def test_other_users_file_invisible(self):
-        r = self.fs.handle("ffs.getattr", {"path": f"/{self.bob_id}"})
+        # Even guessing the file_id, the path is unreachable: no convB
+        # entry in alice's listing, so getattr stops at the conv level.
+        r = self.fs.handle("ffs.getattr",
+                           {"path": f"/convB/{self.bob_id}/secret.txt"})
+        self.assertEqual(r.get("error"), "ENOENT")
+
+    def test_file_id_from_wrong_conv_enoent(self):
+        # alice_id_1 lives under convA; surfacing it through convOther
+        # must NOT leak the file just because the user owns both convs.
+        r = self.fs.handle("ffs.getattr",
+                           {"path": f"/convOther/{self.alice_id_1}"})
         self.assertEqual(r.get("error"), "ENOENT")
 
 
 class TestReaddir(_FsCase):
 
-    def test_root_lists_only_user_files(self):
+    def test_root_lists_user_convs(self):
         r = self.fs.handle("ffs.readdir", {"path": "/"})
         self.assertIn("data", r)
         entries = set(r["data"]["entries"])
-        self.assertIn(self.alice_id_1, entries)
-        self.assertIn(self.alice_id_2, entries)
-        self.assertNotIn(self.bob_id, entries)
+        self.assertEqual(entries, {"convA", "convOther"})
+        self.assertNotIn("convB", entries)  # bob's conv
+
+    def test_conv_lists_only_its_files(self):
+        r = self.fs.handle("ffs.readdir", {"path": "/convA"})
+        self.assertIn("data", r)
+        entries = set(r["data"]["entries"])
+        self.assertEqual(entries, {self.alice_id_1, self.alice_id_2})
+        self.assertNotIn(self.alice_id_other_conv, entries)
+
+    def test_other_conv_lists_its_own(self):
+        r = self.fs.handle("ffs.readdir", {"path": "/convOther"})
+        self.assertIn("data", r)
+        self.assertEqual(r["data"]["entries"], [self.alice_id_other_conv])
+
+    def test_unknown_conv_enoent(self):
+        r = self.fs.handle("ffs.readdir", {"path": "/no_such_conv"})
+        self.assertEqual(r.get("error"), "ENOENT")
 
     def test_file_id_lists_one_filename(self):
-        r = self.fs.handle("ffs.readdir", {"path": f"/{self.alice_id_1}"})
+        r = self.fs.handle("ffs.readdir",
+                           {"path": f"/convA/{self.alice_id_1}"})
         self.assertEqual(r["data"]["entries"], ["hello.txt"])
 
     def test_readdir_on_file_path_enotdir(self):
         r = self.fs.handle("ffs.readdir",
-                           {"path": f"/{self.alice_id_1}/hello.txt"})
+                           {"path": f"/convA/{self.alice_id_1}/hello.txt"})
         self.assertEqual(r.get("error"), "ENOTDIR")
 
-    def test_readdir_unknown_id_enoent(self):
-        r = self.fs.handle("ffs.readdir", {"path": "/deadbeefcafe"})
+    def test_readdir_unknown_file_id_enoent(self):
+        r = self.fs.handle("ffs.readdir",
+                           {"path": "/convA/deadbeefcafe"})
+        self.assertEqual(r.get("error"), "ENOENT")
+
+    def test_readdir_file_id_from_wrong_conv_enoent(self):
+        r = self.fs.handle("ffs.readdir",
+                           {"path": f"/convOther/{self.alice_id_1}"})
         self.assertEqual(r.get("error"), "ENOENT")
 
 
 class TestReadCycle(_FsCase):
 
     def test_open_read_release(self):
-        path = f"/{self.alice_id_1}/hello.txt"
+        path = f"/convA/{self.alice_id_1}/hello.txt"
         r = self.fs.handle("ffs.open", {"path": path,
                                           "flags": os.O_RDONLY})
         self.assertIn("data", r)
@@ -150,26 +212,39 @@ class TestReadCycle(_FsCase):
         self.assertIn("data", r3)
 
     def test_open_write_flags_refused(self):
-        path = f"/{self.alice_id_1}/hello.txt"
+        path = f"/convA/{self.alice_id_1}/hello.txt"
         r = self.fs.handle("ffs.open",
                            {"path": path, "flags": os.O_WRONLY})
         self.assertEqual(r.get("error"), "EROFS")
 
-    def test_open_dir_path_enoent(self):
-        # /<file_id> is a directory in our virtual layout, not a file
-        r = self.fs.handle("ffs.open", {"path": f"/{self.alice_id_1}",
+    def test_open_conv_dir_path_enoent(self):
+        # /<conv> is a directory in our virtual layout, not a file
+        r = self.fs.handle("ffs.open", {"path": "/convA",
                                           "flags": os.O_RDONLY})
-        # split returns (fid, '') → raises FileNotFoundError("not a file")
+        self.assertEqual(r.get("error"), "ENOENT")
+
+    def test_open_file_id_dir_path_enoent(self):
+        # /<conv>/<file_id> is a directory, not a file
+        r = self.fs.handle("ffs.open",
+                           {"path": f"/convA/{self.alice_id_1}",
+                            "flags": os.O_RDONLY})
         self.assertEqual(r.get("error"), "ENOENT")
 
     def test_open_other_users_file_enoent(self):
         r = self.fs.handle("ffs.open",
-                           {"path": f"/{self.bob_id}/secret.txt",
+                           {"path": f"/convB/{self.bob_id}/secret.txt",
+                            "flags": os.O_RDONLY})
+        self.assertEqual(r.get("error"), "ENOENT")
+
+    def test_open_file_id_from_wrong_conv_enoent(self):
+        # alice_id_1 is in convA; trying to open via convOther leaks nothing
+        r = self.fs.handle("ffs.open",
+                           {"path": f"/convOther/{self.alice_id_1}/hello.txt",
                             "flags": os.O_RDONLY})
         self.assertEqual(r.get("error"), "ENOENT")
 
     def test_close_releases_fd(self):
-        path = f"/{self.alice_id_1}/hello.txt"
+        path = f"/convA/{self.alice_id_1}/hello.txt"
         r = self.fs.handle("ffs.open", {"path": path,
                                           "flags": os.O_RDONLY})
         self.assertIn("data", r)
@@ -185,8 +260,8 @@ class TestStatfs(_FsCase):
     def test_statfs_always_succeeds(self):
         r = self.fs.handle("ffs.statfs", {})
         self.assertIn("data", r)
-        # f_files = visible-to-alice count (2)
-        self.assertEqual(r["data"]["f_files"], 2)
+        # f_files = total alice files across convs (2 in convA + 1 in convOther)
+        self.assertEqual(r["data"]["f_files"], 3)
 
 
 class TestMethodAllowlist(_FsCase):

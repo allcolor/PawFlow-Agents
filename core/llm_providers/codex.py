@@ -424,7 +424,12 @@ class LLMCodexMixin:
                 return (tc_id, "shell", args, result)
             return None
 
+        logger.info("[codex-stream] callbacks: block=%s callback=%s thinking=%s turn=%s",
+                    bool(block_callback), bool(callback), bool(thinking_callback), bool(turn_callback))
+
         def _emit_tool_use(tc_id: str, name: str, args: dict):
+            logger.info("[codex-stream] _emit_tool_use tc_id=%s name=%s has_cb=%s",
+                        tc_id[:12], name, bool(block_callback))
             if not block_callback:
                 return
             try:
@@ -444,9 +449,11 @@ class LLMCodexMixin:
                 from core.background_tool import enqueue_cc_tc, _args_hash
                 from core.llm_client import unwrap_mcp_tool
                 _mn, _ma = unwrap_mcp_tool(name, args or {})
+                logger.info("[codex-stream] enqueue_cc_tc tc_id=%s mn=%s ah=%s conv=%s agent=%s",
+                            tc_id[:12], _mn, _args_hash(_ma)[:12], conv_id[:8], agent_name)
                 enqueue_cc_tc(conv_id, agent_name, tc_id, _mn, _args_hash(_ma))
             except Exception as e:
-                logger.debug("[codex] enqueue_cc_tc skipped: %s", e)
+                logger.warning("[codex] enqueue_cc_tc FAILED: %s", e, exc_info=True)
 
         def _emit_tool_result(tc_id: str, name: str, result):
             if not block_callback:

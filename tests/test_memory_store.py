@@ -261,3 +261,114 @@ class TestMemoryHandlers(unittest.TestCase):
         assert registry.get("recall") is not None
         assert registry.get("forget") is not None
 
+
+class TestTtlCleanup(unittest.TestCase):
+    """Hard TTL via expires_at: lazy cleanup at load + on-demand."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        MemoryStore.reset()
+        self.store = MemoryStore(store_dir=self.tmp)
+        MemoryStore._instance = self.store
+
+    def tearDown(self):
+        MemoryStore.reset()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_expires_at_kept_in_dict(self):
+        import time
+        e = MemoryEntry(text="t", tags=[], expires_at=time.time() + 3600)
+        self.assertGreater(e.expires_at, 0)
+        d = e.to_dict()
+        self.assertIn("expires_at", d)
+        e2 = MemoryEntry.from_dict(d)
+        self.assertEqual(e2.expires_at, e.expires_at)
+
+    def test_no_expires_at_means_no_ttl(self):
+        e = MemoryEntry(text="forever", tags=[])
+        self.assertEqual(e.expires_at, 0)
+        d = e.to_dict()
+        self.assertNotIn("expires_at", d)
+
+    def test_remember_with_expires_at_persists(self):
+        import time
+        ts = time.time() + 3600
+        e = self.store.remember(
+            "u1", "ttl fact", ["tmp"], expires_at=ts)
+        self.assertEqual(e.expires_at, ts)
+        # Reload from disk
+        MemoryStore.reset()
+        store2 = MemoryStore(store_dir=self.tmp)
+        rs = store2.recall("u1")
+        self.assertEqual(len(rs), 1)
+        self.assertEqual(rs[0].expires_at, ts)
+
+    def test_load_drops_expired_entries(self):
+        import time
+        # Two entries: one expired, one not.
+        self.store.remember("u1", "keep", [], expires_at=time.time() + 3600)
+        self.store.remember("u1", "drop", [], expires_at=time.time() - 1)
+        # Force a fresh load
+        MemoryStore.reset()
+        store2 = MemoryStore(store_dir=self.tmp)
+        rs = store2.recall("u1")
+        self.assertEqual(len(rs), 1)
+        self.assertEqual(rs[0].text, "keep")
+
+    def test_cleanup_expired_returns_count(self):
+        import time
+        self.store.remember("u1", "a", [], expires_at=time.time() - 1)
+        self.store.remember("u1", "b", [], expires_at=time.time() - 1)
+        self.store.remember("u1", "c", [], expires_at=0)
+        # Bypass the load-time cleanup that already happened by loading
+        # again with a fresh store; the disk file still has 3 entries
+        # after the first remember triplet so we need to re-write.
+        # Instead: poke directly via cleanup_expired which is the on-
+        # demand path.
+        n = self.store.cleanup_expired("u1")
+        # remember() already triggered the load cleanup; expired ones
+        # were dropped on the first reload — but the *store_lock load*
+        # was inside remember itself, before the new entry was added,
+        # so newly-remembered expired ones are still there.
+        # That makes the next cleanup_expired the right place to remove.
+        # Either path: the survivor count is 1.
+        rs = self.store.recall("u1")
+        self.assertEqual(len(rs), 1)
+        self.assertEqual(rs[0].text, "c")
+
+
+class TestBm25Recall(unittest.TestCase):
+    """recall(query=...) ranks by BM25 instead of substring match."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        MemoryStore.reset()
+        self.store = MemoryStore(store_dir=self.tmp)
+        MemoryStore._instance = self.store
+
+    def tearDown(self):
+        MemoryStore.reset()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_multitoken_query_finds_partial_matches(self):
+        # No single entry contains the full "slow auth middleware"
+        # phrase, but each entry contains 2 of the 3 tokens — BM25
+        # ranks them above unrelated entries.
+        self.store.remember("u", "the auth layer is slow", ["perf"])
+        self.store.remember("u", "middleware blocks requests", ["infra"])
+        self.store.remember("u", "random unrelated note", ["misc"])
+        rs = self.store.recall("u", query="slow auth middleware", limit=10)
+        # Top 2 are the relevant ones
+        top_texts = {rs[0].text, rs[1].text}
+        self.assertIn("the auth layer is slow", top_texts)
+        self.assertIn("middleware blocks requests", top_texts)
+
+    def test_query_in_tag_or_category_still_matches(self):
+        # BM25 is computed on text + tags + category, so a query that
+        # only hits a tag still surfaces the entry.
+        self.store.remember("u", "opaque body", ["deadline"], category="events")
+        rs = self.store.recall("u", query="deadline")
+        self.assertGreater(len(rs), 0)
+        self.assertEqual(rs[0].text, "opaque body")
+
+

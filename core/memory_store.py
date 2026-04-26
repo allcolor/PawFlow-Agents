@@ -20,12 +20,57 @@ logger = logging.getLogger(__name__)
 import core.paths as _paths
 
 
+# ── BM25 ranker (no external dep) ────────────────────────────────
+# Replaces the previous substring-only fallback for `recall(query=...)`.
+# Tokenisation is naive on purpose: lowercase, split on non-alnum, drop
+# 1-char tokens. BM25's IDF naturally down-weights common words so a
+# stoplist isn't needed.
+
+import re as _re_bm25
+
+_BM25_SPLIT = _re_bm25.compile(r"[^\w]+", _re_bm25.UNICODE)
+_BM25_K1 = 1.5
+_BM25_B = 0.75
+
+
+def _bm25_tokens(text: str) -> List[str]:
+    return [t for t in _BM25_SPLIT.split(text.lower()) if len(t) > 1]
+
+
+def _bm25_score(query_tokens: List[str], docs: List[List[str]]) -> List[float]:
+    """Return one score per doc. Higher = more relevant."""
+    import math
+    n = len(docs)
+    if n == 0 or not query_tokens:
+        return [0.0] * n
+    avgdl = sum(len(d) for d in docs) / n if n > 0 else 0.0
+    if avgdl == 0:
+        return [0.0] * n
+    df: Dict[str, int] = {}
+    for d in docs:
+        for t in set(d):
+            df[t] = df.get(t, 0) + 1
+    scores = [0.0] * n
+    for t in query_tokens:
+        if t not in df:
+            continue
+        idf = math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5))
+        for i, d in enumerate(docs):
+            tf = d.count(t)
+            if tf == 0:
+                continue
+            denom = tf + _BM25_K1 * (
+                1 - _BM25_B + _BM25_B * len(d) / avgdl)
+            scores[i] += idf * (tf * (_BM25_K1 + 1)) / denom
+    return scores
+
+
 class MemoryEntry:
     """A single memory entry."""
 
     __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source",
                  "embedding", "agent", "conversation_id",
-                 "category", "valid_from", "ended")
+                 "category", "valid_from", "ended", "expires_at")
 
     def __init__(self, text: str, tags: List[str],
                  entry_id: str = "", source: str = "",
@@ -33,7 +78,8 @@ class MemoryEntry:
                  embedding: Optional[List[float]] = None,
                  agent: str = "", conversation_id: str = "",
                  category: str = "",
-                 valid_from: float = 0, ended: float = 0):
+                 valid_from: float = 0, ended: float = 0,
+                 expires_at: float = 0):
         self.id = entry_id or uuid.uuid4().hex[:12]
         self.text = text
         self.tags = [t.lower().strip() for t in tags if t.strip()]
@@ -45,7 +91,8 @@ class MemoryEntry:
         self.conversation_id = conversation_id  # "" = not scoped to conversation
         self.category = category  # memory type category (facts/events/discoveries/preferences/advice)
         self.valid_from = valid_from  # 0 = valid since creation
-        self.ended = ended            # 0 = still valid
+        self.ended = ended            # temporal-validity end (0 = still valid). Kept for as_of queries.
+        self.expires_at = expires_at  # hard TTL for storage cleanup (0 = no TTL, keep forever)
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -68,6 +115,8 @@ class MemoryEntry:
             d["valid_from"] = self.valid_from
         if self.ended:
             d["ended"] = self.ended
+        if self.expires_at:
+            d["expires_at"] = self.expires_at
         return d
 
     @classmethod
@@ -85,6 +134,7 @@ class MemoryEntry:
             category=data.get("category", "") or data.get("hall", ""),
             valid_from=data.get("valid_from", 0),
             ended=data.get("ended", 0),
+            expires_at=data.get("expires_at", 0),
         )
 
     def matches(self, query: str) -> bool:
@@ -137,7 +187,8 @@ class MemoryStore:
                  embedding: Optional[List[float]] = None,
                  agent: str = "", conversation_id: str = "",
                  category: str = "",
-                 valid_from: float = 0) -> MemoryEntry:
+                 valid_from: float = 0,
+                 expires_at: float = 0) -> MemoryEntry:
         """Store a new memory for the user. Returns the created entry."""
         with self._store_lock:
             self._ensure_loaded(user_id)
@@ -156,6 +207,8 @@ class MemoryStore:
                         e.agent = agent
                     if category:
                         e.category = category
+                    if expires_at:
+                        e.expires_at = expires_at
                     self._save_user(user_id)
                     return e
 
@@ -163,7 +216,8 @@ class MemoryStore:
                                 embedding=embedding, agent=agent,
                                 conversation_id=conversation_id,
                                 category=category,
-                                valid_from=valid_from)
+                                valid_from=valid_from,
+                                expires_at=expires_at)
             entries.append(entry)
             self._save_user(user_id)
             return entry
@@ -198,18 +252,18 @@ class MemoryStore:
             # Default: exclude ended entries
             entries = [e for e in entries if not e.ended]
 
-        # Filter to entries visible for this agent/conversation
+        # Filter to entries visible for this agent/conversation. The
+        # query filter is deferred to the BM25 step below — substring
+        # match was the historical pre-filter but it discards entries
+        # that share tokens with the query without containing the
+        # whole phrase, which is exactly the case BM25 is designed to
+        # handle. Tag filter stays a hard pre-filter when set without
+        # a query (callers explicitly want tag-only retrieval).
         visible = []
         for e in entries:
             if not self._is_visible(e, agent_name, conversation_id):
                 continue
-            if query and tags:
-                if e.matches(query) or e.matches_tags(tags):
-                    visible.append(e)
-            elif query:
-                if e.matches(query):
-                    visible.append(e)
-            elif tags:
+            if tags and not query:
                 if e.matches_tags(tags):
                     visible.append(e)
             else:
@@ -226,12 +280,28 @@ class MemoryStore:
             return 3  # global
 
         if query:
-            q_lower = query.lower()
-            visible.sort(key=lambda e: (
-                _scope_priority(e),
-                0 if q_lower in e.text.lower() else 1,
-                -e.updated_at,
+            # BM25 over text + tags + category. Beats the previous
+            # substring-only ranker for multi-token queries ("slow auth
+            # middleware" finds entries containing 2/3 tokens even if
+            # no entry contains the full phrase). Scope priority still
+            # wins over relevance — a global hit shouldn't outrank a
+            # private one with the same content. Entries that don't
+            # share a single token with the query get score 0 and are
+            # dropped (the historical substring filter rejected them
+            # too; we keep that behaviour to avoid noise).
+            q_tokens = _bm25_tokens(query)
+            docs = [_bm25_tokens(
+                e.text + " " + " ".join(e.tags)
+                + (" " + e.category if e.category else ""))
+                for e in visible]
+            scores = _bm25_score(q_tokens, docs)
+            ranked = [(e, s) for e, s in zip(visible, scores) if s > 0]
+            ranked.sort(key=lambda x: (
+                _scope_priority(x[0]),
+                -x[1],
+                -x[0].updated_at,
             ))
+            visible = [e for e, _s in ranked]
         else:
             visible.sort(key=lambda e: (_scope_priority(e), -e.updated_at))
 
@@ -533,9 +603,45 @@ class MemoryStore:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             entries = [MemoryEntry.from_dict(d) for d in data]
-            self._memories[user_id] = entries
+            # Lazy TTL cleanup at load time — cheap (constant comparison
+            # per entry) and means we never need a separate cron. Only
+            # entries with expires_at>0 are eligible (no implicit TTL).
+            now = time.time()
+            kept = [e for e in entries if not e.expires_at or e.expires_at > now]
+            dropped = len(entries) - len(kept)
+            self._memories[user_id] = kept
+            if dropped:
+                logger.info(
+                    "[memory-store] dropped %d expired entr%s for user=%s on load",
+                    dropped, "y" if dropped == 1 else "ies", user_id)
+                # Persist the cleanup so the file shrinks rather than
+                # accumulating dead-but-not-yet-removed entries.
+                self._save_user(user_id)
         except Exception as e:
             logger.warning(f"Failed to load memories for {user_id}: {e}")
+
+    def cleanup_expired(self, user_id: str = "") -> int:
+        """Drop entries whose hard TTL (expires_at) has passed.
+
+        If user_id is empty, runs over every loaded user. Returns total
+        count dropped. Safe to call from a cron / on-demand: idempotent
+        (a fresh call after the previous returns 0).
+        """
+        now = time.time()
+        dropped_total = 0
+        with self._store_lock:
+            users = [user_id] if user_id else list(self._loaded_users)
+            for uid in users:
+                self._ensure_loaded(uid)
+                entries = self._memories.get(uid, [])
+                kept = [e for e in entries
+                        if not e.expires_at or e.expires_at > now]
+                dropped = len(entries) - len(kept)
+                if dropped:
+                    self._memories[uid] = kept
+                    self._save_user(uid)
+                    dropped_total += dropped
+        return dropped_total
 
     def _save_user(self, user_id: str):
         entries = self._memories.get(user_id, [])

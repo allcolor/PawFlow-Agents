@@ -186,6 +186,36 @@ class TestMirrorUpsertDelete(unittest.TestCase):
         )
         assert MemoryStore.instance().list_all(USER) == []
 
+    def test_embed_failure_tags_needs_embedding(self):
+        # Patch _embed to simulate a missing embedding provider
+        # (sentence-transformers not installed in this env). The entry
+        # must still land in the store — just tagged for backfill.
+        from unittest.mock import patch
+        rel = f"{MEMDIR_REL}/no_embed.md"
+        with patch.object(cc_memory_mirror, "_embed", return_value=None):
+            cc_memory_mirror.mirror_write(
+                USER, rel,
+                _write_frontmatter("x", "user", "body without vector")
+            )
+        entries = MemoryStore.instance().list_all(USER)
+        assert len(entries) == 1
+        assert entries[0].embedding is None
+        assert "needs-embedding" in entries[0].tags
+
+    def test_embed_success_no_needs_embedding_tag(self):
+        from unittest.mock import patch
+        rel = f"{MEMDIR_REL}/with_embed.md"
+        with patch.object(cc_memory_mirror, "_embed",
+                          return_value=[0.1, 0.2, 0.3]):
+            cc_memory_mirror.mirror_write(
+                USER, rel,
+                _write_frontmatter("x", "user", "body with vector")
+            )
+        entries = MemoryStore.instance().list_all(USER)
+        assert len(entries) == 1
+        assert entries[0].embedding == [0.1, 0.2, 0.3]
+        assert "needs-embedding" not in entries[0].tags
+
 
 class TestRelayServerFsIntegration(unittest.TestCase):
     """Drive the full FUSE protocol dispatch path and verify the mirror

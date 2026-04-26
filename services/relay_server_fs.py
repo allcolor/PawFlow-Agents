@@ -42,6 +42,7 @@ import logging
 import os
 import stat as _stat
 import threading
+import time as _time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -49,6 +50,11 @@ from core.paths import CLAUDE_SESSIONS_DIR
 from services import cc_memory_mirror
 
 logger = logging.getLogger(__name__)
+
+# Last time we logged a layout-drift warning per user, to avoid spamming
+# logs when every turn writes a non-memory .md (e.g. a generated README).
+# Process-local; rate-limit window is 1 hour.
+_LAYOUT_DRIFT_SEEN: Dict[str, float] = {}
 
 
 # Errno name lookup — we send strings on the wire so the relay can map
@@ -421,8 +427,15 @@ class RelayServerFs:
         disk and forward the bytes to the mirror. Best-effort — errors
         are logged and swallowed so a failed mirror never breaks the FS
         op that triggered it.
+
+        If the path looks like a CC memory file (.md under the slot)
+        but doesn't fit `match_memory_path`, log a rate-limited warning
+        so an operator notices a layout drift (CC may have changed its
+        memory-skill file convention between versions, breaking the
+        mirror without any other surface signal).
         """
         if not cc_memory_mirror.match_memory_path(rel_path):
+            self._maybe_log_layout_drift(rel_path)
             return
         try:
             data = self._resolve(rel_path).read_bytes()
@@ -434,3 +447,28 @@ class RelayServerFs:
             cc_memory_mirror.mirror_write(self._user_id, rel_path, data)
         except Exception:
             logger.exception("[server-fs] mirror_write hook failed")
+
+    def _maybe_log_layout_drift(self, rel_path: str) -> None:
+        """Warn once per hour per user when an .md write doesn't match
+        the mirrorable layout. Avoids log spam if every CC turn writes
+        a non-memory .md (e.g. a generated README) while still surfacing
+        a real layout drift within an hour.
+        """
+        if not rel_path.lower().endswith(".md"):
+            return
+        # Skip the index file (we already filter it in match_memory_path)
+        # and dotfiles — only signal on plausible memory-shaped paths.
+        name = rel_path.rsplit("/", 1)[-1]
+        if name == cc_memory_mirror._INDEX_FILE or name.startswith("."):
+            return
+        now = _time.monotonic()
+        last = _LAYOUT_DRIFT_SEEN.get(self._user_id, 0.0)
+        if now - last < 3600:
+            return
+        _LAYOUT_DRIFT_SEEN[self._user_id] = now
+        logger.warning(
+            "[server-fs] CC wrote %r under user=%s slot but path doesn't "
+            "match the cc-memory mirror layout (<conv>/<agent>/.../memory/<slug>.md). "
+            "If this is a memory file, the CC skill version may have "
+            "changed and cc_memory_mirror.match_memory_path needs updating.",
+            rel_path, self._user_id)

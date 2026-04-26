@@ -142,6 +142,23 @@ def mirror_write(user_id: str, rel_path: str, data: bytes) -> None:
         type_tag = f"cc-type:{cc_type}" if cc_type else "cc-type:unknown"
         tags = ["cc-native", type_tag]
 
+        # Embed up front so semantic_recall can find the entry. If the
+        # local provider is unavailable (sentence-transformers not
+        # installed in this env, embedding model missing, etc.), we
+        # still upsert the entry but tag it 'needs-embedding' for a
+        # later backfill pass via MemoryStore.ensure_embeddings(...).
+        # The previous version silently stored entries with no vector,
+        # making them invisible to semantic_recall but visible to
+        # text-based recall — a quiet correctness bug for users who
+        # rely on semantic search.
+        embedding = _embed(text)
+        if embedding is None:
+            logger.warning(
+                "[cc-mirror] embedding unavailable for user=%s slug=%s "
+                "— entry stored without vector, tagged 'needs-embedding'",
+                user_id, slug)
+            tags.append("needs-embedding")
+
         from core.memory_store import MemoryStore
         store = MemoryStore.instance()
         entry = store.upsert_by_tag(
@@ -150,13 +167,14 @@ def mirror_write(user_id: str, rel_path: str, data: bytes) -> None:
             text=text,
             tags=tags,
             source="cc-memory-skill",
-            embedding=_embed(text),
+            embedding=embedding,
             agent=agent,
             conversation_id=conversation_id,
             category=category,
         )
-        logger.info("[cc-mirror] upsert user=%s slug=%s id=%s",
-                    user_id, slug, entry.id)
+        logger.info("[cc-mirror] upsert user=%s slug=%s id=%s embed=%s",
+                    user_id, slug, entry.id,
+                    "yes" if embedding is not None else "no")
     except Exception:
         logger.exception("[cc-mirror] mirror_write failed for %s", rel_path)
 

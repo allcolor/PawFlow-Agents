@@ -2440,6 +2440,36 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 except Exception:
                     time.sleep(1)
 
+            # Register VNC proxy routes (once, shared by all sessions across CLIs).
+            # Without this the iframe URL /vnc/{session_id}/vnc.html 404s and Chrome
+            # shows "refused to connect" — was the codex-only-fails-when-claude-not-
+            # logged-in-first symptom.
+            try:
+                svc = None
+                try:
+                    from core.service_registry import ServiceRegistry
+                    greg = ServiceRegistry.get_instance()
+                    for _sid, _sdef in greg.get_all("global", "").items():
+                        if getattr(_sdef, "service_type", "") == "httpListener":
+                            svc = greg.get_live_instance("global", "", _sid)
+                            if svc:
+                                break
+                except Exception:
+                    pass
+                if svc:
+                    _vnc_owner = "_vnc_proxy"
+                    existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
+                    if not existing:
+                        svc.register_route("GET", "/vnc/{session_id}/websockify",
+                                           _vnc_owner, callback=lambda req: None,
+                                           ws_handler=vnc_ws_proxy)
+                        svc.register_route("GET", "/vnc/{session_id}/{path+}",
+                                           _vnc_owner, callback=vnc_http_proxy)
+                else:
+                    logger.warning("[codex-login] HTTPListenerService NOT FOUND")
+            except Exception as e:
+                logger.warning("[codex-login] Route registration failed: %s", e)
+
             from services.vnc_proxy import update_session_ready
             update_session_ready(session_id)
             from core.conversation_event_bus import ConversationEventBus
@@ -2631,6 +2661,33 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     break
                 except Exception:
                     time.sleep(1)
+
+            # Register VNC proxy routes (once, shared by all sessions across CLIs).
+            try:
+                svc = None
+                try:
+                    from core.service_registry import ServiceRegistry
+                    greg = ServiceRegistry.get_instance()
+                    for _sid, _sdef in greg.get_all("global", "").items():
+                        if getattr(_sdef, "service_type", "") == "httpListener":
+                            svc = greg.get_live_instance("global", "", _sid)
+                            if svc:
+                                break
+                except Exception:
+                    pass
+                if svc:
+                    _vnc_owner = "_vnc_proxy"
+                    existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
+                    if not existing:
+                        svc.register_route("GET", "/vnc/{session_id}/websockify",
+                                           _vnc_owner, callback=lambda req: None,
+                                           ws_handler=vnc_ws_proxy)
+                        svc.register_route("GET", "/vnc/{session_id}/{path+}",
+                                           _vnc_owner, callback=vnc_http_proxy)
+                else:
+                    logger.warning("[gemini-login] HTTPListenerService NOT FOUND")
+            except Exception as e:
+                logger.warning("[gemini-login] Route registration failed: %s", e)
 
             from services.vnc_proxy import update_session_ready
             update_session_ready(session_id)

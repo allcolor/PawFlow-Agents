@@ -62,9 +62,8 @@ function pgBuild() {
       if (status === 'unchanged') {
         msg = 'Up to date — ' + nodes + ' nodes, ' + edges
           + ' edges, ' + files + ' files (no changes detected)';
-      } else if (status === 'built' || status === 'built_fallback') {
-        msg = (status === 'built_fallback' ? 'Built (fallback) — ' : 'Built — ')
-          + nodes + ' nodes, ' + edges + ' edges, ' + files + ' files';
+      } else if (status === 'built') {
+        msg = 'Built — ' + nodes + ' nodes, ' + edges + ' edges, ' + files + ' files';
         if (reparsed !== undefined || removed !== undefined) {
           msg += ' (reparsed=' + (reparsed || 0) + ', removed=' + (removed || 0) + ')';
         }

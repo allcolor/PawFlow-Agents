@@ -77,10 +77,6 @@ for dirpath, dirnames, filenames in os.walk(root):
         mtimes[rel] = mt
         if known.get(rel) != mt:
             to_parse.append(p)
-        if len(all_files) >= 500:
-            break
-    if len(all_files) >= 500:
-        break
 
 removed = sorted(set(known) - set(all_files))
 
@@ -99,108 +95,68 @@ if not to_parse and not removed:
 
 files = to_parse  # only re-parse the changed ones
 
-# graphify.extract prints progress lines ("AST extraction: 100/500
-# files (20%)") to stdout. We use stdout for the final JSON result
-# so we redirect graphify's output to stderr while it runs — the
-# server parses our last `print(json.dumps(...))` and would choke
-# on the progress prefix.
-import contextlib, io as _io_pg
+# graphify.extract prints progress lines ("AST extraction: N/M
+# files (X%)") to stdout. We reserve stdout for the final JSON
+# result, so redirect graphify's output to stderr while it runs.
+import contextlib
 
-# Try tree-sitter extraction (graphify must be installed on the relay)
-try:
-    from graphify.extract import extract
-    from graphify.build import build
-    with contextlib.redirect_stdout(sys.stderr):
-        extraction = extract(files) if files else []
-        G = build([extraction]) if extraction else None
+# graphify is bundled in core/graphify/ on the server, vendored in
+# /opt/pawflow on the relay container at startup. No fallback path:
+# if the import fails the relay setup is broken and the agent should
+# see the real error instead of a degraded import-only graph.
+from graphify.extract import extract
+from graphify.build import build
 
-    nodes = []
-    if G is not None:
-        for n, data in G.nodes(data=True):
-            sf = data.get("source_file", "")
-            if sf:
-                try:
-                    sf = str(Path(sf).relative_to(root))
-                except ValueError:
-                    pass
-            nodes.append({
-                "id": n, "label": data.get("label", n),
-                "file_type": data.get("file_type", "code"),
-                "source_file": sf.replace(os.sep, "/"),
-                "source_location": data.get("source_location", ""),
-            })
-    edges = []
-    if G is not None:
-        for u, v, data in G.edges(data=True):
-            sf = data.get("source_file", "")
-            if sf:
-                try:
-                    sf = str(Path(sf).relative_to(root))
-                except ValueError:
-                    pass
-            edges.append({
-                "source": u, "target": v,
-                "relation": data.get("relation", "related"),
-                "confidence": data.get("confidence", "EXTRACTED"),
-                "source_file": sf.replace(os.sep, "/"),
-            })
+with contextlib.redirect_stdout(sys.stderr):
+    extraction = extract(files) if files else []
+    G = build([extraction]) if extraction else None
 
-    # parsed_files = the rel-paths the server should drop+replace.
-    # all_files = the rel-paths the server should keep tracking.
-    # removed = files known previously but missing now (orphans).
-    parsed_files = sorted({
-        rel
-        for rel, _ in mtimes.items()
-        if known.get(rel) != mtimes[rel]
-    })
-    print(json.dumps({
-        "status": "built", "nodes": nodes, "edges": edges,
-        "total_files": len(all_files),
-        "all_files": all_files,
-        "parsed_files": parsed_files,
-        "removed": removed,
-        "mtimes": mtimes,
-    }))
+nodes = []
+edges = []
+if G is not None:
+    for n, data in G.nodes(data=True):
+        sf = data.get("source_file", "")
+        if sf:
+            try:
+                sf = str(Path(sf).relative_to(root))
+            except ValueError:
+                pass
+        nodes.append({
+            "id": n, "label": data.get("label", n),
+            "file_type": data.get("file_type", "code"),
+            "source_file": sf.replace(os.sep, "/"),
+            "source_location": data.get("source_location", ""),
+        })
+    for u, v, data in G.edges(data=True):
+        sf = data.get("source_file", "")
+        if sf:
+            try:
+                sf = str(Path(sf).relative_to(root))
+            except ValueError:
+                pass
+        edges.append({
+            "source": u, "target": v,
+            "relation": data.get("relation", "related"),
+            "confidence": data.get("confidence", "EXTRACTED"),
+            "source_file": sf.replace(os.sep, "/"),
+        })
 
-except Exception as e:
-    # Fallback: simple import-based graph (no tree-sitter needed).
-    # Same incremental contract as the tree-sitter branch — we only
-    # parse `files` (the to_parse list) and report the same shape.
-    import re
-    nodes, edges = [], []
-    for f in files:
-        if f.suffix != ".py":
-            continue
-        try:
-            rel = str(f.relative_to(root)).replace(os.sep, "/")
-        except ValueError:
-            rel = f.name
-        fid = rel.replace("/", "_").replace(".py", "")
-        nodes.append({"id": fid, "label": rel, "file_type": "code", "source_file": rel})
-        try:
-            content = f.read_text(encoding="utf-8", errors="ignore")
-            for match in re.findall("^(?:from|import)\\s+([\\w.]+)", content, re.MULTILINE):
-                edges.append({
-                    "source": fid, "target": match.replace(".", "_"),
-                    "relation": "imports", "confidence": "EXTRACTED",
-                    "source_file": rel,
-                })
-        except Exception:
-            pass
-
-    parsed_files = sorted({
-        rel
-        for rel, _ in mtimes.items()
-        if known.get(rel) != mtimes[rel]
-    })
-    print(json.dumps({
-        "status": "built_fallback", "nodes": nodes, "edges": edges,
-        "total_files": len(all_files), "error": str(e),
-        "all_files": all_files,
-        "parsed_files": parsed_files,
-        "removed": removed,
-        "mtimes": mtimes,
-    }))
+# parsed_files = rel-paths the server should drop+replace.
+# all_files = rel-paths the server should keep tracking.
+# removed = files known previously but missing now (orphans).
+parsed_files = sorted({
+    rel
+    for rel, _ in mtimes.items()
+    if known.get(rel) != mtimes[rel]
+})
+print(json.dumps({
+    "status": "built", "nodes": nodes, "edges": edges,
+    "total_files": len(all_files),
+    "all_files": all_files,
+    "parsed_files": parsed_files,
+    "removed": removed,
+    "mtimes": mtimes,
+}))
 '''
 
 
@@ -349,7 +305,6 @@ class ProjectGraph:
                     "total_files": data.get("total_files", len(new_mtimes)),
                     "node_count": len(merged_nodes),
                     "edge_count": len(merged_edges),
-                    "fallback": status == "built_fallback",
                     "files": new_mtimes,
                 },
             }

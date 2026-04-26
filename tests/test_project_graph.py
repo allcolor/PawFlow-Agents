@@ -98,23 +98,6 @@ def test_build_from_relay_invalid_json(tmp_path):
     assert "Invalid JSON" in result["reason"]
 
 
-def test_build_from_relay_fallback(tmp_path):
-    """Relay returns fallback mode (no tree-sitter)."""
-    graph_data = {
-        "status": "built_fallback",
-        "nodes": [{"id": "main", "label": "main.py", "file_type": "code", "source_file": "main.py"}],
-        "edges": [{"source": "main", "target": "os", "relation": "imports", "confidence": "EXTRACTED"}],
-        "total_files": 1,
-        "error": "tree_sitter_python not installed",
-    }
-    svc = _make_relay_mock({"stdout": json.dumps(graph_data), "stderr": "", "returncode": 0})
-
-    pg = ProjectGraph(str(tmp_path / "graph.json"))
-    result = pg.build_from_relay(svc, ".")
-
-    assert result["status"] == "built_fallback"
-    assert pg.has_graph()
-
 
 # ── Query tests ──────────────────────────────────────────────────────
 

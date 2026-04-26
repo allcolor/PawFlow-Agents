@@ -267,14 +267,28 @@ The project graph builds a structural code graph from a codebase using tree-sitt
 
 ### 4.1 Build via Relay
 
-The `build` action:
+The `build` action runs as a single relay exec; the extraction script
+walks the workspace, AST-parses changed files via tree-sitter, and
+returns a JSON delta the server merges into the cached graph.
 
-1. **Discovers code files** on the user's machine via `fs_service.search()` for each supported extension.
-2. **Fetches file contents** via `fs_service.read_file()` (capped at 500 files).
-3. **Writes to a server-side temp directory** recreating the directory structure.
-4. **Runs tree-sitter AST extraction** via `core/graphify/extract.py`.
-5. **Builds the graph** via `core/graphify/build.py` (nodes = code entities, edges = relationships).
-6. **Cleans up** the temp directory.
+1. **Server sends** the cached `{rel_path: mtime}` map to the relay
+   via `PAWFLOW_GRAPH_KNOWN`.
+2. **Relay walks** the workspace tree, skipping standard junk dirs
+   (venv, node_modules, .git, build, dist, __pycache__, etc.).
+3. **Re-parses only files** whose mtime differs from `known` (or are
+   new). Unchanged files keep their cached nodes/edges.
+4. **Reports**: `parsed_files` (re-parsed), `removed` (in `known` but
+   missing now), `mtimes` (new map), `nodes`/`edges` (just for the
+   re-parsed slice).
+5. **Server merges**: drops nodes/edges sourced from re-parsed or
+   removed files, appends the new ones.
+6. **No file count cap** — the previous 500-file ceiling was lifted.
+   Memory cost grows roughly linearly with codebase size; tree-sitter
+   itself handles real-world repos in the tens-of-thousands range
+   without issue.
+7. **Cache hit**: if nothing changed and nothing was removed, the
+   relay returns `status='unchanged'` and no parsing happens server-
+   or relay-side.
 
 **Supported languages (17):** Python, JavaScript, TypeScript, TSX, Go, Rust, Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift, Lua, Zig, PowerShell, Elixir.
 

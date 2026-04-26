@@ -129,11 +129,18 @@ class LLMGeminiMixin:
         else:
             api_key = self._cfg("api_key", "")
 
-        from core.docker_utils import get_host_ip
-        host_ip = get_host_ip()
-        relay_url = self._cfg("tool_relay_url", "") or f"wss://{host_ip}:9090/ws/tools/_tool_relay"
-        relay_token = self._cfg("tool_relay_token", "") or os.environ.get("PAWFLOW_TOOL_RELAY_TOKEN", "")
-        internal_token = os.environ.get("PAWFLOW_INTERNAL_TOKEN", "")
+        # Same shared MCP infra as CC — ToolRelayService is global, mint
+        # a fresh internal-auth token per call.
+        from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
+        relay_url, relay_token = ClaudeCodeSessionMixin._get_tool_relay_info()
+        if not relay_url:
+            logger.warning("[gemini] no toolRelay service — MCP bridge will have no tools")
+        if relay_url:
+            from core.docker_utils import get_host_ip
+            _host_ip = get_host_ip()
+            relay_url = relay_url.replace("localhost", _host_ip).replace("127.0.0.1", _host_ip)
+        from core.internal_auth import mint_token
+        internal_token = mint_token()
 
         settings = {
             "theme": "Default",

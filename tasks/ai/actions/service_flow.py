@@ -40,12 +40,16 @@ def _store_claude_tokens(service_id, access_token, refresh_token, expires_at):
 
 
 def _store_codex_tokens(service_id, access_token, refresh_token, expires_at,
-                        account=""):
-    """Add Codex tokens to the credentials pool (encrypted)."""
+                        account="", id_token=""):
+    """Add Codex tokens to the credentials pool (encrypted).
+
+    id_token (OAuth ID JWT) MUST be persisted — codex CLI rejects an
+    auth.json without a valid id_token ("invalid ID token format").
+    """
     from core.llm_providers.codex_session import add_credential_to_pool
     add_credential_to_pool(
         access_token, refresh_token, expires_at,
-        account=account, service_id=service_id)
+        account=account, service_id=service_id, id_token=id_token)
     logger.info("Codex credential added to pool for '%s'", service_id)
 
 
@@ -644,10 +648,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             refresh_token = parsed.get("refresh_token", "")
             expires_at = parsed.get("expires_at", 0)
             account = parsed.get("account", "")
+            id_token = parsed.get("id_token", "")
             if not access_token:
                 _publish_command_result(conversation_id, {"error": "No access_token in codex auth.json"})
                 return
-            _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+            _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
             logger.info("[codex-relay-login] Credentials saved for %s", service_id)
             _publish_command_result(conversation_id, {
                 "ok": True, "message": "Codex credentials saved!"})
@@ -1037,6 +1042,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             refresh_token = parsed.get("refresh_token", "")
             expires_at = parsed.get("expires_at", 0)
             account = parsed.get("account", "")
+            id_token = parsed.get("id_token", "")
             if not access_token:
                 flowfile.set_content(json.dumps({
                     "error": (
@@ -1062,7 +1068,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         "error": f"Service '{service_id}' is not a codex provider"
                     }).encode())
                     return [flowfile]
-                _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+                _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
                 _stored = True
             if not _stored:
                 try:
@@ -1073,7 +1079,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                 "error": f"Service '{service_id}' is not a codex provider"
                             }).encode())
                             return [flowfile]
-                        _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+                        _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
                         _stored = True
                 except Exception:
                     pass
@@ -2525,9 +2531,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         refresh_token = parsed.get("refresh_token", "")
         expires_at = parsed.get("expires_at", 0)
         account = parsed.get("account", "")
+        id_token = parsed.get("id_token", "")
         if access_token and refresh_token:
             try:
-                _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account)
+                _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
             except Exception as e:
                 logger.warning("Failed to save codex credentials: %s", e)
         try:

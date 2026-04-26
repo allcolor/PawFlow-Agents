@@ -117,6 +117,7 @@ class LLMCodexMixin:
             pool_index, cred = valid[0]
             access_token = cred.get("access_token", "")
             refresh_token = cred.get("refresh_token", "")
+            id_token = cred.get("id_token", "")
             expires_at = cred.get("expires_at", 0)
             account = cred.get("account", "")
             if expires_at < now_ms + 60_000 and refresh_token:
@@ -124,21 +125,28 @@ class LLMCodexMixin:
                     new = _cs.refresh_oauth_token(refresh_token)
                     access_token = new["access_token"]
                     refresh_token = new["refresh_token"]
+                    # Refresh response often carries a fresh id_token — keep it.
+                    id_token = new.get("id_token", id_token) or id_token
                     expires_at = new["expires_at"]
                     _cs.add_credential_to_pool(
                         access_token, refresh_token, expires_at,
-                        account=account, service_id=service_id)
+                        account=account, service_id=service_id,
+                        id_token=id_token)
                     logger.info("[codex] refreshed pool[%d]", pool_index)
                 except Exception as e:
                     logger.warning("[codex] refresh failed: %s — trying access_token as-is", e)
+            tokens = {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "account_id": account,
+            }
+            # Codex CLI rejects an empty id_token ("invalid ID token format").
+            # Only include the field when we actually have a JWT to give.
+            if id_token:
+                tokens["id_token"] = id_token
             auth_blob = {
                 "OPENAI_API_KEY": "",
-                "tokens": {
-                    "access_token": access_token,
-                    "refresh_token": refresh_token,
-                    "id_token": "",
-                    "account_id": account,
-                },
+                "tokens": tokens,
                 "last_refresh": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             (codex_home / "auth.json").write_text(

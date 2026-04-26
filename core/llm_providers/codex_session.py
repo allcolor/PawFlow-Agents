@@ -90,14 +90,22 @@ def _save_credentials_pool(pool: list, service_id: str = ""):
 
 def add_credential_to_pool(access_token: str, refresh_token: str,
                             expires_at, account: str = "",
-                            service_id: str = ""):
-    """Add (or update on refresh_token match) a credential."""
+                            service_id: str = "",
+                            id_token: str = ""):
+    """Add (or update on refresh_token match) a credential.
+
+    `id_token` is the OAuth ID JWT codex expects in auth.json for the
+    ChatGPT account claim — codex CLI rejects auth.json without a valid
+    id_token ("invalid ID token format"). Stored alongside access/refresh
+    so we can reproduce the exact auth.json shape codex wrote on disk.
+    """
     pool = _load_credentials_pool(service_id)
     for i, existing in enumerate(pool):
         if existing.get("refresh_token") == refresh_token:
             pool[i] = {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
+                "id_token": id_token or existing.get("id_token", ""),
                 "expires_at": int(expires_at),
                 "account": account or existing.get("account", ""),
                 "added_at": int(time.time()),
@@ -107,6 +115,7 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
     pool.append({
         "access_token": access_token,
         "refresh_token": refresh_token,
+        "id_token": id_token,
         "expires_at": int(expires_at),
         "account": account,
         "added_at": int(time.time()),
@@ -215,6 +224,7 @@ def parse_auth_json(auth_json_text: str) -> dict:
     return {
         "access_token": tokens.get("access_token", "") or "",
         "refresh_token": tokens.get("refresh_token", "") or "",
+        "id_token": tokens.get("id_token", "") or "",
         "expires_at": int((time.time() + 3600) * 1000),
         "account": tokens.get("account_id", "") or "",
         "openai_api_key": d.get("OPENAI_API_KEY", "") or "",

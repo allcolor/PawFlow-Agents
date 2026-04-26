@@ -111,8 +111,18 @@ class LLMCodexMixin:
         pool_index = -1
         if pool:
             now_ms = int(time.time() * 1000)
-            valid = [(i, c) for i, c in enumerate(pool) if c.get("expires_at", 0) > now_ms]
+            # Codex CLI rejects auth.json without an id_token JWT. Pool
+            # entries created BEFORE the id_token persist fix have an empty
+            # id_token — skip them so the picker doesn't pick a credential
+            # we already know codex will refuse. The user can clear stale
+            # ones via /cls reset @codex_llm_service.
+            valid = [(i, c) for i, c in enumerate(pool)
+                     if c.get("expires_at", 0) > now_ms
+                     and c.get("id_token", "")]
             if not valid:
+                logger.warning(
+                    "[codex] no pool entry with id_token — trying "
+                    "most-recent-anyway (codex may reject 'invalid ID token')")
                 valid = [(len(pool) - 1, pool[-1])]
             pool_index, cred = valid[0]
             access_token = cred.get("access_token", "")

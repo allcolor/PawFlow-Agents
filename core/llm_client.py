@@ -22,6 +22,8 @@ from core.llm_providers import (
     LLMOpenaiMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
+    LLMCodexMixin,
+    LLMGeminiMixin,
 )
 
 logger = logging.getLogger(__name__)
@@ -299,6 +301,8 @@ class LLMClient(
     LLMOpenaiMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
+    LLMCodexMixin,
+    LLMGeminiMixin,
 ):
     """Standalone LLM HTTP client (no BaseService dependency).
 
@@ -313,7 +317,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "anthropic", "claude-code")
+    PROVIDERS = ("openai", "anthropic", "claude-code", "codex", "gemini")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -324,6 +328,8 @@ class LLMClient(
         "openai": "gpt-4o-mini",
         "anthropic": "claude-opus-4-6",
         "claude-code": "claude-opus-4-6",
+        "codex": "gpt-5.2-codex",
+        "gemini": "gemini-2.5-pro",
     }
 
     # Regex for parsing <tool_call>...</tool_call> tags from claude-code responses
@@ -622,7 +628,7 @@ class LLMClient(
         Returns:
             LLMResponse with content and/or tool_calls populated.
         """
-        if not self.api_key and self.provider != "claude-code":
+        if not self.api_key and self.provider not in ("claude-code", "codex", "gemini"):
             raise LLMClientError("api_key is required")
         if self.provider not in self.PROVIDERS:
             raise LLMClientError(
@@ -643,6 +649,25 @@ class LLMClient(
                 # streaming callback. The LLMResponse carries the final
                 # text + tool_calls.
                 result = self._stream_claude_code(
+                    messages, mdl, temperature, max_tokens, tools,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream,
+                )
+            elif self.provider == "codex":
+                # Codex CLI: same shape — always streams via `codex exec --json`.
+                result = self._stream_codex(
+                    messages, mdl, temperature, max_tokens, tools,
+                    call_user_id=call_user_id,
+                    call_conversation_id=call_conversation_id,
+                    call_agent_name=call_agent_name,
+                    call_event_cid=call_event_cid,
+                    call_ephemeral_stream=call_ephemeral_stream,
+                )
+            elif self.provider == "gemini":
+                result = self._stream_gemini(
                     messages, mdl, temperature, max_tokens, tools,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
@@ -799,7 +824,7 @@ class LLMClient(
 
         Supports both OpenAI and Anthropic streaming.
         """
-        if not self.api_key and self.provider != "claude-code":
+        if not self.api_key and self.provider not in ("claude-code", "codex", "gemini"):
             raise LLMClientError("api_key is required")
 
         model = model or self.default_model
@@ -820,6 +845,26 @@ class LLMClient(
                                                   call_agent_name=call_agent_name,
                                                   call_event_cid=call_event_cid,
                                                   call_ephemeral_stream=call_ephemeral_stream)
+            elif self.provider == "codex":
+                result = self._stream_codex(messages, mdl, temperature, max_tokens, tools, callback,
+                                              thinking_callback=thinking_callback,
+                                              turn_callback=turn_callback,
+                                              block_callback=block_callback,
+                                              call_user_id=call_user_id,
+                                              call_conversation_id=call_conversation_id,
+                                              call_agent_name=call_agent_name,
+                                              call_event_cid=call_event_cid,
+                                              call_ephemeral_stream=call_ephemeral_stream)
+            elif self.provider == "gemini":
+                result = self._stream_gemini(messages, mdl, temperature, max_tokens, tools, callback,
+                                               thinking_callback=thinking_callback,
+                                               turn_callback=turn_callback,
+                                               block_callback=block_callback,
+                                               call_user_id=call_user_id,
+                                               call_conversation_id=call_conversation_id,
+                                               call_agent_name=call_agent_name,
+                                               call_event_cid=call_event_cid,
+                                               call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "anthropic":
                 result = self._stream_anthropic(messages, mdl, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback,
                                                  call_user_id=call_user_id or "",

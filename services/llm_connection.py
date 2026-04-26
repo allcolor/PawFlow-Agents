@@ -436,11 +436,42 @@ class LLMConnectionService(BaseService):
                     "effort":        {"visible": True},
                 }
             },
+            {
+                "when": {"provider": ["codex"]},
+                "set": {
+                    "api_key":       {"visible": True, "description": "OpenAI API key (empty = OAuth login via codex CLI)"},
+                    "base_url":      {"visible": False},
+                    "max_retries":   {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "timeout":       {"default": 600},
+                    "docker_image":  {"visible": True},
+                    "docker_cpu_limit": {"visible": True},
+                    "docker_memory_limit": {"visible": True},
+                    "effort":        {"visible": False},
+                }
+            },
+            {
+                "when": {"provider": ["gemini"]},
+                "set": {
+                    "api_key":       {"visible": True, "description": "Google AI Studio key (empty = OAuth login via gemini CLI)"},
+                    "base_url":      {"visible": False},
+                    "max_retries":   {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "timeout":       {"default": 600},
+                    "docker_image":  {"visible": True},
+                    "docker_cpu_limit": {"visible": True},
+                    "docker_memory_limit": {"visible": True},
+                    "effort":        {"visible": False},
+                }
+            },
         ]
 
     def get_service_actions(self) -> list:
         """Custom actions for the admin UI."""
         return [
+            # Claude Code
             {
                 "id": "claude_code_relay_login",
                 "label": "Login via relay",
@@ -463,6 +494,56 @@ class LLMConnectionService(BaseService):
                 "icon": "\U0001f511",
                 "when": {"provider": ["claude-code"]},
                 "server_action": "claude_code_login_url",
+                "flow": "oauth_code",
+            },
+            # Codex CLI — same 3 flows, dedicated actions in service_flow.py
+            {
+                "id": "codex_relay_login",
+                "label": "Login via relay",
+                "icon": "\U0001f50c",
+                "when": {"provider": ["codex"]},
+                "server_action": "claude_code_list_relays",
+                "flow": "codex_login_relay",
+            },
+            {
+                "id": "codex_server_login",
+                "label": "Login via server",
+                "icon": "\U0001f310",
+                "when": {"provider": ["codex"]},
+                "server_action": "codex_server_login",
+                "flow": "codex_login_server",
+            },
+            {
+                "id": "codex_login",
+                "label": "Set credentials",
+                "icon": "\U0001f511",
+                "when": {"provider": ["codex"]},
+                "server_action": "codex_login_url",
+                "flow": "oauth_code",
+            },
+            # Gemini CLI — same 3 flows, dedicated actions in service_flow.py
+            {
+                "id": "gemini_relay_login",
+                "label": "Login via relay",
+                "icon": "\U0001f50c",
+                "when": {"provider": ["gemini"]},
+                "server_action": "claude_code_list_relays",
+                "flow": "gemini_login_relay",
+            },
+            {
+                "id": "gemini_server_login",
+                "label": "Login via server",
+                "icon": "\U0001f310",
+                "when": {"provider": ["gemini"]},
+                "server_action": "gemini_server_login",
+                "flow": "gemini_login_server",
+            },
+            {
+                "id": "gemini_login",
+                "label": "Set credentials",
+                "icon": "\U0001f511",
+                "when": {"provider": ["gemini"]},
+                "server_action": "gemini_login_url",
                 "flow": "oauth_code",
             },
         ]

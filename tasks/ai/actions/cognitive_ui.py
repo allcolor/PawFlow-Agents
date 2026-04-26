@@ -146,14 +146,13 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
                 return [flowfile]
             from core.service_registry import ServiceRegistry
             greg = ServiceRegistry.get_instance()
+            # Same lookup pattern as service_flow._find_relay_svc:
+            # try the global scope first, then the user scope. Relays
+            # spawned by pawflow_cli register under the user scope;
+            # server_relay_manager spawns register under global.
             svc = greg.get_live_instance("global", "", relay_id)
             if svc is None and user_id:
-                try:
-                    _ureg = ServiceRegistry.get_user_instance(user_id)
-                    if _ureg:
-                        svc = _ureg.get_live_instance("user", user_id, relay_id)
-                except (AttributeError, Exception):
-                    pass
+                svc = greg.get_live_instance("user", user_id, relay_id)
             if svc is None:
                 flowfile.set_content(json.dumps({
                     "error": f"Relay '{relay_id}' is not connected.",

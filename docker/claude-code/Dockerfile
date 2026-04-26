@@ -32,9 +32,14 @@ ENV USER="pawflow"
 # No interactive prompts
 ENV CI=true
 
-# Auth login entrypoint (used for server-side OAuth login)
+# Auth login entrypoints (server-side OAuth login via noVNC + Chromium).
+# One per CLI: claude / codex / gemini. Each spawns Xvfb + x11vnc +
+# websockify and drives its CLI's interactive OAuth flow, then copies
+# the resulting credentials file to /workspace for the host action to pick up.
 COPY auth_login.sh /opt/pawflow/auth_login.sh
-RUN chmod +x /opt/pawflow/auth_login.sh
+COPY codex_auth_login.sh /opt/pawflow/codex_auth_login.sh
+COPY gemini_auth_login.sh /opt/pawflow/gemini_auth_login.sh
+RUN chmod +x /opt/pawflow/auth_login.sh /opt/pawflow/codex_auth_login.sh /opt/pawflow/gemini_auth_login.sh
 
 # Browser wrapper for Claude Code auth login (Chromium with Docker-safe flags)
 RUN printf '#!/bin/bash\nexec chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --window-size=1280,800 "$@"\n' \

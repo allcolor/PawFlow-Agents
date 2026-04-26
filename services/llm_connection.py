@@ -89,10 +89,12 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
-        if self.provider == "claude-code":
-            pass  # binary auto-detected at runtime
+        if self.provider in ("claude-code", "codex", "gemini"):
+            # CLI providers — binary auto-detected at runtime, OAuth pool is
+            # the default credential source, api_key is an optional fallback.
+            pass
         else:
-            # API-based providers need an api_key
+            # API-based providers (openai, anthropic) need an api_key.
             if not self.api_key:
                 raise ServiceError("api_key is required")
         return {"provider": self.provider, "ready": True}

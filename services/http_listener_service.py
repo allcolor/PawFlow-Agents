@@ -135,7 +135,7 @@ def _emit_timing_summary(req: "PendingRequest") -> None:
             segments.append(f"{label}={int((t[b] - t[a]) * 1000)}ms")
     last = t.get("send") or t.get("respond") or t.get("dispatch")
     total = int((last - t["recv"]) * 1000) if last else 0
-    logger.info(
+    logger.debug(
         "[http-timing] req_id=%s %s %s total=%dms %s status=%d",
         req.request_id[:8], req.method, req.path,
         total, " ".join(segments), req.response_status,

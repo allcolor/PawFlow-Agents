@@ -147,18 +147,18 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         except Exception:
             pass
 
-        # Live Claude Code sessions — enrich active rows with cc_live
-        # telemetry (badge/button in active_agents.js) and surface
-        # sessions that are live but idle between turns (proc kept warm
-        # by the registry, waiting for the next user message).
+        # Live CLI sessions (Claude Code, codex, gemini) — enrich active
+        # rows with per-CLI telemetry (badge/button in active_agents.js)
+        # and surface sessions that are live but idle between turns.
         cc_live_list = []
+        codex_live_list = []
+        gemini_live_list = []
         try:
             from core.cc_live_registry import LiveSessionRegistry
             _cc_entries = [
                 e for e in LiveSessionRegistry.instance().status()
                 if e.get("conv_id") == conv_id
             ]
-            # Index by agent for O(1) enrichment.
             _by_agent = {e["agent_name"]: e for e in _cc_entries}
             for row in active:
                 _aname = row.get("agent_name")
@@ -171,10 +171,46 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             cc_live_list = _cc_entries
         except Exception:
             logger.debug("cc_live enrichment failed", exc_info=True)
+        try:
+            from core.codex_live_registry import CodexLiveRegistry
+            _cdx_entries = [
+                e for e in CodexLiveRegistry.instance().status()
+                if e.get("conv_id") == conv_id
+            ]
+            _by_agent_cdx = {e["agent_name"]: e for e in _cdx_entries}
+            for row in active:
+                _ent = _by_agent_cdx.get(row.get("agent_name"))
+                if _ent:
+                    row["codex_live"] = bool(_ent.get("live"))
+                    row["codex_idle_seconds"] = _ent.get("idle_seconds", 0)
+                    row["codex_reuse_count"] = _ent.get("reuse_count", 0)
+                    row["codex_lived_seconds"] = _ent.get("lived_seconds", 0)
+            codex_live_list = _cdx_entries
+        except Exception:
+            logger.debug("codex_live enrichment failed", exc_info=True)
+        try:
+            from core.gemini_live_registry import GeminiLiveRegistry
+            _gem_entries = [
+                e for e in GeminiLiveRegistry.instance().status()
+                if e.get("conv_id") == conv_id
+            ]
+            _by_agent_gem = {e["agent_name"]: e for e in _gem_entries}
+            for row in active:
+                _ent = _by_agent_gem.get(row.get("agent_name"))
+                if _ent:
+                    row["gemini_live"] = bool(_ent.get("live"))
+                    row["gemini_idle_seconds"] = _ent.get("idle_seconds", 0)
+                    row["gemini_reuse_count"] = _ent.get("reuse_count", 0)
+                    row["gemini_lived_seconds"] = _ent.get("lived_seconds", 0)
+            gemini_live_list = _gem_entries
+        except Exception:
+            logger.debug("gemini_live enrichment failed", exc_info=True)
 
         flowfile.set_content(json.dumps({
             "active": active,
             "cc_live": cc_live_list,
+            "codex_live": codex_live_list,
+            "gemini_live": gemini_live_list,
         }).encode())
         return [flowfile]
 

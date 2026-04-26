@@ -127,6 +127,45 @@ class CodexLiveRegistry:
             self.kill_and_evict(k, reason)
         return len(victims)
 
+    def kill_and_evict_by_conv_agent(self, conv_id: str, agent_name: str,
+                                       reason: str) -> int:
+        """Kill live containers for a specific (conv, agent) pair.
+
+        Used by the edit-message flow to drop only the affected agent's
+        warm container while leaving siblings in the same conv alive.
+        """
+        with self._lock:
+            victims = [k for k in self._containers
+                       if k[1] == conv_id and k[2] == agent_name]
+        for k in victims:
+            self.kill_and_evict(k, reason)
+        return len(victims)
+
+    def status(self) -> list:
+        """Snapshot for /codex_live UI telemetry. Mirror of CC's status()."""
+        now = time.monotonic()
+        with self._lock:
+            out = []
+            for key, entry in self._containers.items():
+                u, c, a, svc = key
+                out.append({
+                    "user_id": u,
+                    "conv_id": c,
+                    "agent_name": a,
+                    "service_id": svc,
+                    "container": entry.container_name,
+                    "live": True,
+                    "idle_seconds": int(now - entry.last_used),
+                    "reuse_count": entry.reuse_count,
+                    "spawn_at": entry.spawn_at,
+                    "lived_seconds": int(now - entry.spawn_at),
+                })
+        return out
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._containers)
+
     def shutdown_all(self):
         with self._lock:
             keys = list(self._containers.keys())

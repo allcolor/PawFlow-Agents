@@ -237,6 +237,40 @@ HELP: Dict[str, Dict[str, str]] = {
             "idle time, reuse count, spawn age, service/pool index."
         ),
     },
+    "/codex_restart": {
+        "usage": "/codex_restart [agent]",
+        "short": "Kill warm codex container(s) for this conv",
+        "detail": (
+            "Force a fresh codex container spawn on the next turn.\n\n"
+            "  /codex_restart        — kill every live codex container in this conv\n"
+            "  /codex_restart agent  — kill only that agent's container"
+        ),
+    },
+    "/codex_live": {
+        "usage": "/codex_live [agent]",
+        "short": "Show warm codex containers for this conv",
+        "detail": (
+            "List live codex containers still pinned to this conv:\n"
+            "idle time, reuse count, spawn age, service."
+        ),
+    },
+    "/gemini_restart": {
+        "usage": "/gemini_restart [agent]",
+        "short": "Kill warm gemini container(s) for this conv",
+        "detail": (
+            "Force a fresh gemini container spawn on the next turn.\n\n"
+            "  /gemini_restart        — kill every live gemini container in this conv\n"
+            "  /gemini_restart agent  — kill only that agent's container"
+        ),
+    },
+    "/gemini_live": {
+        "usage": "/gemini_live [agent]",
+        "short": "Show warm gemini containers for this conv",
+        "detail": (
+            "List live gemini containers still pinned to this conv:\n"
+            "idle time, reuse count, spawn age, service."
+        ),
+    },
 
     # ── Resources ──
     "/resources": {
@@ -796,6 +830,26 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         _arg = arg.strip()
         agt = _arg if _arg else ""
         return {"action": "cc_live_status", "agent_name": agt, **base}
+
+    if cmd == "/codex_restart":
+        _arg = arg.strip()
+        agt = _arg if _arg else ""
+        return {"action": "codex_restart", "agent_name": agt, **base}
+
+    if cmd == "/codex_live":
+        _arg = arg.strip()
+        agt = _arg if _arg else ""
+        return {"action": "codex_live_status", "agent_name": agt, **base}
+
+    if cmd == "/gemini_restart":
+        _arg = arg.strip()
+        agt = _arg if _arg else ""
+        return {"action": "gemini_restart", "agent_name": agt, **base}
+
+    if cmd == "/gemini_live":
+        _arg = arg.strip()
+        agt = _arg if _arg else ""
+        return {"action": "gemini_live_status", "agent_name": agt, **base}
 
     # ── Agent ──
     if cmd == "/agent":
@@ -1382,7 +1436,9 @@ def _handle_help(topic: str, flowfile: FlowFile) -> list:
             "Agent": ["/agent", "/msg", "/btw", "/stop", "/resume", "/setname"],
             "Context": ["/compact", "/context", "/model", "/llm", "/effort",
                         "/fast", "/rebuild", "/restart", "/rewind", "/summary",
-                        "/cc_restart", "/cc_live"],
+                        "/cc_restart", "/cc_live",
+                        "/codex_restart", "/codex_live",
+                        "/gemini_restart", "/gemini_live"],
             "Resources": ["/resources", "/tools", "/call", "/skill", "/task",
                           "/service", "/flow", "/prompt", "/memory", "/cost"],
             "Secrets & Variables": ["/secrets", "/add-secret", "/variables",

@@ -2092,8 +2092,8 @@ class ConversationStore:
             logger.debug(
                 "invalidate_claude_session_for_agent disk prune failed "
                 "for %s/%s: %s", cid[:8], agent_name, _e)
-        # Kill any warm CC session for this (conv, agent) pair so the
-        # next turn spawns fresh.
+        # Kill any warm CC / codex / gemini session for this (conv, agent)
+        # pair so the next turn spawns fresh.
         try:
             from core.cc_live_registry import LiveSessionRegistry
             n = LiveSessionRegistry.instance().kill_and_evict_by_conv_agent(
@@ -2106,6 +2106,32 @@ class ConversationStore:
         except Exception as _e:
             logger.debug(
                 "invalidate_claude_session_for_agent live-evict failed "
+                "for %s/%s: %s", cid[:8], agent_name, _e)
+        try:
+            from core.codex_live_registry import CodexLiveRegistry
+            n = CodexLiveRegistry.instance().kill_and_evict_by_conv_agent(
+                cid, agent_name,
+                reason="invalidate_claude_session_for_agent")
+            if n:
+                logger.info(
+                    "Invalidated %d live codex container(s) for %s/%s",
+                    n, cid[:8], agent_name)
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_session_for_agent codex-evict failed "
+                "for %s/%s: %s", cid[:8], agent_name, _e)
+        try:
+            from core.gemini_live_registry import GeminiLiveRegistry
+            n = GeminiLiveRegistry.instance().kill_and_evict_by_conv_agent(
+                cid, agent_name,
+                reason="invalidate_claude_session_for_agent")
+            if n:
+                logger.info(
+                    "Invalidated %d live gemini container(s) for %s/%s",
+                    n, cid[:8], agent_name)
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_session_for_agent gemini-evict failed "
                 "for %s/%s: %s", cid[:8], agent_name, _e)
 
     # ── Bindings (repository associations) ──────────────────

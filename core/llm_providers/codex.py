@@ -464,19 +464,16 @@ class LLMCodexMixin:
             except Exception as e:
                 logger.warning("[codex] block_callback tool_result failed: %s", e)
 
-        # Diagnostic: log unknown event types and unknown item types so we
-        # can see when the codex CLI changes its JSONL schema (item types
-        # have already drifted between codex versions, e.g. agent_message vs
-        # assistant_message). Each unknown shape logs once per stream.
+        # Diagnostic: log the FULL first occurrence of each (event_type,
+        # item_type) shape we see, so we can build the right mapping. The
+        # codex JSONL schema drifts across versions and we don't trust the
+        # docs (they lie about field names). One log line per shape per
+        # stream — enough to reverse-engineer once, harmless thereafter.
         _seen_etypes: set = set()
-        _seen_itypes: set = set()
-        _KNOWN_ETYPES = {
+        _seen_item_shapes: set = set()  # (etype, itype) tuples
+        _EXPECTED_ETYPES = {
             "thread.started", "turn.started", "turn.completed", "turn.failed",
             "item.started", "item.completed", "item.updated", "error",
-        }
-        _KNOWN_ITYPES = {
-            "agent_message", "assistant_message", "reasoning",
-            "mcp_tool_call", "command_execution", "function_call",
         }
 
         for line in proc.stdout:
@@ -489,16 +486,21 @@ class LLMCodexMixin:
                 logger.debug("[codex] non-json line skipped: %r", line[:200])
                 continue
             etype = event.get("type", "")
-            if etype not in _KNOWN_ETYPES and etype not in _seen_etypes:
+            # First-of-kind: dump full event for unexpected etypes.
+            if etype not in _EXPECTED_ETYPES and etype not in _seen_etypes:
                 _seen_etypes.add(etype)
-                logger.warning("[codex] UNKNOWN etype=%r body=%s",
-                               etype, json.dumps(event)[:400])
+                logger.warning("[codex-schema] UNEXPECTED etype=%r body=%s",
+                               etype, json.dumps(event)[:600])
+            # First-of-kind: dump full event for every distinct
+            # (etype, item.type) we see — covers function_call vs
+            # mcp_tool_call vs whatever codex actually emits today.
             if etype in ("item.started", "item.completed", "item.updated"):
                 _it = (event.get("item", {}) or {}).get("type", "")
-                if _it and _it not in _KNOWN_ITYPES and _it not in _seen_itypes:
-                    _seen_itypes.add(_it)
-                    logger.warning("[codex] UNKNOWN itype=%r in %s body=%s",
-                                   _it, etype, json.dumps(event)[:400])
+                _key = (etype, _it)
+                if _key not in _seen_item_shapes:
+                    _seen_item_shapes.add(_key)
+                    logger.info("[codex-schema] %s itype=%r body=%s",
+                                etype, _it, json.dumps(event)[:600])
             if etype == "thread.started":
                 thread_id = event.get("thread_id", "") or thread_id
             elif etype == "turn.started":

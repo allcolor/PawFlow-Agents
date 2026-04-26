@@ -1021,7 +1021,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 session_id = ConversationStore.instance().get_extra(
                     conv_id, f"claude_session:{agent_name or 'default'}") or ""
                 if session_id:
-                    logger.info("Restored claude session: %s", session_id)
+                    logger.info("[%s/%s/%s] Restored claude session: %s",
+                                user_id[:6] or '?', conv_id[:8] or '?',
+                                agent_name or 'default', session_id)
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
 
@@ -1961,15 +1963,19 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # carry session_id — without this guard each one logged
                     # "NEW session" with the same sid, flooding the logs.
                     if sid and conv_id and subtype == "init":
+                        _tag = (f"{user_id[:6] or '?'}/{conv_id[:8] or '?'}/"
+                                f"{agent_name or 'default'}")
                         if session_id and sid != session_id:
                             logger.warning(
-                                "[claude-code] SESSION MISMATCH: sent --resume %s but CC returned %s "
+                                "[claude-code][%s] SESSION MISMATCH: sent --resume %s but CC returned %s "
                                 "(resume FAILED — CC created new session)",
-                                session_id[:12], sid[:12])
+                                _tag, session_id[:12], sid[:12])
                         elif session_id and sid == session_id:
-                            logger.info("[claude-code] RESUME OK: session %s reused", sid[:12])
+                            logger.info("[claude-code][%s] RESUME OK: session %s reused",
+                                        _tag, sid[:12])
                         else:
-                            logger.info("[claude-code] NEW session: %s", sid[:12])
+                            logger.info("[claude-code][%s] NEW session: %s",
+                                        _tag, sid[:12])
                         try:
                             from core.conversation_store import ConversationStore
                             ConversationStore.instance().set_extra(
@@ -2034,8 +2040,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     if subtype == "init":
                         _stall_start_time = time.monotonic()
                         _got_assistant = False
-                        logger.info("[claude-code] init — stall watchdog armed (%.0fs timeout)",
-                                    _STALL_TIMEOUT)
+                        logger.info("[claude-code][%s/%s/%s] init — stall watchdog armed (%.0fs timeout)",
+                                    user_id[:6] or '?', conv_id[:8] or '?',
+                                    agent_name or 'default', _STALL_TIMEOUT)
                     continue
 
                 if etype == "assistant":

@@ -18,7 +18,13 @@ class CopyHandler(BaseFsHandler):
     def description(self):
         return (
             "Copy a file between filesystem services and FileStore. "
-            "source_service/dest_service: relay name, 'filestore', or omit for default."
+            "source_service/dest_service: relay name, 'filestore', or omit "
+            "for default. Use this to UPLOAD into the FileStore from a relay "
+            "path — the read-only `/filestore` FUSE mount can't accept writes "
+            "directly (`cp ... /filestore/...` returns EROFS), so call `copy` "
+            "with `dest_service=\"filestore\"` instead. The new file_id is "
+            "returned in the result and the file becomes visible at "
+            "`/filestore/<conv_id>/<file_id>/<filename>` immediately afterwards."
         )
 
     @property

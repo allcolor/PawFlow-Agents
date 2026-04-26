@@ -1010,6 +1010,31 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         "  Use local=true for: accessing host files, host screen, host clipboard\n"
                         "  Use local=false (default) for: sandboxed execution, desktop apps, web browsing"
                     )
+                    # FileStore FUSE hint — every connected relay container
+                    # has /filestore mounted read-only with the conv-first
+                    # layout. Same hierarchy on disk as data/runtime/files,
+                    # exposed virtually so bash/cat/grep/cp work directly
+                    # without going through the FileStore HTTP/MCP API.
+                    if conversation_id:
+                        system_prompt += (
+                            "\n\n## FileStore on the relay\n"
+                            "This conversation's FileStore files are mounted "
+                            "read-only inside every connected relay container at:\n"
+                            f"  `/filestore/{conversation_id}/<file_id>/<filename>`\n"
+                            "Bash works on these paths directly — no extra tool call:\n"
+                            f"  `cat /filestore/{conversation_id}/<fid>/<name>`\n"
+                            f"  `cp  /filestore/{conversation_id}/<fid>/<name> /workspace/in.bin`\n"
+                            f"  `wc -l /filestore/{conversation_id}/<fid>/<name>`\n"
+                            "Equivalent canonical URL form (also accepted by tools "
+                            "that take an URL input): `fs://filestore/<file_id>/<filename>`.\n"
+                            "Writes go through the `copy` tool with "
+                            "`dest_service=\"filestore\"` — the FUSE itself is "
+                            "read-only (`cp foo.bin /filestore/...` returns EROFS), "
+                            "the file_id is allocated by FileStore.store() and only "
+                            "appears in the FUSE after the copy succeeds.\n"
+                            "The conv's CC session files are similarly mounted at "
+                            f"`/cc_sessions/{conversation_id}/`."
+                        )
             except Exception:
                 pass
         _has_relay_bindings = False

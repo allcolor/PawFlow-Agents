@@ -774,7 +774,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         def _bg_setup():
             import subprocess as _sp
-            from core.server_relay_manager import _docker_cmd
+            from core.docker_utils import docker_cmd as _docker_cmd
             try:
                 docker_cmd = _docker_cmd() + [
                     "run", "--rm", "--detach",
@@ -866,7 +866,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         session = _vnc_sessions.get(session_id)
         if session:
             import subprocess as _sp
-            from core.server_relay_manager import _docker_cmd
+            from core.docker_utils import docker_cmd as _docker_cmd
             try:
                 _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],
                         capture_output=True, timeout=10)
@@ -898,7 +898,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         import subprocess as _sp
-        from core.server_relay_manager import _docker_cmd
+        from core.docker_utils import docker_cmd as _docker_cmd
         container = session["container"]
         launch_time = session.get("launch_time", 0)
 
@@ -2397,7 +2397,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         def _bg_setup():
             import subprocess as _sp
-            from core.server_relay_manager import _docker_cmd
+            from core.docker_utils import docker_cmd as _docker_cmd
             try:
                 docker_cmd = _docker_cmd() + [
                     "run", "--rm", "--detach",
@@ -2456,7 +2456,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         session = _vnc_sessions.get(session_id)
         if session:
             import subprocess as _sp
-            from core.server_relay_manager import _docker_cmd
+            from core.docker_utils import docker_cmd as _docker_cmd
             try:
                 _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],
                         capture_output=True, timeout=10)
@@ -2483,7 +2483,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         import subprocess as _sp
-        from core.server_relay_manager import _docker_cmd
+        from core.docker_utils import docker_cmd as _docker_cmd
         container = session["container"]
         launch_time = session.get("launch_time", 0)
         if time.time() - launch_time > 180:
@@ -2588,7 +2588,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         def _bg_setup_gemini():
             import subprocess as _sp
-            from core.server_relay_manager import _docker_cmd
+            from core.docker_utils import docker_cmd as _docker_cmd
             try:
                 docker_cmd = _docker_cmd() + [
                     "run", "--rm", "--detach",
@@ -2647,7 +2647,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         session = _vnc_sessions.get(session_id)
         if session:
             import subprocess as _sp
-            from core.server_relay_manager import _docker_cmd
+            from core.docker_utils import docker_cmd as _docker_cmd
             try:
                 _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],
                         capture_output=True, timeout=10)
@@ -2674,7 +2674,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         import subprocess as _sp
-        from core.server_relay_manager import _docker_cmd
+        from core.docker_utils import docker_cmd as _docker_cmd
         container = session["container"]
         launch_time = session.get("launch_time", 0)
         if time.time() - launch_time > 180:

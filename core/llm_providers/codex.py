@@ -1,49 +1,35 @@
 """LLM provider mixin -- Codex CLI (`codex exec --json`).
 
-Compact MVP: spawns one container per call (no live-session reuse like CC),
-parses the JSONL event stream, returns the final LLMResponse. Tools are
-routed to PawFlow via the MCP bridge (~/.codex/config.toml configured at
-spawn).
+Features:
+- Live container reuse via CodexLiveRegistry: one Docker container is
+  pinned per (user, conv, agent, service) tuple and re-used across turns,
+  evicted by an idle sweeper after ~10 min.
+- send_user_message(text): preempt mid-turn by killing the running
+  `codex exec` process; the agent loop's pending-queue picks up the new
+  message and feeds it on the next call (via session resume).
+- 80% compact threshold: codex emits no compact_boundary event in its
+  JSONL stream (compaction is server-side via OpenAI fast path). We
+  monitor `usage` payloads ourselves and raise CCCompactDetected when we
+  cross the threshold — same exception CC uses, same agent_core handler
+  (kill + PawFlow bucket compact + restart with resume).
 
 NOT a clone of LLMClaudeCodeMixin — the two CLIs evolve independently
-(see memory "Separate pools per CLI"). Sufficient overlap is in the
-shared LLMCliSharedMixin (HTTP, message serialization).
+(see memory "Separate pools per CLI"). Shared infra is the per-CLI pool
+and the LLMCliSharedMixin (message serialization).
 """
 
 import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-
-# Auto-compact threshold for the codex side. Codex emits no
-# compact_boundary event in --json output — it handles compaction silently
-# server-side. We therefore disable codex's own auto-compact (set the
-# limit absurdly high) and detect approaching saturation OURSELVES via the
-# `usage` payload in `turn.completed`. When the running prompt size hits
-# this fraction of the context window we raise PawFlowCompactRequired,
-# which the agent loop catches to trigger PawFlow's own bucket compact.
 _PAWFLOW_COMPACT_THRESHOLD = 0.80
-
-
-class PawFlowCodexCompactRequired(Exception):
-    """Signal: codex usage crossed the PawFlow compact threshold this turn.
-
-    Carries the conversation context so the agent loop can route to its
-    own bucket-based compact instead of waiting for codex to compact
-    server-side (which would discard our deeper transcript).
-    """
-    def __init__(self, used: int, window: int, conv_id: str = ""):
-        super().__init__(
-            f"codex usage {used}/{window} >= {int(_PAWFLOW_COMPACT_THRESHOLD * 100)}% — PawFlow compact")
-        self.used = used
-        self.window = window
-        self.conv_id = conv_id
 
 
 class LLMCodexMixin:
@@ -67,13 +53,8 @@ class LLMCodexMixin:
     execution is owned by codex → our MCP bridge → tool relay service.
     """
 
-    # Container default model for codex CLI calls when none is supplied.
     _CODEX_DEFAULT_MODEL = "gpt-5.2-codex"
 
-    # Approximate context window per model. Codex doesn't surface this in
-    # its events the way CC does (modelUsage.contextWindow); we use a
-    # static map. Conservative defaults so the 80% gauge fires earlier
-    # rather than too late on an unknown model.
     _CODEX_CONTEXT_WINDOW = {
         "gpt-5.2-codex": 400_000,
         "gpt-5.3-codex": 400_000,
@@ -85,22 +66,16 @@ class LLMCodexMixin:
     _CODEX_CONTEXT_WINDOW_DEFAULT = 200_000
 
     def _codex_workdir(self, user_id: str, conv_id: str, agent_name: str) -> str:
-        """Per-conv working dir on the host — mounted into the container as
-        `/cc_sessions/<conv>/<agent>` after the unshare bind."""
         if not user_id or not conv_id:
             raise ValueError("user_id + conversation_id required for codex provider")
         import core.paths as _paths
-        base = _paths.CLAUDE_SESSIONS_DIR  # shared with CC — same /cc_sessions root
+        base = _paths.CLAUDE_SESSIONS_DIR
         agent = agent_name or "default"
         wd = base / user_id / conv_id / agent
         wd.mkdir(parents=True, exist_ok=True)
-        # The unshare-bind layout requires <conv>/<agent> visible at
-        # /cc_sessions/<conv>/<agent> from inside the container, and the
-        # codex_pool's session_dir contract is exactly that path.
         return f"/cc_sessions/{user_id}/{conv_id}/{agent}"
 
     def _codex_resolve_session_id(self, conv_id: str, agent_name: str) -> str:
-        """Resume support: load the codex thread_id pinned for this conv/agent."""
         try:
             from core.conversation_store import ConversationStore
             return ConversationStore.instance().get_extra(
@@ -119,16 +94,9 @@ class LLMCodexMixin:
     def _codex_setup_auth_and_config(self, host_workdir: str,
                                        user_id: str, conv_id: str,
                                        service_id: str = "") -> Dict:
-        """Materialise ~/.codex/auth.json + ~/.codex/config.toml inside
-        the per-conv slot before launching codex.
-
-        Returns {"openai_api_key": ..., "used_oauth": bool, "pool_index": int}
-        for caller-side env injection.
-        """
         import core.paths as _paths
         from core.llm_providers import codex_session as _cs
 
-        # Map host_workdir (/cc_sessions/<u>/<c>/<a>) back to the host path.
         host_root = Path(str(_paths.CLAUDE_SESSIONS_DIR.resolve()))
         rel = host_workdir.lstrip("/").split("/")
         if len(rel) < 4 or rel[0] != "cc_sessions":
@@ -137,7 +105,6 @@ class LLMCodexMixin:
         codex_home = host_dir / ".codex"
         codex_home.mkdir(parents=True, exist_ok=True)
 
-        # Pick a credential from the pool (round-robin). Refresh if expired.
         pool = _cs._load_credentials_pool(service_id)
         used_oauth = False
         api_key = ""
@@ -146,14 +113,12 @@ class LLMCodexMixin:
             now_ms = int(time.time() * 1000)
             valid = [(i, c) for i, c in enumerate(pool) if c.get("expires_at", 0) > now_ms]
             if not valid:
-                # All expired — try the most recent and refresh on the way in.
                 valid = [(len(pool) - 1, pool[-1])]
             pool_index, cred = valid[0]
             access_token = cred.get("access_token", "")
             refresh_token = cred.get("refresh_token", "")
             expires_at = cred.get("expires_at", 0)
             account = cred.get("account", "")
-            # Refresh if within 60s of expiry (or already past).
             if expires_at < now_ms + 60_000 and refresh_token:
                 try:
                     new = _cs.refresh_oauth_token(refresh_token)
@@ -166,7 +131,6 @@ class LLMCodexMixin:
                     logger.info("[codex] refreshed pool[%d]", pool_index)
                 except Exception as e:
                     logger.warning("[codex] refresh failed: %s — trying access_token as-is", e)
-            # Write auth.json in the codex format.
             auth_blob = {
                 "OPENAI_API_KEY": "",
                 "tokens": {
@@ -182,12 +146,8 @@ class LLMCodexMixin:
             os.chmod(codex_home / "auth.json", 0o600)
             used_oauth = True
         else:
-            # Fall back to the service config api_key (CODEX_API_KEY env).
             api_key = self.config.get("api_key", "") if hasattr(self, "config") else ""
 
-        # config.toml: disable codex's own auto-compact (we drive it from
-        # the agent loop via PawFlowCodexCompactRequired) + register the
-        # PawFlow MCP bridge so codex can call our tools.
         from core.docker_utils import get_host_ip
         host_ip = get_host_ip()
         relay_url = self.config.get("tool_relay_url", "") or f"wss://{host_ip}:9090/ws/tools/_tool_relay"
@@ -229,6 +189,28 @@ class LLMCodexMixin:
     def _codex_context_window(self, model: str) -> int:
         return self._CODEX_CONTEXT_WINDOW.get(model or "", self._CODEX_CONTEXT_WINDOW_DEFAULT)
 
+    def send_user_message(self, text: str, attachments: list = None):
+        """Preempt: kill the running `codex exec` process so the agent loop
+        retries with the new prompt next turn.
+
+        Codex `exec` reads stdin once and exits at end-of-turn — there's
+        no continuous stdin to write to. Kill is the only way to abort
+        the current turn; the conversation `codex_session:<agent>` extra
+        ensures the next call resumes the same thread, picking up the
+        compacted history + the new user message.
+        """
+        proc = getattr(self, "_pf_codex_proc", None)
+        if proc is None or proc.poll() is not None:
+            return False
+        logger.info("[codex] preempt: killing running codex proc to inject “%s”",
+                    text[:60].replace("\n", " "))
+        try:
+            proc.kill()
+        except Exception as e:
+            logger.warning("[codex] preempt kill failed: %s", e)
+            return False
+        return True
+
     def _stream_codex(self, messages, model, temperature, max_tokens,
                        tools=None,
                        callback=None,
@@ -242,14 +224,9 @@ class LLMCodexMixin:
                        turn_callback=None,
                        block_callback=None,
                        **_ignored) -> "LLMResponse":
-        """Run a single codex turn and return the LLMResponse.
-
-        Tools are NOT inlined in the prompt: codex talks MCP, and the
-        PawFlow MCP bridge is wired in config.toml so codex calls our
-        tools live during the turn (results land in mcp_tool_call items).
-        """
         from core.llm_client import LLMResponse, LLMClientError
         from core.codex_pool import CodexPool
+        from core.codex_live_registry import CodexLiveRegistry
 
         user_id = call_user_id or getattr(self, "_user_id", "") or ""
         conv_id = call_conversation_id or getattr(self, "_conversation_id", "") or ""
@@ -265,17 +242,12 @@ class LLMCodexMixin:
         except Exception as e:
             raise LLMClientError(f"codex auth/config setup failed: {e}")
 
-        # Build the prompt: codex `exec` takes a single text payload (or
-        # `-` for stdin). We funnel the full message history through the
-        # shared CLI serializer so multi-turn context is preserved across
-        # spawns; codex doesn't keep an in-process session like CC does.
         system_prompt, user_text = self._serialize_messages_for_cli(messages, tools=None)
         if system_prompt:
             prompt_payload = f"<system>\n{system_prompt}\n</system>\n\n{user_text}"
         else:
             prompt_payload = user_text or ""
 
-        # Resume support: pass the previous thread_id if we have one.
         existing_sid = self._codex_resolve_session_id(conv_id, agent_name)
         codex_args: List[str] = ["exec"]
         if existing_sid:
@@ -286,7 +258,7 @@ class LLMCodexMixin:
             "--skip-git-repo-check",
             "--dangerously-bypass-approvals-and-sandbox",
             "--model", model or self._codex_default_model_for_pool(),
-            "-",  # read prompt from stdin so we can pipe arbitrarily long inputs
+            "-",
         ])
 
         extra_env = {}
@@ -294,8 +266,31 @@ class LLMCodexMixin:
             extra_env["CODEX_API_KEY"] = auth_meta["openai_api_key"]
             extra_env["OPENAI_API_KEY"] = auth_meta["openai_api_key"]
 
+        # Live container reuse: prefer an existing warm container for this
+        # (user, conv, agent, service); fall back to a fresh pool spawn.
+        live = CodexLiveRegistry.instance()
+        live_key = (user_id, conv_id, agent_name, service_id)
+        live_entry = live.get(live_key)
         pool = CodexPool.instance()
-        container = pool.acquire()
+        owned_container_for_release = None  # if non-None, release at end
+        if live_entry is not None:
+            container = live_entry.container_name
+            # Verify container is still alive (idle sweeper or external rm).
+            try:
+                from core.docker_utils import docker_cmd
+                _r = subprocess.run(
+                    docker_cmd() + ["inspect", "-f", "{{.State.Running}}", container],
+                    capture_output=True, text=True, timeout=5)
+                _alive = _r.returncode == 0 and _r.stdout.strip() == "true"
+            except Exception:
+                _alive = False
+            if not _alive:
+                live.evict(live_key, "container vanished")
+                live_entry = None
+        if live_entry is None:
+            container = pool.acquire()
+            owned_container_for_release = container  # release if we never register
+
         proc = None
         try:
             proc = pool.exec_codex(
@@ -307,35 +302,44 @@ class LLMCodexMixin:
                 text=True,
                 encoding="utf-8",
             )
+            self._pf_codex_proc = proc  # for send_user_message preempt
             try:
                 proc.stdin.write(prompt_payload + "\n")
                 proc.stdin.close()
             except Exception as e:
                 logger.warning("[codex] failed to write prompt to stdin: %s", e)
 
-            return self._consume_codex_stream(
+            response = self._consume_codex_stream(
                 proc, model=model or self._codex_default_model_for_pool(),
                 conv_id=conv_id, agent_name=agent_name,
                 callback=callback, thinking_callback=thinking_callback,
                 turn_callback=turn_callback, block_callback=block_callback,
             )
+            # Successful turn — keep the container warm for the next one.
+            live.register(live_key, container, host_workdir, service_id=service_id)
+            live.touch(live_key, bump_reuse=True)
+            owned_container_for_release = None
+            return response
         finally:
+            self._pf_codex_proc = None
             if proc and proc.poll() is None:
                 try:
                     proc.kill()
                 except Exception:
                     pass
-            try:
-                pool.release(container)
-            except Exception:
-                logger.debug("codex container release failed", exc_info=True)
+            if owned_container_for_release:
+                # Either a fresh acquire we never registered (turn failed),
+                # or the live container vanished mid-call — always release.
+                try:
+                    pool.release(owned_container_for_release)
+                except Exception:
+                    logger.debug("codex container release failed", exc_info=True)
 
     def _consume_codex_stream(self, proc, *,
                                  model: str, conv_id: str, agent_name: str,
                                  callback, thinking_callback,
                                  turn_callback, block_callback) -> "LLMResponse":
-        """Read the JSONL event stream until `turn.completed` / EOF."""
-        from core.llm_client import LLMResponse, LLMClientError
+        from core.llm_client import LLMResponse, LLMClientError, CCCompactDetected
 
         text_chunks: List[str] = []
         thinking_chunks: List[str] = []
@@ -383,10 +387,6 @@ class LLMCodexMixin:
                                 thinking_callback(chunk)
                             except Exception:
                                 pass
-                # command_execution / mcp_tool_call / file_change /
-                # web_search / plan_update items — codex executes them
-                # itself via MCP. We don't surface them as tool_calls in
-                # LLMResponse because the agent loop must NOT re-run them.
                 elif itype == "mcp_tool_call" and block_callback:
                     try:
                         block_callback({
@@ -398,9 +398,6 @@ class LLMCodexMixin:
                         pass
             elif etype == "turn.completed":
                 _u = event.get("usage", {}) or {}
-                # codex returns input_tokens that EXCLUDES cached_input_tokens
-                # AFAIK — but to mirror CC's gauge we sum input+cached for the
-                # "prompt size" comparison.
                 used = (int(_u.get("input_tokens", 0) or 0)
                         + int(_u.get("cached_input_tokens", 0) or 0))
                 usage["input_tokens"] = int(_u.get("input_tokens", 0) or 0)
@@ -409,7 +406,7 @@ class LLMCodexMixin:
                 usage["_total_used"] = used
                 if ctx_window > 0 and used >= int(ctx_window * _PAWFLOW_COMPACT_THRESHOLD):
                     logger.warning(
-                        "[codex] usage %d/%d crossed PawFlow compact threshold (%d%%)",
+                        "[codex] usage %d/%d crossed PawFlow compact threshold (%d%%) — will signal compact",
                         used, ctx_window, int(_PAWFLOW_COMPACT_THRESHOLD * 100))
                     compact_required = True
                 if turn_callback:
@@ -444,7 +441,9 @@ class LLMCodexMixin:
                                 + f"[codex error: {last_error}]").strip()
 
         if compact_required:
-            raise PawFlowCodexCompactRequired(
-                used=usage.get("_total_used", 0),
-                window=ctx_window, conv_id=conv_id)
+            # CC-equivalent signal: agent_core catches CCCompactDetected,
+            # runs PawFlow's bucket compact, then restarts a fresh codex
+            # call (with `exec resume <thread_id>` since we persisted it).
+            raise CCCompactDetected(
+                f"codex usage {usage.get('_total_used', 0)}/{ctx_window} ≥ {int(_PAWFLOW_COMPACT_THRESHOLD * 100)}%")
         return response

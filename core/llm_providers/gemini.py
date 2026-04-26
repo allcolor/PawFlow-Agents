@@ -1,52 +1,37 @@
 """LLM provider mixin -- Gemini CLI (`gemini -p ... --output-format stream-json`).
 
-Compact MVP, mirror of LLMCodexMixin but with Google's flavour:
-- writes ~/.gemini/oauth_creds.json + ~/.gemini/settings.json (with the
-  pawflow MCP server) under the per-conv slot before launching gemini;
-- reads the NDJSON event stream documented in gemini-cli/docs/cli/headless
-  (init / message / tool_use / tool_result / error / result);
-- raises PawFlowGeminiCompactRequired at 80% usage so the agent loop can
-  trigger PawFlow's bucket compact (gemini emits no compaction event in
-  the stream-json output — ChatCompressionService runs internally).
-
-Not mutualised with codex/CC mixins by design — see memory "Separate
-pools per CLI".
+Mirror of LLMCodexMixin: live container reuse via GeminiLiveRegistry,
+send_user_message preempt that kills the active gemini proc, 80% compact
+threshold raises CCCompactDetected so the agent_core handler does the
+same kill+compact+restart dance it does for CC. Independent file from
+codex's by design — see memory "Separate pools per CLI".
 """
 
 import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-
 _PAWFLOW_COMPACT_THRESHOLD = 0.80
-
-
-class PawFlowGeminiCompactRequired(Exception):
-    """Signal: gemini usage crossed the PawFlow compact threshold."""
-    def __init__(self, used: int, window: int, conv_id: str = ""):
-        super().__init__(
-            f"gemini usage {used}/{window} >= {int(_PAWFLOW_COMPACT_THRESHOLD * 100)}% — PawFlow compact")
-        self.used = used
-        self.window = window
-        self.conv_id = conv_id
 
 
 class LLMGeminiMixin:
     """Gemini CLI provider — `gemini -p "<prompt>" --output-format stream-json`.
 
-    Stream events (per gemini-cli docs):
+    Stream events:
       init{session_id, model}
       message{role, content}
+      thought{content}        (when reasoning is exposed)
       tool_use{name, args}
       tool_result{output}
       error{...}
-      result{stats: {...}, usage: {...}}
+      result{stats / usage}
 
     Tools route through the MCP bridge declared in ~/.gemini/settings.json.
     """
@@ -65,7 +50,7 @@ class LLMGeminiMixin:
         if not user_id or not conv_id:
             raise ValueError("user_id + conversation_id required for gemini provider")
         import core.paths as _paths
-        base = _paths.CLAUDE_SESSIONS_DIR  # shared /cc_sessions root
+        base = _paths.CLAUDE_SESSIONS_DIR
         agent = agent_name or "default"
         wd = base / user_id / conv_id / agent
         wd.mkdir(parents=True, exist_ok=True)
@@ -90,11 +75,6 @@ class LLMGeminiMixin:
     def _gemini_setup_auth_and_settings(self, host_workdir: str,
                                             user_id: str, conv_id: str,
                                             service_id: str = "") -> Dict:
-        """Materialise ~/.gemini/oauth_creds.json + settings.json under the
-        per-conv slot before launching gemini. Disables ChatCompressionService
-        auto-trigger by setting contextPercentageThreshold high — PawFlow
-        compacts via PawFlowGeminiCompactRequired instead.
-        """
         import core.paths as _paths
         from core.llm_providers import gemini_session as _gs
 
@@ -162,7 +142,8 @@ class LLMGeminiMixin:
                 "sessionRetention": {"enabled": True, "maxAge": "30d"},
             },
             "model": {
-                # Disable ChatCompressionService auto-trigger — PawFlow drives it.
+                # Disable ChatCompressionService auto-trigger — PawFlow drives it via
+                # CCCompactDetected raised at our 80% threshold.
                 "chatCompression": {"contextPercentageThreshold": 0.99},
                 "maxSessionTurns": -1,
             },
@@ -196,6 +177,25 @@ class LLMGeminiMixin:
     def _gemini_context_window(self, model: str) -> int:
         return self._GEMINI_CONTEXT_WINDOW.get(model or "", self._GEMINI_CONTEXT_WINDOW_DEFAULT)
 
+    def send_user_message(self, text: str, attachments: list = None):
+        """Preempt: kill the running `gemini -p` process to abort the turn.
+
+        Same rationale as codex's preempt — `gemini -p` reads the prompt
+        once and exits. The agent loop's pending queue + session resume
+        ensures the new message is folded into the next call.
+        """
+        proc = getattr(self, "_pf_gemini_proc", None)
+        if proc is None or proc.poll() is not None:
+            return False
+        logger.info("[gemini] preempt: killing running gemini proc to inject “%s”",
+                    text[:60].replace("\n", " "))
+        try:
+            proc.kill()
+        except Exception as e:
+            logger.warning("[gemini] preempt kill failed: %s", e)
+            return False
+        return True
+
     def _stream_gemini(self, messages, model, temperature, max_tokens,
                          tools=None,
                          callback=None,
@@ -211,6 +211,7 @@ class LLMGeminiMixin:
                          **_ignored) -> "LLMResponse":
         from core.llm_client import LLMResponse, LLMClientError
         from core.gemini_pool import GeminiPool
+        from core.gemini_live_registry import GeminiLiveRegistry
 
         user_id = call_user_id or getattr(self, "_user_id", "") or ""
         conv_id = call_conversation_id or getattr(self, "_conversation_id", "") or ""
@@ -235,23 +236,40 @@ class LLMGeminiMixin:
         existing_sid = self._gemini_resolve_session_id(conv_id, agent_name)
         gemini_args: List[str] = [
             "--output-format", "stream-json",
-            "--yolo",  # auto-approve all tool calls (equivalent of CC --dangerously-skip-permissions)
-            "--skip-trust",  # don't prompt to trust the workspace
+            "--yolo",
+            "--skip-trust",
             "--model", model or self._gemini_default_model_for_pool(),
         ]
         if existing_sid:
             gemini_args.extend(["--resume", existing_sid])
-        # `-p -` is not documented; gemini takes the prompt as a positional
-        # arg or via `-p "text"`. We feed the entire prompt as a single -p
-        # value (gemini reads it whole, no length limit observed in docs).
         gemini_args.extend(["-p", prompt_payload])
 
         extra_env = {}
         if auth_meta.get("gemini_api_key"):
             extra_env["GEMINI_API_KEY"] = auth_meta["gemini_api_key"]
 
+        live = GeminiLiveRegistry.instance()
+        live_key = (user_id, conv_id, agent_name, service_id)
+        live_entry = live.get(live_key)
         pool = GeminiPool.instance()
-        container = pool.acquire()
+        owned_container_for_release = None
+        if live_entry is not None:
+            container = live_entry.container_name
+            try:
+                from core.docker_utils import docker_cmd
+                _r = subprocess.run(
+                    docker_cmd() + ["inspect", "-f", "{{.State.Running}}", container],
+                    capture_output=True, text=True, timeout=5)
+                _alive = _r.returncode == 0 and _r.stdout.strip() == "true"
+            except Exception:
+                _alive = False
+            if not _alive:
+                live.evict(live_key, "container vanished")
+                live_entry = None
+        if live_entry is None:
+            container = pool.acquire()
+            owned_container_for_release = container
+
         proc = None
         try:
             proc = pool.exec_gemini(
@@ -263,28 +281,35 @@ class LLMGeminiMixin:
                 text=True,
                 encoding="utf-8",
             )
-            return self._consume_gemini_stream(
+            self._pf_gemini_proc = proc
+            response = self._consume_gemini_stream(
                 proc, model=model or self._gemini_default_model_for_pool(),
                 conv_id=conv_id, agent_name=agent_name,
                 callback=callback, thinking_callback=thinking_callback,
                 turn_callback=turn_callback, block_callback=block_callback,
             )
+            live.register(live_key, container, host_workdir, service_id=service_id)
+            live.touch(live_key, bump_reuse=True)
+            owned_container_for_release = None
+            return response
         finally:
+            self._pf_gemini_proc = None
             if proc and proc.poll() is None:
                 try:
                     proc.kill()
                 except Exception:
                     pass
-            try:
-                pool.release(container)
-            except Exception:
-                logger.debug("gemini container release failed", exc_info=True)
+            if owned_container_for_release:
+                try:
+                    pool.release(owned_container_for_release)
+                except Exception:
+                    logger.debug("gemini container release failed", exc_info=True)
 
     def _consume_gemini_stream(self, proc, *,
                                   model: str, conv_id: str, agent_name: str,
                                   callback, thinking_callback,
                                   turn_callback, block_callback) -> "LLMResponse":
-        from core.llm_client import LLMResponse, LLMClientError
+        from core.llm_client import LLMResponse, LLMClientError, CCCompactDetected
 
         text_chunks: List[str] = []
         thinking_chunks: List[str] = []
@@ -343,7 +368,6 @@ class LLMGeminiMixin:
             elif etype == "result":
                 _stats = event.get("stats", {}) or {}
                 _u = _stats.get("usage", {}) or event.get("usage", {}) or {}
-                # Gemini may break usage down per-model; sum if so.
                 if isinstance(_u, dict) and any(
                         isinstance(v, dict) for v in _u.values()):
                     sum_in = sum(int((v or {}).get("input_tokens", 0))
@@ -363,7 +387,7 @@ class LLMGeminiMixin:
                 usage["_total_used"] = used
                 if ctx_window > 0 and used >= int(ctx_window * _PAWFLOW_COMPACT_THRESHOLD):
                     logger.warning(
-                        "[gemini] usage %d/%d crossed PawFlow compact threshold (%d%%)",
+                        "[gemini] usage %d/%d crossed PawFlow compact threshold (%d%%) — will signal compact",
                         used, ctx_window, int(_PAWFLOW_COMPACT_THRESHOLD * 100))
                     compact_required = True
                 if turn_callback:
@@ -392,7 +416,6 @@ class LLMGeminiMixin:
                                 + f"[gemini error: {last_error}]").strip()
 
         if compact_required:
-            raise PawFlowGeminiCompactRequired(
-                used=usage.get("_total_used", 0),
-                window=ctx_window, conv_id=conv_id)
+            raise CCCompactDetected(
+                f"gemini usage {usage.get('_total_used', 0)}/{ctx_window} ≥ {int(_PAWFLOW_COMPACT_THRESHOLD * 100)}%")
         return response

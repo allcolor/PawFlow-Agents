@@ -982,7 +982,7 @@ class AgentCoreMixin:
                                 callback=emitter.get_token_callback(ps),
                                 thinking_budget=_tb,
                                 thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None,
-                                turn_callback=_claude_code_turn_callback if _is_claude_code else None,
+                                turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "codex", "gemini") else None,
                                 **_call_kwargs)
                         return client.complete(
                             messages=msgs, model=model or None,

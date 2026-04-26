@@ -396,6 +396,14 @@ class LLMCodexMixin:
         # used to dedupe in case codex retransmits.
         items_in_flight: Dict[str, tuple] = {}
 
+        # Tool calls + their (already-executed) results, accumulated for the
+        # turn_callback flush at end of stream. Codex executes tools server-
+        # side via MCP and emits both call + result inline; PawFlow surfaces
+        # them by attaching the result to the matching tool_call so the agent
+        # loop can persist the assistant.tool_calls + role=tool messages
+        # without re-executing anything.
+        collected_tool_calls: List[dict] = []  # {id, name, arguments, result}
+
         def _extract_tool_call(item: dict) -> Optional[tuple]:
             """Return (tc_id, tool_name, args, result_or_none) or None.
 
@@ -424,52 +432,56 @@ class LLMCodexMixin:
                 return (tc_id, "shell", args, result)
             return None
 
-        logger.info("[codex-stream] callbacks: block=%s callback=%s thinking=%s turn=%s",
-                    bool(block_callback), bool(callback), bool(thinking_callback), bool(turn_callback))
-
         def _emit_tool_use(tc_id: str, name: str, args: dict):
-            logger.info("[codex-stream] _emit_tool_use tc_id=%s name=%s has_cb=%s",
-                        tc_id[:12], name, bool(block_callback))
-            if not block_callback:
-                return
+            # Unwrap MCP wrapper (`pawflow.use_tool` proxy → real tool name +
+            # args) so the UI shows `read({path: ...})` instead of
+            # `pawflow.use_tool({tool_name: read, arguments: {...}})`.
             try:
-                block_callback("tool_use", {
-                    "id": tc_id,
-                    "name": name,
-                    "arguments": args,
-                    "thinking": "",
-                })
-            except Exception as e:
-                logger.warning("[codex] block_callback tool_use failed: %s", e)
-            # Pending registration: lets services.tool_relay_service match the
-            # MCP request that is about to come back through the bridge to
-            # this tc_id (for kill/cancel/background tracking). Without it,
-            # tool_relay logs `cc_tc MISS pending=[]` for every codex tool.
+                from core.llm_client import unwrap_mcp_tool
+                _real_name, _real_args = unwrap_mcp_tool(name, args or {})
+            except Exception:
+                _real_name, _real_args = name, args or {}
+            collected_tool_calls.append({
+                "id": tc_id,
+                "name": _real_name,
+                "arguments": _real_args,
+                "result": None,
+            })
+            # Pending registration: lets services.tool_relay_service match
+            # the MCP request the bridge is about to forward to this tc_id
+            # (for kill/cancel/background tracking). Without it, tool_relay
+            # logs `cc_tc MISS pending=[]` for every codex tool call.
             try:
                 from core.background_tool import enqueue_cc_tc, _args_hash
-                from core.llm_client import unwrap_mcp_tool
-                _mn, _ma = unwrap_mcp_tool(name, args or {})
-                logger.info("[codex-stream] enqueue_cc_tc tc_id=%s mn=%s ah=%s conv=%s agent=%s",
-                            tc_id[:12], _mn, _args_hash(_ma)[:12], conv_id[:8], agent_name)
-                enqueue_cc_tc(conv_id, agent_name, tc_id, _mn, _args_hash(_ma))
+                enqueue_cc_tc(conv_id, agent_name, tc_id, _real_name, _args_hash(_real_args))
             except Exception as e:
-                logger.warning("[codex] enqueue_cc_tc FAILED: %s", e, exc_info=True)
+                logger.debug("[codex] enqueue_cc_tc skipped: %s", e)
 
         def _emit_tool_result(tc_id: str, name: str, result):
-            if not block_callback:
-                return
+            # Pair the result with the tool_call captured at item.started.
             try:
                 if isinstance(result, (dict, list)):
                     result_str = json.dumps(result, ensure_ascii=False, default=str)
                 else:
                     result_str = str(result) if result is not None else ""
-                block_callback("tool_result", {
-                    "tc_id": tc_id,
-                    "tool": name,
-                    "result": result_str,
-                })
-            except Exception as e:
-                logger.warning("[codex] block_callback tool_result failed: %s", e)
+            except Exception:
+                result_str = repr(result)
+            for tc in collected_tool_calls:
+                if tc["id"] == tc_id:
+                    tc["result"] = result_str
+                    return
+            # No matching tool_use captured (rare — e.g. item.completed
+            # without item.started). Push a synthetic entry so the result
+            # still surfaces in the transcript.
+            try:
+                from core.llm_client import unwrap_mcp_tool
+                _real_name, _ = unwrap_mcp_tool(name, {})
+            except Exception:
+                _real_name = name
+            collected_tool_calls.append({
+                "id": tc_id, "name": _real_name,
+                "arguments": {}, "result": result_str,
+            })
 
         # Diagnostic: log the FULL first occurrence of each (event_type,
         # item_type) shape we see, so we can build the right mapping. The
@@ -583,11 +595,6 @@ class LLMCodexMixin:
                         "[codex] usage %d/%d crossed PawFlow compact threshold (%d%%) — will signal compact",
                         used, ctx_window, int(_PAWFLOW_COMPACT_THRESHOLD * 100))
                     compact_required = True
-                if turn_callback:
-                    try:
-                        turn_callback({"usage": usage, "model": model})
-                    except Exception:
-                        pass
             elif etype == "turn.failed":
                 last_error = json.dumps(event.get("error", event))[:500]
                 finish_reason = "error"
@@ -603,17 +610,36 @@ class LLMCodexMixin:
         if thread_id:
             self._codex_persist_session_id(conv_id, agent_name, thread_id)
 
+        full_text = "\n".join(text_chunks).strip()
+        full_thinking = "\n".join(thinking_chunks).strip()
+
+        # CC-style turn flush: hand the (text, tool_calls, thinking) triple
+        # to agent_core's _claude_code_turn_callback so it persists the
+        # assistant message + role=tool result messages and publishes the
+        # corresponding SSE events. Codex executed the tools server-side
+        # already; results are paired in `collected_tool_calls` so the
+        # agent loop does NOT re-execute them — it just records what
+        # happened. Mirrors how CC's _flush_turn works at every internal
+        # turn boundary.
+        if turn_callback and (full_text or collected_tool_calls or full_thinking):
+            try:
+                turn_callback(full_text, collected_tool_calls, full_thinking)
+            except Exception as e:
+                logger.warning("[codex] turn_callback flush failed: %s", e, exc_info=True)
+
         # tokens_in feeds the context gauge — use our prompt-based estimate
         # (`_total_used`), NOT codex's `input_tokens` which sums every internal
         # iteration's prompt and overstates the actual context size by 5–10x.
+        # Empty content + tool_calls when turn_callback already flushed: the
+        # agent loop must not re-append a duplicate assistant message.
         response = LLMResponse(
-            content="\n".join(text_chunks).strip(),
+            content="" if turn_callback else full_text,
             tokens_in=usage.get("_total_used", 0) or usage.get("input_tokens", 0),
             tokens_out=usage.get("output_tokens", 0),
             finish_reason=finish_reason,
             model=model,
         )
-        if last_error:
+        if last_error and not turn_callback:
             response.content = (response.content + ("\n\n" if response.content else "")
                                 + f"[codex error: {last_error}]").strip()
 

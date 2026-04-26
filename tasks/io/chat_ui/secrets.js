@@ -48,31 +48,85 @@ async function toggleFilesPanel() {
   }
 }
 
+function _formatFileSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+function _formatFileDate(epochSeconds) {
+  const t = Number(epochSeconds) || 0;
+  if (t <= 0) return '—';
+  const d = new Date(t * 1000);
+  // Local short form: YYYY-MM-DD HH:mm — sortable + human readable.
+  const pad = (x) => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+    + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
 function loadConvFiles() {
   if (!conversationId) return;
   const list = document.getElementById('filesList');
   list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
   action$('list_conv_files', { conversation_id: conversationId }).subscribe({
     next: (data) => {
-      const files = data.files || [];
+      const files = (data.files || []).slice();
       if (files.length === 0) {
         list.innerHTML = '<span style="color:#808090;font-size:12px">No files in this conversation.</span>';
         return;
       }
-      const available = files.filter(f => f.available);
-      if (!available.length) {
-        list.innerHTML = '<span style="color:#555;font-size:12px">No files</span>';
-        return;
-      }
-      list.innerHTML = '';
-      for (const f of available) {
+      // Newest-first. Server pre-sorts, but re-sort defensively.
+      files.sort((a, b) => (Number(b.created_at) || 0) - (Number(a.created_at) || 0));
+
+      const table = document.createElement('table');
+      table.className = 'files-table';
+      const thead = document.createElement('thead');
+      thead.innerHTML = '<tr>'
+        + '<th class="col-name">Name</th>'
+        + '<th class="col-type">Type</th>'
+        + '<th class="col-size">Size</th>'
+        + '<th class="col-date">Date</th>'
+        + '</tr>';
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      for (const f of files) {
+        const tr = document.createElement('tr');
+        if (!f.available) tr.className = 'unavailable';
         const href = window.location.origin + '/files/' + f.file_id;
-        const chip = document.createElement('span');
-        chip.className = 'file-chip';
-        chip.innerHTML = `<span class="file-status available" title="Available"></span><a href="${href}" target="_blank" title="Download">${escapeHtml(f.filename)}</a>`;
-        chip.addEventListener('contextmenu', (e) => showFileMenu(e, f.file_id, f.filename));
-        list.appendChild(chip);
+        const nameTd = document.createElement('td');
+        nameTd.className = 'col-name';
+        if (f.available) {
+          const a = document.createElement('a');
+          a.href = href;
+          a.target = '_blank';
+          a.title = 'Download';
+          a.textContent = f.filename || f.file_id;
+          nameTd.appendChild(a);
+        } else {
+          nameTd.textContent = (f.filename || f.file_id) + ' (missing)';
+        }
+        const typeTd = document.createElement('td');
+        typeTd.className = 'col-type';
+        typeTd.textContent = f.content_type || '';
+        const sizeTd = document.createElement('td');
+        sizeTd.className = 'col-size';
+        sizeTd.textContent = _formatFileSize(f.size);
+        const dateTd = document.createElement('td');
+        dateTd.className = 'col-date';
+        dateTd.textContent = _formatFileDate(f.created_at);
+        tr.appendChild(nameTd);
+        tr.appendChild(typeTd);
+        tr.appendChild(sizeTd);
+        tr.appendChild(dateTd);
+        tr.addEventListener('contextmenu',
+          (e) => showFileMenu(e, f.file_id, f.filename || f.file_id));
+        tbody.appendChild(tr);
       }
+      table.appendChild(tbody);
+      list.innerHTML = '';
+      list.appendChild(table);
     },
     error: () => {
       list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load files</span>';

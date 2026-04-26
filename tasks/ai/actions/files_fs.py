@@ -22,70 +22,37 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         if not conv_id:
             flowfile.set_content(json.dumps({"files": []}).encode())
             return [flowfile]
-        messages_data = store.load(conv_id, user_id=user_id) or []
-        # Also include files from sub-conversations (task contexts)
-        all_convs = store.list_conversations(user_id=user_id) if user_id else []
-        # list_conversations filters ::task::, so search extras directly
-        try:
-            extras = store.get_extras(conv_id, user_id=user_id) or {}
-            for k in extras:
-                if k.startswith("task_log:"):
-                    # There might be a sub-conv for this task
-                    tid = k[9:]
-                    sub_cid = f"{conv_id}::task::{tid}"
-                    sub_msgs = store.load(sub_cid, user_id=user_id)
-                    if sub_msgs:
-                        messages_data.extend(sub_msgs)
-        except Exception:
-            pass
-        if not messages_data:
-            flowfile.set_content(json.dumps({"files": []}).encode())
-            return [flowfile]
-        import re as _re
+        # Query the FileStore directly. The previous implementation scanned
+        # message content for fs://filestore/<id> / /files/<id> URLs and
+        # missed any file the agent stored without surfacing a URL
+        # (uploaded attachments not yet sent, tool-internal files, etc.).
+        # The FileStore is conv-scoped on disk, so this is the right
+        # source of truth.
         from core.file_store import FileStore
         fstore = FileStore.instance()
-        # Match three URL shapes the agent / handlers emit:
-        #   fs://filestore/<id>/<name>     (canonical handler output)
-        #   /files/<id>/<name>             (HTTP same-origin)
-        #   /files/<id>                    (legacy without filename)
-        # Captures (file_id, filename?). filename is optional — when
-        # missing we fall back to the FileStore-recorded name.
-        pattern = _re.compile(
-            r'(?:fs://filestore|/files)/([a-f0-9]{12})'
-            r'(?:/([^\s)\'"<]+))?')
-        seen_ids = set()
-        seen_names = set()
+        try:
+            rows = fstore.list_files(
+                user_id=user_id, conversation_id=conv_id,
+                include_internal=False)
+        except Exception:
+            logger.exception("list_conv_files: FileStore.list_files failed")
+            rows = []
         files = []
-        def _add_file(fid, fname):
-            if fid in seen_ids:
-                return
-            seen_ids.add(fid)
-            available = fstore.exists(fid)
-            if available and not fname:
-                try:
-                    meta = fstore.get_metadata(fid) or {}
-                    fname = meta.get("filename", fid)
-                except Exception:
-                    fname = fid
-            if fname and fname in seen_names:
-                return
-            if fname:
-                seen_names.add(fname)
-            files.append({"file_id": fid, "filename": fname, "available": available})
-
-        for msg in messages_data:
-            content = msg.get("content", "")
-            # Multi-part content (user messages with attachments)
-            if isinstance(content, list):
-                for part in content:
-                    pt = part.get("type", "") if isinstance(part, dict) else ""
-                    if pt in ("image_ref", "file_ref") and part.get("file_id"):
-                        _add_file(part["file_id"], part.get("filename", ""))
+        for r in rows:
+            fid = r.get("file_id", "")
+            if not fid:
                 continue
-            if not isinstance(content, str):
-                continue
-            for match in pattern.finditer(content):
-                _add_file(match.group(1), match.group(2) or "")
+            files.append({
+                "file_id": fid,
+                "filename": r.get("filename", fid),
+                "content_type": r.get("content_type", ""),
+                "size": int(r.get("size", 0) or 0),
+                "created_at": float(r.get("created_at", 0) or 0),
+                "available": fstore.exists(fid),
+            })
+        # Newest first; the UI sorts again on the client side but
+        # pre-sorting here keeps non-UI consumers consistent.
+        files.sort(key=lambda f: f["created_at"], reverse=True)
         flowfile.set_content(json.dumps({"files": files}, ensure_ascii=False).encode())
         return [flowfile]
 

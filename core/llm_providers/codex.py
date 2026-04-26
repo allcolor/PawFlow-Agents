@@ -154,8 +154,12 @@ class LLMCodexMixin:
             # Only include the field when we actually have a JWT to give.
             if id_token:
                 tokens["id_token"] = id_token
+            # OPENAI_API_KEY MUST be JSON null (not "") — codex CLI treats an
+            # empty string as a real API key and forwards it to api.openai.com,
+            # which then 401s with `Incorrect API key provided: ''`. Setting it
+            # to None makes codex fall through to the OAuth tokens block.
             auth_blob = {
-                "OPENAI_API_KEY": "",
+                "OPENAI_API_KEY": None,
                 "tokens": tokens,
                 "last_refresh": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }

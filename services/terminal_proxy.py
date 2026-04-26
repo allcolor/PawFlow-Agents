@@ -149,17 +149,27 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
 
 
 def _send_command_to_relay(relay_service, cmd: dict):
-    """Send a command to the relay via the proven command pipeline."""
+    """Send a command (terminal_input / terminal_resize) to the relay.
+
+    Uses _ws_send_frame from filesystem_service — the previous code
+    called listener._ws_send(...) which never existed on
+    HTTPListenerService, so every keystroke and resize hit
+    AttributeError, the except branch logged it, and the terminal
+    appeared frozen (open, but unreceptive).
+
+    Pool ordering matches RelayService._send_to_pool: most-recently-
+    connected first, failover backward. The pool only ever holds
+    more than one entry during a reconnect overlap.
+    """
     import asyncio
     import uuid
+    from services.filesystem_service import _ws_send_frame
 
     with relay_service._relay_pool_lock:
         pool = relay_service._relay_pool[:]
     if not pool:
         return
 
-    # Wrap as a "command" type message — this goes through the relay's
-    # _execute_command dispatch which is proven to work.
     request_id = uuid.uuid4().hex[:8]
     msg = {
         "type": "command",
@@ -167,18 +177,22 @@ def _send_command_to_relay(relay_service, cmd: dict):
         **cmd,
     }
     payload = json.dumps(msg).encode("utf-8")
-    conn = pool[0]
-    writer, loop = conn["writer"], conn["loop"]
 
-    async def _send(w=writer):
-        listener = relay_service._connection
-        if listener:
-            await listener._ws_send(w, payload)
+    last_err = None
+    for conn in reversed(pool):
+        writer, loop = conn["writer"], conn["loop"]
 
-    try:
-        asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
-    except Exception as e:
-        logger.warning("Terminal command send error: %s", e)
+        async def _send(w=writer):
+            await _ws_send_frame(w, payload)
+
+        try:
+            asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
+            return
+        except Exception as e:
+            last_err = e
+            continue
+    if last_err is not None:
+        logger.warning("Terminal command send error: %s", last_err)
 
 
 # ── WS frame helpers ──

@@ -80,6 +80,50 @@ class AgentDiary:
         entries.sort(key=lambda e: e.get("ts", 0), reverse=True)
         return entries[:limit]
 
+    def list_agents(self, user_id: str) -> List[str]:
+        """Return every agent name that has a diary file for this user.
+
+        Used by callers that pass `agents=['*']` to read across all
+        agents (e.g. an orchestrator consolidating multi-agent work).
+        """
+        if not user_id:
+            return []
+        safe_user = user_id.replace("/", "_").replace("\\", "_")
+        user_dir = self._store_dir / safe_user
+        if not user_dir.is_dir():
+            return []
+        out = []
+        for p in user_dir.iterdir():
+            name = p.name
+            if p.is_file() and name.startswith("diary_") and name.endswith(".jsonl"):
+                out.append(name[len("diary_"):-len(".jsonl")])
+        return sorted(out)
+
+    def read_multi(self, user_id: str, agents: List[str],
+                   limit: int = 20, entry_type: str = "") -> List[Dict]:
+        """Read entries across multiple agents, merged newest-first.
+
+        `agents=['*']` expands to every agent in the user's diary dir.
+        Each returned record gains an `agent` field so the caller can
+        tell who wrote what — the per-file diaries don't store the
+        agent name in the records themselves (it's encoded in the
+        filename).
+        """
+        if not user_id or not agents:
+            return []
+        if agents == ["*"] or "*" in agents:
+            resolved = self.list_agents(user_id)
+        else:
+            resolved = list(dict.fromkeys(agents))  # preserve order, dedup
+        merged: List[Dict] = []
+        for ag in resolved:
+            for rec in self.read(user_id, ag, limit=limit, entry_type=entry_type):
+                rec = dict(rec)
+                rec["agent"] = ag
+                merged.append(rec)
+        merged.sort(key=lambda e: e.get("ts", 0), reverse=True)
+        return merged[:limit]
+
     def build_diary_digest(self, user_id: str, agent_name: str,
                            max_chars: int = 600) -> str:
         """Build compact diary digest for system prompt injection."""

@@ -37,6 +37,42 @@ def _bm25_tokens(text: str) -> List[str]:
     return [t for t in _BM25_SPLIT.split(text.lower()) if len(t) > 1]
 
 
+# ── Scope semantics (single source of truth) ───────────────────────
+VALID_SCOPES = ("global", "agent", "conversation", "private")
+
+
+def resolve_scope(scope: str, agent: str = "",
+                  conversation_id: str = "") -> Tuple[str, str]:
+    """Convert a logical scope into the (agent, conversation_id) fields
+    stored on a MemoryEntry.
+
+        global       → ("",      "")
+        agent        → (agent,   "")
+        conversation → ("",      conversation_id)
+        private      → (agent,   conversation_id)
+
+    Used by every caller that takes a high-level `scope` string
+    (RememberHandler, future tools). Direct callers that already know
+    the (agent, conv_id) tuple they want (cc_memory_mirror,
+    auto_extract_memories) bypass this helper — their semantics are
+    already pinned at the call site.
+
+    Raises ValueError on an unknown scope so a typo doesn't silently
+    fall through to one of the four valid scopes.
+    """
+    if scope not in VALID_SCOPES:
+        raise ValueError(
+            f"unknown scope {scope!r}; valid: {', '.join(VALID_SCOPES)}")
+    if scope == "global":
+        return ("", "")
+    if scope == "agent":
+        return (agent or "", "")
+    if scope == "conversation":
+        return ("", conversation_id or "")
+    # private
+    return (agent or "", conversation_id or "")
+
+
 def _bm25_score(query_tokens: List[str], docs: List[List[str]]) -> List[float]:
     """Return one score per doc. Higher = more relevant."""
     import math

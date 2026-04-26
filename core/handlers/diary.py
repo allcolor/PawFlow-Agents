@@ -109,16 +109,20 @@ class DiaryReadHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Read your recent diary entries, ordered newest first.\n\n"
-            "Use this to recall your own past observations, decisions, learnings, and "
+            "Read recent diary entries, ordered newest first.\n\n"
+            "Use this to recall past observations, decisions, learnings, and "
             "reflections from previous conversations. Helpful at the start of a session "
             "to re-establish context about ongoing work.\n\n"
             "Key parameters:\n"
             "- limit: Max entries to return (default 10). Increase to see more history.\n"
             "- type: Filter by entry type — 'observation', 'decision', 'learning', or "
-            "'reflection'. Omit to see all types.\n\n"
-            "Each entry shows its type, timestamp, and text. The diary is private to "
-            "your agent — only you can read your own entries."
+            "'reflection'. Omit to see all types.\n"
+            "- agents: List of agent names to read from. Default is your own "
+            "diary only. Pass [\"*\"] to read every agent's diary for this "
+            "user (e.g. an orchestrator consolidating multi-agent work), or "
+            "[\"name1\", \"name2\"] for an explicit subset. Each entry will "
+            "include the writing agent.\n\n"
+            "By default the diary is private to your own agent."
         )
 
     @property
@@ -131,6 +135,14 @@ class DiaryReadHandler(ToolHandler):
                     "type": "string",
                     "enum": ["observation", "decision", "learning", "reflection"],
                     "description": "Filter by entry type",
+                },
+                "agents": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Agents to read from. Default = own agent only. "
+                        "['*'] = every agent in this user's diary directory."
+                    ),
                 },
             },
         }
@@ -146,18 +158,30 @@ class DiaryReadHandler(ToolHandler):
             return "Error: user_id and agent_name required"
         try:
             from core.agent_diary import AgentDiary
-            entries = AgentDiary.instance().read(
-                self._user_id, self._agent_name,
-                limit=int(arguments.get("limit", 10) or 10),
-                entry_type=arguments.get("type", ""),
-            )
+            limit = int(arguments.get("limit", 10) or 10)
+            entry_type = arguments.get("type", "")
+            from core.handlers._arg_normalize import normalize_string_list
+            agents = normalize_string_list(arguments.get("agents"))
+            multi = bool(agents)
+            diary = AgentDiary.instance()
+            if multi:
+                entries = diary.read_multi(
+                    self._user_id, agents, limit=limit, entry_type=entry_type)
+            else:
+                entries = diary.read(
+                    self._user_id, self._agent_name,
+                    limit=limit, entry_type=entry_type)
             if not entries:
                 return "No diary entries yet."
-            lines = [f"Diary ({len(entries)} entries, newest first):"]
+            header = (f"Diary across agents ({len(entries)} entries, newest first):"
+                      if multi
+                      else f"Diary ({len(entries)} entries, newest first):")
+            lines = [header]
             for e in entries:
                 import time
                 _ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(e.get("ts", 0)))
-                lines.append(f"  [{e.get('type', '?')}] {_ts}: {e.get('text', '')[:120]}")
+                _prefix = (f"@{e.get('agent', '?')} " if multi else "")
+                lines.append(f"  [{e.get('type', '?')}] {_ts} {_prefix}{e.get('text', '')[:120]}")
             return "\n".join(lines)
         except Exception as e:
             return f"Error: {e}"

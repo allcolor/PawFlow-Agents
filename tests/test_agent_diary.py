@@ -111,6 +111,62 @@ class TestRead(unittest.TestCase):
         assert results == []
 
 
+class TestReadMulti(unittest.TestCase):
+    """Cross-agent read for orchestrator-style consolidation."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.diary = AgentDiary(store_dir=self.tmpdir)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_list_agents_empty(self):
+        assert self.diary.list_agents("u") == []
+
+    def test_list_agents_returns_known(self):
+        self.diary.write("u", "alice", "a1")
+        self.diary.write("u", "bob", "b1")
+        assert self.diary.list_agents("u") == ["alice", "bob"]
+
+    def test_list_agents_other_user_isolated(self):
+        self.diary.write("u1", "alice", "x")
+        self.diary.write("u2", "alice", "y")
+        assert self.diary.list_agents("u1") == ["alice"]
+
+    def test_read_multi_explicit_agents(self):
+        self.diary.write("u", "alice", "a1")
+        time.sleep(0.01)
+        self.diary.write("u", "bob", "b1")
+        time.sleep(0.01)
+        self.diary.write("u", "alice", "a2")
+        rs = self.diary.read_multi("u", ["alice", "bob"], limit=10)
+        assert len(rs) == 3
+        # Newest first
+        assert rs[0]["text"] == "a2"
+        assert rs[0]["agent"] == "alice"
+        assert {(r["text"], r["agent"]) for r in rs} == {
+            ("a1", "alice"), ("b1", "bob"), ("a2", "alice")}
+
+    def test_read_multi_star_expands_to_all(self):
+        self.diary.write("u", "alice", "x")
+        self.diary.write("u", "bob", "y")
+        rs = self.diary.read_multi("u", ["*"], limit=10)
+        assert {r["agent"] for r in rs} == {"alice", "bob"}
+
+    def test_read_multi_filters_type(self):
+        self.diary.write("u", "alice", "o", entry_type="observation")
+        self.diary.write("u", "alice", "d", entry_type="decision")
+        self.diary.write("u", "bob", "d2", entry_type="decision")
+        rs = self.diary.read_multi("u", ["*"], entry_type="decision", limit=10)
+        assert len(rs) == 2
+        assert all(r["type"] == "decision" for r in rs)
+
+    def test_read_multi_empty_agents(self):
+        self.diary.write("u", "alice", "x")
+        assert self.diary.read_multi("u", [], limit=10) == []
+
+
 class TestDiaryDigest(unittest.TestCase):
 
     def setUp(self):

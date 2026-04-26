@@ -337,6 +337,38 @@ class TestTtlCleanup(unittest.TestCase):
         self.assertEqual(rs[0].text, "c")
 
 
+class TestResolveScope(unittest.TestCase):
+    """Single-source-of-truth scope → (agent, conv_id) mapping."""
+
+    def test_global(self):
+        from core.memory_store import resolve_scope
+        self.assertEqual(resolve_scope("global", "a", "c"), ("", ""))
+
+    def test_agent(self):
+        from core.memory_store import resolve_scope
+        self.assertEqual(resolve_scope("agent", "a", "c"), ("a", ""))
+
+    def test_conversation(self):
+        from core.memory_store import resolve_scope
+        self.assertEqual(resolve_scope("conversation", "a", "c"), ("", "c"))
+
+    def test_private(self):
+        from core.memory_store import resolve_scope
+        self.assertEqual(resolve_scope("private", "a", "c"), ("a", "c"))
+
+    def test_unknown_raises(self):
+        from core.memory_store import resolve_scope
+        with self.assertRaises(ValueError):
+            resolve_scope("bogus", "a", "c")
+
+    def test_empty_agent_in_agent_scope(self):
+        from core.memory_store import resolve_scope
+        # Caller without agent_name still gets a valid tuple
+        # (effectively global). Avoids surfacing a sometimes-legit
+        # empty agent as a hard failure.
+        self.assertEqual(resolve_scope("agent", "", "c"), ("", ""))
+
+
 class TestBm25Recall(unittest.TestCase):
     """recall(query=...) ranks by BM25 instead of substring match."""
 

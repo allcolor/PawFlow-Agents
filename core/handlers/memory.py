@@ -127,15 +127,14 @@ class RememberHandler(ToolHandler):
         scope = arguments.get("scope", "agent")
 
         user_id = self._user_id
-        # Resolve scope to agent + conversation_id
-        if scope == "global":
-            agent, conv_id = "", ""
-        elif scope == "conversation":
-            agent, conv_id = "", self._conversation_id
-        elif scope == "private":
-            agent, conv_id = self._agent_name or "", self._conversation_id
-        else:  # "agent" (default)
-            agent, conv_id = self._agent_name or "", ""
+        # Resolve scope to (agent, conv_id) via the canonical helper
+        # so all callers that accept a `scope` string land on the
+        # same fields.
+        from core.memory_store import resolve_scope, VALID_SCOPES
+        if scope not in VALID_SCOPES:
+            return f"Error: invalid scope {scope!r} (valid: {', '.join(VALID_SCOPES)})"
+        agent, conv_id = resolve_scope(
+            scope, self._agent_name or "", self._conversation_id or "")
         try:
             # Auto-embed if embed function is available
             embedding = None

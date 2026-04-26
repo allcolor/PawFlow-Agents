@@ -97,6 +97,22 @@ class LLMConnectionService(BaseService):
             # API-based providers (openai, anthropic) need an api_key.
             if not self.api_key:
                 raise ServiceError("api_key is required")
+        # compact_target_tokens > 40% of max_context_size leaves no room for
+        # the post-compact context to grow before re-triggering compact, which
+        # would loop. Reject at install time when both are set; if max_context
+        # is 0 (model default) we can't validate here — runtime falls back to
+        # the 25% formula and logs a warning.
+        try:
+            _ctt = int(self.config.get("compact_target_tokens", 0) or 0)
+            _mcs = int(self.config.get("max_context_size", 0) or 0)
+        except (TypeError, ValueError):
+            _ctt, _mcs = 0, 0
+        if _ctt > 0 and _mcs > 0 and _ctt > int(_mcs * 0.4):
+            raise ServiceError(
+                f"compact_target_tokens ({_ctt}) must be ≤ 40% of "
+                f"max_context_size ({_mcs}) = {int(_mcs * 0.4)} — got "
+                f"{_ctt / _mcs * 100:.1f}%."
+            )
         return {"provider": self.provider, "ready": True}
 
     def _close_connection(self):
@@ -336,6 +352,15 @@ class LLMConnectionService(BaseService):
             "max_context_size": {
                 "type": "integer", "default": 0,
                 "description": "Context window in tokens (0 = model default)",
+            },
+            "compact_target_tokens": {
+                "type": "integer", "default": 0,
+                "description": (
+                    "Absolute cap on compact output, in tokens. "
+                    "0 = use 25% of max_context_size (the legacy default). "
+                    "Must be ≤ 40% of max_context_size (rejected at install time "
+                    "otherwise) so the post-compact context still has room to grow."
+                ),
             },
             "max_iterations": {
                 "type": "integer", "default": 0,

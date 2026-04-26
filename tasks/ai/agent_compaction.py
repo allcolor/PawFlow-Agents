@@ -581,7 +581,25 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         #  Iterative reduce-to-cap algorithm (5 steps, always converges)
         # ════════════════════════════════════════════════════════════════
         _original_count = len(messages)
-        cap = int(max_tokens * target_fraction)
+        # Compact target precedence:
+        #   1. service config `compact_target_tokens` (absolute, in tokens) —
+        #      enforced ≤ 40% of max at service install time; runtime falls
+        #      back to the formula if somehow that bound is exceeded here.
+        #   2. legacy fraction (`target_fraction`, default 0.25 × max).
+        _cfg_ref = getattr(client, "_config_ref", None) or {}
+        try:
+            _abs_cap = int(_cfg_ref.get("compact_target_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            _abs_cap = 0
+        if _abs_cap > 0 and _abs_cap <= int(max_tokens * 0.4):
+            cap = _abs_cap
+        else:
+            if _abs_cap > 0:
+                logger.warning(
+                    "[compact] compact_target_tokens=%d exceeds 40%% of "
+                    "max_context_size=%d — falling back to %.0f%% formula",
+                    _abs_cap, max_tokens, target_fraction * 100)
+            cap = int(max_tokens * target_fraction)
         trigger = int(max_tokens * trigger_fraction)
         _bucket_target = max(1000, int(max_tokens * 0.05))
 

@@ -288,8 +288,13 @@ class ProjectGraph:
             try:
                 data = json.loads(stdout)
             except json.JSONDecodeError as e:
-                logger.error("[project_graph] Invalid JSON from relay: %s", str(e))
-                return {"status": "error", "reason": f"Invalid JSON output: {str(e)[:100]}"}
+                logger.error(
+                    "[project_graph] Invalid JSON from relay: %s\n"
+                    "  stdout[:500]=%r\n  stderr[:500]=%r",
+                    str(e), (stdout or "")[:500], (stderr or "")[:500])
+                return {"status": "error",
+                        "reason": (f"Invalid JSON output: {str(e)[:100]}; "
+                                    f"stdout starts with {(stdout or '')[:60]!r}")}
 
             status = data.get("status", "?")
             if status == "skipped":

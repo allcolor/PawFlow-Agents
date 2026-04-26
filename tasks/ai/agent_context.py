@@ -1208,6 +1208,29 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         except Exception:
             pass
 
+        # Inject knowledge graph digest (top god nodes + recent facts)
+        # so the agent has a passive view of the KG without spending
+        # a kg_query call. Empty when the graph has no current facts.
+        try:
+            from core.kg_digest import build_kg_digest
+            _kg = build_kg_digest(user_id)
+            if _kg:
+                system_prompt += f"\n\n## Knowledge graph\n{_kg}"
+        except Exception:
+            pass
+
+        # Inject project-graph digest (codebase structure summary)
+        # for the current conv. Empty when no graph has been built
+        # — the agent learns the tool exists via the cognitive-tools
+        # block below in any case.
+        try:
+            from core.project_graph_digest import build_project_graph_digest
+            _pg = build_project_graph_digest(user_id, conversation_id or "")
+            if _pg:
+                system_prompt += f"\n\n## Project structure\n{_pg}"
+        except Exception:
+            pass
+
         # Tool usage guidelines (CC-level guidance)
         system_prompt += (
             "\n\n## Using your tools"

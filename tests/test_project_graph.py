@@ -212,3 +212,172 @@ def test_load_corrupted_file(tmp_path):
     path.write_text("not valid json", encoding="utf-8")
     pg = ProjectGraph(str(path))
     assert not pg.has_graph()
+
+
+# ── Incremental build (mtime-based merge) ─────────────────────────
+# These tests exercise the SERVER-SIDE merge logic by mocking the
+# relay's exec to return crafted partial-build JSONs. The relay-side
+# script (mtime diff) isn't unit-testable from here; integration
+# coverage for it lives in test_project_graph_relay_extract.py.
+
+
+def test_incremental_unchanged_keeps_graph(tmp_path):
+    """status=unchanged → keep nodes/edges, refresh mtimes only."""
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    pg._graph = {
+        "nodes": [{"id": "a", "label": "A", "source_file": "a.py"}],
+        "edges": [{"source": "a", "target": "b", "source_file": "a.py"}],
+        "metadata": {"root": ".", "files": {"a.py": 100}},
+    }
+    pg._save()
+
+    svc = _make_relay_mock({
+        "stdout": json.dumps({
+            "status": "unchanged",
+            "all_files": ["a.py"],
+            "mtimes": {"a.py": 100},
+            "total_files": 1,
+        }),
+        "stderr": "", "returncode": 0,
+    })
+    result = pg.build_from_relay(svc, ".")
+    assert result["status"] == "unchanged"
+    assert result["nodes"] == 1
+    assert pg.nodes[0]["id"] == "a"
+    assert pg._graph["metadata"]["files"] == {"a.py": 100}
+
+
+def test_incremental_replaces_reparsed_file(tmp_path):
+    """status=built with parsed_files → drop+replace nodes/edges from
+    those files, keep nodes/edges from unchanged files."""
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    pg._graph = {
+        "nodes": [
+            {"id": "a_old", "label": "A", "source_file": "a.py"},
+            {"id": "b", "label": "B", "source_file": "b.py"},
+        ],
+        "edges": [
+            {"source": "a_old", "target": "b", "source_file": "a.py"},
+            {"source": "b", "target": "x", "source_file": "b.py"},
+        ],
+        "metadata": {"root": ".", "files": {"a.py": 100, "b.py": 200}},
+    }
+    pg._save()
+
+    # a.py was modified: relay re-parsed and returned new nodes/edges
+    # tagged source_file=a.py. b.py unchanged.
+    svc = _make_relay_mock({
+        "stdout": json.dumps({
+            "status": "built",
+            "nodes": [{"id": "a_new", "label": "ANew", "source_file": "a.py"}],
+            "edges": [{"source": "a_new", "target": "b", "source_file": "a.py"}],
+            "all_files": ["a.py", "b.py"],
+            "parsed_files": ["a.py"],
+            "removed": [],
+            "mtimes": {"a.py": 150, "b.py": 200},
+            "total_files": 2,
+        }),
+        "stderr": "", "returncode": 0,
+    })
+    result = pg.build_from_relay(svc, ".")
+    assert result["status"] == "built"
+    assert result["reparsed"] == 1
+    assert result["removed"] == 0
+    node_ids = {n["id"] for n in pg.nodes}
+    assert node_ids == {"a_new", "b"}  # a_old dropped, a_new added, b kept
+    edge_targets = {(e["source"], e["target"]) for e in pg.edges}
+    assert ("a_new", "b") in edge_targets
+    assert ("b", "x") in edge_targets
+    assert ("a_old", "b") not in edge_targets
+
+
+def test_incremental_garbage_collects_removed_files(tmp_path):
+    """status=built with `removed` → nodes/edges from those files dropped."""
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    pg._graph = {
+        "nodes": [
+            {"id": "a", "label": "A", "source_file": "a.py"},
+            {"id": "orphan", "label": "O", "source_file": "deleted.py"},
+        ],
+        "edges": [
+            {"source": "a", "target": "orphan", "source_file": "a.py"},
+            {"source": "orphan", "target": "a", "source_file": "deleted.py"},
+        ],
+        "metadata": {"root": ".", "files": {"a.py": 100, "deleted.py": 50}},
+    }
+    pg._save()
+
+    svc = _make_relay_mock({
+        "stdout": json.dumps({
+            "status": "built",
+            "nodes": [],   # nothing reparsed
+            "edges": [],
+            "all_files": ["a.py"],
+            "parsed_files": [],
+            "removed": ["deleted.py"],
+            "mtimes": {"a.py": 100},
+            "total_files": 1,
+        }),
+        "stderr": "", "returncode": 0,
+    })
+    result = pg.build_from_relay(svc, ".")
+    assert result["removed"] == 1
+    node_ids = {n["id"] for n in pg.nodes}
+    assert node_ids == {"a"}
+    # The edge whose source_file was deleted.py is dropped. The edge
+    # owned by a.py keeps its `orphan` target reference (target IDs
+    # aren't reverse-indexed; agents calling get_node('orphan') just
+    # see no node).
+    edge_files = {e.get("source_file") for e in pg.edges}
+    assert "deleted.py" not in edge_files
+
+
+def test_incremental_passes_known_mtimes_to_script(tmp_path):
+    """build_from_relay forwards the cached files map as PAWFLOW_GRAPH_KNOWN."""
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    pg._graph = {
+        "nodes": [], "edges": [],
+        "metadata": {"root": ".", "files": {"a.py": 42, "b.py": 99}},
+    }
+    svc = _make_relay_mock({
+        "stdout": json.dumps({
+            "status": "unchanged",
+            "all_files": ["a.py", "b.py"],
+            "mtimes": {"a.py": 42, "b.py": 99},
+            "total_files": 2,
+        }),
+        "stderr": "", "returncode": 0,
+    })
+    pg.build_from_relay(svc, ".")
+    # exec was called with env containing the JSON-serialised known
+    # files map.
+    _, kwargs = svc.exec.call_args
+    env = kwargs.get("env", {})
+    assert "PAWFLOW_GRAPH_KNOWN" in env
+    known = json.loads(env["PAWFLOW_GRAPH_KNOWN"])
+    assert known == {"a.py": 42, "b.py": 99}
+
+
+def test_incremental_first_build_sends_empty_known(tmp_path):
+    """No prior cache → PAWFLOW_GRAPH_KNOWN={} so the relay treats it
+    as a full build."""
+    pg = ProjectGraph(str(tmp_path / "graph.json"))
+    svc = _make_relay_mock({
+        "stdout": json.dumps({
+            "status": "built",
+            "nodes": [{"id": "a", "label": "A", "source_file": "a.py"}],
+            "edges": [],
+            "all_files": ["a.py"],
+            "parsed_files": ["a.py"],
+            "removed": [],
+            "mtimes": {"a.py": 100},
+            "total_files": 1,
+        }),
+        "stderr": "", "returncode": 0,
+    })
+    pg.build_from_relay(svc, ".")
+    _, kwargs = svc.exec.call_args
+    env = kwargs.get("env", {})
+    assert env["PAWFLOW_GRAPH_KNOWN"] == "{}"
+    # Cache populated for next time
+    assert pg._graph["metadata"]["files"] == {"a.py": 100}

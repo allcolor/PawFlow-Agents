@@ -44,65 +44,120 @@ SKIP_DIRS = {"venv", ".venv", "env", ".env", "node_modules", "__pycache__",
     ".eggs", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 
 root = Path(os.environ.get("PAWFLOW_GRAPH_ROOT", ".")).resolve()
-files = []
+# Incremental build: caller may pass a JSON dict {rel_path: mtime_int}
+# of files we already have nodes/edges for. We skip parsing for any
+# file whose current mtime matches — the server will keep the cached
+# nodes/edges. Files in `known` but missing from disk get reported
+# as `removed`; the server uses that to garbage-collect orphans.
+try:
+    known = json.loads(os.environ.get("PAWFLOW_GRAPH_KNOWN", "") or "{}")
+    if not isinstance(known, dict):
+        known = {}
+except (json.JSONDecodeError, ValueError):
+    known = {}
+
+all_files = []   # rel paths discovered now (for orphan detection)
+to_parse = []    # absolute paths we need to re-parse
+mtimes = {}      # rel path -> int mtime for the new metadata
 for dirpath, dirnames, filenames in os.walk(root):
     dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
     for fname in filenames:
         p = Path(dirpath) / fname
-        if p.suffix in EXTENSIONS:
-            files.append(p)
-            if len(files) >= 500:
-                break
-    if len(files) >= 500:
+        if p.suffix not in EXTENSIONS:
+            continue
+        try:
+            rel = str(p.relative_to(root)).replace(os.sep, "/")
+        except ValueError:
+            rel = p.name
+        try:
+            mt = int(p.stat().st_mtime)
+        except OSError:
+            continue
+        all_files.append(rel)
+        mtimes[rel] = mt
+        if known.get(rel) != mt:
+            to_parse.append(p)
+        if len(all_files) >= 500:
+            break
+    if len(all_files) >= 500:
         break
 
-if not files:
+removed = sorted(set(known) - set(all_files))
+
+if not all_files:
     print(json.dumps({"status": "skipped", "reason": "no code files found"}))
     sys.exit(0)
+
+# Pure-cache hit: nothing changed, no removal. Server keeps the
+# entire previous graph; no parsing happens.
+if not to_parse and not removed:
+    print(json.dumps({
+        "status": "unchanged", "all_files": all_files,
+        "mtimes": mtimes, "total_files": len(all_files),
+    }))
+    sys.exit(0)
+
+files = to_parse  # only re-parse the changed ones
 
 # Try tree-sitter extraction (graphify must be installed on the relay)
 try:
     from graphify.extract import extract
     from graphify.build import build
-    extraction = extract(files)
-    G = build([extraction])
+    extraction = extract(files) if files else []
+    G = build([extraction]) if extraction else None
 
     nodes = []
-    for n, data in G.nodes(data=True):
-        sf = data.get("source_file", "")
-        if sf:
-            try:
-                sf = str(Path(sf).relative_to(root))
-            except ValueError:
-                pass
-        nodes.append({
-            "id": n, "label": data.get("label", n),
-            "file_type": data.get("file_type", "code"),
-            "source_file": sf.replace(os.sep, "/"),
-            "source_location": data.get("source_location", ""),
-        })
+    if G is not None:
+        for n, data in G.nodes(data=True):
+            sf = data.get("source_file", "")
+            if sf:
+                try:
+                    sf = str(Path(sf).relative_to(root))
+                except ValueError:
+                    pass
+            nodes.append({
+                "id": n, "label": data.get("label", n),
+                "file_type": data.get("file_type", "code"),
+                "source_file": sf.replace(os.sep, "/"),
+                "source_location": data.get("source_location", ""),
+            })
     edges = []
-    for u, v, data in G.edges(data=True):
-        sf = data.get("source_file", "")
-        if sf:
-            try:
-                sf = str(Path(sf).relative_to(root))
-            except ValueError:
-                pass
-        edges.append({
-            "source": u, "target": v,
-            "relation": data.get("relation", "related"),
-            "confidence": data.get("confidence", "EXTRACTED"),
-            "source_file": sf.replace(os.sep, "/"),
-        })
+    if G is not None:
+        for u, v, data in G.edges(data=True):
+            sf = data.get("source_file", "")
+            if sf:
+                try:
+                    sf = str(Path(sf).relative_to(root))
+                except ValueError:
+                    pass
+            edges.append({
+                "source": u, "target": v,
+                "relation": data.get("relation", "related"),
+                "confidence": data.get("confidence", "EXTRACTED"),
+                "source_file": sf.replace(os.sep, "/"),
+            })
 
+    # parsed_files = the rel-paths the server should drop+replace.
+    # all_files = the rel-paths the server should keep tracking.
+    # removed = files known previously but missing now (orphans).
+    parsed_files = sorted({
+        rel
+        for rel, _ in mtimes.items()
+        if known.get(rel) != mtimes[rel]
+    })
     print(json.dumps({
         "status": "built", "nodes": nodes, "edges": edges,
-        "total_files": len(files),
+        "total_files": len(all_files),
+        "all_files": all_files,
+        "parsed_files": parsed_files,
+        "removed": removed,
+        "mtimes": mtimes,
     }))
 
 except Exception as e:
-    # Fallback: simple import-based graph (no tree-sitter needed)
+    # Fallback: simple import-based graph (no tree-sitter needed).
+    # Same incremental contract as the tree-sitter branch — we only
+    # parse `files` (the to_parse list) and report the same shape.
     import re
     nodes, edges = [], []
     for f in files:
@@ -120,13 +175,23 @@ except Exception as e:
                 edges.append({
                     "source": fid, "target": match.replace(".", "_"),
                     "relation": "imports", "confidence": "EXTRACTED",
+                    "source_file": rel,
                 })
         except Exception:
             pass
 
+    parsed_files = sorted({
+        rel
+        for rel, _ in mtimes.items()
+        if known.get(rel) != mtimes[rel]
+    })
     print(json.dumps({
         "status": "built_fallback", "nodes": nodes, "edges": edges,
-        "total_files": len(files), "error": str(e),
+        "total_files": len(all_files), "error": str(e),
+        "all_files": all_files,
+        "parsed_files": parsed_files,
+        "removed": removed,
+        "mtimes": mtimes,
     }))
 '''
 
@@ -181,17 +246,30 @@ class ProjectGraph:
     # ── Build via single relay exec ───────────────────────────────
 
     def build_from_relay(self, fs_service, root_path: str = ".") -> Dict:
-        """Build project graph by running extraction script on the relay.
+        """Build (or refresh) the project graph from the relay.
 
-        Single exec call — the script discovers files, parses AST, and returns
-        the full graph as JSON. No N×read_file roundtrips.
+        Incremental: passes the relay the {file: mtime} map we already
+        have so it only re-parses files whose mtime changed. The server
+        merges the partial result with the cached graph — nodes/edges
+        from unchanged files are kept verbatim, files reported as
+        removed have their nodes/edges garbage-collected, files that
+        were re-parsed have their nodes/edges replaced. First build
+        for a conv (no cache) is naturally a full build.
+
+        Single exec call regardless of incremental vs full.
         """
         try:
-            # Write extraction script to relay, exec it, read result
+            # What we know from the cached graph: per-file mtimes from
+            # metadata.files. The relay script reads this via env var.
+            known_files: Dict[str, int] = (
+                self._graph.get("metadata", {}).get("files", {}) or {})
             script_name = ".pawflow_graph_extract.py"
             fs_service.write_file(script_name, _RELAY_EXTRACT_SCRIPT.encode("utf-8"))
             try:
-                env = {"PAWFLOW_GRAPH_ROOT": root_path}
+                env = {
+                    "PAWFLOW_GRAPH_ROOT": root_path,
+                    "PAWFLOW_GRAPH_KNOWN": json.dumps(known_files),
+                }
                 result = fs_service.exec(".", f"python3 {script_name}", env=env)
             finally:
                 try:
@@ -207,7 +285,6 @@ class ProjectGraph:
                 logger.error("[project_graph] Relay script failed: %s", stderr[:500])
                 return {"status": "error", "reason": f"Script failed (exit {returncode}): {stderr[:200]}"}
 
-            # Parse JSON from stdout
             try:
                 data = json.loads(stdout)
             except json.JSONDecodeError as e:
@@ -218,24 +295,63 @@ class ProjectGraph:
             if status == "skipped":
                 return data
 
-            nodes = data.get("nodes", [])
-            edges = data.get("edges", [])
+            new_mtimes: Dict[str, int] = data.get("mtimes", {}) or {}
+
+            # Cache hit: nothing parsed, nothing removed. Refresh the
+            # mtimes (a cheap touch can shift them without changing
+            # content) and return early.
+            if status == "unchanged":
+                meta = self._graph.setdefault("metadata", {})
+                meta["files"] = new_mtimes
+                meta["total_files"] = data.get("total_files", len(new_mtimes))
+                self._save()
+                logger.info(
+                    "[project_graph] unchanged — %d files, %d nodes, %d edges",
+                    len(new_mtimes), len(self.nodes), len(self.edges))
+                return {"status": "unchanged",
+                        "nodes": len(self.nodes), "edges": len(self.edges),
+                        "files": len(new_mtimes)}
+
+            new_nodes = data.get("nodes", [])
+            new_edges = data.get("edges", [])
+            parsed_files = set(data.get("parsed_files", []) or [])
+            removed = set(data.get("removed", []) or [])
+            # `gone` = files whose nodes/edges must be dropped from the
+            # cache. Two reasons to drop: file was re-parsed (will be
+            # replaced by new_nodes/new_edges) or file vanished from
+            # disk (orphan GC).
+            gone = parsed_files | removed
+
+            kept_nodes = [n for n in self.nodes
+                          if n.get("source_file", "") not in gone]
+            kept_edges = [e for e in self.edges
+                          if e.get("source_file", "") not in gone]
+            merged_nodes = kept_nodes + new_nodes
+            merged_edges = kept_edges + new_edges
 
             self._graph = {
-                "nodes": nodes, "edges": edges,
+                "nodes": merged_nodes, "edges": merged_edges,
                 "metadata": {
                     "root": root_path,
-                    "total_files": data.get("total_files", 0),
-                    "node_count": len(nodes),
-                    "edge_count": len(edges),
+                    "total_files": data.get("total_files", len(new_mtimes)),
+                    "node_count": len(merged_nodes),
+                    "edge_count": len(merged_edges),
                     "fallback": status == "built_fallback",
+                    "files": new_mtimes,
                 },
             }
             self._save()
-            logger.info("[project_graph] Built: %d nodes, %d edges (%s)",
-                        len(nodes), len(edges), status)
-            return {"status": status, "nodes": len(nodes), "edges": len(edges),
-                    "files": data.get("total_files", 0)}
+            logger.info(
+                "[project_graph] %s — reparsed %d, removed %d, total %d "
+                "(nodes=%d, edges=%d)",
+                status, len(parsed_files), len(removed),
+                len(new_mtimes), len(merged_nodes), len(merged_edges))
+            return {
+                "status": status,
+                "nodes": len(merged_nodes), "edges": len(merged_edges),
+                "files": len(new_mtimes),
+                "reparsed": len(parsed_files), "removed": len(removed),
+            }
 
         except Exception as e:
             logger.error("Project graph build failed: %s", e, exc_info=True)

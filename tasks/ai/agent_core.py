@@ -1232,24 +1232,49 @@ class AgentCoreMixin:
                             # own compact_boundary, or a context edit.
                             # Anything else must surface as an error so
                             # the user can decide — NEVER silently rebuild.
+                            #
+                            # Distinguish transport-kill from session-loss:
+                            # "exited with code N" / signal exit / EIO are
+                            # OS-level kills (server shutdown, OOM, network
+                            # blip, FUSE EIO). The session jsonl on disk is
+                            # intact and the next resume should succeed.
+                            # Only an explicit CC-side "session not found"
+                            # type error means the session is genuinely gone.
+                            # Wiping `claude_session:<agent>` on every kill
+                            # was the cause of post-restart NEW-SESSION
+                            # context-loss after a routine `^C` shutdown.
+                            _is_transport_kill = (
+                                "exited with code" in err_str
+                                or "Stream stalled" in err_str
+                                or "EIO" in err_str
+                                or "stream interrupted" in err_str.lower()
+                                or "broken pipe" in err_str.lower()
+                            )
                             logger.error(
                                 "[claude-code] resume failed (%s) — "
-                                "hard-fail (silent context replace forbidden)",
-                                err_str[:200])
-                            try:
-                                from core.conversation_store import ConversationStore
-                                _an = ctx["active_agent_name"]
-                                ConversationStore.instance().set_extra(
-                                    conversation_id, f"claude_session:{_an}", "")
-                            except Exception:
-                                logger.debug("exception suppressed", exc_info=True)
-                            ctx["_claude_has_session"] = False
+                                "hard-fail (silent context replace forbidden) "
+                                "[transport_kill=%s, session_preserved=%s]",
+                                err_str[:200], _is_transport_kill,
+                                _is_transport_kill)
+                            if not _is_transport_kill:
+                                try:
+                                    from core.conversation_store import ConversationStore
+                                    _an = ctx["active_agent_name"]
+                                    ConversationStore.instance().set_extra(
+                                        conversation_id, f"claude_session:{_an}", "")
+                                except Exception:
+                                    logger.debug("exception suppressed", exc_info=True)
+                                ctx["_claude_has_session"] = False
                             emitter.on_fatal_error(
-                                f"Claude Code session lost: {err_str}")
+                                f"Claude Code session lost: {err_str}"
+                                if not _is_transport_kill else
+                                f"Claude Code stream interrupted: {err_str}")
                             _fatal_error = True
                             _fatal_error_msg = (
                                 _fatal_error_msg
-                                or f"Claude Code session lost: {err_str}")
+                                or (f"Claude Code session lost: {err_str}"
+                                    if not _is_transport_kill else
+                                    f"Claude Code stream interrupted: {err_str}"))
                             break
                         if ("exceed_context_size" in err_str
                               or "n_prompt_tokens" in err_str

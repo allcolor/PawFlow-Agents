@@ -67,9 +67,20 @@ class ServerFsClient:
         'errno': 5, 'message': '...'}` so callers don't need to
         distinguish transport failures from sandbox refusals — both
         translate to a FUSE errno on the consumer side.
+
+        Total wall-clock cap is `timeout` (default 30 s, FUSE side
+        passes 5 s). Includes acquiring the shared `_send_lock` —
+        previously a long-held lock from other WS traffic could park
+        the caller before `evt.wait` ever ran, so the timeout never
+        fired and FUSE callbacks froze forever.
         """
         if self._closed:
             return {'error': 'EIO', 'errno': 5, 'message': 'client closed'}
+        deadline_total = timeout if timeout is not None else self.DEFAULT_TIMEOUT
+        deadline_at = None
+        import time as _t
+        if deadline_total is not None:
+            deadline_at = _t.monotonic() + deadline_total
         request_id = uuid.uuid4().hex[:12]
         evt = threading.Event()
         holder: Dict[str, Any] = {}
@@ -84,8 +95,23 @@ class ServerFsClient:
         payload = json.dumps(envelope).encode('utf-8')
         try:
             if self._send_lock is not None:
-                with self._send_lock:
+                # Bounded wait on the shared send lock — never an
+                # un-timed `with` block. If contention exceeds our
+                # remaining budget we bail out as EIO instead of
+                # parking the FUSE callback (and through it, the
+                # user's shell) indefinitely.
+                _budget = (deadline_at - _t.monotonic()
+                           if deadline_at is not None else None)
+                _budget = max(0.001, _budget) if _budget is not None else None
+                if not self._send_lock.acquire(timeout=_budget if _budget is not None else -1):
+                    with self._pending_lock:
+                        self._pending.pop(request_id, None)
+                    return {'error': 'EIO', 'errno': 5,
+                            'message': f'send_lock contended >{_budget}s for {method}'}
+                try:
                     self._send(payload)
+                finally:
+                    self._send_lock.release()
             else:
                 self._send(payload)
         except Exception as e:
@@ -93,7 +119,15 @@ class ServerFsClient:
                 self._pending.pop(request_id, None)
             return {'error': 'EIO', 'errno': 5,
                     'message': f'send failed: {e}'}
-        if not evt.wait(timeout if timeout is not None else self.DEFAULT_TIMEOUT):
+        # What's left of the budget is the time to wait for the reply.
+        _remaining = (deadline_at - _t.monotonic()
+                      if deadline_at is not None else None)
+        if _remaining is not None and _remaining <= 0:
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
+            return {'error': 'EIO', 'errno': 5,
+                    'message': f'budget exhausted before reply for {method}'}
+        if not evt.wait(_remaining):
             with self._pending_lock:
                 self._pending.pop(request_id, None)
             return {'error': 'EIO', 'errno': 5,

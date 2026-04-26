@@ -30,6 +30,31 @@ from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
+
+def _short_args(args: dict) -> str:
+    """Compact dict repr for logging — caps long values, hides bulky bytes.
+
+    FUSE ops carry args like {'path': '/...', 'fh': 3, 'data_b64': '<huge>'}.
+    A single 1 MB write would otherwise put a megabyte of base64 into the
+    log line; cap each value at 80 chars and replace bulky payloads with
+    `<N bytes>` markers so we keep the line scannable.
+    """
+    if not args:
+        return "{}"
+    parts = []
+    for k, v in args.items():
+        if k in ("data_b64",):
+            try:
+                parts.append(f"{k}=<{len(v)}b>")
+            except Exception:
+                parts.append(f"{k}=<bulk>")
+            continue
+        s = repr(v)
+        if len(s) > 80:
+            s = s[:77] + "..."
+        parts.append(f"{k}={s}")
+    return "{" + ", ".join(parts) + "}"
+
 # Relay script files to sync (relative to tools/ directory)
 _RELAY_SCRIPT_FILES = [
     "pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
@@ -232,13 +257,22 @@ class RelayService(BaseService):
         self._pending_lock = threading.Lock()
 
         # Inverse-direction handler: relay-initiated FS ops scoped to the
-        # owner's CLAUDE_SESSIONS_DIR slot. Lazy because user_id arrives
-        # after construction (set_user_id called by the registry).
-        # _user_id defaults to "" so _get_server_fs can test it safely
-        # before set_user_id fires — repro was AttributeError thrown
-        # against the relay's first relay_request frame when it landed
-        # before the registry wired up the owner.
-        self._user_id = ""
+        # owner's CLAUDE_SESSIONS_DIR slot. We seed `_user_id` from the
+        # registry-supplied `_scope_id` if this is a user-scoped relay,
+        # so the FUSE bridge serves requests even before any tool
+        # handler has called set_user_id(). Without this seed, the
+        # first FUSE callbacks (e.g. `ls /cc_sessions/` from a bare
+        # relay terminal) would arrive with `_user_id == ""` and the
+        # dispatcher would either return EACCES or block depending on
+        # the path — exact symptom user saw.
+        try:
+            from core.service_registry import SCOPE_USER
+            if config.get("_scope", "") == SCOPE_USER:
+                self._user_id = str(config.get("_scope_id", "") or "")
+            else:
+                self._user_id = ""
+        except Exception:
+            self._user_id = ""
         self._server_fs = None
         self._server_fs_lock = threading.Lock()
         # Second inverse-direction handler: virtualized FUSE view of the
@@ -346,6 +380,15 @@ class RelayService(BaseService):
     async def _serve_relay_session(self, reader, writer, loop, remote):
         import asyncio
         service = self
+        # One asyncio.Lock per WS connection — required because the
+        # relay_request handler is now spawned as a task per inbound
+        # frame (so a slow ffs.read doesn't block the next FUSE
+        # callback in line), and concurrent tasks calling
+        # writer.write()/drain() would interleave WS frames. The lock
+        # is passed alongside the writer rather than attached to it
+        # because StreamWriter implementations (e.g. _SockWriter on
+        # Windows) can have __slots__ and refuse new attributes.
+        send_lock = asyncio.Lock()
         try:
             opcode, payload = await _ws_recv_frame(reader)
             if opcode != 0x01:
@@ -355,8 +398,9 @@ class RelayService(BaseService):
                 return
             relay_token = reg.get('token', '')
             if not relay_token or relay_token != service.config.get('token', ''):
-                await _ws_send_frame(writer, json.dumps(
-                    {'type': 'error', 'message': 'Token mismatch'}).encode())
+                async with send_lock:
+                    await _ws_send_frame(writer, json.dumps(
+                        {'type': 'error', 'message': 'Token mismatch'}).encode())
                 return
             relay_id = reg.get('relay_id', '')
             reg_info = reg.get('info', {})
@@ -366,11 +410,12 @@ class RelayService(BaseService):
             if reg_info:
                 service._relay_info = reg_info
             service._relay_addr = remote
-            await _ws_send_frame(writer, json.dumps({
-                'type': 'registered', 'relay_id': relay_id}).encode())
-            service._set_relay(reader, writer, loop)
+            async with send_lock:
+                await _ws_send_frame(writer, json.dumps({
+                    'type': 'registered', 'relay_id': relay_id}).encode())
+            service._set_relay(reader, writer, loop, send_lock)
             self._spawn_ctx_sync(reg_info, relay_id)
-            await self._relay_main_loop(reader, writer, service)
+            await self._relay_main_loop(reader, writer, service, send_lock)
         except Exception as e:
             _err_str = str(e)
             # Peer-initiated close is the nominal end of a relay session:
@@ -415,7 +460,7 @@ class RelayService(BaseService):
         threading.Thread(target=_fetch_ctx_and_sync, daemon=True,
                          name=f'relay-ctx-{relay_id}').start()
 
-    async def _relay_main_loop(self, reader, writer, service):
+    async def _relay_main_loop(self, reader, writer, service, send_lock):
         import asyncio
         KEEPALIVE = 120
         while True:
@@ -423,22 +468,34 @@ class RelayService(BaseService):
                 opcode, payload = await asyncio.wait_for(
                     _ws_recv_frame(reader), timeout=KEEPALIVE)
             except asyncio.TimeoutError:
-                await _ws_send_frame(writer, json.dumps({'type': 'ping'}).encode())
+                async with send_lock:
+                    await _ws_send_frame(
+                        writer, json.dumps({'type': 'ping'}).encode())
                 continue
             if opcode == 0x08:
                 break
             if opcode == 0x09:
-                await _ws_send_frame(writer, payload, opcode=0x0A)
+                async with send_lock:
+                    await _ws_send_frame(writer, payload, opcode=0x0A)
                 continue
             if opcode != 0x01:
                 continue
             msg = json.loads(payload.decode('utf-8'))
-            await self._dispatch_relay_msg(msg, writer, service)
+            await self._dispatch_relay_msg(msg, writer, service, send_lock)
 
-    async def _dispatch_relay_msg(self, msg, writer, service):
+    async def _dispatch_relay_msg(self, msg, writer, service, send_lock):
+        import asyncio
         mtype = msg.get('type')
         if mtype == 'relay_request':
-            await service._handle_relay_request(msg, writer)
+            # Fire-and-forget: each FUSE callback (sfs.read, ffs.getattr,
+            # …) runs on the executor without blocking the WS receiver.
+            # Otherwise CC reading 8 MB through 1 MB FUSE chunks holds
+            # the main loop for the full sequence and every other FUSE
+            # op (and any concurrent terminal/exec frame) queues up
+            # behind it. The send back is serialized via send_lock so
+            # concurrent tasks can't interleave frames.
+            asyncio.create_task(
+                service._handle_relay_request(msg, writer, send_lock))
             return
         if mtype in ('result', 'error'):
             service._resolve_pending(msg)
@@ -476,7 +533,9 @@ class RelayService(BaseService):
             except Exception as e:
                 logger.debug('cs_ws_close dispatch failed: %s', e, exc_info=True)
         elif mtype == 'ping':
-            await _ws_send_frame(writer, json.dumps({'type': 'pong'}).encode())
+            async with send_lock:
+                await _ws_send_frame(
+                    writer, json.dumps({'type': 'pong'}).encode())
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
@@ -505,7 +564,7 @@ class RelayService(BaseService):
                 self._filestore_fs = RelayFileStoreFs(self._user_id)
             return self._filestore_fs
 
-    async def _handle_relay_request(self, msg, writer):
+    async def _handle_relay_request(self, msg, writer, send_lock):
         """Service a relay→server FS op (the inverse direction).
 
         The relay's FUSE proxy forwards each FUSE callback as a
@@ -515,9 +574,14 @@ class RelayService(BaseService):
           - `ffs.*` → virtualized FileStore view
         Anything else returns ENOSYS.
         """
+        import asyncio
+        import time as _time
         request_id = msg.get('request_id', '')
         method = msg.get('method', '')
         args = msg.get('args', {}) or {}
+        _t0 = _time.monotonic()
+        logger.debug("[server-fs] %s ENTER rid=%s args=%s",
+                     method, request_id[:8], _short_args(args))
         if method.startswith('ffs.'):
             fs = self._get_filestore_fs()
         elif method.startswith('sfs.'):
@@ -533,23 +597,46 @@ class RelayService(BaseService):
                          'message': f'unknown method prefix: {method!r}'}
         else:
             # FS ops are sync — run on the loop's default executor so we
-            # don't block other relay traffic on a slow disk.
-            import asyncio
+            # don't block other relay traffic on a slow disk. Hard 10s
+            # cap: a single os.listdir/os.read on a hung WSL UNC path
+            # must NOT freeze the FUSE callback indefinitely. After the
+            # cap we send EIO; the kernel surfaces "Input/output error"
+            # to the caller instead of blocking the whole shell.
             loop = asyncio.get_event_loop()
-            reply = await loop.run_in_executor(None, fs.handle, method, args)
+            try:
+                reply = await asyncio.wait_for(
+                    loop.run_in_executor(None, fs.handle, method, args),
+                    timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[server-fs] %s TIMEOUT rid=%s after 10s — returning EIO",
+                    method, request_id[:8])
+                reply = {'error': 'EIO', 'errno': 5,
+                         'message': f'{method} timed out after 10s'}
+        _dt = int((_time.monotonic() - _t0) * 1000)
+        if 'error' in reply:
+            logger.debug("[server-fs] %s EXIT rid=%s dt=%dms err=%s",
+                         method, request_id[:8], _dt, reply.get('error'))
+        else:
+            logger.debug("[server-fs] %s EXIT rid=%s dt=%dms ok",
+                         method, request_id[:8], _dt)
         envelope = {'type': 'relay_response', 'request_id': request_id, **reply}
         try:
-            await _ws_send_frame(writer, json.dumps(envelope).encode())
+            # Serialize so concurrent _handle_relay_request tasks (now
+            # spawned via create_task) can't interleave WS frames.
+            async with send_lock:
+                await _ws_send_frame(writer, json.dumps(envelope).encode())
         except Exception as e:
             logger.warning('[server-fs] failed to send response for %s: %s',
                            request_id, e)
 
     # ── Relay connection management ──
 
-    def _set_relay(self, reader, writer, loop):
+    def _set_relay(self, reader, writer, loop, send_lock):
         """Add a relay connection to the pool."""
         with self._relay_pool_lock:
-            self._relay_pool.append({"reader": reader, "writer": writer, "loop": loop})
+            self._relay_pool.append({"reader": reader, "writer": writer,
+                                      "loop": loop, "send_lock": send_lock})
             count = len(self._relay_pool)
         logger.info("Relay pool: %d connection(s) for '%s'", count, self._service_id)
         # Notify all SSE clients to refresh resources (relay status changed)
@@ -642,8 +729,13 @@ class RelayService(BaseService):
         }).encode("utf-8")
         for conn in pool:
             writer, loop = conn["writer"], conn["loop"]
-            async def _send(w=writer):
-                await _ws_send_frame(w, payload)
+            send_lock = conn.get("send_lock")
+            async def _send(w=writer, lk=send_lock):
+                if lk is not None:
+                    async with lk:
+                        await _ws_send_frame(w, payload)
+                else:
+                    await _ws_send_frame(w, payload)
             try:
                 asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=2)
             except Exception as e:
@@ -725,9 +817,14 @@ class RelayService(BaseService):
         last_err = None
         for conn in reversed(pool):
             writer, loop = conn["writer"], conn["loop"]
+            send_lock = conn.get("send_lock")
 
-            async def _send(w=writer):
-                await _ws_send_frame(w, payload)
+            async def _send(w=writer, lk=send_lock):
+                if lk is not None:
+                    async with lk:
+                        await _ws_send_frame(w, payload)
+                else:
+                    await _ws_send_frame(w, payload)
 
             try:
                 asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)

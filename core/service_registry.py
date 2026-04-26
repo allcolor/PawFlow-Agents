@@ -585,6 +585,15 @@ class ServiceRegistry:
             from core.expression import LazyResolveDict
             lazy_config = LazyResolveDict(svc_def.config)
             lazy_config["_service_id"] = service_id
+            # Pass scope-derived owner identity through so services that
+            # take inverse-direction calls (e.g. RelayService FUSE bridge)
+            # can self-initialize their user/conv binding instead of
+            # waiting for a tool handler to call set_user_id() — that
+            # waiting window is what made `ls /cc_sessions/` from a
+            # bare relay terminal block: the FUSE callback hits the
+            # server before any tool has wired up the owner.
+            lazy_config["_scope"] = svc_def.scope
+            lazy_config["_scope_id"] = svc_def.scope_id
             svc_instance = svc_class(lazy_config)
             svc_instance.connect()
             with self._data_lock:

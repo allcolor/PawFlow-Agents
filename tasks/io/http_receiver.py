@@ -157,6 +157,7 @@ class HTTPReceiverTask(BaseTask):
                 pass
 
         # Enqueue for pickup by execute()
+        pending_req.mark("enqueue")
         try:
             self._queue.put_nowait(ff)
             logger.debug("[httpReceiver] enqueued %s %s (req_id=%s, qsize=%d)",
@@ -187,6 +188,16 @@ class HTTPReceiverTask(BaseTask):
             _route = ff.get_attribute("http.route") or "?"
             _method = ff.get_attribute("http.method") or "?"
             _rid = ff.get_attribute("http.request.id") or "?"
+            # Mark the dequeue moment so [http-timing] can attribute the
+            # in-queue wait separately from the handler's actual work —
+            # a fat enqueue→dequeue gap means the scheduler is starved
+            # (e.g. blocked behind a slow upstream task).
+            if _rid and _rid != "?":
+                svc = self.get_service(self.config.get("service_id", ""))
+                if svc is not None and getattr(svc, "_server", None) is not None:
+                    pending = svc._server._pending_requests.get(_rid)
+                    if pending is not None:
+                        pending.mark("dequeue")
             logger.debug("[httpReceiver] dequeued %s %s (req_id=%s, qsize=%d)",
                         _method, _route, _rid[:8] if _rid else "?",
                         self._queue.qsize())

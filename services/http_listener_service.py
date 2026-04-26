@@ -54,6 +54,21 @@ class PendingRequest:
     _event: threading.Event = field(default_factory=threading.Event)
     completed: bool = False
 
+    # Per-request timing — keyed milestone → monotonic seconds.
+    # Filled in via mark(); the listener's emit_timing_summary() walks
+    # the keys to produce a single grep-friendly log line per request.
+    timing: Dict[str, float] = field(default_factory=dict)
+
+    def mark(self, name: str) -> None:
+        """Record a monotonic-clock milestone for this request.
+
+        Idempotent: subsequent calls with the same name overwrite. Used
+        by the HTTP listener and downstream tasks (httpReceiver, the
+        response-emit path) so we can attribute every millisecond of a
+        slow request without having to grep across multiple log lines.
+        """
+        self.timing[name] = time.monotonic()
+
     def wait(self) -> None:
         """Block until response is ready. NO TIMEOUT — project rule.
 
@@ -65,6 +80,7 @@ class PendingRequest:
 
     def complete(self, status: int, headers: Dict[str, str], body: bytes):
         """Set the response and unblock the waiting HTTP handler."""
+        self.mark("respond")
         self.response_status = status
         self.response_headers = headers
         self.response_body = body
@@ -77,11 +93,53 @@ class PendingRequest:
         Args:
             stream: An iterable yielding bytes chunks.
         """
+        self.mark("respond")
         self.response_status = status
         self.response_headers = headers
         self.response_stream = stream
         self.completed = True
         self._event.set()
+
+
+_TIMING_SEGMENTS = (
+    # (label, start_mark, end_mark) — order is wall-clock order. Each
+    # segment shows wall-time spent in that phase. Missing marks (e.g.
+    # streaming responses that never get a `send` mark on this thread,
+    # or `enqueue`/`dequeue` only present for routes that go through
+    # httpReceiver) are silently skipped — the summary then just omits
+    # that segment rather than printing 0ms or NaN.
+    ("recv→dispatch", "recv", "dispatch"),
+    ("dispatch→enqueue", "dispatch", "enqueue"),
+    ("enqueue→dequeue", "enqueue", "dequeue"),
+    ("dequeue→respond", "dequeue", "respond"),
+    ("respond→send", "respond", "send"),
+)
+
+
+def _emit_timing_summary(req: "PendingRequest") -> None:
+    """Emit one grep-friendly per-request timing line.
+
+    Filter quickly with `grep '\\[http-timing\\]'`; restrict to a path
+    with `grep '\\[http-timing\\].*POST /api/ui'`; sort by total via
+    `awk -F'total=' '{print $2}' | sort -rn`.
+
+    Always logged at INFO so users can collect timing without bumping
+    log level — the volume is bounded by request rate, not log spam.
+    """
+    t = req.timing
+    if not t or "recv" not in t:
+        return
+    segments = []
+    for label, a, b in _TIMING_SEGMENTS:
+        if a in t and b in t:
+            segments.append(f"{label}={int((t[b] - t[a]) * 1000)}ms")
+    last = t.get("send") or t.get("respond") or t.get("dispatch")
+    total = int((last - t["recv"]) * 1000) if last else 0
+    logger.info(
+        "[http-timing] req_id=%s %s %s total=%dms %s status=%d",
+        req.request_id[:8], req.method, req.path,
+        total, " ".join(segments), req.response_status,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -352,13 +410,12 @@ class _RequestHandler(BaseHTTPRequestHandler):
             path_params=path_params,
             remote_addr=self.client_address[0] if self.client_address else "",
         )
+        req.mark("recv")
 
         # Store in server's pending map
         self.server._pending_requests[req.request_id] = req
 
         # Dispatch to flow (non-blocking — the callback enqueues a FlowFile)
-        import time as _t_http
-        _t_dispatch = _t_http.monotonic()
         try:
             entry.callback(req)
         except Exception as e:
@@ -369,6 +426,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"error": "Internal Server Error"}).encode())
             return
+        req.mark("dispatch")
 
         # Block until flow responds. NO TIMEOUT — project rule: only the
         # LLM watchdog has a timeout, nowhere else. If a request stalls
@@ -377,7 +435,11 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # but skips paths that are legitimately long-lived (LLM streaming
         # through /relay-proxy/ can take 60+ s per turn).
         req.wait()
-        _waited = _t_http.monotonic() - _t_dispatch
+        # `respond` is marked from inside complete()/complete_stream(),
+        # capturing when the flow actually handed us the response — not
+        # when this thread woke up from the event.
+        _waited = time.monotonic() - req.timing.get(
+            "recv", req.timing.get("dispatch", time.monotonic()))
         _is_streaming_path = path.startswith("/relay-proxy/")
         if _waited > 5.0 and not _is_streaming_path:
             logger.warning("[http] slow response — %s %s took %.1fs "
@@ -419,6 +481,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 logger.error(f"Stream error for {req.request_id}: {e}")
         elif req.response_body:
             self.wfile.write(req.response_body)
+        req.mark("send")
+        _emit_timing_summary(req)
 
     def _handle_upload(self, body: bytes, session):
         """Fast-path handler for POST /api/upload.

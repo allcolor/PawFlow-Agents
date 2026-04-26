@@ -1981,10 +1981,18 @@ class ConversationStore:
         """
         extras = self.get_extras(cid) or {}
         _had_any = False
+        # Clear ALL CLI session pointers (claude / codex / gemini). Each
+        # provider stores its resume id under `<cli>_session:<agent>`; with
+        # the pointer wiped, the next turn starts a fresh session instead
+        # of resuming the now-stale one. Without this codex/gemini would
+        # `--resume <sid>` and reload the exact pre-edit state from disk,
+        # making the context edit a no-op for those CLIs.
         for key in list(extras.keys()):
-            if key.startswith("claude_session:"):
+            if (key.startswith("claude_session:")
+                    or key.startswith("codex_session:")
+                    or key.startswith("gemini_session:")):
                 self.set_extra(cid, key, "")
-                logger.info("Invalidated claude session '%s' for conv %s", key, cid[:8])
+                logger.info("Invalidated %s for conv %s", key, cid[:8])
                 _had_any = True
         # Wipe stale session files on disk (all jsonls + companion dirs
         # for this conv). Safe: we just cleared the "current" flags,
@@ -2058,13 +2066,23 @@ class ConversationStore:
         """
         if not agent_name:
             return
-        key = f"claude_session:{agent_name}"
+        # Clear the resume pointer for ALL three CLIs (claude / codex / gemini)
+        # so the next turn for this (conv, agent) starts a fresh session
+        # regardless of which CLI is configured. Symmetric with the all-agent
+        # variant `invalidate_claude_sessions`.
         extras = self.get_extras(cid) or {}
+        cleared_any = False
+        for _cli in ("claude", "codex", "gemini"):
+            _k = f"{_cli}_session:{agent_name}"
+            if extras.get(_k):
+                self.set_extra(cid, _k, "")
+                logger.info("Invalidated %s for conv %s", _k, cid[:8])
+                cleared_any = True
+        # CC-specific disk prune happens below by sid; codex/gemini sessions
+        # live under their per-conv volume and are recreated lazily on the
+        # next turn, so the wiped extras alone are sufficient for them.
+        key = f"claude_session:{agent_name}"
         sid = str(extras.get(key) or "")
-        if sid:
-            self.set_extra(cid, key, "")
-            logger.info("Invalidated claude session '%s' for conv %s",
-                        key, cid[:8])
         if not sid:
             return
         # Delete the specific jsonl + companion dir for this sid only.

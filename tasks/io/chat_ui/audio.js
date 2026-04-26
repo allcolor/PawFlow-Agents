@@ -27,11 +27,28 @@ var _pcmBatchPos = 0;
 var _PCM_BATCH_SIZE = 960;
 var _pcmFlushTimer = null;
 
+// Latency / jitter buffer. The total audio pipeline is roughly:
+//   parec(20ms) + Opus encode(~5ms) + relay→server(~1-5ms LAN)
+//   + WebCodecs decode(~20ms) + worklet(~3ms) + THIS BUFFER
+// So the audible-vs-VNC delay = encode/decode/transport (~30ms
+// fixed) + this jitter buffer. Default 80ms keeps total ~110ms.
+// Override with `window.PAWFLOW_AUDIO_TARGET_MS = N` (e.g. 250 for
+// remote/jittery relays, 60 for local LAN, 40 for loopback). The
+// previous value was 250ms which gave a visible 300-400ms gap vs
+// video on a local relay.
+var _AUDIO_TARGET_MS = (typeof window !== 'undefined'
+    && Number.isFinite(window.PAWFLOW_AUDIO_TARGET_MS))
+  ? Math.max(20, Math.min(500, window.PAWFLOW_AUDIO_TARGET_MS))
+  : 80;
+// 48 samples = 1ms at 48kHz.
+var _PRE_BUFFER_TARGET = _AUDIO_TARGET_MS * 48;
+var _RESUME_MIN_SAMPLES = Math.max(960, Math.floor(_AUDIO_TARGET_MS * 48 * 0.5));
+var _MAX_FILL_SAMPLES = Math.max(_PRE_BUFFER_TARGET * 3, 4800);
+
 // Pre-buffer
 var _preBuffer = [];
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 12000; // 250ms at 48kHz — jitter absorption buffer
 
 // Diagnostic stats
 var _audioStats = {
@@ -119,9 +136,9 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = ring.length;
     const wPos = Atomics.load(this.sabCtrl, 0);
     const available = wPos - Math.floor(this.sabRPos);
-    const TARGET = 12000; // 250ms at 48kHz
-    const MAX_FILL = 36000; // 750ms — hard snap safety net
-    const RESUME_MIN = 4800; // 100ms
+    const TARGET = __TARGET__;        // injected from _AUDIO_TARGET_MS
+    const MAX_FILL = __MAX_FILL__;    // hard snap safety net
+    const RESUME_MIN = __RESUME_MIN__; // resume threshold post-underrun
 
     // Clock drift recovery: ±3% max, EMA smoothed over ~1s
     const error = (available - TARGET) / TARGET; // -1..+N
@@ -167,9 +184,9 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = this.ring.length;
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
-    const TARGET = 12000;
-    const MAX_FILL = 36000;
-    const RESUME_MIN = 4800;
+    const TARGET = __TARGET__;
+    const MAX_FILL = __MAX_FILL__;
+    const RESUME_MIN = __RESUME_MIN__;
 
     const error = (available - TARGET) / TARGET;
     const correction = error * 0.002;
@@ -303,7 +320,15 @@ function audioConnect(sessionId) {
   }
 
   if (!_audioWorkletModuleLoaded) {
-    var blob = new Blob([_WORKLET_CODE], { type: 'application/javascript' });
+    // Inject the latency constants into the worklet code so the
+    // running worklet uses the same TARGET we computed at module
+    // scope (the worklet runs in its own JS realm and can't see
+    // module-level vars).
+    var workletSrc = _WORKLET_CODE
+      .replace(/__TARGET__/g, String(_PRE_BUFFER_TARGET))
+      .replace(/__MAX_FILL__/g, String(_MAX_FILL_SAMPLES))
+      .replace(/__RESUME_MIN__/g, String(_RESUME_MIN_SAMPLES));
+    var blob = new Blob([workletSrc], { type: 'application/javascript' });
     var blobUrl = URL.createObjectURL(blob);
     _audioCtx.audioWorklet.addModule(blobUrl).then(function() {
       URL.revokeObjectURL(blobUrl);

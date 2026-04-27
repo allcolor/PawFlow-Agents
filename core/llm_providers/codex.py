@@ -2093,8 +2093,9 @@ class LLMCodexMixin(CodexSessionMixin):
                             # Prepending the codex thread_id makes the id
                             # globally unique inside the conversation.
                             _raw_iid = iid or f"codex-{_turn_count}-{len(_turn_tool_calls)}"
-                            _block_id = (f"{thread_id}:{_raw_iid}"
-                                         if thread_id and _raw_iid else _raw_iid)
+                            _tid = getattr(self, '_current_session_id', '') or ''
+                            _block_id = (f"{_tid}:{_raw_iid}"
+                                         if _tid and _raw_iid else _raw_iid)
                             _block_entry = {
                                 "name": _raw_name,
                                 "arguments": _raw_args,
@@ -2174,8 +2175,9 @@ class LLMCodexMixin(CodexSessionMixin):
                             # one stored in `_turn_tool_calls` so the result
                             # attaches and the SSE tc_id matches the
                             # tool_call SSE element.
-                            tc_id = (f"{thread_id}:{iid}"
-                                     if thread_id and iid else iid)
+                            _tid = getattr(self, '_current_session_id', '') or ''
+                            tc_id = (f"{_tid}:{iid}"
+                                     if _tid and iid else iid)
                             _result = item.get("result", item.get("output", None))
                             # Unwrap the MCP envelope so the UI sees the real
                             # tool output, not raw JSON. MCP servers (like our

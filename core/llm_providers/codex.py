@@ -65,32 +65,63 @@ class LLMCodexMixin(CodexSessionMixin):
     # ── Process management ──────────────────────────────────────────
 
     def _codex_send_user_message(self, text: str, attachments: list = None):
-        """Inline-preempt entrypoint. Always refuses for codex.
+        """Inline-preempt entrypoint for codex.
 
-        Codex `exec --json` is one-shot: stdin is read as a SINGLE blob
-        until EOF (verified empirically — codex blocks on read until we
-        close stdin, then processes the blob and exits). `_stream_codex`
-        therefore closes `proc.stdin` immediately after writing the
-        initial prompt (codex.py:1296) so the proc starts processing.
-        Once closed, no further writes are possible — attempting one
-        raises `ValueError: I/O operation on closed file`.
+        CC's preempt model (write a new user message to a long-running
+        proc's stdin) does NOT apply to codex. Verified empirically:
+          - codex `exec --json` reads stdin as a SINGLE blob until EOF
+          - `_stream_codex` closes proc.stdin after the initial prompt
+            (codex.py:1296) to make codex start processing
+          - once closed, writes raise ValueError
+          - codex has no protocol to inject a 2nd user message into the
+            same proc
 
-        CC's stream-json multi-message protocol on a long-running proc
-        does NOT apply: codex has no equivalent of `--input-format
-        stream-json` for `exec`, only the experimental `app-server` mode
-        (different protocol, not used here).
+        Codex preempt = INTERRUPT current turn + RESUME against the
+        rollout with the new message as next-turn prompt. The rollout
+        is appended-to per-event by codex (verified: at t=1s after
+        spawn the rollout already had the session_meta + task_started +
+        developer prompt lines; on SIGTERM the file is preserved
+        intact). `codex exec resume <sid>` appends to the SAME rollout
+        file, so the conversation stays continuous.
 
-        Returning False is the contract `agent_streaming.py:184` reads:
-        the caller falls through to PawFlow's PendingQueue, which
-        delivers the message as the FIRST input of the NEXT turn (which
-        respawns `codex exec resume <sid>` against the rollout). Output
-        already produced by the in-flight turn is preserved in the
-        rollout, so nothing is lost.
+        Steps:
+          1. Kill the in-flight codex CLI inside the pool container
+             (`_kill_codex_hard` reaps the CLI but leaves the container
+             alive for re-use — next turn's spawn reuses the warm slot).
+          2. Return False so `agent_streaming.py:184` routes the user
+             message via PendingQueue — it'll be the FIRST input of the
+             NEXT turn.
+          3. The current `_stream_codex` call sees proc died and tears
+             down through its normal exception path. The live registry
+             entry's proc field becomes stale; the REUSE path detects
+             the dead proc and falls through to a fresh spawn that does
+             `codex exec resume <sid>` against the rollout — carrying
+             the partial output of the killed turn forward.
+
+        Result: user sees the in-flight turn end fast, the preempt
+        message takes over the next turn, no rollout corruption, no
+        prompt merging needed (codex re-reads the rollout, has the
+        full past).
         """
-        logger.info(
-            "[codex] preempt refused (codex exec is one-shot, stdin "
-            "closed after initial prompt) — caller routes via "
-            "PendingQueue: %.100s", text)
+        proc = getattr(self, '_codex_proc', None)
+        if proc is not None and proc.poll() is None:
+            logger.info(
+                "[codex] preempt: killing in-flight CLI to interrupt "
+                "current turn — next turn will resume rollout with "
+                "new prompt: %.100s", text)
+            try:
+                self._kill_codex_hard(proc)
+            except Exception as _ke:
+                logger.warning("[codex] preempt kill failed: %s", _ke)
+        else:
+            logger.info(
+                "[codex] preempt: no in-flight proc to interrupt — "
+                "PendingQueue will pick up: %.100s", text)
+        # Always return False: the caller (agent_streaming.py:175) reads
+        # this as "could not preempt inline, route via PendingQueue".
+        # The user message is already on disk (pre-persisted before this
+        # call) so PendingQueue + the next _stream_codex spawn deliver
+        # it cleanly.
         return False
 
     def cancel_codex(self, force: bool = False):

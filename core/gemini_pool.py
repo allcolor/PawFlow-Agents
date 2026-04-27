@@ -156,9 +156,11 @@ class GeminiPool:
         # Kill orphan pool containers from previous PawFlow runs
         self._cleanup_orphans()
 
-        # Sessions volume: host path for CC sessions (must be absolute for Docker -v)
+        # Sessions volume: host path for GEMINI sessions (must be absolute for Docker -v).
+        # See codex_pool for the same fix — must be GEMINI_SESSIONS_DIR so
+        # the container sees the config + auth files written by gemini_session.
         import core.paths as _paths
-        _raw_path = str(_paths.CLAUDE_SESSIONS_DIR.resolve())
+        _raw_path = str(_paths.GEMINI_SESSIONS_DIR.resolve())
         # translate_path converts Windows paths (C:\...) to WSL mount paths (/mnt/c/...)
         from pawflow_relay.utils import translate_path
         self._sessions_host_path = translate_path(to_host_path(_raw_path))
@@ -516,7 +518,7 @@ class GeminiPool:
         # don't accidentally recreate the pre-migration data/claude_sessions
         # location.
         import core.paths as _paths
-        _paths.CLAUDE_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        _paths.GEMINI_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
         # Dev-mount the MCP bridge + PawFlow SDK straight from the host
         # tree so that changes take effect on the next container spawn

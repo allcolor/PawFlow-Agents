@@ -156,9 +156,18 @@ class CodexPool:
         # Kill orphan pool containers from previous PawFlow runs
         self._cleanup_orphans()
 
-        # Sessions volume: host path for CC sessions (must be absolute for Docker -v)
+        # Sessions volume: host path for CODEX sessions (must be absolute for Docker -v).
+        # MUST be CODEX_SESSIONS_DIR — codex_session writes config.toml + auth.json
+        # under <CODEX_SESSIONS_DIR>/<user>/<conv>/<agent>/.codex/, and the
+        # container mounts that tree at /cc_sessions. Earlier version used
+        # CLAUDE_SESSIONS_DIR (carried over from the codex_pool clone of
+        # claude_code_pool), so the container saw an EMPTY tree at /cc_sessions
+        # and codex started without MCP config — no bridge spawned, no
+        # mcp_bridge.log written, and the only WS attempt on /ws/tools/* was
+        # whatever else codex tries internally (rejected with `cookie_header has
+        # 1 parts` because no internal-auth cookie was set).
         import core.paths as _paths
-        _raw_path = str(_paths.CLAUDE_SESSIONS_DIR.resolve())
+        _raw_path = str(_paths.CODEX_SESSIONS_DIR.resolve())
         # translate_path converts Windows paths (C:\...) to WSL mount paths (/mnt/c/...)
         from pawflow_relay.utils import translate_path
         self._sessions_host_path = translate_path(to_host_path(_raw_path))
@@ -515,7 +524,7 @@ class CodexPool:
         # don't accidentally recreate the pre-migration data/claude_sessions
         # location.
         import core.paths as _paths
-        _paths.CLAUDE_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        _paths.CODEX_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
         # Dev-mount the MCP bridge + PawFlow SDK straight from the host
         # tree so that changes take effect on the next container spawn

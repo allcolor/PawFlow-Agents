@@ -1221,12 +1221,26 @@ class LLMCodexMixin(CodexSessionMixin):
                     "[codex] %d image attachment(s) ignored — codex exec "
                     "stdin is text-only; pipe vision via MCP tools instead",
                     len(image_blocks))
-            # prompt_chars feeds the live context gauge below — codex's
-            # `turn.completed.usage.input_tokens` is the SUM across every
-            # internal iteration (1 user turn with 17 tools → input_tokens
-            # is ~17× the actual prompt size), so we estimate from the
-            # prompt we actually sent.
-            prompt_chars = len(initial_text)
+            # Gauge source-of-truth: the PawFlow conversation context
+            # (`messages`) is what we own and what we send to the LLM. Codex's
+            # own `turn.completed.usage.input_tokens` is the SUM of every
+            # internal iteration (1 turn with 17 tools ≈ 17× actual context
+            # — billing metric, not context size). Tokenising just the
+            # `initial_text` is also wrong: it ignores the tool outputs +
+            # prior history already in the conv.
+            # Use the same helper as agent_utils._estimate_tokens.
+            try:
+                from core.token_counter import (
+                    count_messages_tokens as _count_msgs,
+                    resolve_token_multiplier as _resolve_mult,
+                )
+                _mult = _resolve_mult(getattr(self, "_config_ref", None) or {})
+                prompt_tokens = _count_msgs(
+                    [{"content": (m.content if hasattr(m, "content") else str(m))}
+                     for m in messages],
+                    multiplier=_mult)
+            except Exception:
+                prompt_tokens = int(len(initial_text) / 3.5)
             proc.stdin.write(initial_text)
             proc.stdin.flush()
             # Close stdin so codex sees EOF and starts processing the turn.
@@ -2200,7 +2214,7 @@ class LLMCodexMixin(CodexSessionMixin):
                                  "session_id": getattr(self, '_current_session_id', '') or '',
                                  "model": model,
                                  "num_turns": _turn_count}
-                    _ctx_used_live = int(prompt_chars / 3.5) + 8000 if 'prompt_chars' in dir() else _input
+                    _ctx_used_live = prompt_tokens
                     # max_tokens = service-configured max_context_size. CC
                     # overrides it on the fly with the model-reported value
                     # (`result.modelUsage[model].contextWindow`); codex's
@@ -2513,7 +2527,7 @@ class LLMCodexMixin(CodexSessionMixin):
         # value as `tokens_in` makes the gauge balloon and triggers a
         # PawFlow compact after a couple of messages on a 1M context.
         # Use a prompt-based estimate that reflects what we actually sent.
-        _ti_estimate = int(prompt_chars / 3.5) + 8000 if prompt_chars > 0 else _ti_in_raw
+        _ti_estimate = prompt_tokens if prompt_tokens > 0 else _ti_in_raw
         return LLMResponse(
             content=full_content,
             model=last_data.get("model", model),

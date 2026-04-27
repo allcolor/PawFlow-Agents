@@ -1208,9 +1208,22 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     "[gemini] %d image attachment(s) ignored — gemini -p "
                     "stdin is text-only; pipe vision via MCP tools instead",
                     len(image_blocks))
-            # Prompt-based gauge estimate — see codex.py for the same fix.
-            # gemini's reported input_tokens sums internal iterations.
-            prompt_chars = len(initial_text)
+            # Gauge source-of-truth: PawFlow `messages` (see codex.py
+            # for the rationale). Tokenise via core.token_counter so it
+            # matches agent_utils._estimate_tokens and the service-config
+            # `token_multiplier`.
+            try:
+                from core.token_counter import (
+                    count_messages_tokens as _count_msgs,
+                    resolve_token_multiplier as _resolve_mult,
+                )
+                _mult = _resolve_mult(getattr(self, "_config_ref", None) or {})
+                prompt_tokens = _count_msgs(
+                    [{"content": (m.content if hasattr(m, "content") else str(m))}
+                     for m in messages],
+                    multiplier=_mult)
+            except Exception:
+                prompt_tokens = int(len(initial_text) / 3.5)
             proc.stdin.write(initial_text)
             proc.stdin.flush()
             try:
@@ -2148,7 +2161,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                                  "session_id": getattr(self, '_current_session_id', '') or '',
                                  "model": model,
                                  "num_turns": _turn_count or 1}
-                    _ctx_used_live = int(prompt_chars / 3.5) + 8000 if 'prompt_chars' in dir() else sum_in
+                    _ctx_used_live = prompt_tokens
                     _ctx_max_live = self._gemini_context_window(model) if hasattr(self, '_gemini_context_window') else 1_000_000
                     _ctx_pct_live = _ctx_used_live / _ctx_max_live if _ctx_max_live > 0 else 0.0
                     _pub("message_meta", {
@@ -2442,7 +2455,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         # Same fix as codex: gemini's `input_tokens` sums every internal
         # iteration's prompt size, so it balloons the gauge and triggers
         # spurious compacts. Use a prompt-based estimate.
-        _ti_estimate = int(prompt_chars / 3.5) + 8000 if prompt_chars > 0 else _ti_in_raw
+        _ti_estimate = prompt_tokens if prompt_tokens > 0 else _ti_in_raw
         return LLMResponse(
             content=full_content,
             model=last_data.get("model", model),

@@ -25,13 +25,33 @@ class GeminiLiveContainer:
     container_name: str
     workdir: str
     service_id: str
+    svc_pool_idx: int = -1
+    proc: object = None
+    event_q: object = None
+    reader_thread: object = None
+    stop_event: object = None
+    pool_container: Optional[str] = None
+    session_id: str = ""
+    mcp_internal_token: Optional[str] = None
+    hb_state: Optional[Dict[str, object]] = None
     spawn_at: float = field(default_factory=time.monotonic)
     last_used: float = field(default_factory=time.monotonic)
     reuse_count: int = 0
     turn_lock: object = field(default_factory=threading.RLock)
 
+    def is_alive(self) -> bool:
+        try:
+            return self.proc is None or self.proc.poll() is None
+        except Exception:
+            return False
+
     def idle_seconds(self) -> float:
         return time.monotonic() - self.last_used
+
+
+# Alias matching CC's CCLiveSession / codex's CodexLiveSession naming —
+# the gemini stream code references the richer name.
+GeminiLiveSession = GeminiLiveContainer
 
 
 class GeminiLiveRegistry:

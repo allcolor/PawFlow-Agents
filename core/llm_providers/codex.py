@@ -1136,6 +1136,42 @@ class LLMCodexMixin(CodexSessionMixin):
         _is_reuse = _live_session is not None
 
         if _is_reuse:
+            # Codex `exec --json` is ONE-SHOT (per the CLI docs: `[PROMPT]`
+            # is the *initial* instructions; stdin is consumed once;
+            # process exits after the turn completes). The proc captured
+            # at the previous turn's register is therefore DEAD by the
+            # time we hit REUSE — writing to its closed stdin raises
+            # `ValueError: I/O operation on closed file`. CC behaves
+            # differently: its `claude` CLI stays alive across turns via
+            # stream-json, so reusing `proc.stdin` works.
+            # For codex, REUSE means: same SESSION (rollout file picked
+            # up by `codex exec resume <sid>`) + same WARM CONTAINER
+            # (pooled by codex_pool). The proc itself is always fresh.
+            # Detect the dead proc and fall through to a normal spawn,
+            # which will re-`exec resume <sid>` against the rollout.
+            _prev_proc = _live_session.proc
+            try:
+                _proc_alive = (_prev_proc is not None
+                               and _prev_proc.poll() is None)
+            except Exception:
+                _proc_alive = False
+            if not _proc_alive:
+                # Carry the live session's session_id forward so spawn's
+                # rollout glob finds the right rollout to resume against.
+                if _live_session.session_id:
+                    session_id = _live_session.session_id
+                    self._current_session_id = session_id
+                _is_reuse = False
+                _owns_turn_lock = False
+                proc, self._pool_container_name, _mcp_internal_token = (
+                    self._spawn_codex_stream(
+                        workdir, user_id, conv_id, agent_name,
+                        session_id, model,
+                        ephemeral_stream=_is_ephemeral))
+                # Fall through past the live-session block; spawn already
+                # set proc + container + token.
+                _live_session = None
+        if _is_reuse and _live_session is not None:
             # Serialise concurrent _stream_codex calls targeting the
             # same live session. Without this, bg_bucket_builder's
             # auto_extract_memories (or any other background caller that

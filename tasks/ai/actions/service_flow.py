@@ -768,10 +768,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
             # Pre-register session so status endpoint works immediately
             from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
-            register_session(session_id, free_port,
-                             container=container_name, service_id=service_id,
-                             user_id=user_id, volume=volume_name,
-                             launch_time=time.time(), ready=False)
+            _vnc_token = register_session(
+                session_id, free_port,
+                owner_user_id=user_id,
+                login_session_id=getattr(flowfile, "auth_session_id", "") or "",
+                container=container_name, service_id=service_id,
+                user_id=user_id, volume=volume_name,
+                launch_time=time.time(), ready=False)
         except Exception as e:
             logger.error("[vnc-login] Setup failed: %s", e, exc_info=True)
             flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
@@ -834,10 +837,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     _vnc_owner = "_vnc_proxy"
                     existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
                     if not existing:
-                        svc.register_route("GET", "/vnc/{session_id}/websockify",
+                        svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                            _vnc_owner, callback=lambda req: None,
                                            ws_handler=vnc_ws_proxy)
-                        svc.register_route("GET", "/vnc/{session_id}/{path+}",
+                        svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                            _vnc_owner, callback=vnc_http_proxy)
                 else:
                     logger.warning("[vnc-login] HTTPListenerService NOT FOUND")
@@ -853,6 +856,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 conversation_id, "vnc_login_ready", {
                     "session_id": session_id,
                     "service_id": service_id,
+                    "token": _vnc_token,
                     "cli": "claude",
                 })
 
@@ -1782,20 +1786,31 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             _vnc_owner = "_vnc_proxy"
             existing = [r for r in _http_svc.get_routes() if r.get("owner") == _vnc_owner]
             if not existing:
-                _http_svc.register_route("GET", "/vnc/{session_id}/websockify",
+                _http_svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                          _vnc_owner, callback=lambda req: None,
                                          ws_handler=vnc_ws_proxy)
-                _http_svc.register_route("GET", "/vnc/{session_id}/{path+}",
+                _http_svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                          _vnc_owner, callback=vnc_http_proxy)
                 logger.info("[vnc] Registered VNC routes on port %s", _req_port)
             _audio_exists = [r for r in _http_svc.get_routes()
                              if r.get("pattern", "").startswith("/audio/")]
             if not _audio_exists:
-                _http_svc.register_route("GET", "/audio/{session_id}/stream",
+                _http_svc.register_route("GET", "/audio/{session_id}/{token}/stream",
                                          _vnc_owner, callback=lambda req: None,
                                          ws_handler=audio_ws_proxy)
         except Exception as e:
             logger.warning("[vnc] Route registration failed: %s", e)
+
+    def _audio_lookup_token(sid: str) -> str:
+        """Return the capability token minted for an audio session, or
+        empty string if there is none. Used by the URL builders that
+        emit `audio_token` alongside `audio_session` so the frontend
+        can build /audio/<sid>/<token>/stream."""
+        try:
+            from services.audio_proxy import get_audio_token
+            return get_audio_token(sid)
+        except Exception:
+            return ""
 
     def _get_desktop_host_port(relay_id):
         """Get the published host port for desktop noVNC.
@@ -1894,7 +1909,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             # Both Docker and local terminals use the same relay WS path
             # (local terminal data arrives via host helper → relay → progress → dispatch)
             from services.terminal_proxy import register_terminal, terminal_ws_handler
-            register_terminal(session_id, relay_id, relay_service=svc)
+            _term_token = register_terminal(
+                session_id, relay_id, relay_service=svc,
+                owner_user_id=user_id,
+                login_session_id=flowfile.get_attribute("auth.session_id") or "")
 
             # Register WS route (once)
             _owner = "_terminal_proxy"
@@ -1910,7 +1928,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
                 if not existing:
                     http_svc.register_route(
-                        "GET", "/terminal/{session_id}",
+                        "GET", "/terminal/{session_id}/{token}",
                         _owner,
                         callback=lambda req: None,
                         ws_handler=terminal_ws_handler,
@@ -1919,6 +1937,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "session_id": session_id,
+                "token": _term_token,
                 "relay_id": relay_id,
             }).encode())
         except Exception as e:
@@ -1978,7 +1997,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             from services.code_server_proxy import (
                 register_code_server, code_http_proxy, code_ws_proxy,
             )
-            register_code_server(relay_id, port, svc)
+            _cs_session_id, _cs_token = register_code_server(
+                relay_id, port, svc,
+                owner_user_id=user_id,
+                login_session_id=flowfile.get_attribute("auth.session_id") or "")
 
             _owner = "_code_server_proxy"
             http_svc = None
@@ -1995,55 +2017,42 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 logger.debug("[open_code_server] existing code routes: %s", existing)
                 if not existing:
                     http_svc.register_route(
-                        "GET", "/code/{path+}",
+                        "GET", "/code/{session_id}/{token}/{path+}",
                         _owner,
                         callback=code_http_proxy,
                         ws_handler=code_ws_proxy,
                     )
-                    http_svc.register_route(
-                        "POST", "/code/{path+}",
-                        _owner,
-                        callback=code_http_proxy,
-                    )
-                    http_svc.register_route(
-                        "PUT", "/code/{path+}",
-                        _owner,
-                        callback=code_http_proxy,
-                    )
-                    http_svc.register_route(
-                        "DELETE", "/code/{path+}",
-                        _owner,
-                        callback=code_http_proxy,
-                    )
-                    http_svc.register_route(
-                        "PATCH", "/code/{path+}",
-                        _owner,
-                        callback=code_http_proxy,
-                    )
-                    http_svc.register_route(
-                        "OPTIONS", "/code/{path+}",
-                        _owner,
-                        callback=code_http_proxy,
-                    )
+                    for _m in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):
+                        http_svc.register_route(
+                            _m, "/code/{session_id}/{token}/{path+}",
+                            _owner,
+                            callback=code_http_proxy,
+                        )
 
             conv_id = body.get("conversation_id", "")
             _rl = relay_id
             _pt = port
+            _csid = _cs_session_id
+            _ctok = _cs_token
 
             def _bg_wait_code():
                 time.sleep(2)
                 logger.info("[code-server] Ready on relay %s port %s", _rl, _pt)
                 if conv_id:
+                    _url = f"/code/{_csid}/{_ctok}/"
                     _publish_command_result(conv_id, {
                         "ok": True, "port": _pt, "relay_id": _rl,
-                        "url": f"/code/{_rl}/",
-                        "message": f"Code server ready at /code/{_rl}/",
+                        "session_id": _csid, "token": _ctok,
+                        "url": _url,
+                        "message": f"Code server ready at {_url}",
                     })
 
             threading.Thread(target=_bg_wait_code, daemon=True).start()
             flowfile.set_content(json.dumps({
                 "ok": True, "message": "Starting code server...",
-                "port": port, "relay_id": relay_id, "url": f"/code/{relay_id}/",
+                "port": port, "relay_id": relay_id,
+                "session_id": _cs_session_id, "token": _cs_token,
+                "url": f"/code/{_cs_session_id}/{_cs_token}/",
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -2089,12 +2098,16 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             status = svc._request("desktop_status")
             logger.info("[open_desktop] desktop_status for %s: %s (key=%s)", relay_id, status, _action_status_key)
             if isinstance(status, dict) and status.get(_action_status_key):
+                _login_sid = flowfile.get_attribute("auth.session_id") or ""
                 if local_screen:
                     _novnc_port = status.get("local_screen_novnc_port")
                     if _novnc_port:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session
-                        register_session(_sid, _novnc_port)
+                        _vtok = register_session(
+                            _sid, _novnc_port,
+                            owner_user_id=user_id,
+                            login_session_id=_login_sid)
                         _ensure_vnc_routes()
                         # Re-register audio for already-running desktop
                         try:
@@ -2102,14 +2115,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             _audio_port = status.get("local_screen_audio_port")
                             if _audio_port:
                                 _relay_addr = getattr(svc, '_relay_addr', None) or '127.0.0.1'
-                                register_audio_source(_sid, _relay_addr, _audio_port)
+                                register_audio_source(_sid, _relay_addr, _audio_port,
+                                                              owner_user_id=user_id,
+                                                              login_session_id=_login_sid)
                         except Exception:
                             pass
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True, "local_screen": True,
                             "relay_id": relay_id,
-                            "url": f"/vnc/{_sid}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/websockify",
+                            "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/{_vtok}/websockify",
                             "audio_session": _sid,
+                            "audio_token": _audio_lookup_token(_sid),
                         }).encode())
                         return [flowfile]
                 else:
@@ -2118,7 +2134,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     if _hp:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session
-                        register_session(_sid, _hp)
+                        _vtok = register_session(
+                            _sid, _hp,
+                            owner_user_id=user_id,
+                            login_session_id=_login_sid)
                         _ensure_vnc_routes()
                         # Re-register audio for already-running desktop
                         try:
@@ -2135,14 +2154,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             if not _ahp:
                                 _ahp = _get_container_port(relay_id, 6180)
                             if _ahp:
-                                register_audio_source(_sid, "127.0.0.1", _ahp)
+                                register_audio_source(_sid, "127.0.0.1", _ahp,
+                                                              owner_user_id=user_id,
+                                                              login_session_id=_login_sid)
                         except Exception:
                             pass
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True,
                             "relay_id": relay_id,
-                            "url": f"/vnc/{_sid}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/websockify",
+                            "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/{_vtok}/websockify",
                             "audio_session": _sid,
+                            "audio_token": _audio_lookup_token(_sid),
                         }).encode())
                         return [flowfile]
 
@@ -2155,6 +2177,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": f"Failed to start {_action_start}", "detail": str(result)}).encode())
                 return [flowfile]
 
+            _login_sid = flowfile.get_attribute("auth.session_id") or ""
             if local_screen:
                 # Local screen: the relay runs VNC+websockify on its own machine.
                 # The novnc_port is directly on the relay's host (not in Docker).
@@ -2164,7 +2187,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 # For local relays connecting from the same machine, use the port directly
                 session_id = f"{_session_prefix}_{relay_id}"
                 from services.vnc_proxy import register_session
-                register_session(session_id, host_port, host=_relay_addr)
+                _vtok = register_session(
+                    session_id, host_port,
+                    owner_user_id=user_id,
+                    login_session_id=_login_sid,
+                    host=_relay_addr)
             else:
                 # Docker: get the published host port
                 host_port = _get_desktop_host_port(relay_id)
@@ -2173,7 +2200,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     return [flowfile]
                 session_id = f"{_session_prefix}_{relay_id}"
                 from services.vnc_proxy import register_session
-                register_session(session_id, host_port)
+                _vtok = register_session(
+                    session_id, host_port,
+                    owner_user_id=user_id,
+                    login_session_id=_login_sid)
 
             _ensure_vnc_routes()
 
@@ -2184,7 +2214,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     # Local relay: audio_capture runs on relay host
                     _audio_port = result.get("audio_port") if isinstance(result, dict) else None
                     if _audio_port:
-                        register_audio_source(session_id, _relay_addr, _audio_port)
+                        register_audio_source(session_id, _relay_addr, _audio_port,
+                                              owner_user_id=user_id,
+                                              login_session_id=_login_sid)
                 else:
                     # Docker: get audio_host_port from relay metadata, fallback to docker port 6180
                     _audio_host_port = 0
@@ -2199,14 +2231,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     if not _audio_host_port:
                         _audio_host_port = _get_container_port(relay_id, 6180)
                     if _audio_host_port:
-                        register_audio_source(session_id, "127.0.0.1", _audio_host_port)
+                        register_audio_source(session_id, "127.0.0.1", _audio_host_port,
+                                              owner_user_id=user_id,
+                                              login_session_id=_login_sid)
             except Exception as _ae:
                 logger.debug("[open_desktop] Audio registration skipped: %s", _ae)
 
             flowfile.set_content(json.dumps({
                 "ok": True, "relay_id": relay_id, "local_screen": local_screen,
-                "url": f"/vnc/{session_id}/vnc.html?autoconnect=true&resize=scale&path=vnc/{session_id}/websockify",
+                "url": f"/vnc/{session_id}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=vnc/{session_id}/{_vtok}/websockify",
                 "audio_session": session_id,
+                "audio_token": _audio_lookup_token(session_id),
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -2255,21 +2290,28 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 return [flowfile]
 
             from services.port_forward_proxy import add_forward, fwd_http_proxy, fwd_root_redirect, _ROUTE_OWNER
-            first = add_forward(relay_id, int_port, svc, ext_port=ext_port)
+            _ttl = int(body.get("ttl_seconds", 28800)) or 28800
+            first, _fwd_id, _fwd_token = add_forward(
+                relay_id, int_port, svc, ext_port=ext_port,
+                owner_user_id=user_id,
+                login_session_id=flowfile.get_attribute("auth.session_id") or "",
+                ttl_seconds=_ttl,
+                description=body.get("description", "") or "")
 
             # Register generic routes once (shared by all forwards)
             if first:
                 http_svc = _find_http_listener()
                 if http_svc:
                     for method in ("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"):
-                        http_svc.register_route(method, "/fwd/{relay_id}/{ext_port}/{path+}",
+                        http_svc.register_route(method, "/fwd/{forward_id}/{token}/{path+}",
                                                 _ROUTE_OWNER, callback=fwd_http_proxy)
-                    http_svc.register_route("GET", "/fwd/{relay_id}/{ext_port}",
+                    http_svc.register_route("GET", "/fwd/{forward_id}/{token}",
                                             _ROUTE_OWNER, callback=fwd_root_redirect)
 
-            _url = f"/fwd/{relay_id}/{ext_port}/"
+            _url = f"/fwd/{_fwd_id}/{_fwd_token}/"
             flowfile.set_content(json.dumps({
                 "ok": True, "relay_id": relay_id,
+                "forward_id": _fwd_id, "token": _fwd_token,
                 "int_port": int_port, "ext_port": ext_port, "url": _url,
             }).encode())
         except Exception as e:
@@ -2277,16 +2319,21 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "port_forward_remove":
+        forward_id = body.get("forward_id", "") or ""
         relay_id = body.get("relay_id", "")
         ext_port = body.get("ext_port", 0) or body.get("port", 0)
-        if not relay_id or not ext_port:
-            flowfile.set_content(json.dumps({"error": "Missing relay_id or port"}).encode())
+        if not forward_id and (not relay_id or not ext_port):
+            flowfile.set_content(json.dumps({
+                "error": "Missing forward_id (or relay_id+port for legacy)",
+            }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            ext_port = int(ext_port)
             from services.port_forward_proxy import remove_forward, _ROUTE_OWNER
-            last = remove_forward(relay_id, ext_port)
+            if forward_id:
+                last = remove_forward(forward_id=forward_id)
+            else:
+                last = remove_forward(relay_id=relay_id, ext_port=int(ext_port))
             if last:
                 http_svc = _find_http_listener()
                 if http_svc:
@@ -2392,10 +2439,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             image = "pawflow-claude-code:latest"
             logger.info("[codex-login] Creating session %s (port %d)", session_id, free_port)
             from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
-            register_session(session_id, free_port,
-                             container=container_name, service_id=service_id,
-                             user_id=user_id, volume=volume_name,
-                             launch_time=time.time(), ready=False)
+            _vnc_token = register_session(
+                session_id, free_port,
+                owner_user_id=user_id,
+                login_session_id=flowfile.get_attribute("auth.session_id") or "",
+                container=container_name, service_id=service_id,
+                user_id=user_id, volume=volume_name,
+                launch_time=time.time(), ready=False)
         except Exception as e:
             logger.error("[codex-login] Setup failed: %s", e, exc_info=True)
             flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
@@ -2460,10 +2510,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     _vnc_owner = "_vnc_proxy"
                     existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
                     if not existing:
-                        svc.register_route("GET", "/vnc/{session_id}/websockify",
+                        svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                            _vnc_owner, callback=lambda req: None,
                                            ws_handler=vnc_ws_proxy)
-                        svc.register_route("GET", "/vnc/{session_id}/{path+}",
+                        svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                            _vnc_owner, callback=vnc_http_proxy)
                 else:
                     logger.warning("[codex-login] HTTPListenerService NOT FOUND")
@@ -2476,6 +2526,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             ConversationEventBus.instance().publish_event(
                 conversation_id, "vnc_login_ready", {
                     "session_id": session_id, "service_id": service_id,
+                    "token": _vnc_token,
                     "cli": "codex",
                 })
 
@@ -2614,10 +2665,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             image = "pawflow-claude-code:latest"
             logger.info("[gemini-login] Creating session %s (port %d)", session_id, free_port)
             from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
-            register_session(session_id, free_port,
-                             container=container_name, service_id=service_id,
-                             user_id=user_id, volume=volume_name,
-                             launch_time=time.time(), ready=False)
+            _vnc_token = register_session(
+                session_id, free_port,
+                owner_user_id=user_id,
+                login_session_id=flowfile.get_attribute("auth.session_id") or "",
+                container=container_name, service_id=service_id,
+                user_id=user_id, volume=volume_name,
+                launch_time=time.time(), ready=False)
         except Exception as e:
             logger.error("[gemini-login] Setup failed: %s", e, exc_info=True)
             flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
@@ -2679,10 +2733,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     _vnc_owner = "_vnc_proxy"
                     existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
                     if not existing:
-                        svc.register_route("GET", "/vnc/{session_id}/websockify",
+                        svc.register_route("GET", "/vnc/{session_id}/{token}/websockify",
                                            _vnc_owner, callback=lambda req: None,
                                            ws_handler=vnc_ws_proxy)
-                        svc.register_route("GET", "/vnc/{session_id}/{path+}",
+                        svc.register_route("GET", "/vnc/{session_id}/{token}/{path+}",
                                            _vnc_owner, callback=vnc_http_proxy)
                 else:
                     logger.warning("[gemini-login] HTTPListenerService NOT FOUND")
@@ -2695,6 +2749,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             ConversationEventBus.instance().publish_event(
                 conversation_id, "vnc_login_ready", {
                     "session_id": session_id, "service_id": service_id,
+                    "token": _vnc_token,
                     "cli": "gemini",
                 })
 

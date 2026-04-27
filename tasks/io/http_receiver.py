@@ -128,6 +128,18 @@ class HTTPReceiverTask(BaseTask):
         ff.set_attribute("http.path", pending_req.path)
         ff.set_attribute("http.query", pending_req.query_string)
         ff.set_attribute("http.remote.addr", pending_req.remote_addr)
+        # Authenticated identity (stamped onto PendingRequest by the
+        # HTTP listener after auth passes). Downstream actions read
+        # these to mint capability tokens that bind a resource to its
+        # owner / login session.
+        ff.set_attribute("auth.user_id",
+                         getattr(pending_req, "auth_user_id", "") or "")
+        ff.set_attribute("auth.role",
+                         getattr(pending_req, "auth_role", "") or "")
+        ff.set_attribute("auth.session_id",
+                         getattr(pending_req, "auth_session_id", "") or "")
+        ff.set_attribute("auth.is_api_key",
+                         "1" if getattr(pending_req, "auth_is_api_key", False) else "")
         # Identify the listener that served this request so downstream
         # tasks can register dynamic routes on the CORRECT listener when
         # multiple listeners are running (admin vs chat, different ports…).

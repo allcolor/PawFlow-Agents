@@ -17,24 +17,62 @@ import uuid
 logger = logging.getLogger(__name__)
 
 # —— Session registry ——
-# relay_id → {port, relay_service, cs_ws_sessions: {sid → {browser_sock, ...}}}
+# session_id → {port, relay_service, relay_id, owner_user_id,
+#               capability_token, cs_ws_sessions: {sid → {browser_sock, ...}}}
 _sessions: dict = {}
+_relay_to_session: dict = {}  # relay_id → session_id (for legacy lookups)
 _lock = threading.Lock()
 
 
-def register_code_server(relay_id: str, port: int, relay_service, **kwargs):
+def register_code_server(relay_id: str, port: int, relay_service,
+                          *, owner_user_id: str = "",
+                          conversation_id: str = "",
+                          login_session_id: str = "",
+                          ttl_seconds: int = 86400,
+                          **kwargs) -> tuple[str, str]:
+    """Register a code-server session and mint its capability token.
+
+    Returns (session_id, token). Caller embeds both in the URL handed
+    to the user (`/code/<session_id>/<token>/...`); without the token
+    the route handler rejects every request 401/403.
+
+    `owner_user_id` is required for non-test callers.
+    """
+    if not owner_user_id:
+        raise ValueError("register_code_server: owner_user_id is required")
+    session_id = uuid.uuid4().hex[:16]
+    from core.capability_routes import mint_route_token
+    token = mint_route_token(
+        "code_server", session_id, owner_user_id,
+        conversation_id=conversation_id,
+        session_id=login_session_id,
+        ttl_seconds=ttl_seconds)
     with _lock:
-        _sessions[relay_id] = {
+        _sessions[session_id] = {
             "port": port,
+            "relay_id": relay_id,
             "relay_service": relay_service,
+            "owner_user_id": owner_user_id,
+            "capability_token": token,
             "cs_ws_sessions": {},
         }
-    logger.info("Code-server registered: relay=%s port=%d", relay_id, port)
+        _relay_to_session[relay_id] = session_id
+    logger.info(
+        "Code-server registered: session=%s relay=%s port=%d owner=%s",
+        session_id, relay_id, port, owner_user_id)
+    return session_id, token
 
 
 def unregister_code_server(relay_id: str):
     with _lock:
-        sess = _sessions.pop(relay_id, None)
+        session_id = _relay_to_session.pop(relay_id, "")
+        sess = _sessions.pop(session_id, None) if session_id else None
+    if session_id:
+        try:
+            from core.capability_routes import revoke_route_tokens
+            revoke_route_tokens(session_id)
+        except Exception:
+            pass
     if sess:
         for ws_sess in sess.get("cs_ws_sessions", {}).values():
             sock = ws_sess.get("browser_sock")
@@ -48,24 +86,36 @@ def unregister_code_server(relay_id: str):
 # —— HTTP proxy callback ——
 
 def code_http_proxy(pending_req):
-    """HTTP callback for /code/{path+}.
+    """HTTP callback for /code/{session_id}/{token}/{path+}.
 
-    Proxies to code-server via relay's http_proxy action.
+    Proxies to code-server via relay's http_proxy action. The
+    capability token in the path binds the requester (auth_user) to
+    this code-server session; cross-user access is rejected 403
+    here, before any backend call.
     """
-    full_path = pending_req.path_params.get("path", "")
-    relay_id = full_path.split("/", 1)[0]
-    sub_path = full_path.split("/", 1)[1] if "/" in full_path else ""
+    session_id = pending_req.path_params.get("session_id", "")
+    token = pending_req.path_params.get("token", "")
+    sub_path = pending_req.path_params.get("path", "")
     proxied_path = "/" + sub_path
     query = pending_req.query_string
     if query:
         proxied_path += "?" + query
 
+    from core.capability_routes import verify_route_request
+    claims, err = verify_route_request(
+        pending_req, "code_server", session_id, token)
+    if err is not None:
+        pending_req.complete(
+            err["status"], err["headers"], err["body"].encode("utf-8"))
+        return
+
     with _lock:
-        sess = _sessions.get(relay_id)
+        sess = _sessions.get(session_id)
     if not sess:
         pending_req.complete(404, {"Content-Type": "application/json"},
-                             b'{"error": "Code server not running for this relay"}')
+                             b'{"error": "Code server session not found"}')
         return
+    relay_id = sess["relay_id"]
 
     relay_service = sess["relay_service"]
     port = sess["port"]
@@ -112,23 +162,40 @@ def code_http_proxy(pending_req):
 # —— WebSocket proxy handler ——
 
 def code_ws_proxy(client_sock, path_params: dict, meta: dict):
-    """WS handler for /code/{path+}.
+    """WS handler for /code/{session_id}/{token}/{path+}.
 
-    Tunnels browser WS <-> relay <-> code-server WS.
+    Tunnels browser WS <-> relay <-> code-server WS. The capability
+    token in the path binds the requester to this code-server
+    session; cross-user access is rejected before any tunnel is
+    opened.
     """
-    full_path = path_params.get("path", "")
-    relay_id = full_path.split("/", 1)[0]
-    sub_path = full_path.split("/", 1)[1] if "/" in full_path else ""
+    session_id = path_params.get("session_id", "")
+    token = path_params.get("token", "")
+    sub_path = path_params.get("path", "")
     proxied_path = "/" + sub_path
     query = meta.get("query", "")
     if query:
         proxied_path += "?" + query
 
-    with _lock:
-        sess = _sessions.get(relay_id)
-    if not sess:
-        _ws_close(client_sock, 4001, "Code server not running")
+    from core.capability_routes import verify_route_ws
+    claims, err = verify_route_ws(meta or {}, "code_server", session_id, token)
+    if err is not None:
+        try:
+            client_sock.sendall(err)
+        except Exception:
+            pass
+        try:
+            client_sock.close()
+        except Exception:
+            pass
         return
+
+    with _lock:
+        sess = _sessions.get(session_id)
+    if not sess:
+        _ws_close(client_sock, 4001, "Code server session not found")
+        return
+    relay_id = sess["relay_id"]
 
     relay_service = sess["relay_service"]
     port = sess["port"]
@@ -219,7 +286,8 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
 def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode: int = 1):
     """Called when relay sends cs_ws_data — forward to browser."""
     with _lock:
-        sess = _sessions.get(relay_id)
+        session_id = _relay_to_session.get(relay_id, "")
+        sess = _sessions.get(session_id) if session_id else None
     if not sess:
         logger.debug("cs_ws_data: no session for relay %s", relay_id)
         return
@@ -237,7 +305,8 @@ def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode
 def dispatch_cs_ws_close(relay_id: str, ws_session_id: str):
     """Called when relay's code-server WS closes."""
     with _lock:
-        sess = _sessions.get(relay_id)
+        session_id = _relay_to_session.get(relay_id, "")
+        sess = _sessions.get(session_id) if session_id else None
     if not sess:
         return
     ws_sess = sess["cs_ws_sessions"].pop(ws_session_id, None)

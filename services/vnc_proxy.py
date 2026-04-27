@@ -18,19 +18,30 @@ logger = logging.getLogger(__name__)
 
 
 def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
-    """WebSocket handler for /vnc/{session_id}/websockify.
+    """WebSocket handler for /vnc/{session_id}/{token}/websockify.
 
-    Called by HTTPListenerService after the WS handshake with the browser.
-    Connects to the Docker noVNC websockify and relays frames bidirectionally.
-
-    Args:
-        client_sock: Raw socket to the browser (already past WS handshake).
-        path_params: {"session_id": "abc123"} from URL pattern.
-        meta: {"path", "query", "headers", "remote_addr"}.
+    The browser connects to PawFlow with the capability token in the
+    URL path (issued by `register_session`). We verify the token binds
+    this session_id to the authenticated user before opening the
+    backend connection — cross-user access is rejected at this point.
     """
     session_id = path_params.get("session_id", "")
+    token = path_params.get("token", "")
     if not session_id:
         _ws_close(client_sock, 4000, "Missing session_id")
+        return
+
+    from core.capability_routes import verify_route_ws
+    claims, err = verify_route_ws(meta or {}, "vnc", session_id, token)
+    if err is not None:
+        try:
+            client_sock.sendall(err)
+        except Exception:
+            pass
+        try:
+            client_sock.close()
+        except Exception:
+            pass
         return
 
     # Look up the target host:port for this session
@@ -131,14 +142,59 @@ _sessions: dict = {}  # session_id → {"port": int, ...}
 _lock = threading.Lock()
 
 
-def register_session(session_id: str, port: int, **kwargs):
+def register_session(session_id: str, port: int, *,
+                     owner_user_id: str = "",
+                     conversation_id: str = "",
+                     login_session_id: str = "",
+                     ttl_seconds: int = 86400,
+                     **kwargs) -> str:
+    """Register a VNC session and mint its capability token.
+
+    Returns the token (URL-safe). Caller MUST embed it in the URL
+    handed to the user (`/vnc/<session_id>/<token>/...`); without the
+    token in the path the route handler rejects every request 401/403.
+
+    `owner_user_id` is required for non-test callers — every VNC
+    session belongs to exactly one PawFlow user. `login_session_id`
+    binds the token to the user's login session so logout revokes it.
+    """
+    if not owner_user_id:
+        raise ValueError("register_session: owner_user_id is required")
+    from core.capability_routes import mint_route_token
+    token = mint_route_token(
+        "vnc", session_id, owner_user_id,
+        conversation_id=conversation_id,
+        session_id=login_session_id,
+        ttl_seconds=ttl_seconds)
     with _lock:
-        _sessions[session_id] = {"port": port, **kwargs}
+        _sessions[session_id] = {
+            "port": port,
+            "owner_user_id": owner_user_id,
+            "conversation_id": conversation_id,
+            "login_session_id": login_session_id,
+            "capability_token": token,
+            **kwargs,
+        }
+    return token
 
 
 def unregister_session(session_id: str):
     with _lock:
         _sessions.pop(session_id, None)
+    try:
+        from core.capability_routes import revoke_route_tokens
+        revoke_route_tokens(session_id)
+    except Exception:
+        pass
+
+
+def get_session_token(session_id: str) -> str:
+    """Return the capability token for a session (used by URL builders
+    that issue the user-facing URL after register_session). Returns
+    empty string if the session is unknown."""
+    with _lock:
+        entry = _sessions.get(session_id)
+        return (entry or {}).get("capability_token", "") or ""
 
 
 def update_session_ready(session_id: str):
@@ -272,18 +328,27 @@ def _check_http_session_auth(pending_req) -> bool:
 def vnc_http_proxy(pending_req):
     """HTTP proxy callback for noVNC static files.
 
-    Proxies GET requests to the backend noVNC HTTP server.
-    Falls back to serving from local noVNC files if the backend
-    returns 405 (websockify without --web) or is unreachable.
-    Route pattern: /vnc/{session_id}/{path}
+    Route pattern: /vnc/{session_id}/{token}/{path}. The capability
+    token in the path binds the requester (auth_user) to this VNC
+    session; cross-user access is rejected 403 here, before any
+    backend connection. Falls back to serving from local noVNC files
+    if the backend returns 405 (websockify without --web) or is
+    unreachable.
     """
-    # Auth already checked by HTTP listener
-
     import urllib.request
     import urllib.error
 
     session_id = pending_req.path_params.get("session_id", "")
+    token = pending_req.path_params.get("token", "")
     sub_path = pending_req.path_params.get("path", "")
+
+    from core.capability_routes import verify_route_request
+    claims, err = verify_route_request(
+        pending_req, "vnc", session_id, token)
+    if err is not None:
+        pending_req.complete(
+            err["status"], err["headers"], err["body"].encode("utf-8"))
+        return
 
     host, port = _get_vnc_target(session_id)
     if not port:

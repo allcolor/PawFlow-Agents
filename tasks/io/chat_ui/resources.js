@@ -2195,7 +2195,10 @@ function cmdClaudeLoginCredentials(text, parts) {
 
 // `cli` is one of: 'claude' | 'codex' | 'gemini' — picks the right server
 // status/cleanup actions (each CLI has its own dedicated namespace).
-function _openVncLoginDialog(sessionId, serviceId, triggerBtn, cli) {
+// `token` is the capability token issued by the backend at session
+// register time; without it the iframe URL will 401/403 — leaving it
+// empty is only valid in legacy-tooling test paths.
+function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli) {
   cli = cli || 'claude';
   const _statusAction = {
     'claude': 'claude_code_server_login_status',
@@ -2223,8 +2226,8 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn, cli) {
   header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:#16213e;';
   header.innerHTML = '<span style="color:#aaa;font-size:13px;">' + _title + '</span>'
     + '<button id="vnc-dialog-close" style="background:none;border:none;color:#e94560;font-size:18px;cursor:pointer;">&times;</button>';
-  const vncUrl = '/vnc/' + sessionId + '/vnc.html?autoconnect=true&resize=scale'
-    + '&path=vnc/' + sessionId + '/websockify';
+  const vncUrl = '/vnc/' + sessionId + '/' + token + '/vnc.html?autoconnect=true&resize=scale'
+    + '&path=vnc/' + sessionId + '/' + token + '/websockify';
   const iframe = document.createElement('iframe');
   iframe.src = vncUrl;
   iframe.style.cssText = 'flex:1;border:none;background:#000;';

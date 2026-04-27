@@ -22,19 +22,56 @@ _sessions: dict = {}
 _lock = threading.Lock()
 
 
-def register_terminal(session_id: str, relay_service_id: str, relay_service=None, **kwargs):
+def register_terminal(session_id: str, relay_service_id: str, relay_service=None,
+                       *, owner_user_id: str = "",
+                       conversation_id: str = "",
+                       login_session_id: str = "",
+                       ttl_seconds: int = 86400,
+                       **kwargs) -> str:
+    """Register a terminal session and mint its capability token.
+
+    Returns the token (URL-safe). Caller embeds it in the WS URL
+    (`/terminal/<session>/<token>`); without it the WS handler
+    rejects every connection 401/403.
+
+    `owner_user_id` is required for non-test callers.
+    """
+    if not owner_user_id:
+        raise ValueError("register_terminal: owner_user_id is required")
+    from core.capability_routes import mint_route_token
+    token = mint_route_token(
+        "terminal", session_id, owner_user_id,
+        conversation_id=conversation_id,
+        session_id=login_session_id,
+        ttl_seconds=ttl_seconds)
     with _lock:
         _sessions[session_id] = {
             "relay_service_id": relay_service_id,
             "relay_service": relay_service,
             "browser_sock": None,
+            "owner_user_id": owner_user_id,
+            "capability_token": token,
             **kwargs,
         }
+    return token
+
+
+def get_terminal_token(session_id: str) -> str:
+    """Return the capability token for a terminal session, or empty
+    string if the session is unknown."""
+    with _lock:
+        return (_sessions.get(session_id) or {}).get(
+            "capability_token", "") or ""
 
 
 def unregister_terminal(session_id: str):
     with _lock:
         _sessions.pop(session_id, None)
+    try:
+        from core.capability_routes import revoke_route_tokens
+        revoke_route_tokens(session_id)
+    except Exception:
+        pass
 
 
 def get_terminal(session_id: str):
@@ -78,14 +115,30 @@ def dispatch_terminal_exit(session_id: str):
 # ── WS handler (called by HTTPListenerService after handshake) ──
 
 def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
-    """WebSocket handler for /terminal/{session_id}.
+    """WebSocket handler for /terminal/{session_id}/{token}.
 
     Called by HTTPListenerService after the WS upgrade handshake.
-    Receives terminal_input/terminal_resize from browser, forwards to relay.
+    Receives terminal_input/terminal_resize from browser, forwards to
+    relay. The capability token in the URL binds the requester
+    (auth_user) to this terminal; cross-user access is rejected here.
     """
     session_id = path_params.get("session_id", "")
+    token = path_params.get("token", "")
     if not session_id:
         _ws_close(client_sock, 4000, "Missing session_id")
+        return
+
+    from core.capability_routes import verify_route_ws
+    claims, err = verify_route_ws(meta or {}, "terminal", session_id, token)
+    if err is not None:
+        try:
+            client_sock.sendall(err)
+        except Exception:
+            pass
+        try:
+            client_sock.close()
+        except Exception:
+            pass
         return
 
     with _lock:

@@ -162,13 +162,18 @@ async function cmdTerminal(text, parts) {
       }
 
       const sessionId = resp.session_id;
+      const token = resp.token || '';
+      if (!token) {
+        addMsg('system', '⚠ terminal opened but server did not return a capability token');
+        return;
+      }
       await _loadXterm();
 
       // Create tab and init xterm inside it
       const tabId = addTerminalTab(sessionId, relayId);
       const panel = document.getElementById('tabContent_' + tabId);
       const container = panel.querySelector('.xterm-container');
-      _initXterm(container, sessionId);
+      _initXterm(container, sessionId, token);
     },
     error: (e) => {
       addMsg('system', 'Failed to open terminal: ' + e.message);
@@ -178,7 +183,7 @@ async function cmdTerminal(text, parts) {
 }
 
 /** Initialize xterm.js inside a container element. */
-function _initXterm(container, sessionId) {
+function _initXterm(container, sessionId, token) {
   const term = new window.Terminal({
     cursorBlink: true,
     fontSize: 13,
@@ -203,7 +208,7 @@ function _initXterm(container, sessionId) {
 
   // Connect WS
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/terminal/' + sessionId);
+  const ws = new WebSocket(proto + '//' + location.host + '/terminal/' + sessionId + '/' + token);
   container._ws = ws;
 
   ws.onopen = () => {
@@ -398,10 +403,19 @@ async function cmdDesktop(text, parts) {
       const _prefix = localScreen ? 'local_desktop' : 'desktop';
       const _desktopSid = _prefix + '_' + relayId;
       const _tabLabel = localScreen ? relayId + ' (local)' : relayId;
-      addDesktopTab(_tabLabel, resp.url || '/vnc/' + _desktopSid + '/vnc.html?autoconnect=true&resize=remote&path=vnc/' + _desktopSid + '/websockify');
-      // Connect audio if available
+      // Backend always returns a tokenised URL via resp.url — without
+      // the capability token in the path the proxy returns 401/403,
+      // so a hand-built fallback URL would never work anyway.
+      if (!resp.url) {
+        addMsg('error', 'Desktop ready but server did not return a URL');
+        return;
+      }
+      addDesktopTab(_tabLabel, resp.url);
+      // Connect audio if available. The capability token is separate
+      // from the VNC one (different resource_type) — audioConnect needs
+      // both the session id and the audio token to build the WS URL.
       if (resp.audio_session) {
-        audioConnect(resp.audio_session);
+        audioConnect(resp.audio_session, resp.audio_token || '');
       }
       addMsg('system', (localScreen ? 'Local screen' : 'Desktop') + ' ready.');
     },
@@ -560,8 +574,22 @@ async function cmdPortForward(text, parts) {
       addMsg('system', 'Usage: /port-forward open <relay_id> <port>');
       return true;
     }
-    const url = '/fwd/' + relayId + '/' + port + '/';
-    addBrowserTab(relayId + ':' + port, url);
+    // The URL now embeds a capability token — look it up via
+    // port_forward_list rather than reconstructing it from
+    // (relay_id, port), which would land on a 401/403.
+    action$('port_forward_list', {}).subscribe({
+      next: (resp) => {
+        const entries = (resp && resp.forwards) || [];
+        const match = entries.find((e) =>
+          e.relay_id === relayId && Number(e.ext_port) === Number(port));
+        if (!match) {
+          addMsg('system', '⚠ No forward for ' + relayId + ':' + port + ' — add it first.');
+          return;
+        }
+        addBrowserTab(relayId + ':' + port, match.url);
+      },
+      error: (e) => addMsg('system', 'Failed: ' + e.message),
+    });
     return true;
   }
 

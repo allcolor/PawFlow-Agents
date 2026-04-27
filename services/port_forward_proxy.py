@@ -1,109 +1,166 @@
 """Port Forward Proxy — forwards HTTP requests to a relay's local port.
 
-Similar to code_server_proxy.py but generic: any relay, any port.
-Routes: /fwd/{relay_id}/{ext_port}/{path+}
-Proxies to localhost:{int_port} on the relay.
-
-External port (in URL) can differ from internal port (on relay).
+Routes: /fwd/{forward_id}/{token}/{path+}. Each forward gets its own
+random forward_id (UUID prefix); the capability token bound to it
+decides who can hit the URL. The internal routing (relay_id, int_port)
+is kept server-side and never exposed in the URL.
 """
 
 import base64
 import json
 import logging
 import threading
-from typing import Dict
+import uuid
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# relay_id:ext_port → {relay_service, int_port, ext_port, relay_id}
+# forward_id → {relay_id, int_port, ext_port (label only),
+#               relay_service, owner_user_id, capability_token,
+#               created_at, expires_at, description}
 _forwards: Dict[str, dict] = {}
 _lock = threading.Lock()
-
-
-def _fwd_key(relay_id: str, ext_port: int) -> str:
-    return f"{relay_id}:{ext_port}"
-
 
 _ROUTE_OWNER = "_port_fwd_routes"
 
 
 def add_forward(relay_id: str, int_port: int, relay_service,
-               ext_port: int = 0) -> bool:
-    """Register a port forward. Returns True if this is the first forward (routes need registering).
+                ext_port: int = 0, *,
+                owner_user_id: str = "",
+                conversation_id: str = "",
+                login_session_id: str = "",
+                ttl_seconds: int = 28800,
+                description: str = "") -> Tuple[bool, str, str]:
+    """Register a port forward and mint its capability token.
 
-    Args:
-        relay_id: Relay service ID.
-        int_port: Port on the relay (internal).
-        ext_port: Port in the URL (external). Defaults to int_port.
+    Returns (first, forward_id, token):
+      - first: True if this is the first forward registered (caller
+        uses this signal to register the HTTP route the first time).
+      - forward_id: opaque random id for the URL.
+      - token: capability token — caller embeds it in the URL handed
+        to the user (`/fwd/<forward_id>/<token>/...`).
+
+    `owner_user_id` is required for non-test callers — every forward
+    is bound to exactly one PawFlow user and a leaked URL stops
+    working at logout (revoke_session_capabilities).
     """
     if not ext_port:
         ext_port = int_port
-    key = _fwd_key(relay_id, ext_port)
+    if not owner_user_id:
+        raise ValueError("add_forward: owner_user_id is required")
+    forward_id = uuid.uuid4().hex[:16]
+    from core.capability_routes import mint_route_token
+    token = mint_route_token(
+        "port_forward", forward_id, owner_user_id,
+        conversation_id=conversation_id,
+        session_id=login_session_id,
+        ttl_seconds=ttl_seconds)
+    import time as _time
+    now = int(_time.time())
     with _lock:
         first = len(_forwards) == 0
-        _forwards[key] = {
+        _forwards[forward_id] = {
+            "forward_id": forward_id,
             "relay_id": relay_id,
             "int_port": int_port,
             "ext_port": ext_port,
             "relay_service": relay_service,
+            "owner_user_id": owner_user_id,
+            "capability_token": token,
+            "created_at": now,
+            "expires_at": now + ttl_seconds,
+            "description": description,
         }
-    logger.info("Port forward registered: %s ext=%d → int=%d", relay_id, ext_port, int_port)
-    return first
+    logger.info(
+        "Port forward registered: forward_id=%s relay=%s ext=%d → int=%d owner=%s",
+        forward_id, relay_id, ext_port, int_port, owner_user_id)
+    return first, forward_id, token
 
 
-def remove_forward(relay_id: str, ext_port: int) -> bool:
-    """Remove a port forward. Returns True if no forwards remain (routes should be unregistered)."""
-    key = _fwd_key(relay_id, ext_port)
+def remove_forward(forward_id: str = "", *,
+                   relay_id: str = "", ext_port: int = 0) -> bool:
+    """Remove a forward. Either pass `forward_id` (preferred) or the
+    legacy (relay_id, ext_port) pair. Returns True when no forwards
+    remain (caller signal to unregister the HTTP route).
+    """
     with _lock:
-        entry = _forwards.pop(key, None)
+        if not forward_id:
+            for fid, entry in list(_forwards.items()):
+                if (entry.get("relay_id") == relay_id
+                        and entry.get("ext_port") == ext_port):
+                    forward_id = fid
+                    break
+        entry = _forwards.pop(forward_id, None) if forward_id else None
         last = entry is not None and len(_forwards) == 0
     if entry:
-        logger.info("Port forward removed: %s ext=%d", relay_id, ext_port)
+        try:
+            from core.capability_routes import revoke_route_tokens
+            revoke_route_tokens(forward_id)
+        except Exception:
+            pass
+        logger.info(
+            "Port forward removed: forward_id=%s relay=%s ext=%d",
+            forward_id, entry.get("relay_id", ""), entry.get("ext_port", 0))
     return last
 
 
-def list_forwards() -> list:
-    """List all active port forwards."""
+def list_forwards() -> List[dict]:
+    """List all active port forwards (with their capability URL)."""
     with _lock:
         return [
-            {"relay_id": v["relay_id"],
-             "int_port": v["int_port"],
-             "ext_port": v["ext_port"],
-             "url": f"/fwd/{v['relay_id']}/{v['ext_port']}/"}
+            {
+                "forward_id": v["forward_id"],
+                "relay_id": v["relay_id"],
+                "int_port": v["int_port"],
+                "ext_port": v["ext_port"],
+                "owner_user_id": v["owner_user_id"],
+                "created_at": v["created_at"],
+                "expires_at": v["expires_at"],
+                "description": v["description"],
+                "url": f"/fwd/{v['forward_id']}/{v['capability_token']}/",
+            }
             for v in _forwards.values()
         ]
 
 
 def remove_all_for_relay(relay_id: str) -> bool:
-    """Remove all forwards for a relay. Returns True if no forwards remain."""
+    """Remove all forwards for a relay. Returns True when no forwards
+    remain after the cleanup."""
     with _lock:
-        to_remove = [k for k, v in _forwards.items() if v["relay_id"] == relay_id]
-        for k in to_remove:
-            _forwards.pop(k)
-        return len(to_remove) > 0 and len(_forwards) == 0
+        to_remove = [
+            fid for fid, v in _forwards.items() if v["relay_id"] == relay_id]
+    for fid in to_remove:
+        remove_forward(forward_id=fid)
+    with _lock:
+        return len(_forwards) == 0
 
 
 # -- HTTP proxy callback --
 
 def fwd_http_proxy(pending_req):
-    """HTTP callback for /fwd/{relay_id}/{ext_port}/{path+}."""
-    relay_id = pending_req.path_params.get("relay_id", "")
-    ext_port_str = pending_req.path_params.get("ext_port", "")
+    """HTTP callback for /fwd/{forward_id}/{token}/{path+}.
+
+    The capability token in the path binds the requester (auth_user)
+    to this forward; cross-user access is rejected 403 here, before
+    any backend call.
+    """
+    forward_id = pending_req.path_params.get("forward_id", "")
+    token = pending_req.path_params.get("token", "")
     sub_path = pending_req.path_params.get("path", "")
 
-    try:
-        ext_port = int(ext_port_str)
-    except (ValueError, TypeError):
-        pending_req.complete(400, {"Content-Type": "application/json"},
-                             b'{"error": "Invalid port"}')
+    from core.capability_routes import verify_route_request
+    claims, err = verify_route_request(
+        pending_req, "port_forward", forward_id, token)
+    if err is not None:
+        pending_req.complete(
+            err["status"], err["headers"], err["body"].encode("utf-8"))
         return
 
-    key = _fwd_key(relay_id, ext_port)
     with _lock:
-        entry = _forwards.get(key)
+        entry = _forwards.get(forward_id)
     if not entry:
         pending_req.complete(404, {"Content-Type": "application/json"},
-                             json.dumps({"error": f"No forward for {relay_id}:{ext_port}"}).encode())
+                             json.dumps({"error": "unknown forward"}).encode())
         return
 
     relay_service = entry["relay_service"]
@@ -147,13 +204,18 @@ def fwd_http_proxy(pending_req):
 
         pending_req.complete(status, resp_headers, resp_body)
     except Exception as e:
-        logger.warning("Port forward proxy error for %s:%d: %s", relay_id, int_port, e)
+        logger.warning(
+            "Port forward proxy error for %s (relay=%s int=%d): %s",
+            forward_id, entry.get("relay_id", ""), int_port, e)
         pending_req.complete(502, {"Content-Type": "application/json"},
                              json.dumps({"error": str(e)}).encode())
 
 
 def fwd_root_redirect(pending_req):
-    """Redirect /fwd/{relay_id}/{ext_port} to /fwd/{relay_id}/{ext_port}/ (trailing slash)."""
-    relay_id = pending_req.path_params.get("relay_id", "")
-    ext_port = pending_req.path_params.get("ext_port", "")
-    pending_req.complete(301, {"Location": f"/fwd/{relay_id}/{ext_port}/"}, b"")
+    """Redirect /fwd/{forward_id}/{token} → /fwd/{forward_id}/{token}/
+    (trailing slash). The redirect is unauthenticated by design — a
+    bad token still receives the redirect, then the followed request
+    is rejected 403 by the real handler."""
+    fid = pending_req.path_params.get("forward_id", "")
+    tok = pending_req.path_params.get("token", "")
+    pending_req.complete(301, {"Location": f"/fwd/{fid}/{tok}/"}, b"")

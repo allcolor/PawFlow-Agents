@@ -5,6 +5,7 @@
 var _audioCtx = null;
 var _audioWs = null;
 var _audioSessionId = null;
+var _audioToken = '';
 var _audioMuted = false;
 var _audioVolume = 1.0;
 var _audioGain = null;
@@ -247,9 +248,10 @@ window.addEventListener('focus', _resumeAudio);
 window.addEventListener('click', _resumeAudio);
 window.addEventListener('keydown', _resumeAudio);
 
-function audioConnect(sessionId) {
+function audioConnect(sessionId, token) {
   if (_audioWs) audioDisconnect();
   _audioSessionId = sessionId;
+  _audioToken = token || '';
 
   if (typeof AudioDecoder === 'undefined') {
     console.error('[audio] WebCodecs not available');
@@ -371,7 +373,7 @@ function audioConnect(sessionId) {
   }, 5000);
 
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  var url = proto + '//' + location.host + '/audio/' + sessionId + '/stream';
+  var url = proto + '//' + location.host + '/audio/' + sessionId + '/' + (_audioToken || '') + '/stream';
   _audioWs = new WebSocket(url);
   _audioWs.binaryType = 'arraybuffer';
 

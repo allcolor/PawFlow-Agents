@@ -1378,7 +1378,7 @@ function connectSSE(cid, onReady, opts) {
     const data = JSON.parse(e.data);
     // `cli` is one of 'claude' | 'codex' | 'gemini' — picks the right
     // server status/cleanup action namespace inside the dialog.
-    _openVncLoginDialog(data.session_id, data.service_id, null, data.cli || 'claude');
+    _openVncLoginDialog(data.session_id, data.service_id, data.token || '', null, data.cli || 'claude');
   });
 
   eventSource.addEventListener('notification', (e) => {

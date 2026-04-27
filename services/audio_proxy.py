@@ -16,27 +16,63 @@ from typing import Dict, Tuple, Optional
 logger = logging.getLogger(__name__)
 
 _audio_sources: Dict[str, Tuple[str, int]] = {}
+_audio_tokens: Dict[str, str] = {}
 _audio_lock = threading.Lock()
 # Active proxy sessions: session_id -> [(stop_event, backend_socket), ...]
 _active_proxies: Dict[str, list] = {}
 
 
-def register_audio_source(session_id: str, host: str, port: int):
+def register_audio_source(session_id: str, host: str, port: int,
+                          *, owner_user_id: str = "",
+                          conversation_id: str = "",
+                          login_session_id: str = "",
+                          ttl_seconds: int = 86400) -> str:
+    """Register an audio source and mint its capability token.
+
+    Returns the token (URL-safe). Caller embeds it in the WS URL
+    (`/audio/<session>/<token>/stream`); without it the WS handler
+    rejects every connection 401/403.
+
+    `owner_user_id` is required for non-test callers.
+    """
     if not port:
-        return
+        return ""
+    if not owner_user_id:
+        raise ValueError("register_audio_source: owner_user_id is required")
+    from core.capability_routes import mint_route_token
+    token = mint_route_token(
+        "audio", session_id, owner_user_id,
+        conversation_id=conversation_id,
+        session_id=login_session_id,
+        ttl_seconds=ttl_seconds)
     # Kill any stale proxies from a previous session with the same ID
     with _audio_lock:
         old_proxies = _active_proxies.pop(session_id, [])
         _audio_sources[session_id] = (host, port)
+        _audio_tokens[session_id] = token
     _kill_proxies(old_proxies)
     logger.info("Audio proxy: registered %s -> %s:%d", session_id, host, port)
+    return token
+
+
+def get_audio_token(session_id: str) -> str:
+    """Return the capability token for an audio session, or empty
+    string if the session is unknown."""
+    with _audio_lock:
+        return _audio_tokens.get(session_id, "") or ""
 
 
 def unregister_audio_source(session_id: str):
     with _audio_lock:
         _audio_sources.pop(session_id, None)
+        _audio_tokens.pop(session_id, None)
         proxies = _active_proxies.pop(session_id, [])
     _kill_proxies(proxies)
+    try:
+        from core.capability_routes import revoke_route_tokens
+        revoke_route_tokens(session_id)
+    except Exception:
+        pass
 
 
 def kill_audio_proxies(session_id: str):
@@ -67,10 +103,26 @@ def _get_audio_target(session_id: str) -> Tuple[str, int]:
 
 
 def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
-    """WebSocket handler for /audio/{session_id}/stream."""
+    """WebSocket handler for /audio/{session_id}/{token}/stream. The
+    token binds the requester (auth_user) to this audio session;
+    cross-user access is rejected before any backend connect."""
     session_id = path_params.get("session_id", "")
+    token = path_params.get("token", "")
     if not session_id:
         _ws_close(client_sock, 4000, "Missing session_id")
+        return
+
+    from core.capability_routes import verify_route_ws
+    claims, err = verify_route_ws(meta or {}, "audio", session_id, token)
+    if err is not None:
+        try:
+            client_sock.sendall(err)
+        except Exception:
+            pass
+        try:
+            client_sock.close()
+        except Exception:
+            pass
         return
 
     target_host, target_port = _get_audio_target(session_id)

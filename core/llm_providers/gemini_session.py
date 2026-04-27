@@ -608,15 +608,18 @@ class GeminiSessionMixin:
                            workdir: str = "") -> list:
         """Build the gemini CLI command.
 
-        `gemini -p <prompt> --output-format stream-json [--resume <uuid>]`.
-        Reads stdin once when prompt is `-`. Like codex, gemini is one-shot
-        per turn; PawFlow keeps the container warm via GeminiLiveRegistry.
+        Per `gemini --help`: `-p, --prompt <STRING>` enables headless mode
+        and is appended to whatever's read on stdin. We pass an empty
+        prompt-arg sentinel and write the full conversation on stdin in
+        the caller; this avoids blowing up the argv length on long
+        histories. NOTE: codex uses `-` as a stdin sentinel; gemini does
+        NOT — `-p -` would be interpreted as a literal one-character prompt.
         """
-        gemini_args = ["-p", "-"]
-        gemini_args.extend([
+        gemini_args = [
+            "-p", " ",  # space sentinel; real prompt arrives on stdin
             "--output-format", "stream-json",
-            "--yolo",  # auto-accept tool calls (PawFlow controls perms)
-        ])
+            "--yolo",   # auto-accept tool calls (PawFlow controls perms)
+        ]
         if session_id:
             gemini_args.extend(["--resume", session_id])
         if model:

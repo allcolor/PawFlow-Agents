@@ -1193,26 +1193,27 @@ class LLMGeminiMixin(GeminiSessionMixin):
         if session_id and conv_id and agent_name:
             catchup_text = self._gemini_build_catchup_context(conv_id, agent_name)
 
-        # Send initial message as stream-json (keep stdin open for preempt/interrupt)
+        # Send initial message as PLAIN TEXT on stdin. Per gemini --help:
+        # `-p <prompt>` is required to enable headless mode and is appended
+        # to whatever is read from stdin. We pass `-p ""` (or whatever the
+        # cmd builder picked) and pipe the real conversation via stdin so
+        # the arg-list size never explodes for long histories. CC's
+        # `--input-format stream-json` JSON envelope does NOT apply to
+        # gemini — it would leak the wrapper into the prompt.
         try:
-            # Prepend catch-up context to the initial message
             if catchup_text:
                 initial_text = catchup_text + "\n\n" + initial_text
-
             if image_blocks:
-                # Multipart: text + images as content array (enables vision)
-                content = [{"type": "text", "text": initial_text}] + image_blocks
-                msg = json.dumps({
-                    "type": "user",
-                    "message": {"role": "user", "content": content},
-                })
-            else:
-                msg = json.dumps({
-                    "type": "user",
-                    "message": {"role": "user", "content": initial_text},
-                })
-            proc.stdin.write(msg + "\n")
+                logger.warning(
+                    "[gemini] %d image attachment(s) ignored — gemini -p "
+                    "stdin is text-only; pipe vision via MCP tools instead",
+                    len(image_blocks))
+            proc.stdin.write(initial_text)
             proc.stdin.flush()
+            try:
+                proc.stdin.close()
+            except Exception:
+                logger.debug("gemini stdin close failed", exc_info=True)
         except BrokenPipeError:
             stderr = ""
             try:

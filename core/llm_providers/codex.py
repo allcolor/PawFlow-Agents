@@ -1194,26 +1194,31 @@ class LLMCodexMixin(CodexSessionMixin):
         if session_id and conv_id and agent_name:
             catchup_text = self._codex_build_catchup_context(conv_id, agent_name)
 
-        # Send initial message as stream-json (keep stdin open for preempt/interrupt)
+        # Send initial message as PLAIN TEXT on stdin. Codex `exec --json -`
+        # reads its prompt from stdin as a single text blob (terminated by
+        # EOF / stdin close). CC's `--input-format stream-json` wraps each
+        # message in a JSON envelope ({"type":"user","message":{"role":
+        # "user","content":"…"}}) but codex doesn't speak that protocol —
+        # piping the JSON would either leak the wrapper into the prompt or
+        # confuse the parser. Image attachments are not supported via codex
+        # exec stdin; vision goes through MCP tool calls instead.
         try:
-            # Prepend catch-up context to the initial message
             if catchup_text:
                 initial_text = catchup_text + "\n\n" + initial_text
-
             if image_blocks:
-                # Multipart: text + images as content array (enables vision)
-                content = [{"type": "text", "text": initial_text}] + image_blocks
-                msg = json.dumps({
-                    "type": "user",
-                    "message": {"role": "user", "content": content},
-                })
-            else:
-                msg = json.dumps({
-                    "type": "user",
-                    "message": {"role": "user", "content": initial_text},
-                })
-            proc.stdin.write(msg + "\n")
+                logger.warning(
+                    "[codex] %d image attachment(s) ignored — codex exec "
+                    "stdin is text-only; pipe vision via MCP tools instead",
+                    len(image_blocks))
+            proc.stdin.write(initial_text)
             proc.stdin.flush()
+            # Close stdin so codex sees EOF and starts processing the turn.
+            # Without close, codex blocks waiting for more input until our
+            # watchdog kills it.
+            try:
+                proc.stdin.close()
+            except Exception:
+                logger.debug("codex stdin close failed", exc_info=True)
         except BrokenPipeError:
             stderr = ""
             try:

@@ -635,7 +635,14 @@ class AgentCoreMixin:
                     emitter.on_iteration_start(
                         iteration, current_round, ctx["max_iterations"],
                         max_rounds, tools_called, poll_silent)
-                    # Read the service-config proactive-compact threshold.
+                    # Read the service-config proactive-compact threshold
+                    # from the AGENT's client (e.g. codex_llm_service),
+                    # NOT from the summarizer client (`compact_client`,
+                    # typically claude_code_llm_service). The threshold
+                    # describes when the agent's own context is too
+                    # large — the summarizer is just the tool used to
+                    # shrink it.
+                    #
                     # `compact_threshold_pct` is in [0, 100]:
                     #   0   = no proactive PawFlow compact (defer entirely to
                     #         the CLI's mechanism — e.g. CC's compact_boundary,
@@ -646,12 +653,14 @@ class AgentCoreMixin:
                     #         trigger to fire wins.
                     _compact_pct = 0
                     try:
-                        _cfg_for_pct = (getattr(compact_client, "config", None)
-                                        or getattr(compact_client, "_config_ref", None)
-                                        or getattr(getattr(compact_client, "_client", None),
-                                                   "_config_ref", None)
-                                        or {})
-                        _compact_pct = int(_cfg_for_pct.get("compact_threshold_pct", 0) or 0)
+                        _agent_client_cfg = (
+                            getattr(client, "config", None)
+                            or getattr(client, "_config_ref", None)
+                            or getattr(getattr(client, "_client", None),
+                                       "_config_ref", None)
+                            or {})
+                        _compact_pct = int(
+                            _agent_client_cfg.get("compact_threshold_pct", 0) or 0)
                     except (TypeError, ValueError):
                         _compact_pct = 0
                     _trigger_frac = (_compact_pct / 100.0) if _compact_pct > 0 else 0.0

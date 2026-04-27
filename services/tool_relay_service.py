@@ -1149,7 +1149,25 @@ class ToolRelayService(BaseService):
                 _tperms = _cs.get_extra(_perm_cid, "tool_permissions") or {}
                 _tool_perm = _tperms.get(tool_name, "")
 
-            # Per-tool override
+            # read_only mode takes precedence over EVERY per-tool
+            # override — a stale `allow` permission left from a
+            # previous mode must not let a write tool through once the
+            # conversation has been switched to read_only. The
+            # allowlist is fail-closed (anything not classified is
+            # denied).
+            if _perm_mode == "read_only":
+                from core.tool_approval import ToolApprovalGate
+                if not ToolApprovalGate.is_read_only_allowed(
+                        tool_name,
+                        arguments if isinstance(arguments, dict) else None):
+                    return {"type": "result", "request_id": request_id,
+                            "data": f"Error: tool '{tool_name}' is not allowed in read-only mode."}
+                # Allowed by read_only — fall through, but skip the
+                # per-tool override below (it would be redundant for
+                # an allowlisted read tool).
+                _tool_perm = ""
+
+            # Per-tool override (only consulted outside read_only).
             if _tool_perm == "deny":
                 return {"type": "result", "request_id": request_id,
                         "data": f"Error: Tool '{tool_name}' is denied by permission settings."}
@@ -1176,17 +1194,6 @@ class ToolRelayService(BaseService):
                         if approval != "approved":
                             return {"type": "result", "request_id": request_id,
                                     "data": f"Error: Command rejected by user: {_cmd[:100]}"}
-            elif _perm_mode == "read_only":
-                # Allowlist (fail-closed): only tools explicitly classified
-                # as read-only safe are allowed; anything else — including
-                # any new tool added later — is denied. The classification
-                # lives on `ToolApprovalGate.is_read_only_allowed` so the
-                # relay and any other gate share the same source of truth.
-                from core.tool_approval import ToolApprovalGate
-                if not ToolApprovalGate.is_read_only_allowed(
-                        tool_name, arguments if isinstance(arguments, dict) else None):
-                    return {"type": "result", "request_id": request_id,
-                            "data": f"Error: tool '{tool_name}' is not allowed in read-only mode."}
             else:
                 # default / approve_edits — use approval gate
                 from core.tool_approval import ToolApprovalGate

@@ -120,8 +120,17 @@ class ConfigStore:
                 encrypted = value.get("value", "") if isinstance(value, dict) else value
                 try:
                     decrypted = sm.decrypt(encrypted)
-                except Exception:
-                    decrypted = encrypted
+                except Exception as e:
+                    # Fail loud: a corrupted / wrong-key payload must NOT
+                    # be returned as ciphertext to the caller — a
+                    # provider would then see `enc:v2:...` as if it were
+                    # the API key. Map the entry to an empty string so
+                    # downstream code visibly fails on missing creds
+                    # rather than silently using a useless secret.
+                    logger.warning(
+                        "Failed to decrypt secret '%s': %s — dropping value",
+                        key, e)
+                    decrypted = ""
                 result[key] = ConfigValue(value=decrypted)
         return result
 

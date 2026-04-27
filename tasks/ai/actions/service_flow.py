@@ -2016,6 +2016,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
                 logger.debug("[open_code_server] existing code routes: %s", existing)
                 if not existing:
+                    # Root route (trailing slash, empty path) — matches
+                    # the URL we hand to the user (`/code/<sid>/<tok>/`).
+                    # The `{path+}` pattern alone requires at least one
+                    # segment after the slash, so without this entry the
+                    # iframe lands on a 404.
+                    http_svc.register_route(
+                        "GET", "/code/{session_id}/{token}/",
+                        _owner,
+                        callback=code_http_proxy,
+                        ws_handler=code_ws_proxy,
+                    )
                     http_svc.register_route(
                         "GET", "/code/{session_id}/{token}/{path+}",
                         _owner,
@@ -2023,6 +2034,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         ws_handler=code_ws_proxy,
                     )
                     for _m in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):
+                        http_svc.register_route(
+                            _m, "/code/{session_id}/{token}/",
+                            _owner,
+                            callback=code_http_proxy,
+                        )
                         http_svc.register_route(
                             _m, "/code/{session_id}/{token}/{path+}",
                             _owner,
@@ -2298,11 +2314,18 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 ttl_seconds=_ttl,
                 description=body.get("description", "") or "")
 
-            # Register generic routes once (shared by all forwards)
+            # Register generic routes once (shared by all forwards).
+            # The root pattern (trailing slash, no `{path+}`) is needed
+            # because `{path+}` requires at least one segment, so the
+            # exact URL we hand to the user (`/fwd/<fid>/<tok>/`) would
+            # otherwise 404. fwd_root_redirect on the no-slash variant
+            # nudges browsers that drop the trailing slash.
             if first:
                 http_svc = _find_http_listener()
                 if http_svc:
                     for method in ("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"):
+                        http_svc.register_route(method, "/fwd/{forward_id}/{token}/",
+                                                _ROUTE_OWNER, callback=fwd_http_proxy)
                         http_svc.register_route(method, "/fwd/{forward_id}/{token}/{path+}",
                                                 _ROUTE_OWNER, callback=fwd_http_proxy)
                     http_svc.register_route("GET", "/fwd/{forward_id}/{token}",

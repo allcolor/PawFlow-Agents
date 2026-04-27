@@ -72,6 +72,8 @@ def verify_route_request(
     resource_type: str,
     resource_id: str,
     token: str,
+    *,
+    conversation_id: Optional[str] = None,
 ) -> Tuple[Optional[_ca.CapabilityClaims], Optional[dict]]:
     """Check a capability token attached to an HTTP `PendingRequest`.
 
@@ -82,13 +84,37 @@ def verify_route_request(
     HTTP listener stamps `auth_user_id` after the session/API-key
     check passes); a public / unauthenticated route reaching this
     helper indicates a misconfiguration and is rejected.
+
+    `conversation_id` is forwarded to `verify_capability` when the
+    caller knows the conversation the requester is acting from
+    (typical for sub-agent paths via tool_relay_service). Browser
+    routes do not carry the conv id in the URL and pass `None`,
+    which means "no conv check" — a token minted without conv
+    scope (`""`) is accepted from any conv, by design.
     """
     auth_user = getattr(req, "auth_user_id", "") or ""
     if not auth_user:
         return None, _http_response(401)
     remote = getattr(req, "remote_addr", "") or ""
     return _verify_or_403(
-        token, resource_type, resource_id, auth_user, remote)
+        token, resource_type, resource_id, auth_user, remote,
+        conversation_id=conversation_id)
+
+
+def _ws_close_frame(code: int, reason: str) -> bytes:
+    """Build a WebSocket close control frame. The handler is called
+    AFTER the listener has completed the 101 upgrade, so an HTTP
+    status line on the socket would be invalid bytes from the
+    browser's perspective. A close frame is the protocol-correct way
+    to refuse the connection.
+
+    `code` is the WS close code (1008 Policy Violation, 1011 Internal
+    Error, etc.); `reason` is a short UTF-8 string truncated to fit
+    the 125-byte single-frame payload limit.
+    """
+    import struct
+    payload = struct.pack("!H", code & 0xFFFF) + reason.encode("utf-8")[:123]
+    return bytes([0x88, len(payload)]) + payload
 
 
 def verify_route_ws(
@@ -96,28 +122,36 @@ def verify_route_ws(
     resource_type: str,
     resource_id: str,
     token: str,
-) -> Tuple[Optional[_ca.CapabilityClaims], Optional[str]]:
+    *,
+    conversation_id: Optional[str] = None,
+) -> Tuple[Optional[_ca.CapabilityClaims], Optional[bytes]]:
     """WebSocket variant. `meta` is the dict the HTTP listener passes
     to ws_handler (already carries `auth_user_id` etc.). Returns
-    `(claims, None)` on success, or `(None, status_line)` where
-    status_line is a `"HTTP/1.1 4xx ...\\r\\n\\r\\n"` string the handler
-    can sock.sendall + close on.
+    `(claims, None)` on success, or `(None, ws_close_frame_bytes)`
+    on failure — a CLOSE frame the handler MUST sendall + close.
+
+    The listener has already completed the 101 upgrade by the time
+    this runs, so we cannot use HTTP status lines (the previous
+    `b"HTTP/1.1 403"` trick produced protocol-violation bytes that
+    confused some browsers). Close codes follow RFC 6455:
+      1008 — Policy Violation (auth failure)
+      1011 — Internal Error (rate limited / unknown)
     """
     auth_user = (meta or {}).get("auth_user_id", "") or ""
     if not auth_user:
-        return None, b"HTTP/1.1 401 Unauthorized\r\n\r\n"
+        return None, _ws_close_frame(1008, "unauthenticated")
     remote = (meta or {}).get("remote_addr", "") or ""
     claims, response = _verify_or_403(
-        token, resource_type, resource_id, auth_user, remote)
+        token, resource_type, resource_id, auth_user, remote,
+        conversation_id=conversation_id)
     if claims is not None:
         return claims, None
-    status_byte = {
-        401: b"HTTP/1.1 401 Unauthorized\r\n\r\n",
-        403: b"HTTP/1.1 403 Forbidden\r\n\r\n",
-        404: b"HTTP/1.1 404 Not Found\r\n\r\n",
-        429: b"HTTP/1.1 429 Too Many Requests\r\n\r\n",
-    }
-    return None, status_byte.get(response["status"], status_byte[403])
+    status = (response or {}).get("status", 403)
+    if status == 401:
+        return None, _ws_close_frame(1008, "unauthenticated")
+    if status == 429:
+        return None, _ws_close_frame(1013, "rate limited")
+    return None, _ws_close_frame(1008, (response or {}).get("body") or "forbidden")
 
 
 def _verify_or_403(
@@ -126,13 +160,17 @@ def _verify_or_403(
     resource_id: str,
     auth_user: str,
     remote_ip: str,
+    *,
+    conversation_id: Optional[str] = None,
 ) -> Tuple[Optional[_ca.CapabilityClaims], Optional[dict]]:
     if not token:
         return None, _http_response(401, "missing capability token")
     try:
         claims = _ca.verify_capability(
             token, resource_type, resource_id,
-            user_id=auth_user, remote_ip=remote_ip)
+            user_id=auth_user,
+            conversation_id=conversation_id,
+            remote_ip=remote_ip)
         return claims, None
     except _ca.CapabilityRateLimited as e:
         logger.warning("[route-auth] rate-limited: %s", e)

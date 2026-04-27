@@ -100,20 +100,48 @@ class SecretsManager:
     # --- Key management -------------------------------------------------
 
     def _init_default_key(self, override: Optional[str]) -> None:
-        """Resolve the boot key and seed the keyring with it."""
-        key, derived_from_password = self._resolve_boot_key(override)
+        """Resolve the boot key and seed the keyring with it.
+
+        The legacy XOR scheme used a *different* KDF profile from the
+        new v2 scrypt path: PBKDF2-HMAC-SHA256 against the salt
+        b'pawflow-salt' with 100_000 iterations. We must derive the
+        legacy key with that exact recipe from the same password the
+        user already had set as `PAWFLOW_SECRET_KEY`, otherwise
+        upgrading the binary breaks every existing secret.
+        """
+        key, password_for_legacy = self._resolve_boot_key(override)
         self._keyring[_DEFAULT_KID] = key
-        # Legacy format uses the same key bytes as the HMAC/stream key;
-        # keep a handle for read-back of `enc:<v1>` payloads.
-        self._legacy_xor_key = key
-        if derived_from_password:
-            logger.info("[secrets] master key derived from password (scrypt)")
+        if password_for_legacy is not None:
+            self._legacy_xor_key = self._derive_legacy_xor_key(
+                password_for_legacy)
+            logger.info(
+                "[secrets] master key derived from password (scrypt for v2, "
+                "PBKDF2 for legacy v1 read-back)")
+        else:
+            # Raw 32-byte env key or generated file: there is no
+            # password to re-derive the legacy key from. Best-effort:
+            # use the raw key bytes for legacy read-back too. New
+            # deployments set PAWFLOW_SECRET_KEY_B64 and never had
+            # legacy payloads, so this branch is rarely the read path.
+            self._legacy_xor_key = key
 
     @staticmethod
-    def _resolve_boot_key(override: Optional[str]) -> tuple[bytes, bool]:
+    def _derive_legacy_xor_key(password: str) -> bytes:
+        """Reproduce the pre-v2 KDF exactly so old `enc:<v1>` payloads
+        still decrypt under the same password."""
+        return hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), b"pawflow-salt", 100000)
+
+    @staticmethod
+    def _resolve_boot_key(override: Optional[str]) -> tuple[bytes, Optional[str]]:
+        """Return (v2_key, password_for_legacy_kdf). The second element
+        is the original password string when the boot key came from a
+        password (override or PAWFLOW_SECRET_KEY) so the legacy XOR
+        helper can re-derive its own KDF profile from it. None when
+        no password is in play (raw env key or random file)."""
         # 1) Direct override (used by tests / CLI rotation).
         if override is not None:
-            return SecretsManager._derive_from_password(override), True
+            return SecretsManager._derive_from_password(override), override
         # 2) PAWFLOW_SECRET_KEY_B64 — raw 32-byte key.
         b64_env = os.environ.get("PAWFLOW_SECRET_KEY_B64")
         if b64_env:
@@ -125,18 +153,18 @@ class SecretsManager:
             if len(raw) != 32:
                 raise SecretDecryptError(
                     f"PAWFLOW_SECRET_KEY_B64 must decode to 32 bytes, got {len(raw)}")
-            return raw, False
+            return raw, None
         # 3) PAWFLOW_SECRET_KEY — plaintext password.
         pwd = os.environ.get("PAWFLOW_SECRET_KEY")
         if pwd:
-            return SecretsManager._derive_from_password(pwd), True
+            return SecretsManager._derive_from_password(pwd), pwd
         # 4) Generated key file fallback.
         from core.paths import SECRET_KEY_FILE
         path = SECRET_KEY_FILE
         if path.exists():
             data = path.read_bytes()
             if len(data) >= 32:
-                return data[:32], False
+                return data[:32], None
         path.parent.mkdir(parents=True, exist_ok=True)
         generated = os.urandom(32)
         path.write_bytes(generated)
@@ -148,7 +176,7 @@ class SecretsManager:
             "[secrets] generated new random master key at %s — set "
             "PAWFLOW_SECRET_KEY_B64 in production to avoid relying on "
             "this on-disk file.", path)
-        return generated, False
+        return generated, None
 
     @staticmethod
     def _derive_from_password(password: str) -> bytes:

@@ -153,22 +153,29 @@ def test_verify_rate_limit_returns_429(cap_db):
 
 
 # ---------------------------------------------------------------------------
-# WS path returns the right HTTP/1.1 status line bytes
+# WS path returns a CLOSE frame (the 101 upgrade is already complete by
+# the time the handler runs — HTTP status lines on the socket would be
+# protocol-violation bytes).
 # ---------------------------------------------------------------------------
 
 
-def test_ws_unauthenticated_returns_401_status_line(cap_db):
+def _close_code(frame: bytes) -> int:
+    assert frame[0] == 0x88, f"not a WS close frame: {frame!r}"
+    return (frame[2] << 8) | frame[3]
+
+
+def test_ws_unauthenticated_returns_close_frame(cap_db):
     claims, err = cr.verify_route_ws({}, "vnc", "sess1", "x")
     assert claims is None
-    assert err == b"HTTP/1.1 401 Unauthorized\r\n\r\n"
+    assert _close_code(err) == 1008  # Policy Violation
 
 
-def test_ws_other_user_returns_403_status_line(cap_db):
+def test_ws_other_user_returns_close_frame(cap_db):
     tok = cr.mint_route_token("vnc", "sess1", "alice")
     meta = {"auth_user_id": "bob", "remote_addr": "10.0.0.10"}
     claims, err = cr.verify_route_ws(meta, "vnc", "sess1", tok)
     assert claims is None
-    assert err == b"HTTP/1.1 403 Forbidden\r\n\r\n"
+    assert _close_code(err) == 1008
 
 
 def test_ws_owner_succeeds(cap_db):

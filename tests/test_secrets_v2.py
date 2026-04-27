@@ -130,11 +130,52 @@ def _make_legacy_payload(key: bytes, plaintext: str) -> str:
 
 def test_legacy_string_decrypt_via_same_password():
     """Legacy XOR payload encrypted with password P decrypts under a v2
-    manager built with the same P (legacy uses scrypt-derived key too)."""
+    manager built with the same P. The legacy KDF profile (PBKDF2 +
+    pawflow-salt) is reproduced from the boot password so existing
+    deployments don't lose access on upgrade."""
     sm = SecretsManager("shared-password")
     key = sm._legacy_xor_key
     legacy = _make_legacy_payload(key, "old data")
     assert sm.decrypt(legacy) == "old data"
+
+
+def test_legacy_xor_key_uses_pbkdf2_pawflow_salt():
+    """Regression guard: the legacy XOR key MUST be derived with the
+    pre-v2 KDF (PBKDF2-HMAC-SHA256 + b'pawflow-salt' + 100k iters)
+    when the boot key comes from a password. The first cut of v2
+    used the scrypt-derived key for legacy too, which silently broke
+    every existing `enc:<v1>` payload at upgrade."""
+    import hashlib
+    sm = SecretsManager("some-password")
+    expected = hashlib.pbkdf2_hmac(
+        "sha256", b"some-password", b"pawflow-salt", 100000)
+    assert sm._legacy_xor_key == expected
+
+
+def test_legacy_payload_made_by_pre_v2_code_decrypts():
+    """Concrete reproduction: build a payload exactly like the
+    pre-v2 SecretsManager would have, then read it back from the
+    new manager initialised with the same password."""
+    import hashlib
+    import hmac
+    import os
+    pwd = "the-old-password"
+    legacy_key = hashlib.pbkdf2_hmac(
+        "sha256", pwd.encode("utf-8"), b"pawflow-salt", 100000)
+    plaintext = b"old-style-secret"
+    iv = os.urandom(16)
+    stream = b""
+    counter = 0
+    while len(stream) < len(plaintext):
+        stream += hashlib.pbkdf2_hmac(
+            "sha256", legacy_key + iv,
+            counter.to_bytes(4, "big"), 1)
+        counter += 1
+    ct = bytes(a ^ b for a, b in zip(plaintext, stream[:len(plaintext)]))
+    mac = hmac.new(legacy_key, iv + ct, hashlib.sha256).digest()[:16]
+    payload = "enc:" + base64.b64encode(iv + ct + mac).decode()
+    sm = SecretsManager(pwd)
+    assert sm.decrypt(payload) == "old-style-secret"
 
 
 def test_legacy_string_wrong_key_raises():

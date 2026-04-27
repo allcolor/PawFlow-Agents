@@ -774,13 +774,17 @@ class CodexSessionMixin:
             "image_generation",   # DALL-E image gen
         ):
             codex_args.extend(["--disable", _builtin])
-        # Hosted Responses-API tools (NOT in `codex features list`,
-        # toggled via config.toml `tools.<name>`). Pass via -c so the
-        # config setting overrides whatever the codex binary defaults to.
-        # `web_search` was observed firing as item.type='web_search' in
-        # production logs even with all features --disabled.
+        # Hosted Responses-API tools toggled via the `[tools]` config
+        # table. Verified against the codex binary's TOML config schema
+        # (struct `WebSearchToolConfigInput` enum has variants
+        # `web_search` and `view_image`). Pass via -c so the value
+        # overrides whatever the binary defaults to.
+        # NOTE: with the user's ChatGPT-plan auth, the model may still
+        # emit `web_search_call` items at the Responses-API level
+        # (server-side decision); the parser handles those gracefully.
         for _hosted in (
-            "web_search",
+            "web_search",   # OpenAI hosted web search
+            "view_image",   # hosted vision/image-view tool
         ):
             codex_args.extend(["-c", f"tools.{_hosted}=false"])
         codex_args.extend([
@@ -798,19 +802,37 @@ class CodexSessionMixin:
     # so this is one-shot per rollout. Stay short — codex weights system
     # context heavily and over-instruction degrades reasoning quality.
     _CODEX_PAWFLOW_PREAMBLE = (
-        "## PawFlow runtime\n"
-        "You are running inside PawFlow's container. The host's project lives at "
-        "`/workspace` — a VIRTUAL path that is ONLY reachable through the MCP "
-        "bridge (`pawflow.use_tool`). Your container's local filesystem (cwd, "
-        "`/`, etc.) is NOT the user's project.\n\n"
-        "Hard rules:\n"
-        "- For ANY file read/write/list, shell exec, search, screen capture, "
-        "clipboard, browser, etc., call `pawflow.use_tool(<tool_name>, {...})` "
-        "— never use built-in shell or file tools.\n"
-        "- Discover available tools via `pawflow.get_tool_schema()` first if "
-        "unsure. Common tools: `read`, `write`, `edit`, `bash`, `glob`, `grep`, "
+        "## PawFlow runtime — MCP-only (mandatory)\n"
+        "You are running inside a PawFlow sandboxed container. The user's\n"
+        "project lives at `/workspace` — a VIRTUAL path reachable ONLY "
+        "through the PawFlow MCP server (`pawflow.use_tool`). Your container's "
+        "local filesystem (cwd, `/`, `/tmp`, `/home`, ...) is empty / disposable "
+        "and is NOT the user's project.\n\n"
+        "### Mandatory rule — zero exceptions\n"
+        "For EVERY action against the user's project or environment — file "
+        "read/write/edit, shell command, search/glob/grep, listing a "
+        "directory, screen capture, web fetch, image view, web search, etc. "
+        "— you MUST call `pawflow.use_tool(<tool_name>, {...})`. Native "
+        "codex tools (shell, browser, web_search, image_generation, "
+        "computer_use, view_image, ...) are DISABLED at the runtime layer; "
+        "any attempt to invoke them will fail or be silently dropped.\n\n"
+        "### How to use the MCP bridge\n"
+        "1. List available tools first if unsure: `pawflow.get_tool_schema()`. "
+        "Common tools: `read`, `write`, `edit`, `bash`, `glob`, `grep`, "
         "`list_dir`, `screen`, `web_fetch`.\n"
-        "- Paths starting with `/workspace/...` route through the relay; the "
-        "relay translates them to the host's actual project root. Do not "
-        "`cd /workspace` — it does not exist on the local filesystem.\n"
+        "2. Pass tool args inside the `arguments` object, e.g. "
+        "`pawflow.use_tool(\"read\", {\"path\": \"/workspace/README.md\"})`.\n"
+        "3. Paths starting with `/workspace/...` are translated by the relay "
+        "to the host's project root. Never `cd /workspace` — it does not "
+        "exist on the container filesystem; the path only resolves via MCP.\n\n"
+        "### What NOT to do\n"
+        "- Do NOT call `bash`/`sh`/`run` directly, do NOT issue `cd`, `ls`, "
+        "`cat`, `grep`, `find`, etc. as native shell commands. Even if codex "
+        "surfaces a `shell`/`exec`/`browser` tool option, it is NOT functional "
+        "here — PawFlow disables them.\n"
+        "- Do NOT try to access files via the responses-API hosted tools "
+        "(`web_search`, `image_generation`, `view_image`); they are off and "
+        "would not see the user's project anyway.\n"
+        "- If a request is ambiguous, ASK the user instead of falling back to "
+        "a native tool. There is no \"native fallback\" path.\n"
     )

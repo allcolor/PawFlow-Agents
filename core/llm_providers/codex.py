@@ -1,656 +1,3078 @@
-"""LLM provider mixin -- Codex CLI (`codex exec --json`).
+"""LLM provider mixin -- Codex CLI (subprocess-based).
 
-Features:
-- Live container reuse via CodexLiveRegistry: one Docker container is
-  pinned per (user, conv, agent, service) tuple and re-used across turns,
-  evicted by an idle sweeper after ~10 min.
-- send_user_message(text): preempt mid-turn by killing the running
-  `codex exec` process; the agent loop's pending-queue picks up the new
-  message and feeds it on the next call (via session resume).
-- 80% compact threshold: codex emits no compact_boundary event in its
-  JSONL stream (compaction is server-side via OpenAI fast path). We
-  monitor `usage` payloads ourselves and raise CCCompactDetected when we
-  cross the threshold — same exception CC uses, same agent_core handler
-  (kill + PawFlow bucket compact + restart with resume).
-
-NOT a clone of LLMClaudeCodeMixin — the two CLIs evolve independently
-(see memory "Separate pools per CLI"). Shared infra is the per-CLI pool
-and the LLMCliSharedMixin (message serialization).
+Uses --input-format stream-json + --output-format stream-json for
+bidirectional streaming. This enables:
+- Real-time output streaming (tool calls, text, thinking)
+- Preempt: send new user messages on stdin while Codex works
+- Interrupt: send interrupt signal on stdin to stop gracefully
 """
 
 import json
 import logging
 import os
+import queue
+import re
 import subprocess
 import threading
 import time
-import uuid
-from pathlib import Path
 from typing import Dict, List, Optional
+
+from core.codex_live_registry import CodexLiveSession, CodexLiveRegistry
+
+# Sentinel pushed onto the per-session event queue when the reader daemon
+# exits (proc stdout EOF). Module-level so the SAME object identity holds
+# across turns for a reused session — the dispatch loop does `event is
+# _CODEX_READER_EOF` to break; a new sentinel per turn would wrongly treat
+# the ORIGINAL reader's EOF as a regular event.
+_CODEX_READER_EOF = object()
+
+from core.llm_providers.codex_session import CodexSessionMixin, _get_sessions_base
 
 logger = logging.getLogger(__name__)
 
-_PAWFLOW_COMPACT_THRESHOLD = 0.80
+
+class _Codex401Retry(Exception):
+    """Internal signal: OAuth 401 mid-stream, credentials refreshed, retry the call."""
 
 
-class LLMCodexMixin:
-    """Codex CLI provider — `codex exec --json` over the shared CodexPool.
+class LLMCodexMixin(CodexSessionMixin):
+    """Codex CLI provider using bidirectional stream-json.
 
-    Stream events emitted by `codex exec --json` (one JSON per line on
-    stdout):
-      thread.started{thread_id}
-      turn.started
-      item.started{item:{type, ...}}
-      item.updated{item:{...}}
-      item.completed{item:{type:agent_message|reasoning|command_execution
-                              |mcp_tool_call|file_change|web_search|plan_update,
-                            text/result/...}}
-      turn.completed{usage:{input_tokens, cached_input_tokens, output_tokens}}
-      turn.failed
-      error
+    Codex uses MCP natively for tool access. PawFlow tools are
+    exposed via the MCP bridge (tools/mcp_bridge.py) configured with
+    --mcp-config.
 
-    PawFlow tools live behind the MCP bridge — codex calls them via
-    mcp_tool_call items. Our code only watches the events; the actual tool
-    execution is owned by codex → our MCP bridge → tool relay service.
+    Each session runs in its own working directory under
+    data/claude_sessions/<conversation_id>/<agent_name>/ so Codex
+    doesn't read/modify the PawFlow server code.
+
+    stdin (stream-json input):
+        {"type": "user", "content": "initial prompt"}
+        {"type": "user", "content": "follow-up while working"}  # preempt
+
+    stdout (stream-json output):
+        {"type": "system", "subtype": "init", ...}
+        {"type": "assistant", "message": {...}}
+        {"type": "user", "message": {...}}  # tool results
+        {"type": "result", ...}
     """
 
-    _CODEX_DEFAULT_MODEL = "gpt-5.2-codex"
+    # Session/workdir methods inherited from ClaudeCodeSessionMixin:
+    # _get_session_workdir, _codex_env, _setup_credentials,
+    # _recover_tokens, _setup_mcp_config, _build_codex_cmd,
+    # _get_tool_relay_info, _DISALLOWED_BUILTIN_TOOLS
 
-    _CODEX_CONTEXT_WINDOW = {
-        "gpt-5.2-codex": 400_000,
-        "gpt-5.3-codex": 400_000,
-        "gpt-5.4": 1_000_000,
-        "gpt-5.5": 1_000_000,
-        "o3": 200_000,
-        "o4-mini": 200_000,
-    }
-    _CODEX_CONTEXT_WINDOW_DEFAULT = 200_000
-
-    def _codex_workdir(self, user_id: str, conv_id: str, agent_name: str) -> str:
-        if not user_id or not conv_id:
-            raise ValueError("user_id + conversation_id required for codex provider")
-        import core.paths as _paths
-        base = _paths.CLAUDE_SESSIONS_DIR
-        agent = agent_name or "default"
-        wd = base / user_id / conv_id / agent
-        wd.mkdir(parents=True, exist_ok=True)
-        return f"/cc_sessions/{user_id}/{conv_id}/{agent}"
-
-    def _codex_resolve_session_id(self, conv_id: str, agent_name: str) -> str:
-        try:
-            from core.conversation_store import ConversationStore
-            return ConversationStore.instance().get_extra(
-                conv_id, f"codex_session:{agent_name or 'default'}") or ""
-        except Exception:
-            return ""
-
-    def _codex_persist_session_id(self, conv_id: str, agent_name: str, sid: str):
-        try:
-            from core.conversation_store import ConversationStore
-            ConversationStore.instance().set_extra(
-                conv_id, f"codex_session:{agent_name or 'default'}", sid)
-        except Exception:
-            logger.debug("codex session_id persist failed", exc_info=True)
-
-    def _codex_setup_auth_and_config(self, host_workdir: str,
-                                       user_id: str, conv_id: str,
-                                       service_id: str = "") -> Dict:
-        import core.paths as _paths
-        from core.llm_providers import codex_session as _cs
-
-        host_root = Path(str(_paths.CLAUDE_SESSIONS_DIR.resolve()))
-        rel = host_workdir.lstrip("/").split("/")
-        if len(rel) < 4 or rel[0] != "cc_sessions":
-            raise ValueError(f"unexpected codex workdir layout: {host_workdir!r}")
-        host_dir = host_root / rel[1] / rel[2] / rel[3]
-        codex_home = host_dir / ".codex"
-        codex_home.mkdir(parents=True, exist_ok=True)
-
-        pool = _cs._load_credentials_pool(service_id)
-        used_oauth = False
-        api_key = ""
-        pool_index = -1
-        if pool:
-            now_ms = int(time.time() * 1000)
-            # Codex CLI rejects auth.json without an id_token JWT. Pool
-            # entries created BEFORE the id_token persist fix have an empty
-            # id_token — skip them so the picker doesn't pick a credential
-            # we already know codex will refuse. The user can clear stale
-            # ones via /cls reset @codex_llm_service.
-            valid = [(i, c) for i, c in enumerate(pool)
-                     if c.get("expires_at", 0) > now_ms
-                     and c.get("id_token", "")]
-            if not valid:
-                logger.warning(
-                    "[codex] no pool entry with id_token — trying "
-                    "most-recent-anyway (codex may reject 'invalid ID token')")
-                valid = [(len(pool) - 1, pool[-1])]
-            pool_index, cred = valid[0]
-            access_token = cred.get("access_token", "")
-            refresh_token = cred.get("refresh_token", "")
-            id_token = cred.get("id_token", "")
-            expires_at = cred.get("expires_at", 0)
-            account = cred.get("account", "")
-            if expires_at < now_ms + 60_000 and refresh_token:
-                try:
-                    new = _cs.refresh_oauth_token(refresh_token)
-                    access_token = new["access_token"]
-                    refresh_token = new["refresh_token"]
-                    # Refresh response often carries a fresh id_token — keep it.
-                    id_token = new.get("id_token", id_token) or id_token
-                    expires_at = new["expires_at"]
-                    _cs.add_credential_to_pool(
-                        access_token, refresh_token, expires_at,
-                        account=account, service_id=service_id,
-                        id_token=id_token)
-                    logger.info("[codex] refreshed pool[%d]", pool_index)
-                except Exception as e:
-                    logger.warning("[codex] refresh failed: %s — trying access_token as-is", e)
-            tokens = {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "account_id": account,
-            }
-            # Codex CLI rejects an empty id_token ("invalid ID token format").
-            # Only include the field when we actually have a JWT to give.
-            if id_token:
-                tokens["id_token"] = id_token
-            # OPENAI_API_KEY MUST be JSON null (not "") — codex CLI treats an
-            # empty string as a real API key and forwards it to api.openai.com,
-            # which then 401s with `Incorrect API key provided: ''`. Setting it
-            # to None makes codex fall through to the OAuth tokens block.
-            auth_blob = {
-                "OPENAI_API_KEY": None,
-                "tokens": tokens,
-                "last_refresh": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-            (codex_home / "auth.json").write_text(
-                json.dumps(auth_blob, ensure_ascii=False), encoding="utf-8")
-            os.chmod(codex_home / "auth.json", 0o600)
-            used_oauth = True
-        else:
-            api_key = self._cfg("api_key", "")
-
-        # Reuse the same shared tool relay service that CC's MCP bridge
-        # uses. _get_tool_relay_info() is a classmethod that lazily creates
-        # the global ToolRelayService and caches (url, token) for ALL CLIs
-        # (not CC-specific — just shared MCP infra).
-        from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin
-        relay_url, relay_token = ClaudeCodeSessionMixin._get_tool_relay_info()
-        if not relay_url:
-            logger.warning("[codex] no toolRelay service — MCP bridge will have no tools")
-        # Replace localhost → host IP reachable from the container.
-        if relay_url:
-            from core.docker_utils import get_host_ip
-            _host_ip = get_host_ip()
-            relay_url = relay_url.replace("localhost", _host_ip).replace("127.0.0.1", _host_ip)
-        # Mint a fresh internal-auth token scoped to this call — same as CC.
-        from core.internal_auth import mint_token
-        internal_token = mint_token()
-        config_toml = (
-            f'# Auto-generated by PawFlow — do not edit by hand.\n'
-            f'model = "{self._codex_default_model_for_pool()}"\n'
-            f'# Disable codex auto-compact — PawFlow tracks usage and triggers\n'
-            f'# its own bucket compact at {int(_PAWFLOW_COMPACT_THRESHOLD * 100)}% (codex emits no boundary event).\n'
-            f'model_auto_compact_token_limit = 999999999\n'
-            f'\n'
-            f'[mcp_servers.pawflow]\n'
-            f'command = "python3"\n'
-            f'args = ["/opt/pawflow/mcp_bridge.py"]\n'
-            f'startup_timeout_sec = 20\n'
-            f'tool_timeout_sec = 300\n'
-            f'enabled = true\n'
-            f'required = true\n'
-            f'\n'
-            f'[mcp_servers.pawflow.env]\n'
-            f'PAWFLOW_TOOL_RELAY_URL = "{relay_url}"\n'
-            f'PAWFLOW_TOOL_RELAY_TOKEN = "{relay_token}"\n'
-            f'PAWFLOW_INTERNAL_TOKEN = "{internal_token}"\n'
-            f'PAWFLOW_USER_ID = "{user_id}"\n'
-            f'PAWFLOW_CONVERSATION_ID = "{conv_id}"\n'
-            f'PAWFLOW_AGENT_NAME = "{getattr(self, "_agent_name", "") or ""}"\n'
-        )
-        (codex_home / "config.toml").write_text(config_toml, encoding="utf-8")
-        os.chmod(codex_home / "config.toml", 0o600)
-        return {"openai_api_key": api_key, "used_oauth": used_oauth, "pool_index": pool_index}
-
-    def _codex_default_model_for_pool(self) -> str:
-        try:
-            return self.default_model or self._CODEX_DEFAULT_MODEL
-        except AttributeError:
-            return self._CODEX_DEFAULT_MODEL
-
-    def _codex_context_window(self, model: str) -> int:
-        return self._CODEX_CONTEXT_WINDOW.get(model or "", self._CODEX_CONTEXT_WINDOW_DEFAULT)
+    # ── Process management ──────────────────────────────────────────
 
     def send_user_message(self, text: str, attachments: list = None):
-        """Preempt: kill the running `codex exec` process so the agent loop
-        retries with the new prompt next turn.
+        """Send a user message to the running Codex subprocess (preempt).
 
-        Codex `exec` reads stdin once and exits at end-of-turn — there's
-        no continuous stdin to write to. Kill is the only way to abort
-        the current turn; the conversation `codex_session:<agent>` extra
-        ensures the next call resumes the same thread, picking up the
-        compacted history + the new user message.
+        Uses stream-json input format to inject a new user message while
+        Codex is working — enables the same preempt behavior as
+        other LLM providers.
+
+        Args:
+            text: User message text.
+            attachments: Optional list of attachment dicts with base64 image data.
+
+        Sets _preempt_pending so _stream_codex knows to NOT break
+        at the next result event — it must wait for the preempt's result too.
         """
-        proc = getattr(self, "_pf_codex_proc", None)
-        if proc is None or proc.poll() is not None:
+        # During PawFlow's sentinel sessions (_compact, _memory_extract, ...)
+        # the SAME client instance is repurposed: _conversation_id is set to
+        # the sentinel name and _codex_proc points to a fresh subprocess
+        # spawned for that one-shot job. Writing a preempt to that stdin
+        # would land in the wrong stream. Refuse so the caller routes via
+        # the PendingQueue path.
+        _conv = getattr(self, '_conversation_id', '') or ''
+        if _conv.startswith('_'):
+            logger.info("Preempt arrived during sentinel '%s' — refusing send: %.100s",
+                        _conv, text)
             return False
-        logger.info("[codex] preempt: killing running codex proc to inject “%s”",
-                    text[:60].replace("\n", " "))
+        # Compact-in-progress: the reader thread has already (or is about to)
+        # kill the CC subprocess. Refuse immediately so the caller routes via
+        # the PendingQueue path — writing to a dying stdin would land the
+        # message in _inflight_preempts with a narrow race where the rescue
+        # handler may have already cleared the list.
+        if getattr(self, '_compacting', False):
+            logger.info("Preempt arrived during CC compact — refusing send: %.100s", text)
+            return False
+        proc = getattr(self, '_codex_proc', None)
+        if not proc or proc.poll() is not None:
+            logger.warning("No running Codex process to send message to")
+            return False
+        # If CC has already emitted its final result, sending via stdin is
+        # racy — CC may be tearing down. Refuse so the caller routes via
+        # PendingQueue.
+        if getattr(self, '_result_emitted', False):
+            logger.info("Preempt arrived after CC result — refusing send: %.100s", text)
+            return False
+        # Capture user-supplied text BEFORE catchup-prefix mutation; the
+        # original (or its non-empty suffix) is what we'll match against
+        # CC's session jsonl in _check_codex_preempt_in_jsonl.
+        _original_text = text
+        try:
+            # Multi-agent catch-up: inject messages from other agents before user msg
+            conv_id = getattr(self, '_conversation_id', "")
+            agent_name = getattr(self, '_agent_name', "")
+            if conv_id and agent_name:
+                catchup = self._build_catchup_context(conv_id, agent_name)
+                if catchup:
+                    text = catchup + "\n\n" + text
+
+            # Build content: text + optional images
+            if attachments:
+                content = []
+                if text:
+                    content.append({"type": "text", "text": text})
+                for att in attachments:
+                    if isinstance(att, dict) and att.get("data"):
+                        mime = att.get("mime_type", "image/png")
+                        content.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime,
+                                "data": att["data"],
+                            },
+                        })
+            else:
+                content = text
+
+            msg = json.dumps({
+                "type": "user",
+                "message": {"role": "user", "content": content},
+            })
+            proc.stdin.write(msg + "\n")
+            proc.stdin.flush()
+            self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
+            # Remember the EXACT text we sent so the result-time jsonl
+            # check can locate it. Skip the multi-agent catchup prefix
+            # (built locally above) — only the user-supplied tail is
+            # written verbatim by CC. Use the original `text` parameter
+            # before catchup mutation for a clean match key.
+            try:
+                self._sent_preempt_texts.append(_original_text)
+            except AttributeError:
+                self._sent_preempt_texts = [_original_text]
+            logger.info("Sent preempt message to Codex (pending=%d): %.100s",
+                        self._preempt_pending, text)
+            return True
+        except (OSError, BrokenPipeError) as e:
+            logger.warning("Failed to send to Codex stdin: %s", e)
+            return False
+
+    def cancel_codex(self, force: bool = False):
+        """Cancel Codex subprocess.
+
+        force=False: graceful interrupt on stdin — Codex acknowledges
+                     and responds with a summary, then the stream loop exits
+                     normally on the result event. No kill.
+        force=True: kill immediately.
+        """
+        proc = getattr(self, '_codex_proc', None)
+        if not proc or proc.poll() is not None:
+            return
+
+        if force:
+            logger.info("FORCE KILLING Codex subprocess (pid=%d)", proc.pid)
+            self._codex_proc = None
+            # Kill the container-side claude CLI by its captured PID
+            # (from the shell wrapper's __PF_CLAUDE_PID=$$ preamble) AND
+            # the host-side docker exec wrapper. Without the container-side
+            # kill, the CLI becomes an orphan (reparented to PID 1) and
+            # keeps emitting tool calls / running auto-compact / writing
+            # to its session .jsonl.
+            self._kill_codex_hard(proc)
+            # Pool mode: release the slot (the container stays up for
+            # other sessions; _kill_codex_hard only killed the CLI inside it).
+            _pool_name = getattr(self, '_pool_container_name', None)
+            if _pool_name:
+                from core.codex_pool import CodexPool
+                CodexPool.instance().release(_pool_name)
+                self._pool_container_name = None
+            self._current_session_id = ""
+            return
+
+        # Graceful interrupt: send interrupt message on stdin.
+        # Codex will stop what it's doing, summarize, and send
+        # a result event — the stream loop exits normally.
+        logger.info("Interrupting Codex subprocess (pid=%d)", proc.pid)
+        try:
+            if proc.stdin and not proc.stdin.closed:
+                msg = json.dumps({
+                    "type": "user",
+                    "message": {"role": "user",
+                                "content": "Stop what you're doing right now. I need your attention on something else. Finish your current response briefly and wait for the next message."},
+                })
+                proc.stdin.write(msg + "\n")
+                proc.stdin.flush()
+        except (OSError, BrokenPipeError):
+            pass
+
+    def _kill_codex_hard(self, proc) -> None:
+        """Kill the codex subprocess on BOTH the host and inside
+        the pool container, deterministically by PID.
+
+        `proc.kill()` only reaps the host-side `docker exec` wrapper.
+        Without a container-side kill, the claude CLI becomes an orphan
+        (reparented to PID 1 inside the container) and keeps running —
+        emitting tool calls via MCP, running its own auto-compact,
+        writing to its session .jsonl — while PawFlow spawns a fresh
+        session in the SAME pool container, creating zombie races on
+        the same files.
+
+        The container-side PID is captured at spawn from the shell
+        wrapper's `__PF_CLAUDE_PID=$$` stderr preamble (see
+        `ClaudeCodePool.exec_claude`). Bash chain-execs into
+        setpriv → claude, so $$ stays constant across the three
+        processes — the captured PID IS claude's PID. Under docker
+        exec, bash is the session leader of its exec, so claude's PGID
+        equals its PID. `kill -9 -<PID>` (negative) SIGKILLs the WHOLE
+        group, reaping claude AND every Node worker it forked. Without
+        the minus sign, orphaned workers survive and keep writing to
+        the session jsonl.
+        """
         try:
             proc.kill()
-        except Exception as e:
-            logger.warning("[codex] preempt kill failed: %s", e)
-            return False
-        return True
-
-    def _stream_codex(self, messages, model, temperature, max_tokens,
-                       tools=None,
-                       callback=None,
-                       *,
-                       call_user_id: str = "",
-                       call_conversation_id: str = "",
-                       call_agent_name: str = "",
-                       call_event_cid: str = "",
-                       call_ephemeral_stream: bool = False,
-                       thinking_callback=None,
-                       turn_callback=None,
-                       block_callback=None,
-                       **_ignored) -> "LLMResponse":
-        from core.llm_client import LLMResponse, LLMClientError
-        from core.codex_pool import CodexPool
-        from core.codex_live_registry import CodexLiveRegistry
-
-        user_id = call_user_id or getattr(self, "_user_id", "") or ""
-        conv_id = call_conversation_id or getattr(self, "_conversation_id", "") or ""
-        agent_name = call_agent_name or getattr(self, "_agent_name", "") or "default"
-        if not user_id or not conv_id:
-            raise LLMClientError("codex provider requires call_user_id and call_conversation_id")
-
-        host_workdir = self._codex_workdir(user_id, conv_id, agent_name)
-        service_id = getattr(self, "_agent_service", "") or ""
+        except Exception:
+            logger.debug("exception suppressed", exc_info=True)
+        # Read per-stream tags pinned on `proc` at spawn time — NOT from
+        # `self` which is a singleton shared with concurrent streams
+        # (main agent, compact, memory_extract, btw, sub-agents). A
+        # later-spawned stream clobbers `self._pool_container_name` and
+        # `self._codex_container_pid` mid-flight; reading from proc ties
+        # the kill to the exact subprocess we're targeting.
+        _container = getattr(proc, '_pf_container', '') or ''
         try:
-            auth_meta = self._codex_setup_auth_and_config(
-                host_workdir, user_id, conv_id, service_id=service_id)
-        except Exception as e:
-            raise LLMClientError(f"codex auth/config setup failed: {e}")
-
-        system_prompt, user_text = self._serialize_messages_for_cli(messages, tools=None)
-        if system_prompt:
-            prompt_payload = f"<system>\n{system_prompt}\n</system>\n\n{user_text}"
+            _pid = int(getattr(proc, '_pf_pid', 0) or 0)
+        except (TypeError, ValueError):
+            _pid = 0
+        if not _container or not _pid:
+            logger.error(
+                "[codex] _kill_codex_hard SKIPPED -- container=%r "
+                "pid=%d -- CC PROCESS LIKELY ORPHANED", _container, _pid)
+            return
+        import subprocess as _sp
+        from pawflow_relay.utils import docker_cmd
+        # SIGKILL the entire process group (negative PID). claude CLI
+        # forks Node workers; killing only the root PID leaves them
+        # orphaned (reparented to PID 1) and they keep running.
+        _r = _sp.run(
+            docker_cmd() + ["exec", _container,
+                             "kill", "-9", f"-{_pid}"],
+            capture_output=True, timeout=5,
+        )
+        if _r.returncode == 0:
+            logger.info(
+                "[codex] container-side kill OK: pgid=%d "
+                "container=%s", _pid, _container)
         else:
-            prompt_payload = user_text or ""
+            # rc=1 typically means group already gone (kill ESRCH).
+            logger.warning(
+                "[codex] kill -9 -pgid=%d returned rc=%d in "
+                "container=%s (stderr=%s) -- likely already dead",
+                _pid, _r.returncode, _container,
+                _r.stderr.decode('utf-8', 'replace')[:200].strip())
 
-        existing_sid = self._codex_resolve_session_id(conv_id, agent_name)
-        codex_args: List[str] = ["exec"]
-        if existing_sid:
-            codex_args.extend(["resume", existing_sid])
-        # `--sandbox` is rejected by `codex exec resume` (which we use for
-        # warm-thread continuation). `--dangerously-bypass-approvals-and-sandbox`
-        # already disables the sandbox completely, so `--sandbox` is redundant
-        # in either path — drop it.
-        codex_args.extend([
-            "--json",
-            "--skip-git-repo-check",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--model", model or self._codex_default_model_for_pool(),
-            "-",
-        ])
+    def _check_codex_preempt_in_jsonl(self, jsonl_path: str,
+                                 sent_texts: list) -> str:
+        """Inspect CC's session jsonl to determine if a queued preempt has
+        already been answered by the just-completed result event.
 
-        extra_env = {}
-        if auth_meta.get("openai_api_key"):
-            extra_env["CODEX_API_KEY"] = auth_meta["openai_api_key"]
-            extra_env["OPENAI_API_KEY"] = auth_meta["openai_api_key"]
+        Returns one of:
+          - 'done'    — every sent preempt is followed by an assistant
+                        event in the jsonl. CC integrated/answered it
+                        inline; safe to break the stream loop.
+          - 'pending' — at least one preempt sits at a position AFTER the
+                        last assistant event. CC has read stdin but hasn't
+                        responded yet — keep the stream open for the next
+                        turn's events.
+          - 'unread'  — our preempt text(s) are not yet in the jsonl. CC
+                        has not yet read stdin; keep the stream open and
+                        let the watchdog enforce the timeout if it never
+                        does.
+          - 'unknown' — jsonl unreadable / no sent_texts to match. Caller
+                        should fall back to the default \"keep open with
+                        budget\" behavior.
 
-        # Live container reuse: prefer an existing warm container for this
-        # (user, conv, agent, service); fall back to a fresh pool spawn.
-        live = CodexLiveRegistry.instance()
-        live_key = (user_id, conv_id, agent_name, service_id)
-        live_entry = live.get(live_key)
-        pool = CodexPool.instance()
-        owned_container_for_release = None  # if non-None, release at end
-        if live_entry is not None:
-            container = live_entry.container_name
-            # Verify container is still alive (idle sweeper or external rm).
-            try:
-                from core.docker_utils import docker_cmd
-                _r = subprocess.run(
-                    docker_cmd() + ["inspect", "-f", "{{.State.Running}}", container],
-                    capture_output=True, text=True, timeout=5)
-                _alive = _r.returncode == 0 and _r.stdout.strip() == "true"
-            except Exception:
-                _alive = False
-            if not _alive:
-                live.evict(live_key, "container vanished")
-                live_entry = None
-        if live_entry is None:
-            container = pool.acquire()
-            owned_container_for_release = container  # release if we never register
-
-        proc = None
+        Match strategy: literal substring search of each sent text in the
+        user-message content. We use the ORIGINAL user text (without the
+        catchup prefix) so the substring is what CC stored verbatim.
+        """
+        if not sent_texts or not jsonl_path:
+            return 'unknown'
         try:
-            proc = pool.exec_codex(
-                container, host_workdir, codex_args,
-                extra_env=extra_env,
+            with open(jsonl_path, 'rb') as _f:
+                _raw = _f.read()
+        except OSError:
+            return 'unknown'
+        last_assistant_pos = -1
+        last_preempt_pos = -1
+        # Per-preempt found flag so 'done' really means ALL of them got
+        # an assistant event after — not just the most recent.
+        _found_flags = [False] * len(sent_texts)
+        # Position (line index) at which each preempt was last seen.
+        _preempt_positions = [-1] * len(sent_texts)
+        for i, _line in enumerate(_raw.splitlines()):
+            if not _line.strip():
+                continue
+            try:
+                _entry = json.loads(_line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            _etype = _entry.get('type', '')
+            if _etype == 'assistant':
+                last_assistant_pos = i
+                continue
+            if _etype != 'user':
+                continue
+            _msg = _entry.get('message', {}) or {}
+            _content = _msg.get('content', '')
+            _text_blob = ''
+            if isinstance(_content, str):
+                _text_blob = _content
+            elif isinstance(_content, list):
+                for _p in _content:
+                    if isinstance(_p, dict) and _p.get('type') == 'text':
+                        _text_blob += _p.get('text', '') or ''
+            if not _text_blob:
+                continue
+            for _idx, _sent in enumerate(sent_texts):
+                # Substring match — CC may prefix our text with catchup,
+                # so we look for the user-supplied tail. Skip empties.
+                if _sent and _sent in _text_blob:
+                    _found_flags[_idx] = True
+                    _preempt_positions[_idx] = i
+                    last_preempt_pos = max(last_preempt_pos, i)
+        # Decide.
+        if not any(_found_flags):
+            return 'unread'
+        # Any preempt with no assistant event after it → still pending.
+        for _idx, _pos in enumerate(_preempt_positions):
+            if _found_flags[_idx] and _pos > last_assistant_pos:
+                return 'pending'
+        # Every found preempt has an assistant event after it.
+        # If some preempts are still unfound (unread), 'pending' wins
+        # (we treat partially-unread as 'wait' — conservative).
+        if not all(_found_flags):
+            return 'unread'
+        return 'done'
+
+    def _cleanup_proc(self, proc) -> str:
+        """Clean up a Codex subprocess. Returns captured stderr.
+
+        Pool/proc state pinned to `proc` (via _pf_container set at spawn)
+        is the authoritative source — `self._pool_container_name` /
+        `self._codex_proc` / `self._current_session_id` /
+        `self._codex_container_pid` are SINGLETON state on a shared
+        provider used by concurrent streams (main agent, compact,
+        memory-extract, btw, sub-agent). Reading the pool name from
+        `self` would race: a concurrent _spawn_codex_stream that just
+        clobbered self._pool_container_name with ITS container would
+        steer this cleanup to release the wrong slot. Read from proc.
+        """
+        # Release pool slot from proc-pinned container (race-safe).
+        _pool_name = getattr(proc, '_pf_container', '') or ''
+        if _pool_name:
+            self._pool_release(_pool_name)
+        # Clear self.* mirrors only if they still point at THIS stream's
+        # values — leave another concurrent stream's mirror intact.
+        if getattr(self, '_codex_proc', None) is proc:
+            self._codex_proc = None
+        if (getattr(self, '_pool_container_name', None) == _pool_name
+                and _pool_name):
+            self._pool_container_name = None
+        try:
+            _self_pid = int(getattr(self, '_codex_container_pid', 0) or 0)
+        except (TypeError, ValueError):
+            _self_pid = 0
+        try:
+            _proc_pid = int(getattr(proc, '_pf_pid', 0) or 0)
+        except (TypeError, ValueError):
+            _proc_pid = 0
+        if _self_pid and _self_pid == _proc_pid:
+            self._codex_container_pid = 0
+            # Session id is paired with this PID — drop it too only
+            # when we owned the slot.
+            self._current_session_id = ""
+        # Kill process FIRST so pipes become readable (no more blocking)
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=3)
+        except Exception:
+            logger.debug("exception suppressed", exc_info=True)
+        # NOW read stderr from the drain buffer (live thread owns the fd)
+        stderr = ""
+        try:
+            stderr = "".join(getattr(self, "_stderr_buffer", []) or [])
+        except Exception:
+            logger.debug("exception suppressed", exc_info=True)
+        # Close all streams
+        for stream in (proc.stdout, proc.stdin, proc.stderr):
+            try:
+                if stream and not stream.closed:
+                    stream.close()
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
+        return stderr
+
+    # ── Legacy session scrub ────────────────────────────────────────
+
+    # Matches placeholders the agent used to write into user text before the
+    # vision channel was wired properly, e.g. "[image: image_1234567890_2.png]".
+    # The image bytes travel via the native vision path now, so the text
+    # reference is stale — keeping it would make the agent pattern-match
+    # "image attached → call see('image_1234567890_2.png')" on every resume.
+    _LEGACY_IMAGE_RE = re.compile(
+        r'\s*\[image:\s*image_\d+_\d+\.[A-Za-z0-9]+\s*\]\s*')
+
+    def _scrub_legacy_image_placeholders(self, session_file: str) -> None:
+        """Rewrite a codex .jsonl session file in place, stripping
+        legacy ``[image: image_<ts>_<n>.<ext>]`` markers from user text.
+
+        Only user-authored text is touched. Lines that aren't valid JSON or
+        that aren't user messages pass through unchanged. No-op if nothing
+        matches, so repeated resumes on a clean file cost only a read.
+        """
+        import json
+        try:
+            with open(session_file, "r", encoding="utf-8") as _f:
+                _raw_lines = _f.readlines()
+        except OSError:
+            return
+
+        _pat = self._LEGACY_IMAGE_RE
+        _changed = False
+        _out = []
+        for _line in _raw_lines:
+            try:
+                _obj = json.loads(_line)
+            except (json.JSONDecodeError, ValueError):
+                _out.append(_line)
+                continue
+            if isinstance(_obj, dict) and _obj.get("type") == "user":
+                _msg = _obj.get("message")
+                if isinstance(_msg, dict):
+                    _content = _msg.get("content")
+                    if isinstance(_content, str):
+                        _new = _pat.sub(" ", _content).strip()
+                        if _new != _content:
+                            _msg["content"] = _new
+                            _changed = True
+                    elif isinstance(_content, list):
+                        for _part in _content:
+                            if isinstance(_part, dict) and _part.get("type") == "text":
+                                _t = _part.get("text", "")
+                                _new = _pat.sub(" ", _t).strip()
+                                if _new != _t:
+                                    _part["text"] = _new
+                                    _changed = True
+                _out.append(json.dumps(_obj, ensure_ascii=False) + "\n")
+            else:
+                _out.append(_line)
+
+        if not _changed:
+            return
+
+        # Atomic rewrite: write .tmp then rename so a crash mid-scrub
+        # doesn't leave the session file truncated.
+        _tmp = session_file + ".scrubtmp"
+        with open(_tmp, "w", encoding="utf-8") as _f:
+            _f.writelines(_out)
+        os.replace(_tmp, session_file)
+
+    # ── Non-streaming (complete) ────────────────────────────────────
+
+    @staticmethod
+    def _codex_project_key(workdir: str) -> str:
+        """Derive the project subdir name CC uses to bucket session files.
+
+        CC encodes its cwd into a project key by stripping the leading
+        slash and replacing every non-alphanum character (including `_`)
+        with `-`. The pool's per-exec mount-namespace gives CC
+        `cwd=/cc_sessions/<conv>/<agent>`, so the key becomes
+        `-cc-sessions-<conv>-<agent>`.
+
+        If this derivation drifts from CC's real algorithm, `--resume`
+        would silently fall through to a fresh NEW session; the
+        file_exists guard in _stream_codex drops --resume in that
+        case rather than losing history without warning.
+        """
+        rel = os.path.relpath(workdir, _get_sessions_base()).replace(
+            "\\", "/").split("/", 1)[-1]
+        return "-cc-sessions-" + rel.replace("/", "-").replace("_", "-")
+
+    def _pool_popen(self, workdir: str, cmd: list, **popen_kwargs) -> tuple:
+        """Launch claude inside a pool container via docker exec.
+
+        Returns (proc, pool_container_name). Caller must release
+        pool_container when done — release destroys the container
+        (`docker rm -f`) under the 1:1 model.
+        """
+        _env = self._codex_env(workdir)
+        from core.codex_pool import CodexPool
+        pool = CodexPool.instance()
+        container = pool.acquire()
+        _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
+        _session_dir = f"/cc_sessions/{_rel}"
+        # Pass API key / base URL / TLS skip to container if configured
+        _extra = {}
+        if _env.get("ANTHROPIC_API_KEY"):
+            _extra["ANTHROPIC_API_KEY"] = _env["ANTHROPIC_API_KEY"]
+        if _env.get("ANTHROPIC_BASE_URL"):
+            _extra["ANTHROPIC_BASE_URL"] = _env["ANTHROPIC_BASE_URL"]
+        # NODE_TLS_REJECT_UNAUTHORIZED=0 is set by _codex_env only
+        # for HTTPS relay-proxy URLs pointing at a LAN IP with a self-
+        # signed cert. Without this passthrough the container still
+        # refuses the TLS handshake (self-signed cert not in the trust
+        # store) and CC surfaces "empty or malformed response (HTTP 200)".
+        if _env.get("NODE_TLS_REJECT_UNAUTHORIZED"):
+            _extra["NODE_TLS_REJECT_UNAUTHORIZED"] = _env["NODE_TLS_REJECT_UNAUTHORIZED"]
+        proc = pool.exec_codex(
+            container, _session_dir, cmd[1:],  # skip 'claude' binary
+            extra_env=_extra or None,
+            **popen_kwargs)
+        return proc, container
+
+    def _pool_release(self, container_name):
+        """Release a pool container slot."""
+        if container_name:
+            try:
+                from core.codex_pool import CodexPool
+                CodexPool.instance().release(container_name)
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
+
+    # ── Streaming ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_images(messages, user_id: str, conversation_id: str) -> list:
+        """Extract images from the LAST user message only.
+
+        Removes image blocks from ALL messages (so they don't bloat the text
+        prompt). Only returns image blocks from the LAST user message as
+        content blocks for the stream-json message (native vision).
+
+        Older images are replaced with a placeholder text.
+
+        user_id and conversation_id are REQUIRED — image_ref blocks point
+        to private attachments stored under (owner × conv × file_id).
+        A missing identifier means the caller has a bug; raise loudly
+        instead of dropping the image and pretending nothing happened.
+        """
+        if not user_id:
+            raise ValueError(
+                "_extract_images: user_id is required to resolve image_ref "
+                "attachments (owner-scoped access control)")
+        if not conversation_id:
+            raise ValueError(
+                "_extract_images: conversation_id is required to resolve "
+                "image_ref attachments (files belong to a conversation)")
+        import base64 as _b64
+        image_blocks = []
+
+        # Find the last user message index
+        _last_user_idx = -1
+        for i, m in enumerate(messages):
+            if m.role == "user" and isinstance(m.content, list):
+                _last_user_idx = i
+
+        for idx, m in enumerate(messages):
+            if not isinstance(m.content, list):
+                continue
+            new_content = []
+            for block in m.content:
+                if not isinstance(block, dict):
+                    new_content.append(block)
+                    continue
+                btype = block.get("type", "")
+
+                _is_last_user = (idx == _last_user_idx)
+
+                # Placeholder policy: when we extract an image from the LAST
+                # user message into image_blocks, that image is sent to the
+                # model natively via vision — emitting a text placeholder on
+                # top of it is actively harmful: the agent reads
+                # "[image: foo.png]" and calls see() / read() on it, duplicating
+                # the image in its context (tokens ×2) for zero benefit.
+                # For OLDER user messages we keep a text placeholder so the
+                # model knows an image was there, but we DON'T re-send it via
+                # vision (would bloat context with every historical image).
+
+                if btype == "image_url":
+                    url = (block.get("image_url") or {}).get("url", "")
+                    if url.startswith("data:"):
+                        if _is_last_user:
+                            try:
+                                header, data_b64 = url.split(",", 1)
+                                mime = header.split(":")[1].split(";")[0]
+                                image_blocks.append({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime,
+                                        "data": data_b64,
+                                    },
+                                })
+                                logger.info("Extracted image for vision: %s (%d chars b64)",
+                                            mime, len(data_b64))
+                            except Exception as e:
+                                logger.warning("Failed to extract image: %s", e)
+                            # Image is in vision — no text placeholder.
+                        else:
+                            new_content.append({"type": "text", "text": "[image]"})
+                        continue
+
+                elif btype == "image":
+                    source = block.get("source", {})
+                    if source.get("type") == "base64":
+                        if _is_last_user:
+                            image_blocks.append(block)
+                            logger.info("Extracted image for vision: %s",
+                                        source.get("media_type", "?"))
+                            # Image is in vision — no text placeholder.
+                        else:
+                            new_content.append({"type": "text", "text": "[image]"})
+                        continue
+
+                elif btype == "image_ref":
+                    # Image stored in FileStore — load for vision on last user message only.
+                    # Older image_ref blocks (from prior turns already seen by
+                    # the model via session resume) are intentionally dropped
+                    # to text to keep the prompt compact.
+                    if _is_last_user:
+                        from core.file_store import FileStore
+                        import base64 as _b64
+                        _fid = block.get("file_id", "")
+                        if not _fid:
+                            raise ValueError(
+                                "image_ref block missing file_id — producer bug")
+                        _fname, _data, _ct = FileStore.instance().get_required(
+                            _fid, user_id=user_id,
+                            conversation_id=conversation_id)
+                        _data_b64 = _b64.b64encode(_data).decode("ascii")
+                        image_blocks.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": block.get("mime_type", _ct),
+                                "data": _data_b64,
+                            },
+                        })
+                        logger.info("Loaded image from FileStore for vision: %s (%d bytes)",
+                                    _fid, len(_data))
+                        # Image is in vision — no text placeholder that would
+                        # make the agent see()/read() it redundantly.
+                    else:
+                        new_content.append({"type": "text", "text": f"[image: {block.get('filename', '?')}]"})
+                    continue
+
+                new_content.append(block)
+
+            m.content = new_content
+
+        return image_blocks
+
+    @staticmethod
+    def _build_stdin_with_system(system_prompt: str, user_text: str) -> str:
+        """Combine system prompt and user text for text-mode input."""
+        if not system_prompt:
+            return user_text
+        return (
+            "<system_instructions>\n" + system_prompt
+            + "\n</system_instructions>\n\n" + user_text
+        )
+
+    def _build_catchup_context(self, conv_id: str, agent_name: str) -> str:
+        """Build catch-up text from messages other agents sent since our last turn.
+
+        Reads the PARENT conversation's context for this agent (sub-agents
+        included — a delegate still sees new activity in the main chat
+        while it works). Finds messages after the last known index
+        (tracked in self._cc_catchup_idx). Returns formatted text block or "".
+        Also updates self._cc_catchup_idx so the same messages aren't sent twice
+        (shared between initial, preempt, and inter-turn catch-up).
+        """
+        if not conv_id:
+            return ""
+        # Internal sentinel (e.g. "_compact" summarizer session) — no
+        # real conversation to catch up from.
+        if conv_id.startswith("_"):
+            return ""
+        # Sub-conv (delegate / task) → catch up from the parent conv so
+        # the delegate sees messages arriving in the main chat while it
+        # works. The sub-conv itself has no multi-agent dialog of its own.
+        _lookup_cid = conv_id
+        for _sep in ("::delegate::", "::task::"):
+            if _sep in _lookup_cid:
+                _lookup_cid = _lookup_cid.split(_sep, 1)[0]
+                break
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            ctx_data = store.load_agent_context(_lookup_cid, agent_name)
+            if not ctx_data:
+                return ""
+
+            # Initialize tracking index: find last own message as baseline
+            if not hasattr(self, '_cc_catchup_idx') or self._cc_catchup_idx == 0:
+                last_own = -1
+                for i, m in enumerate(ctx_data):
+                    src = m.get("source") or {}
+                    if src.get("type") == "agent" and src.get("name") == agent_name:
+                        last_own = i
+                self._cc_catchup_idx = (last_own + 1) if last_own >= 0 else len(ctx_data)
+
+            # Collect messages since last check
+            new_msgs = ctx_data[self._cc_catchup_idx:]
+            self._cc_catchup_idx = len(ctx_data)
+
+            if not new_msgs:
+                return ""
+
+            # Filter: only messages from OTHER agents or user→other agent
+            # Messages from this agent or user→this agent are already in CC's session
+            filtered = []
+            for m in new_msgs:
+                src = m.get("source") or {}
+                src_type = src.get("type", "")
+                src_name = src.get("name", "")
+                # Skip our own agent's messages (CC already has them)
+                if src_type == "agent" and src_name == agent_name:
+                    continue
+                # Skip user messages directed at this agent (CC already has them)
+                if src_type == "user":
+                    target = src.get("target_agent", "")
+                    if not target or target == agent_name:
+                        continue
+                # Skip tool results and context injections
+                if m.get("role") == "tool" or m.get("tool_calls"):
+                    continue
+                if src_type == "context":
+                    continue
+                filtered.append(m)
+
+            if not filtered:
+                return ""
+
+            # Format as XML block
+            lines = ["<catch_up_context>",
+                     "New messages from other participants since your last response:"]
+            count = 0
+            for m in filtered:
+                content = m.get("content", "")
+                if not content or not isinstance(content, str):
+                    continue
+                role = m.get("role", "user")
+                lines.append(f"<message role=\"{role}\">\n{content}\n</message>")
+                count += 1
+            lines.append("</catch_up_context>")
+
+            if count == 0:
+                return ""
+
+            logger.info("[codex] catch-up: %d messages for %s", count, agent_name)
+            return "\n".join(lines)
+        except Exception as e:
+            logger.warning("[codex] catch-up failed: %s", e)
+            return ""
+
+    def _spawn_codex_stream(self, workdir: str, user_id: str, conv_id: str,
+                         agent_name: str, session_id: str, model,
+                         *, ephemeral_stream: bool = False):
+        """Spawn a fresh Codex subprocess (CC container exec + CLI).
+
+        Extracted from _stream_codex so the live-session reuse path
+        can skip spawning and pull proc + mcp token from a cached session.
+        This is a pure move; behavior is identical when called.
+
+        Writes .mcp.json + mints an internal-auth token, computes the
+        effective --resume session id (dropped if the jsonl is missing),
+        scrubs legacy image placeholders in the resumed jsonl, builds the
+        CLI command, and launches via the pool.
+
+        Side effects:
+            - self._codex_proc  (unless _ephemeral_stream)
+            - self._pool_container_name
+            - self._codex_container_pid (= 0 initially; drain thread fills it)
+            - self._stderr_buffer
+            - proc._pf_container / proc._pf_pid
+            - Starts a daemon cc-stderr-drain thread.
+
+        Returns: (proc, pool_container_name, mcp_internal_token).
+        """
+        from core.llm_client import LLMClientError
+        mcp_path, _mcp_internal_token = self._setup_mcp_config(
+            workdir, user_id, conv_id, agent_name)
+
+        # The pool's per-exec mount-namespace binds /cc_sessions/<user>
+        # over /cc_sessions; CC's working directory is
+        # /cc_sessions/<conv>/<agent>. MCP config path inside that
+        # namespace = workdir basename joined to it.
+        _mcp_arg = mcp_path
+        if mcp_path:
+            _rel_no_user = os.path.relpath(
+                workdir, _get_sessions_base()).replace("\\", "/").split("/", 1)[-1]
+            _container_workdir = f"/cc_sessions/{_rel_no_user}"
+            _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
+
+        # Gate --resume on the jsonl actually existing at the expected
+        # path. If it doesn't, CC would silently create a NEW empty
+        # session under the same sid and we'd lose all history without
+        # any error. Fall back to a true NEW session (drop --resume),
+        # which is a well-defined state the caller can detect via the
+        # SESSION MISMATCH check downstream.
+        _effective_session_id = session_id
+        _expected_session_file = ""
+        _exists = False
+        if session_id:
+            _proj_key = self._codex_project_key(workdir)
+            _expected_session_file = os.path.join(
+                workdir, "projects", _proj_key, f"{session_id}.jsonl")
+            _exists = os.path.exists(_expected_session_file)
+            _size = os.path.getsize(_expected_session_file) if _exists else 0
+            if _exists:
+                logger.info(
+                    "codex RESUME: session_id=%s file_size=%d path=%s",
+                    session_id, _size, _expected_session_file)
+            else:
+                logger.warning(
+                    "codex NEW (resume jsonl MISSING at expected path): "
+                    "session_id=%s expected=%s — dropping --resume, "
+                    "starting fresh CC session",
+                    session_id, _expected_session_file)
+                _effective_session_id = ""
+
+        cmd = self._build_codex_cmd(model, _effective_session_id,
+                                     mcp_config_path=_mcp_arg,
+                                     workdir=workdir)
+
+        logger.info("codex stream: cwd=%s cmd=%s",
+                     workdir, " ".join(str(c) for c in cmd[:20]))
+        # Scrub legacy [image: image_<ts>_<n>.<ext>] placeholders from
+        # user text fields. These were written before the vision-
+        # placeholder fix and make the agent pattern-match "image
+        # attached → call see() with this filename" on every new
+        # user turn. The image bytes are still forwarded via the
+        # native vision channel, so stripping the text reference is
+        # purely cosmetic for the transcript AND prevents the bogus
+        # see() calls. Only meaningful when we actually --resume an
+        # existing jsonl; skip for NEW sessions.
+        if session_id and _exists:
+            try:
+                self._scrub_legacy_image_placeholders(_expected_session_file)
+            except Exception as _scrub_err:
+                logger.warning("[codex] session scrub failed (%s): %s",
+                               session_id[:8], _scrub_err)
+
+        # Track pool container for cleanup
+        self._pool_container_name = None
+
+        try:
+            proc, self._pool_container_name = self._pool_popen(
+                workdir, cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
             )
-            self._pf_codex_proc = proc  # for send_user_message preempt
-            try:
-                proc.stdin.write(prompt_payload + "\n")
-                proc.stdin.close()
-            except Exception as e:
-                logger.warning("[codex] failed to write prompt to stdin: %s", e)
-
-            response = self._consume_codex_stream(
-                proc, model=model or self._codex_default_model_for_pool(),
-                conv_id=conv_id, agent_name=agent_name,
-                callback=callback, thinking_callback=thinking_callback,
-                turn_callback=turn_callback, block_callback=block_callback,
-                prompt_chars=len(prompt_payload or ""),
-            )
-            # Successful turn — keep the container warm for the next one.
-            live.register(live_key, container, host_workdir, service_id=service_id)
-            live.touch(live_key, bump_reuse=True)
-            owned_container_for_release = None
-            return response
-        finally:
-            self._pf_codex_proc = None
-            if proc and proc.poll() is None:
+            # Ephemeral streams (btw) don't register proc — they don't
+            # need preempt/cancel and must not overwrite the main agent's proc.
+            if not ephemeral_stream:
+                self._codex_proc = proc
+            # Per-stream session info pinned on the proc object. The
+            # provider instance is a SINGLETON shared across concurrent
+            # streams (main agent, compact, memory_extract, btw, sub-agents);
+            # storing container name / container PID on `self` means any
+            # later-spawned stream clobbers the in-flight one's tracking
+            # state. Pinning to `proc` ties the info to the exact subprocess
+            # the kill targets, so clobbers on `self` don't matter. Drain
+            # thread updates proc._pf_pid in place.
+            proc._pf_container = self._pool_container_name
+            proc._pf_pid = 0
+            # Keep self.* mirrors for the codepath that still reads them
+            # (cancel_codex force-stop, cleanup_proc) — but treat them
+            # as best-effort hints, not authoritative for kill.
+            self._codex_container_pid = 0
+            self._stderr_buffer = []
+            def _drain_stderr():
                 try:
-                    proc.kill()
+                    for _line in proc.stderr:
+                        # setsid --wait prints "setsid: child NN did not
+                        # exit normally: Success" whenever the session
+                        # leader is SIGKILL'd. Our _kill_codex_hard ALWAYS
+                        # uses SIGKILL (it IS the kill mechanism), so
+                        # this message fires on every clean compact/
+                        # cancel. Keeping it in _stderr_buffer poisons
+                        # the "Codex CLI stream exited ...: <stderr>"
+                        # exception string, which the outer retry logic
+                        # then has to special-case. Drop it at the source.
+                        if (_line.startswith("setsid: child ")
+                                and "did not exit normally" in _line):
+                            continue
+                        # __PF_CLAUDE_PID=<pid>\n is the shell wrapper's
+                        # spawn-time preamble. We capture it into
+                        # proc._pf_pid below, log it at INFO as "captured
+                        # container PID=<pid>", and that's the only value
+                        # it has. Keeping the raw line in _stderr_buffer
+                        # means every clean post-kill log surfaces as
+                        # "Codex CLI stderr: __PF_CLAUDE_PID=<pid>" at
+                        # ERROR level — misleading (no error, just a
+                        # leftover PID dump). Drop it after capture.
+                        if '__PF_CLAUDE_PID=' in _line:
+                            if not proc._pf_pid:
+                                try:
+                                    _pid_str = _line.split(
+                                        '__PF_CLAUDE_PID=', 1)[1].strip()
+                                    _pid_int = int(_pid_str)
+                                    proc._pf_pid = _pid_int
+                                    self._codex_container_pid = _pid_int
+                                    logger.info(
+                                        "[codex] captured container PID=%d "
+                                        "(container=%s)",
+                                        _pid_int, proc._pf_container)
+                                except Exception:
+                                    logger.debug("exception suppressed", exc_info=True)
+                            continue
+                        self._stderr_buffer.append(_line)
                 except Exception:
-                    pass
-            if owned_container_for_release:
-                # Either a fresh acquire we never registered (turn failed),
-                # or the live container vanished mid-call — always release.
-                try:
-                    pool.release(owned_container_for_release)
-                except Exception:
-                    logger.debug("codex container release failed", exc_info=True)
+                    logger.debug("exception suppressed", exc_info=True)
+            import threading as _th
+            _th.Thread(target=_drain_stderr, daemon=True,
+                       name="cc-stderr-drain").start()
+        except FileNotFoundError:
+            if self._pool_container_name:
+                from core.codex_pool import CodexPool
+                CodexPool.instance().release(self._pool_container_name)
+                self._pool_container_name = None
+            raise LLMClientError(
+                "Binary 'docker' not found. Install Docker Desktop.")
 
-    def _consume_codex_stream(self, proc, *,
-                                 model: str, conv_id: str, agent_name: str,
-                                 callback, thinking_callback,
-                                 turn_callback, block_callback,
-                                 prompt_chars: int = 0) -> "LLMResponse":
-        from core.llm_client import LLMResponse, LLMClientError, CCCompactDetected
+        return proc, self._pool_container_name, _mcp_internal_token
 
-        text_chunks: List[str] = []
-        thinking_chunks: List[str] = []
-        usage: Dict = {}
-        thread_id = ""
-        turn_count = 0
-        last_error: Optional[str] = None
-        finish_reason = "stop"
+    def _stream_codex(
+        self, messages, model, temperature, max_tokens, tools, callback=None,
+        turn_callback=None, block_callback=None, _is_auth_retry=False,
+        *,
+        call_user_id: Optional[str] = None,
+        call_conversation_id: Optional[str] = None,
+        call_agent_name: Optional[str] = None,
+        call_event_cid: Optional[str] = None,
+        call_ephemeral_stream: Optional[bool] = None,
+    ):
+        """Stream from claude CLI using bidirectional stream-json.
 
-        ctx_window = self._codex_context_window(model)
-        compact_required = False
+        Input: JSON lines on stdin (user messages, can preempt anytime)
+        Output: JSON lines on stdout (events: assistant, user, result, etc.)
 
-        # Map codex item.id → (tool_name, args) so item.completed can emit
-        # tool_result with the same tc_id we pushed on item.started. Also
-        # used to dedupe in case codex retransmits.
-        items_in_flight: Dict[str, tuple] = {}
+        turn_callback(text, tool_calls): called at each turn boundary so
+        the agent loop can persist intermediate messages. Each Codex
+        assistant turn = one message in the conversation.
 
-        # Tool calls + their (already-executed) results, accumulated for the
-        # turn_callback flush at end of stream. Codex executes tools server-
-        # side via MCP and emits both call + result inline; PawFlow surfaces
-        # them by attaching the result to the matching tool_call so the agent
-        # loop can persist the assistant.tool_calls + role=tool messages
-        # without re-executing anything.
-        collected_tool_calls: List[dict] = []  # {id, name, arguments, result}
+        Codex uses MCP for tool calls — tools param is ignored.
 
-        def _extract_tool_call(item: dict) -> Optional[tuple]:
-            """Return (tc_id, tool_name, args, result_or_none) or None.
+        Per-call identity (user_id / conversation_id / agent_name /
+        event_cid / ephemeral_stream) MUST be passed via the call_*
+        kwargs by every caller. The shared client instance no longer
+        carries these as state — the previous self._user_id /
+        self._conversation_id / etc. pattern was a footgun: concurrent
+        compact / memory-extract / sub-agent streams would clobber
+        each other's identity via try/finally save-restore on the
+        same instance, leaving the values empty for whichever stream
+        won the race. Each call now passes its own scope explicitly.
+        """
+        from core.llm_client import LLMClientError, LLMResponse
 
-            Codex item types we surface as tool calls:
-              - mcp_tool_call: server + tool_name + arguments + result
-              - command_execution: command + cwd + output (treat as 'shell')
-            """
-            itype = item.get("type", "")
-            tc_id = item.get("id", "") or ""
-            if itype == "mcp_tool_call":
-                # Codex emits the bare proxy name (`use_tool`) under `tool`,
-                # with the real tool name nested inside `arguments.tool_name`.
-                # Pass the bare name through — `unwrap_mcp_tool` recognizes
-                # exactly `"use_tool"` / `"mcp__pawflow__use_tool"` and peels
-                # the wrapper off. Building `"<server>.<tool>"` here defeats
-                # that match and leaks the proxy name to the UI.
-                _tool = item.get("tool_name", "") or item.get("tool", "")
-                args = item.get("arguments", {}) or item.get("args", {}) or {}
-                result = item.get("result", item.get("output", None))
-                return (tc_id, _tool, args, result)
-            if itype == "command_execution":
-                cmd = item.get("command", "") or ""
-                args = {"command": cmd, "cwd": item.get("cwd", "") or ""}
-                _out = item.get("output", item.get("result", None))
-                _ec = item.get("exit_code", None)
-                if _out is not None or _ec is not None:
-                    result = {"output": _out, "exit_code": _ec}
-                else:
-                    result = None
-                return (tc_id, "shell", args, result)
-            return None
+        # Resolve per-call identity. Fall back to self.* only as a
+        # transitional safety net so a caller that hasn't yet been
+        # updated to pass kwargs doesn't crash; the goal is for every
+        # call site to pass these explicitly, at which point the
+        # fallback can be tightened to raise.
+        user_id = (call_user_id if call_user_id is not None
+                    else getattr(self, '_user_id', ""))
+        conv_id = (call_conversation_id if call_conversation_id is not None
+                    else getattr(self, '_conversation_id', ""))
+        agent_name = (call_agent_name if call_agent_name is not None
+                       else getattr(self, '_agent_name', ""))
+        _is_ephemeral = (bool(call_ephemeral_stream)
+                          if call_ephemeral_stream is not None
+                          else bool(getattr(self, '_ephemeral_stream', False)))
+        _raw_event_cid = (call_event_cid if call_event_cid is not None
+                           else getattr(self, '_event_cid', ''))
 
-        def _emit_tool_use(tc_id: str, name: str, args: dict):
-            # Unwrap MCP wrapper (`pawflow.use_tool` proxy → real tool name +
-            # args) so the UI shows `read({path: ...})` instead of
-            # `pawflow.use_tool({tool_name: read, arguments: {...}})`.
+        # Extract images BEFORE serialization (they'll be sent as content blocks).
+        # user_id + conv_id are REQUIRED — FileStore enforces owner×conv
+        # access control, and a missing identifier silently drops the
+        # user's image. _extract_images raises if either is empty.
+        image_blocks = self._extract_images(
+            messages, user_id=user_id, conversation_id=conv_id)
+
+        # Always load session_id from the store for THIS conversation
+        # (never from self — the client is shared across conversations)
+        session_id = ""
+        if conv_id:
             try:
-                from core.llm_client import unwrap_mcp_tool
-                _real_name, _real_args = unwrap_mcp_tool(name, args or {})
+                from core.conversation_store import ConversationStore
+                session_id = ConversationStore.instance().get_extra(
+                    conv_id, f"codex_session:{agent_name or 'default'}") or ""
+                if session_id:
+                    logger.info("[%s/%s/%s] Restored claude session: %s",
+                                user_id[:6] or '?', conv_id[:8] or '?',
+                                agent_name or 'default', session_id)
             except Exception:
-                _real_name, _real_args = name, args or {}
-            collected_tool_calls.append({
-                "id": tc_id,
-                "name": _real_name,
-                "arguments": _real_args,
-                "result": None,
-            })
-            # Pending registration: lets services.tool_relay_service match
-            # the MCP request the bridge is about to forward to this tc_id
-            # (for kill/cancel/background tracking). Without it, tool_relay
-            # logs `cc_tc MISS pending=[]` for every codex tool call.
-            try:
-                from core.background_tool import enqueue_cc_tc, _args_hash
-                enqueue_cc_tc(conv_id, agent_name, tc_id, _real_name, _args_hash(_real_args))
-            except Exception as e:
-                logger.debug("[codex] enqueue_cc_tc skipped: %s", e)
+                logger.debug("exception suppressed", exc_info=True)
 
-        def _emit_tool_result(tc_id: str, name: str, result):
-            # Pair the result with the tool_call captured at item.started.
+        # Session-aware serialization:
+        # - New session (no session_id): feed the full PawFlow ctx ONCE.
+        # - Resume (session_id set): CC already has the history; send only
+        #   the new user message. The catch-up mechanism below injects
+        #   anything that arrived from other agents since last turn.
+        if session_id:
+            system_prompt = ""
+            last_user = ""
+            for _m in reversed(messages):
+                if _m.role == "user":
+                    _c = _m.content
+                    if isinstance(_c, list):
+                        last_user = _m.text_content
+                    else:
+                        last_user = _c or ""
+                    break
+            user_text = last_user
+        else:
+            system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
+
+        initial_text = self._build_stdin_with_system(system_prompt, user_text)
+        logger.debug("[codex] prompt: system=%d user=%d images=%d msgs=%d session=%s",
+                     len(system_prompt), len(user_text), len(image_blocks), len(messages),
+                     "resume" if session_id else "new")
+
+        logger.info("codex stream: conv_id='%s' user='%s' agent='%s' session='%s'",
+                     conv_id, user_id, agent_name, session_id[:12] if session_id else "new")
+
+        workdir = self._get_session_workdir(conv_id, agent_name, user_id)
+        # Resume with same credential that created the session (approach 3)
+        _resume_pool_idx = -1
+        if session_id and conv_id:
             try:
-                if isinstance(result, (dict, list)):
-                    result_str = json.dumps(result, ensure_ascii=False, default=str)
-                else:
-                    result_str = str(result) if result is not None else ""
+                _resume_pool_idx = int(ConversationStore.instance().get_extra(
+                    conv_id, f"codex_pool_idx:{agent_name or 'default'}") or -1)
             except Exception:
-                result_str = repr(result)
-            for tc in collected_tool_calls:
-                if tc["id"] == tc_id:
-                    tc["result"] = result_str
-                    return
-            # No matching tool_use captured (rare — e.g. item.completed
-            # without item.started). Push a synthetic entry so the result
-            # still surfaces in the transcript.
+                logger.debug("exception suppressed", exc_info=True)
+        self._setup_credentials(workdir, pool_index=_resume_pool_idx)
+        # Store pool index for this session
+        if conv_id and hasattr(self, '_current_pool_index'):
             try:
-                from core.llm_client import unwrap_mcp_tool
-                _real_name, _ = unwrap_mcp_tool(name, {})
+                ConversationStore.instance().set_extra(
+                    conv_id, f"codex_pool_idx:{agent_name or 'default'}",
+                    self._current_pool_index)
             except Exception:
-                _real_name = name
-            collected_tool_calls.append({
-                "id": tc_id, "name": _real_name,
-                "arguments": {}, "result": result_str,
-            })
+                logger.debug("exception suppressed", exc_info=True)
+        _auth_retried = _is_auth_retry
 
-        # Diagnostic: log the FULL first occurrence of each (event_type,
-        # item_type) shape we see, so we can build the right mapping. The
-        # codex JSONL schema drifts across versions and we don't trust the
-        # docs (they lie about field names). One log line per shape per
-        # stream — enough to reverse-engineer once, harmless thereafter.
-        _seen_etypes: set = set()
-        _seen_item_shapes: set = set()  # (etype, itype) tuples
-        _EXPECTED_ETYPES = {
-            "thread.started", "turn.started", "turn.completed", "turn.failed",
-            "item.started", "item.completed", "item.updated", "error",
-        }
+        # Live-session reuse: look up a warm CC process pinned by
+        # (user, conv, agent, service, pool_idx). A hit skips the spawn
+        # (mcp setup, container exec, CC startup, --resume load) and
+        # pushes the new user message onto the existing stdin. A miss
+        # (or a dead proc — auto-evicted by get()) falls through to
+        # _spawn_codex_stream. Ephemeral streams (compact / memory_extract
+        # / btw) never reuse: they're short-lived by design and must
+        # not inherit nor leak another stream's proc.
+        _svc_id = getattr(self, '_agent_service', '') or 'default'
+        # Intentionally NOT `getattr(...) or -1`: `or` coerces 0 to -1,
+        # silently mapping OAuth pool slot 0 onto the api-key sentinel.
+        # The getattr default handles the "attr never set" case (api-key
+        # mode: _setup_credentials early-returns before assigning the
+        # attr).
+        _svc_pool_idx = int(getattr(self, '_current_pool_index', -1))
+        # _is_ephemeral resolved earlier at function entry from
+        # call_ephemeral_stream (with self._ephemeral_stream fallback).
+        _live_reg = CodexLiveRegistry.instance()
+        _live_key = None
+        _live_session: Optional[CodexLiveSession] = None
+        if conv_id and not _is_ephemeral:
+            _live_key = (user_id, conv_id, agent_name or 'default',
+                         _svc_id, _svc_pool_idx)
+            _live_session = _live_reg.get(_live_key)
+            if _live_session is not None:
+                # Bump reuse_count for the new stream call. The idle
+                # invariant is handled by the stdout reader daemon
+                # (per-line touch) so we don't need to bump last_used
+                # for that here — but touch() does it anyway, which
+                # closes the tiny window between get() and the first
+                # incoming line as a defence-in-depth.
+                _live_reg.touch(_live_key)
+        _is_reuse = _live_session is not None
 
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
+        if _is_reuse:
+            # Serialise concurrent _stream_codex calls targeting the
+            # same live session. Without this, bg_bucket_builder's
+            # auto_extract_memories (or any other background caller that
+            # reuses the same client) can enter _stream while the main
+            # stream is still mid-turn, clobber proc.stdin with a rogue
+            # message, and end the main turn with an empty stop. The lock
+            # is RLock so one thread can re-enter (nested flush/retries
+            # during teardown) without deadlocking itself.
+            _turn_lock_acquired = _live_session.turn_lock.acquire()
+            _owns_turn_lock = _turn_lock_acquired
             try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                logger.debug("[codex] non-json line skipped: %r", line[:200])
-                continue
-            etype = event.get("type", "")
-            # First-of-kind: dump full event for unexpected etypes.
-            if etype not in _EXPECTED_ETYPES and etype not in _seen_etypes:
-                _seen_etypes.add(etype)
-                logger.warning("[codex-schema] UNEXPECTED etype=%r body=%s",
-                               etype, json.dumps(event)[:600])
-            # First-of-kind: dump full event for every distinct
-            # (etype, item.type) we see — covers function_call vs
-            # mcp_tool_call vs whatever codex actually emits today.
-            if etype in ("item.started", "item.completed", "item.updated"):
-                _it = (event.get("item", {}) or {}).get("type", "")
-                _key = (etype, _it)
-                if _key not in _seen_item_shapes:
-                    _seen_item_shapes.add(_key)
-                    logger.info("[codex-schema] %s itype=%r body=%s",
-                                etype, _it, json.dumps(event)[:600])
-            if etype == "thread.started":
-                thread_id = event.get("thread_id", "") or thread_id
-            elif etype == "turn.started":
-                turn_count += 1
-            elif etype == "item.started":
-                item = event.get("item", {}) or {}
-                tc = _extract_tool_call(item)
-                if tc is not None:
-                    tc_id, name, args, _ = tc
-                    if not tc_id:
-                        tc_id = f"codex-{uuid.uuid4().hex[:12]}"
-                    items_in_flight[item.get("id", tc_id)] = (tc_id, name)
-                    _emit_tool_use(tc_id, name, args)
-            elif etype in ("item.completed", "item.updated"):
-                item = event.get("item", {}) or {}
-                itype = item.get("type", "")
-                if itype == "agent_message":
-                    chunk = item.get("text", "") or ""
-                    if chunk and chunk not in text_chunks:
-                        text_chunks.append(chunk)
-                        if callback:
-                            try:
-                                callback(chunk)
-                            except Exception:
-                                pass
-                elif itype == "reasoning":
-                    chunk = item.get("text", "") or ""
-                    if chunk and chunk not in thinking_chunks:
-                        thinking_chunks.append(chunk)
-                        if thinking_callback:
-                            try:
-                                thinking_callback(chunk)
-                            except Exception:
-                                pass
-                elif itype in ("mcp_tool_call", "command_execution"):
-                    tc = _extract_tool_call(item)
-                    if tc is not None:
-                        _native_id = item.get("id", "") or ""
-                        _, _, _, result = tc
-                        # Pair with the started-side tc_id; if codex skipped
-                        # item.started (rare), synthesize a matching pair now.
-                        prior = items_in_flight.pop(_native_id, None)
-                        if prior is None:
-                            tc_id, name, args = tc[0] or f"codex-{uuid.uuid4().hex[:12]}", tc[1], tc[2]
-                            _emit_tool_use(tc_id, name, args)
-                        else:
-                            tc_id, name = prior
-                        _emit_tool_result(tc_id, name, result)
-            elif etype == "turn.completed":
-                _u = event.get("usage", {}) or {}
-                # Codex's `input_tokens` is the SUM of every internal
-                # iteration's prompt across the turn (each tool call replays
-                # the prompt, so 10 tool calls ≈ 10× the prompt size).
-                # Useful for billing, NOT a context-size signal — a 5-message
-                # conv shows 1.2M because of the iteration sum, not because
-                # the conv is huge. For the gauge we estimate context size
-                # from the prompt we sent (chars/3.5 ≈ tokens), which scales
-                # with the actual conversation history.
-                _input = int(_u.get("input_tokens", 0) or 0)
-                _cached = int(_u.get("cached_input_tokens", 0) or 0)
-                _output = int(_u.get("output_tokens", 0) or 0)
-                usage["input_tokens"] = _input
-                usage["cached_input_tokens"] = _cached
-                usage["output_tokens"] = _output
-                usage["billing_input_tokens"] = _input  # for cost reporting
-                # Gauge basis: our serialized prompt size, with a small fixed
-                # overhead for codex's own system prompt + MCP tool registry.
-                _gauge_used = int(prompt_chars / 3.5) + 8000
-                usage["_total_used"] = _gauge_used
-                used = _gauge_used
-                if ctx_window > 0 and used >= int(ctx_window * _PAWFLOW_COMPACT_THRESHOLD):
+                proc = _live_session.proc
+                self._pool_container_name = _live_session.pool_container
+                _mcp_internal_token = _live_session.mcp_internal_token
+                # Non-ephemeral by construction (see guard above); mirror the
+                # spawn path's self._codex_proc assignment so preempt /
+                # cancel_codex targets the reused process.
+                self._codex_proc = proc
+                # The live session pins CC's actual session_id; that's
+                # the source of truth for the jsonl filename CC writes
+                # to. Local `session_id` (read from extras at line
+                # 1017) and `self._current_session_id` (volatile) MAY
+                # diverge from it under concurrent code paths that
+                # touch extras or self — _live_session.session_id was
+                # captured at register time and is immune to those.
+                if not _live_session.session_id:
+                    # Invariant from the register site: keep-alive
+                    # never registers without a session_id. If we ever
+                    # observe an empty one here, registration violated
+                    # the contract — fail loudly.
+                    raise RuntimeError(
+                        f"[codex-live] REUSE entry for "
+                        f"{user_id[:6]}/{conv_id[:8]}/{agent_name} has "
+                        f"empty session_id on the live session — the "
+                        f"register site should have refused to create "
+                        f"this. Pawflow data corruption?")
+                # Override the local session_id from extras if it
+                # disagrees — the live session's value wins (extras
+                # could have been cleared by a sibling code path).
+                if session_id and session_id != _live_session.session_id:
                     logger.warning(
-                        "[codex] usage %d/%d crossed PawFlow compact threshold (%d%%) — will signal compact",
-                        used, ctx_window, int(_PAWFLOW_COMPACT_THRESHOLD * 100))
-                    compact_required = True
-            elif etype == "turn.failed":
-                last_error = json.dumps(event.get("error", event))[:500]
-                finish_reason = "error"
-            elif etype == "error":
-                last_error = json.dumps(event.get("error", event))[:500]
-                finish_reason = "error"
+                        "[codex-live] REUSE: extras session_id=%s "
+                        "DIVERGES from live session_id=%s — using "
+                        "live (CC's reality)",
+                        session_id[:12], _live_session.session_id[:12])
+                session_id = _live_session.session_id
+                # Sync self too so any code path that still reads from
+                # the singleton sees the right value. Defence-in-depth.
+                self._current_session_id = session_id
+                try:
+                    self._codex_container_pid = int(getattr(
+                        proc, '_pf_pid', 0) or 0)
+                except (TypeError, ValueError):
+                    pass
+                logger.info(
+                    "[codex-live] REUSE %s/%s/%s@%s#%d (reuse_count=%d, "
+                    "lived=%.1fs, session=%s)",
+                    user_id[:6], conv_id[:8], agent_name or 'default',
+                    _svc_id, _svc_pool_idx, _live_session.reuse_count,
+                    time.monotonic() - _live_session.spawn_at,
+                    session_id[:12])
+            except BaseException:
+                if _owns_turn_lock:
+                    try: _live_session.turn_lock.release()
+                    except Exception: pass
+                raise
+        else:
+            _owns_turn_lock = False
+            proc, self._pool_container_name, _mcp_internal_token = (
+                self._spawn_codex_stream(workdir, user_id, conv_id, agent_name,
+                                      session_id, model,
+                                      ephemeral_stream=_is_ephemeral))
 
-        rc = proc.wait()
-        if rc != 0 and not text_chunks and not last_error:
-            stderr = proc.stderr.read() if proc.stderr else ""
-            raise LLMClientError(f"codex exited rc={rc}: {stderr[:500]}")
+        # Multi-agent catch-up: when resuming a session, inject messages
+        # from other agents that CC hasn't seen (arrived after CC's last turn)
+        catchup_text = ""
+        if session_id and conv_id and agent_name:
+            catchup_text = self._build_catchup_context(conv_id, agent_name)
 
-        if thread_id:
-            self._codex_persist_session_id(conv_id, agent_name, thread_id)
+        # Send initial message as stream-json (keep stdin open for preempt/interrupt)
+        try:
+            # Prepend catch-up context to the initial message
+            if catchup_text:
+                initial_text = catchup_text + "\n\n" + initial_text
 
-        full_text = "\n".join(text_chunks).strip()
-        full_thinking = "\n".join(thinking_chunks).strip()
-
-        # CC-style turn flush: hand the (text, tool_calls, thinking) triple
-        # to agent_core's _claude_code_turn_callback so it persists the
-        # assistant message + role=tool result messages and publishes the
-        # corresponding SSE events. Codex executed the tools server-side
-        # already; results are paired in `collected_tool_calls` so the
-        # agent loop does NOT re-execute them — it just records what
-        # happened. Mirrors how CC's _flush_turn works at every internal
-        # turn boundary.
-        if turn_callback and (full_text or collected_tool_calls or full_thinking):
+            if image_blocks:
+                # Multipart: text + images as content array (enables vision)
+                content = [{"type": "text", "text": initial_text}] + image_blocks
+                msg = json.dumps({
+                    "type": "user",
+                    "message": {"role": "user", "content": content},
+                })
+            else:
+                msg = json.dumps({
+                    "type": "user",
+                    "message": {"role": "user", "content": initial_text},
+                })
+            proc.stdin.write(msg + "\n")
+            proc.stdin.flush()
+        except BrokenPipeError:
+            stderr = ""
             try:
-                turn_callback(full_text, collected_tool_calls, full_thinking)
-            except Exception as e:
-                logger.warning("[codex] turn_callback flush failed: %s", e, exc_info=True)
+                stderr = "".join(
+                    getattr(self, "_stderr_buffer", []) or []
+                ).strip()
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
+            proc.wait()
+            raise LLMClientError(
+                f"Codex CLI pipe broken (exit {proc.returncode}): {stderr[:500]}")
 
-        # tokens_in feeds the context gauge — use our prompt-based estimate
-        # (`_total_used`), NOT codex's `input_tokens` which sums every internal
-        # iteration's prompt and overstates the actual context size by 5–10x.
-        # Empty content + tool_calls when turn_callback already flushed: the
-        # agent loop must not re-append a duplicate assistant message.
-        response = LLMResponse(
-            content="" if turn_callback else full_text,
-            tokens_in=usage.get("_total_used", 0) or usage.get("input_tokens", 0),
-            tokens_out=usage.get("output_tokens", 0),
-            finish_reason=finish_reason,
-            model=model,
+        # SSE publisher for webchat visibility.
+        # _event_cid sentinel values:
+        #   None               → publishing explicitly suppressed (sub-agent path)
+        #   "" or missing attr → fall back to conv_id (main agent default)
+        #   any string         → publish to that conv
+        # _subagent_event_cb: if set, called INSTEAD of the bus — used by
+        #   SubAgentExecutor to re-emit CC's tool_call/tool_result as
+        #   sub_agent_tool/sub_agent_tool_result so they land in the
+        #   delegate sub-block instead of the main chat.
+        # _raw_event_cid resolved earlier at function entry from
+        # call_event_cid (with self._event_cid fallback).
+        if _raw_event_cid is None:
+            _event_cid = ""
+        else:
+            _event_cid = _raw_event_cid or conv_id
+        _subagent_event_cb = getattr(self, '_subagent_event_cb', None)
+        # Extract task_id from sub-conv ID so frontend can group task events
+        _task_id = ''
+        if '::task::' in conv_id:
+            _task_id = conv_id.split('::task::')[-1].split('::')[0]
+        _agent_ctx = getattr(self, '_agent_ctx', {}) or {}
+
+        def _pub(event_type, data):
+            # Safety net: any tool_call/tool_result that escaped unwrap
+            # (raw `mcp__pawflow__use_tool` / `use_tool` name with wrapped
+            # args) gets unwrapped here before it reaches the UI / subagent
+            # relay. Prevents `use_tool(tool_name=read, arguments=[object
+            # Object])` from ever being displayed.
+            if event_type in ("tool_call", "tool_result") and isinstance(data, dict):
+                _t = data.get("tool", "")
+                if _t in ("mcp__pawflow__use_tool", "use_tool"):
+                    try:
+                        from core.llm_client import unwrap_mcp_tool
+                        _raw_args = data.get("arguments", {}) or {}
+                        # Defensive parse: CC can forward arguments as a JSON
+                        # string. unwrap_mcp_tool handles that, but only if the
+                        # outer value is a dict-shaped str. Try once more here.
+                        if isinstance(_raw_args, str):
+                            try:
+                                _raw_args = json.loads(_raw_args)
+                            except Exception as _parse_err:
+                                logger.debug(
+                                    "[codex] _pub outer args not JSON, "
+                                    "keeping as string: %s", _parse_err)
+                        _u_name, _u_args = unwrap_mcp_tool(_t, _raw_args)
+                        # If unwrap didn't resolve (still the wrapper name),
+                        # fall back to reading tool_name from the raw args
+                        # so the UI never shows `use_tool(...)`.
+                        if _u_name in ("mcp__pawflow__use_tool", "use_tool") and isinstance(_raw_args, dict):
+                            _u_name = _raw_args.get("tool_name", _t) or _t
+                            _inner = _raw_args.get("arguments", _raw_args)
+                            if isinstance(_inner, str):
+                                try:
+                                    _inner = json.loads(_inner)
+                                except Exception as _inner_err:
+                                    logger.debug(
+                                        "[codex] _pub inner args not "
+                                        "JSON, keeping as string: %s",
+                                        _inner_err)
+                            _u_args = _inner if isinstance(_inner, dict) else _raw_args
+                        data["tool"] = _u_name
+                        if event_type == "tool_call":
+                            data["arguments"] = _u_args
+                        # Only log when the unwrap actually produced a
+                        # different name — "X → X" is noise from the
+                        # no-op branch where raw_args had no usable
+                        # tool_name to peel.
+                        if _u_name != _t:
+                            logger.warning(
+                                "[codex] _pub safety-net unwrapped %s → %s",
+                                _t, _u_name)
+                    except Exception as _unwrap_err:
+                        logger.warning(
+                            "[codex] _pub safety-net unwrap failed "
+                            "for tool=%s event=%s: %s",
+                            _t, event_type, _unwrap_err, exc_info=True)
+            if _subagent_event_cb:
+                try:
+                    _subagent_event_cb(event_type, data)
+                except Exception as _sub_err:
+                    # Never-swallow: log loudly. Do NOT raise — raising
+                    # here would kill the CC stream parse loop for the
+                    # rest of the turn. Log is the pragmatic floor
+                    # (user rule: at minimum log).
+                    logger.error(
+                        "[codex] subagent_event_cb failed for "
+                        "event=%s: %s", event_type, _sub_err, exc_info=True)
+                # Subagent events relay to parent via the callback ONLY;
+                # they must NOT also hit the parent conv's event bus,
+                # otherwise the UI gets duplicates.
+                return
+            if not _event_cid:
+                return
+            if _task_id:
+                data['task_id'] = _task_id
+                data['task_iteration'] = _agent_ctx.get("_task_iteration", 0)
+            # If this turn is a delegate reply, tag the event with
+            # agent_delegate source so the UI groups it under the private
+            # delegate block instead of the main chat.
+            _tm = _agent_ctx.get("_turn_mode") or {}
+            if (_tm.get("type") == "delegate_reply"
+                    and _tm.get("source_agent")
+                    and "source" not in data):
+                data["source"] = {
+                    "type": "agent_delegate",
+                    "from": agent_name or "",
+                    "to": _tm["source_agent"],
+                }
+            # Invariant: user-visible state MUST be on disk before we
+            # publish the SSE that makes it visible. For message_meta with
+            # context_usage, persist the extras synchronously first.
+            # (Earlier commit 056b99e moved this AFTER publish on a daemon
+            # thread to dodge a lock contention issue; that violated the
+            # "visible = persisted" invariant — if the extras lock blocks,
+            # we log loudly and still publish so the gauge doesn't freeze,
+            # but we never skip logging the failure.)
+            # Persist BEFORE publish (strict visible=persisted invariant):
+            # if the gauge value fails to hit disk, don't show a live SSE
+            # value that will disappear on reload — the UI and the
+            # persisted state would disagree. Log loudly and skip the
+            # publish so the inconsistency is visible in logs rather than
+            # silently drifting.
+            #
+            # With `get_extra*` readers now holding the same per-conv
+            # lock as `set_extra`, there's no concurrent file handle on
+            # `extras.json` during the atomic rename — `os.replace`
+            # cannot be blocked by our own reads anymore. A
+            # PermissionError here now signals a real OS-level problem
+            # (disk full, genuine permission issue) and is a bug worth
+            # investigating, not masking.
+            _persist_ok = True
+            if (event_type == "message_meta"
+                    and isinstance(data, dict)
+                    and (data.get("context_used") or 0) > 0
+                    and (data.get("context_max") or 0) > 0
+                    and agent_name):
+                try:
+                    from core.conversation_store import ConversationStore as _CS_pub
+                    _store_pub = _CS_pub.instance()
+                    _cu_map = _store_pub.get_extra(
+                        _event_cid, "context_usage") or {}
+                    _cu_map[agent_name] = {
+                        "used": int(data["context_used"]),
+                        "max": int(data["context_max"]),
+                        "pct": float(data.get("context_pct") or 0),
+                        "updated_at": int(time.time()),
+                    }
+                    _store_pub.set_extra(
+                        _event_cid, "context_usage", _cu_map)
+                except Exception as _ctx_err:
+                    _persist_ok = False
+                    logger.error(
+                        "[codex] context_usage persist FAILED "
+                        "for cid=%s agent=%s: %s — SKIPPING SSE publish "
+                        "to keep visible=persisted invariant. This is a "
+                        "real bug to investigate (not a transient retry "
+                        "case).",
+                        _event_cid, agent_name, _ctx_err, exc_info=True)
+            if not _persist_ok:
+                return
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    _event_cid, event_type, data)
+            except Exception as _pub_err:
+                logger.error(
+                    "[codex] publish_event failed for event=%s "
+                    "cid=%s: %s", event_type, _event_cid, _pub_err,
+                    exc_info=True)
+
+        # Read streaming output — accumulate per turn
+        content_parts: List[str] = []  # final result text
+        last_data: dict = {}
+        _turn_count = 0
+
+        # Per-turn accumulator
+        _turn_text_parts: List[str] = []
+        _turn_tool_calls: list = []
+        _turn_thinking: str = ""
+        # Redacted thinking tracking. CC/Anthropic return extended-thinking
+        # blocks with thinking="" + signature="..." — the content is
+        # encrypted at the API level. We can't show the reasoning but we
+        # CAN surface "Thought for Xs" so the user sees the agent did
+        # reason, and the chat bubble stays visually aligned with the
+        # pre-redaction UX.
+        _turn_thinking_redacted: bool = False
+        _turn_thinking_start: float = 0.0
+        _turn_thinking_end: float = 0.0
+        _tool_results: dict = {}  # tool_use_id → result text
+        # Persistent tool_call_id → unwrapped tool name map. _turn_tool_calls
+        # is cleared on every _flush_turn, so by the time a tool_result for
+        # tool T arrives (potentially several turns after the tool_use that
+        # issued it), the per-turn list can't resolve the name and we'd
+        # fall back to the raw tc_id. Keep a stream-scoped map so the
+        # tool_result handler can always recover the name — critical for
+        # the compact_result short-circuit kill.
+        _stream_tc_names: Dict[str, str] = {}
+        _current_msg_id: str = ""  # track message ID to detect incremental updates
+        # Latest usage observed on an assistant event — used to publish
+        # a fresh context-fill % to the webchat. The `result` event's
+        # usage may sum differently; the last assistant.message.usage
+        # reflects the actual prompt size of the final turn.
+        _latest_usage: dict = {}
+        self._preempt_pending = 0  # reset at start of each stream
+        self._had_preempts_this_turn = False
+        self._result_emitted = False  # set True when CC emits final result
+        self._compacting = False  # set True when CC compact_boundary fires
+        # CC's authoritative context window for the model in use is lifted
+        # from result.modelUsage[model].contextWindow on each result event
+        # and cached PER-STREAM in self._codex_context_window_by_stream
+        # (keyed by (conv_id, agent_name)). The old singleton scalar got
+        # clobbered across concurrent streams (memory_extract / _compact /
+        # multi-agent) on the shared provider — an opus turn would read
+        # back haiku's 200k after an unrelated stream had written it.
+        if not hasattr(self, '_codex_context_window_by_stream'):
+            self._codex_context_window_by_stream = {}
+        # Track text of every preempt sent via stdin during this stream so
+        # we can locate it in CC's session jsonl by content match. Used by
+        # _check_codex_preempt_in_jsonl to determine whether CC has already
+        # responded to the preempt (last assistant after preempt) or not.
+        self._sent_preempt_texts: list = []
+
+        # Compact-drain state: when CC emits compact_boundary we don't
+        # kill+raise immediately anymore. We close CC's stdin (EOF signal),
+        # let the parse loop drain remaining events (per-msg_id flushes
+        # persist each turn through turn_callback), then raise
+        # CCCompactDetected once CC has finished streaming. Killing too
+        # early lost already-emitted tool_use/tool_result blocks that were
+        # still in the pipe buffer — resulting in gaps in shared.jsonl
+        # between the last persisted turn and the compact trigger.
+        _compact_pending = [False]
+        _compact_drain_timer = [None]
+
+        def _inject_catchup():
+            """Check for new messages from other agents and inject via stdin."""
+            if not conv_id or not agent_name:
+                return
+            catchup = self._build_catchup_context(conv_id, agent_name)
+            if not catchup:
+                return
+            _p = getattr(self, '_codex_proc', None)
+            if _p and _p.poll() is None:
+                msg = json.dumps({
+                    "type": "user",
+                    "message": {"role": "user", "content": catchup},
+                })
+                _p.stdin.write(msg + "\n")
+                _p.stdin.flush()
+                self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
+
+        def _flush_turn():
+            """Emit the accumulated turn via turn_callback."""
+            nonlocal _turn_text_parts, _turn_tool_calls, _turn_thinking, content_parts
+            nonlocal _turn_thinking_redacted, _turn_thinking_start, _turn_thinking_end
+            text = "".join(_turn_text_parts).strip()
+            # Drop phantom tool calls: empty inner args + no result (never executed)
+            # For MCP wrapped calls, check the inner arguments, not the wrapper
+            def _has_real_args(t):
+                # Phantom detection is input-only: empty args, empty bash
+                # command, or all-whitespace values. Output-based matching
+                # ("no command provided" in result) was removed — a tool's
+                # OUTPUT can legitimately contain any phrase (git log of a
+                # commit whose message is about the filter itself, grep
+                # over this source file, etc.) and we were silently
+                # dropping real calls + results from the transcript.
+                args = t.get("arguments", {})
+                if not args or args == {}:
+                    return False
+                # MCP wrapper: check inner arguments
+                if t.get("name") == "mcp__pawflow__use_tool" and isinstance(args, dict):
+                    inner = args.get("arguments", {})
+                    # Tolerate flat args: LLM sometimes forgets the "arguments"
+                    # wrapper and places tool args at the top level next to
+                    # tool_name. Harvest them so the call isn't dropped as
+                    # phantom. Symmetric with mcp_bridge.py's flat-args harvest.
+                    if not inner or inner == {}:
+                        _flat = {k: v for k, v in args.items() if k != "tool_name"}
+                        if not _flat:
+                            return False
+                        inner = _flat
+                    # bash with empty/whitespace command (resolve aliases)
+                    from core.llm_client import _TOOL_ALIASES
+                    inner_tool = args.get("tool_name", "")
+                    inner_tool = _TOOL_ALIASES.get(inner_tool, inner_tool)
+                    if inner_tool == "bash" and isinstance(inner, dict) and not str(inner.get("command", "")).strip():
+                        return False
+                    # Any tool where all string values are empty
+                    if isinstance(inner, dict) and inner and all(
+                            not str(v).strip() for v in inner.values()):
+                        return False
+                # Non-MCP bash with empty command
+                if t.get("name") == "bash" and isinstance(args, dict) and not str(args.get("command", "")).strip():
+                    return False
+                return True
+            tc = [t for t in _turn_tool_calls if _has_real_args(t)]
+            _dropped = len(_turn_tool_calls) - len(tc)
+            if _dropped:
+                _dropped_tcs = [t for t in _turn_tool_calls if not _has_real_args(t)]
+                logger.warning("[CODEX-DROPPED] %d phantom tool call(s): %s", _dropped,
+                             json.dumps(_dropped_tcs, default=str, ensure_ascii=False)[:3000])
+            turn_thinking = _turn_thinking
+            # Redacted thinking synthesis: if CC sent thinking blocks with
+            # signature but no content (Anthropic API policy — reasoning
+            # is encrypted at the API level), synthesize a user-visible
+            # placeholder so the UI still renders a "Thought for Xs"
+            # bubble instead of silently dropping the signal.
+            if (not turn_thinking) and _turn_thinking_redacted:
+                _dur_s = max(0.0, _turn_thinking_end - _turn_thinking_start)
+                turn_thinking = (
+                    f"[Thought for {_dur_s:.1f}s — reasoning content "
+                    f"redacted by the Anthropic API; the signature is "
+                    f"preserved in the session so the chain of thought "
+                    f"is carried forward on resume.]")
+            # Attach results to tool calls
+            for t in tc:
+                t["result"] = _tool_results.pop(t.get("id", ""), None)
+            # Attach thinking to first tool_call (legacy tc_msg carrier)
+            # AND pass it through as a 3rd positional to turn_callback so
+            # text-only turns (no tool_calls) can still persist it on the
+            # assistant text message. Without the 3rd positional, thinking
+            # is lost whenever the LLM's reply is pure text.
+            _tc_thinking = turn_thinking
+            for t in tc:
+                t["thinking"] = _tc_thinking
+                _tc_thinking = ""  # only first tc gets thinking
+            _turn_text_parts = []
+            _turn_tool_calls = []
+            _turn_thinking = ""
+            _turn_thinking_redacted = False
+            _turn_thinking_start = 0.0
+            _turn_thinking_end = 0.0
+            # Mark the most recent turn flush — the sentinel-session
+            # EOF nudger in _stall_watchdog uses this as its silence
+            # threshold anchor.
+            _hb_state["last_turn_flush_ts"] = time.monotonic()
+            # codex-live idle is reset by the stdout reader daemon on every
+            # line received — see the touch in _reader_daemon. No need
+            # for a per-turn touch here.
+            # Phantom-only turn: CC emitted a tool_call we dropped at
+            # phantom detection (typo in param name, empty bash command,
+            # whitespace-only args) AND nothing else. Without `text` or
+            # surviving `tc`, the only thing left is `turn_thinking` —
+            # but that thinking was the model "explaining" the phantom
+            # call. Keeping it would persist an orphan assistant row
+            # (content_len=0, tool_calls=0, thinking_len>0) that the
+            # UI renders as a stray "Thought for Xs" bubble polluting
+            # the chat. Drop the turn entirely.
+            _phantom_only = (_dropped > 0 and not tc and not text)
+            if _phantom_only:
+                logger.info(
+                    "[codex] flush turn %d SKIPPED: phantom-only "
+                    "(dropped %d tc, no text, thinking=%d) — not persisted",
+                    _turn_count, _dropped, len(turn_thinking))
+            if (text or tc or turn_thinking) and turn_callback and not _phantom_only:
+                logger.info("[codex] flush turn %d: text=%d chars, tc=%d, thinking=%d, callback=%s",
+                            _turn_count, len(text), len(tc), len(turn_thinking), bool(turn_callback))
+                try:
+                    # Back-compat: old callbacks accept (text, tc). New
+                    # callbacks accept (text, tc, thinking). Introspect
+                    # once so we don't break the surface for anyone.
+                    import inspect as _insp
+                    try:
+                        _nparams = len(_insp.signature(turn_callback).parameters)
+                    except (TypeError, ValueError):
+                        _nparams = 2
+                    if _nparams >= 3:
+                        turn_callback(text, tc, turn_thinking)
+                    else:
+                        turn_callback(text, tc)
+                except Exception as e:
+                    logger.error("[codex] turn_callback error: %s", e,
+                                 exc_info=True)
+            elif text or tc:
+                # Internal sentinel sessions (e.g. "_compact" summarizer,
+                # "_memory_extract") run without a turn_callback by design —
+                # they aggregate the result in content_parts. Log at INFO
+                # so that summarizer / memory-extract behavior is visible
+                # when these sessions misbehave (CC saturating, looping on
+                # phantom tool calls, etc.). Includes a tool-name digest
+                # so debugging doesn't require enabling DEBUG everywhere.
+                _is_sentinel = conv_id.startswith("_") if conv_id else False
+                # mcp__pawflow__use_tool is the meta-dispatch tool — the
+                # ACTUAL useful info is in its `tool_name` argument
+                # ("read", "compact_result", …). Without unwrapping it,
+                # every log line just says "use_tool" and you can't tell
+                # the summarizer apart from a phantom call.
+                def _tc_label(t):
+                    name = t.get("name", "?")
+                    args = t.get("arguments") or {}
+                    if name == "mcp__pawflow__use_tool" and isinstance(args, dict):
+                        inner = args.get("tool_name") or "?"
+                        inner_args = args.get("arguments") or {}
+                        # Add a single distinguishing arg per inner tool
+                        if inner == "read":
+                            _p = (inner_args.get("path") or "")[:24]
+                            _o = inner_args.get("offset")
+                            _l = inner_args.get("limit")
+                            return (f"use_tool/read({_p}"
+                                    + (f",off={_o}" if _o else "")
+                                    + (f",lim={_l}" if _l else "") + ")")
+                        if inner == "compact_result":
+                            _slen = len(str(inner_args.get("summary", "")))
+                            return f"use_tool/compact_result(summary={_slen}c)"
+                        return f"use_tool/{inner}"
+                    return name
+                _tc_names = ",".join(_tc_label(t) for t in tc)[:200]
+                if _is_sentinel:
+                    logger.info("[codex] flush turn %d (sentinel '%s'): "
+                                "text=%d, tc=%d [%s]",
+                                _turn_count, conv_id, len(text), len(tc),
+                                _tc_names)
+                else:
+                    logger.warning("[codex] flush turn %d but NO turn_callback: "
+                                   "text=%d, tc=%d [%s]",
+                                   _turn_count, len(text), len(tc), _tc_names)
+                # Tell webchat to finalize current streaming element
+                _pub("turn_complete", {
+                    "agent_name": agent_name,
+                    "turn": _turn_count,
+                })
+                # Clear content_parts — intermediate turns are persisted
+                # by turn_callback. Only the LAST turn stays in content_parts
+                content_parts.clear()
+
+        # Stall watchdog: if CC emits a system event (init or compact_boundary)
+        # but produces no assistant response within _STALL_TIMEOUT seconds,
+        # kill the process. The retry loop in stream_chat will relaunch
+        # a fresh CC process with the same session.
+        # Read from the LLM service config (timeout property) so users can
+        # tune it without touching code.
+        _STALL_TIMEOUT = int(getattr(self, "timeout", 120) or 120)
+        _stall_start_time = 0.0  # time.monotonic() when stall watch begins
+        _got_assistant = False   # set True on first assistant event
+        _last_tool_result_time = 0.0  # monotonic time of last tool_result with no pending tools
+        _pending_tool_ids = set()     # tool_use ids awaiting results
+        _emitted_sse_tcs = set()      # tool_use ids for which we sent a SSE tool_call
+        _compact_result_done = False  # flip when compact_result tool delivers
+
+        # Phantom tool call detector: if CC emits too many empty/phantom
+        # tool calls in a short window, it likely lost context after a bad
+        # internal compact. Trigger a PawFlow compact to recover.
+        _PHANTOM_WINDOW = 300   # 5 minutes
+        _PHANTOM_THRESHOLD = 10
+        _phantom_timestamps: list = []  # monotonic timestamps of phantom detections
+
+        _watchdog_stop = threading.Event()
+
+        def _record_phantom(tool_name: str, block_id: str):
+            """Record a phantom tool call. If threshold exceeded, trigger compact."""
+            now = time.monotonic()
+            _phantom_timestamps.append(now)
+            # Prune entries outside window
+            cutoff = now - _PHANTOM_WINDOW
+            while _phantom_timestamps and _phantom_timestamps[0] < cutoff:
+                _phantom_timestamps.pop(0)
+            count = len(_phantom_timestamps)
+            if count >= _PHANTOM_THRESHOLD:
+                logger.warning(
+                    "[codex] %d phantom tool calls in %ds window "
+                    "(latest: %s id=%s) -- killing CC, PawFlow will compact",
+                    count, _PHANTOM_WINDOW, tool_name, block_id)
+                if _compact_pending[0]:
+                    return
+                self._compacting = True
+                _compact_pending[0] = True
+                # Same rationale as the compact_boundary branch: flush any
+                # real pre-phantom turn still sitting in the per-turn
+                # accumulator, then kill host + container-side claude CLI
+                # immediately. No drain window — phantom tool calls are
+                # the symptom of a blown context and keeping the stream
+                # open only lets CC emit more garbage that we'd pollute
+                # the transcript with.
+                try:
+                    _flush_turn()
+                except Exception as _fe:
+                    logger.error(
+                        "[codex] pre-phantom-compact flush failed: %s",
+                        _fe, exc_info=True)
+                self._kill_codex_hard(proc)
+
+        self._stall_killed = False  # set by watchdog — retry must be unconditional
+
+        # Heartbeat state for observability — updated by the main event
+        # loop so the watchdog (and anyone reading logs) can see WHERE
+        # we are when nothing moves for long stretches.
+        #
+        # On reuse we share the session's hb_state dict by reference so
+        # the original reader daemon (captured at spawn time) keeps
+        # writing into the SAME object this turn's watchdog reads. We
+        # reset the per-turn counters in place rather than allocating a
+        # fresh dict, which would orphan the reader's closure.
+        if _is_reuse and _live_session.hb_state is not None:
+            _hb_state = _live_session.hb_state
+            _hb_state.update({
+                "last_event_ts": 0.0,
+                "last_event_kind": "",
+                "last_dispatched_tc": "",
+                "last_tool_result_id": "",
+                "stream_line_count": 0,
+                "last_turn_flush_ts": 0.0,
+                "stdin_closed": False,
+            })
+        else:
+            _hb_state = {
+                "last_event_ts": 0.0,       # time.monotonic() of last stdout line read
+                "last_event_kind": "",      # 'assistant', 'user', 'system', 'result', ...
+                "last_dispatched_tc": "",   # last tool_use dispatched (id + name)
+                "last_tool_result_id": "",  # last tool_result received
+                "stream_line_count": 0,     # total lines read from CC stdout
+                "last_turn_flush_ts": 0.0,  # monotonic of last _flush_turn
+                "stdin_closed": False,      # True once we sent EOF on stdin
+            }
+        # Sentinel-session EOF nudge: after _SENTINEL_EOF_INTERVAL
+        # seconds of silence on a _compact/_memory_extract session,
+        # close proc.stdin to signal EOF to CC. CC interprets this as
+        # "no more user input" and finalises its current turn (LLM
+        # reply included), which in practice flushes the buffered
+        # JSON events to stdout so our reader sees them. Does NOT
+        # kill CC (the process keeps running until it decides to
+        # exit on its own). The 300s stall watchdog remains as a
+        # hard fallback if EOF doesn't suffice.
+        _is_sentinel_conv = bool(conv_id) and conv_id.startswith("_")
+        _SENTINEL_EOF_INTERVAL = 10.0
+
+        def _stall_watchdog():
+            pass  # _stall_killed is on self
+            while not _watchdog_stop.is_set():
+                if _stall_start_time and not _got_assistant:
+                    elapsed = time.monotonic() - _stall_start_time
+                    if elapsed >= _STALL_TIMEOUT:
+                        logger.warning(
+                            "[codex] Stall detected (%.0fs with no assistant "
+                            "response, budget=%.0fs) — killing process for retry. "
+                            "hb: lines_read=%d last_event=%s@%.0fs last_tc=%s "
+                            "last_tr=%s pending=%s",
+                            elapsed, _STALL_TIMEOUT,
+                            _hb_state["stream_line_count"],
+                            _hb_state["last_event_kind"] or "(none)",
+                            time.monotonic() - _hb_state["last_event_ts"]
+                              if _hb_state["last_event_ts"] else -1,
+                            _hb_state["last_dispatched_tc"] or "(none)",
+                            _hb_state["last_tool_result_id"] or "(none)",
+                            sorted(_pending_tool_ids)[:5])
+                        self._stall_killed = True
+                        try:
+                            proc.kill()
+                        except OSError:
+                            pass
+                        return
+                # Tool result stall: all tools resolved but no assistant response
+                if _last_tool_result_time and not _pending_tool_ids:
+                    elapsed = time.monotonic() - _last_tool_result_time
+                    if elapsed >= _STALL_TIMEOUT:
+                        logger.warning(
+                            "[codex] Tool-result stall (%.0fs since last "
+                            "tool_result, no pending tools, no assistant) "
+                            "— killing for retry. hb: lines_read=%d "
+                            "last_event=%s@%.0fs last_tc=%s last_tr=%s",
+                            elapsed,
+                            _hb_state["stream_line_count"],
+                            _hb_state["last_event_kind"] or "(none)",
+                            time.monotonic() - _hb_state["last_event_ts"]
+                              if _hb_state["last_event_ts"] else -1,
+                            _hb_state["last_dispatched_tc"] or "(none)",
+                            _hb_state["last_tool_result_id"] or "(none)")
+                        self._stall_killed = True
+                        try:
+                            proc.kill()
+                        except OSError:
+                            pass
+                        return
+                # Sentinel-session EOF nudge: when a _compact /
+                # _memory_extract session goes silent for
+                # _SENTINEL_EOF_INTERVAL AND we're not waiting on a
+                # pending tool, close proc.stdin. CC sees EOF on its
+                # stdin (stream-json input is done) and finalises its
+                # current turn — LLM reply, any pending tool_use,
+                # compact_result — then exits cleanly. This replicates
+                # what the stall watchdog's proc.kill() incidentally
+                # achieves (pipe close on our side → Python unblocks
+                # from readline), but WITHOUT killing CC. One-shot per
+                # stream: once stdin is closed we can't re-open it, so
+                # stdin_closed flag guards re-entry.
+                if (_is_sentinel_conv
+                        and not _hb_state["stdin_closed"]
+                        and _hb_state["last_turn_flush_ts"]
+                        and not _pending_tool_ids):
+                    _since_turn = (time.monotonic()
+                                    - _hb_state["last_turn_flush_ts"])
+                    if _since_turn >= _SENTINEL_EOF_INTERVAL:
+                        try:
+                            if proc.stdin and not proc.stdin.closed:
+                                proc.stdin.close()
+                                _hb_state["stdin_closed"] = True
+                                logger.info(
+                                    "[codex] sentinel '%s' idle "
+                                    "%.0fs since last turn — closed "
+                                    "stdin (EOF nudge, NOT a kill)",
+                                    conv_id, _since_turn)
+                        except (OSError, BrokenPipeError) as _eof_err:
+                            logger.debug(
+                                "[codex] EOF nudge failed: %s",
+                                _eof_err)
+
+                # DEBUG heartbeat every 30s. Kept at debug so default
+                # deployments don't log every half-minute on every
+                # healthy stream; enable when chasing a specific hang
+                # via the usual logger config. The stall watchdog's
+                # kill log still fires at WARNING with the same state
+                # snapshot for the worst case.
+                if not hasattr(_stall_watchdog, '_dbg_count'):
+                    _stall_watchdog._dbg_count = 0
+                _stall_watchdog._dbg_count += 1
+                if _stall_watchdog._dbg_count % 6 == 0:  # every 30s
+                    _now = time.monotonic()
+                    _since_evt = (_now - _hb_state["last_event_ts"]
+                                   if _hb_state["last_event_ts"] else -1)
+                    _since_tr = (_now - _last_tool_result_time
+                                  if _last_tool_result_time else -1)
+                    logger.debug(
+                        "[codex] hb: lines_read=%d last_event=%s (%.0fs ago) "
+                        "last_tc=%s last_tr=%s pending=%s got_asst=%s since_tr=%.0fs",
+                        _hb_state["stream_line_count"],
+                        _hb_state["last_event_kind"] or "(none)",
+                        _since_evt,
+                        _hb_state["last_dispatched_tc"] or "(none)",
+                        _hb_state["last_tool_result_id"] or "(none)",
+                        sorted(_pending_tool_ids)[:5],
+                        _got_assistant, _since_tr)
+                _watchdog_stop.wait(5)
+
+        _watchdog_thread = threading.Thread(target=_stall_watchdog, daemon=True)
+        _watchdog_thread.start()
+
+        # Reader daemon: pure stdout → event queue pump. Decouples IO
+        # from dispatch so the dispatch loop can block on a single
+        # queue.get() and react promptly to proc death / sentinel EOF
+        # without polling stdout directly.
+        #
+        # On reuse: the original reader is still draining the same
+        # proc.stdout. We adopt its queue + thread + stop_event; any
+        # stale events sitting in the queue from between-turn idle are
+        # unexpected (CC stays quiet after `result`) but the dispatch
+        # loop below still short-circuits on `result` so they'd be
+        # harmless at worst.
+        if _is_reuse:
+            _event_q = _live_session.event_q
+            _reader_thread = _live_session.reader_thread
+            _reader_stop = _live_session.stop_event
+        else:
+            _event_q = queue.Queue()
+            _reader_stop = threading.Event()
+
+            def _reader_daemon():
+                try:
+                    for _line in proc.stdout:
+                        if _reader_stop.is_set():
+                            break
+                        _hb_state["stream_line_count"] += 1
+                        _hb_state["last_event_ts"] = time.monotonic()
+                        # Reset codex-live idle on EVERY line received from
+                        # CC's stdout. This is the simplest correct
+                        # invariant: any byte coming back from CC means
+                        # the session is actively streaming — the idle
+                        # sweeper must not race with any in-flight
+                        # turn, init handshake, slow tool reply, long
+                        # thinking block, etc. bump_reuse=False because
+                        # one stream call is one logical reuse — the
+                        # counter is bumped at REUSE entry, not per
+                        # line.
+                        if _live_key is not None:
+                            try:
+                                _live_reg.touch(_live_key, bump_reuse=False)
+                            except Exception:
+                                pass
+                        _line = _line.strip()
+                        if not _line:
+                            continue
+                        try:
+                            _ev = json.loads(_line)
+                        except json.JSONDecodeError:
+                            continue
+                        # Defensive: event must be a dict. When the stream
+                        # is wrapped in a PTY (script -qfc), extra terminal
+                        # output like "Script started" banners or control
+                        # sequences can produce parseable-but-non-dict
+                        # JSON (e.g. a bare string literal). Log once and
+                        # skip instead of exploding on .get().
+                        if not isinstance(_ev, dict):
+                            logger.warning(
+                                "[codex] non-dict JSON ignored (%s): %r",
+                                type(_ev).__name__, str(_ev)[:200])
+                            continue
+                        _event_q.put(_ev)
+                except Exception as _re_err:
+                    logger.debug("[codex-reader] stdout read failed: %s", _re_err)
+                finally:
+                    _event_q.put(_CODEX_READER_EOF)
+
+            _reader_thread = threading.Thread(
+                target=_reader_daemon, daemon=True, name="codex-reader")
+            _reader_thread.start()
+
+        # Live-session reuse decision: set to True ONLY after a clean
+        # result-event break AND no compact/stall/auth failure. Any
+        # other exit path (EOF, exception, compact, stall) leaves this
+        # False so the `finally` block tears down the proc as usual.
+        _keep_alive = False
+        # Defensive init: post-finally code reads _stderr inside an
+        # `if proc.returncode ...` branch that stays skipped on the
+        # keep-alive path (proc still running → returncode=None). Setting
+        # to "" here keeps the name bound even if finally takes the
+        # keep-alive branch that skips _cleanup_proc.
+        _stderr = ""
+
+        try:
+            while True:
+                event = _event_q.get()
+                if event is _CODEX_READER_EOF:
+                    break
+
+                etype = event.get("type", "")
+                _hb_state["last_event_kind"] = etype
+                _parent_tc_id = event.get("parent_tool_use_id") or ""
+                # Raw event dump at DEBUG. Confirmed CC 1.0+ sends
+                # complete `assistant` events (no content_block_delta)
+                # with thinking blocks redacted (thinking="" + signature).
+                logger.debug("[codex-raw] %s %.500s", etype, json.dumps(event))
+
+                if etype == "system":
+                    # Capture AND persist session_id from init event immediately.
+                    # Must be in ConversationStore before any preempt triggers
+                    # _prepare_agent_context (which checks for session to skip compact).
+                    sid = event.get("session_id", "")
+                    if sid:
+                        self._current_session_id = sid
+                    subtype = event.get("subtype", "")
+                    # Only the init event announces a (re)used session. Other
+                    # system events (compact_boundary, status, etc.) also
+                    # carry session_id — without this guard each one logged
+                    # "NEW session" with the same sid, flooding the logs.
+                    if sid and conv_id and subtype == "init":
+                        _tag = (f"{user_id[:6] or '?'}/{conv_id[:8] or '?'}/"
+                                f"{agent_name or 'default'}")
+                        if session_id and sid != session_id:
+                            logger.warning(
+                                "[codex][%s] SESSION MISMATCH: sent --resume %s but CC returned %s "
+                                "(resume FAILED — CC created new session)",
+                                _tag, session_id[:12], sid[:12])
+                        elif session_id and sid == session_id:
+                            logger.info("[codex][%s] RESUME OK: session %s reused",
+                                        _tag, sid[:12])
+                        else:
+                            logger.info("[codex][%s] NEW session: %s",
+                                        _tag, sid[:12])
+                        try:
+                            from core.conversation_store import ConversationStore
+                            ConversationStore.instance().set_extra(
+                                conv_id,
+                                f"codex_session:{agent_name or 'default'}",
+                                sid)
+                        except Exception:
+                            logger.debug("exception suppressed", exc_info=True)
+                    # compact_boundary → drain CC stream + PawFlow compact; init → arm stall watchdog
+                    if subtype == "compact_boundary" or (
+                            subtype == "status" and event.get("status") == "compacting"):
+                        # Sentinel sessions (_compact, _memory_extract, …)
+                        # are themselves PawFlow compactions. If CC saturates
+                        # mid-summarization, let it run its own internal
+                        # compact — interrupting would either loop forever
+                        # (compact-of-compact) or destroy the in-flight
+                        # summarization. Preempt-on-compact only applies
+                        # to normal user sessions where PawFlow's bucket
+                        # cache produces a better result than CC's auto.
+                        _is_sentinel = conv_id.startswith("_") if conv_id else False
+                        if _is_sentinel:
+                            logger.info("[codex] CC self-compacting in "
+                                         "sentinel '%s' — letting it continue",
+                                         conv_id)
+                            continue
+                        if _compact_pending[0]:
+                            continue
+                        logger.warning(
+                            "[codex] CC compacting detected (subtype=%s) "
+                            "— flushing pre-compact turn, killing CC, "
+                            "PawFlow will compact", subtype)
+                        # Set BEFORE killing so any racing send_user_message
+                        # from another thread sees the flag and refuses,
+                        # routing the user message via PendingQueue.
+                        self._compacting = True
+                        _compact_pending[0] = True
+                        # compact_boundary is the LAST useful event from CC
+                        # for this turn — everything that follows is CC's own
+                        # summary + post-compact work we do NOT want
+                        # ingested. Do not drain. But the turn that fired
+                        # compact may still hold unflushed events in the
+                        # per-turn accumulator: if CC streamed
+                        # tool_use + tool_result + assistant text inside the
+                        # same msg_id and compact_boundary fired before the
+                        # next msg_id rollover, those items were only in
+                        # CC's .jsonl and never made it to the PawFlow
+                        # transcript / webchat. Force-flush now so nothing
+                        # emitted pre-compact is lost.
+                        try:
+                            _flush_turn()
+                        except Exception as _fe:
+                            logger.error(
+                                "[codex] pre-compact flush failed: %s",
+                                _fe, exc_info=True)
+                        # Kill host AND container-side claude. Without the
+                        # container-side kill the claude CLI survives as an
+                        # orphan inside the pool container and keeps running
+                        # in parallel with the replacement session PawFlow
+                        # is about to spawn.
+                        self._kill_codex_hard(proc)
+                        break
+                    if subtype == "init":
+                        _stall_start_time = time.monotonic()
+                        _got_assistant = False
+                        logger.info("[codex][%s/%s/%s] init — stall watchdog armed (%.0fs timeout)",
+                                    user_id[:6] or '?', conv_id[:8] or '?',
+                                    agent_name or 'default', _STALL_TIMEOUT)
+                    continue
+
+                if etype == "assistant":
+                    # Got a response — stall watchdog disarmed
+                    _got_assistant = True
+                    _last_tool_result_time = 0.0
+
+                    msg = event.get("message", {})
+                    msg_id = msg.get("id", "")
+                    # Capture freshest usage — each assistant event carries
+                    # message.usage with current prompt size (input + cache).
+                    # Emit a live `message_meta` so the webchat gauge updates
+                    # mid-turn instead of waiting for the final `result`.
+                    # Skip when usage didn't actually change (CC sometimes
+                    # re-emits the same assistant event for incremental
+                    # blocks of the same msg_id).
+                    _u = msg.get("usage")
+                    if isinstance(_u, dict) and _u != _latest_usage:
+                        _latest_usage = _u
+                        _ctx_used_live = (_u.get("input_tokens", 0)
+                                          + _u.get("cache_creation_input_tokens", 0)
+                                          + _u.get("cache_read_input_tokens", 0))
+                        # Only CC's own contextWindow (cached from the
+                        # previous result.modelUsage), scoped per-stream
+                        # to avoid singleton pollution across concurrent
+                        # streams — no service-config or 200k default.
+                        # Until the first result event lands, _ctx_max_live
+                        # stays 0 and the UI skips the gauge (truth over
+                        # pretend number).
+                        _cw_map_live = getattr(self, '_codex_context_window_by_stream', None) or {}
+                        _ctx_max_live = int(_cw_map_live.get(
+                            (conv_id or "", agent_name or ""), 0) or 0)
+                        _ctx_pct_live = (_ctx_used_live / _ctx_max_live
+                                         if _ctx_max_live > 0 else 0.0)
+                        _pub("message_meta", {
+                            "msg_id": msg_id,
+                            "agent_name": agent_name,
+                            "context_used": _ctx_used_live,
+                            "context_max": _ctx_max_live,
+                            "context_pct": _ctx_pct_live,
+                            "live": True,  # flag: mid-turn (real, not estimate)
+                        })
+
+                    # Codex sends INCREMENTAL updates for the same message:
+                    # event 1: [thinking], event 2: [text], event 3: [tool_use]
+                    # Each event has ONLY the new block, not all blocks.
+                    # Same msg_id = same turn → just append (don't clear).
+                    if msg_id and msg_id != _current_msg_id:
+                        # New message — flush previous turn
+                        if _turn_count > 0:
+                            _flush_turn()
+                            _inject_catchup()
+                        _turn_count += 1
+                        _current_msg_id = msg_id
+                    for block in msg.get("content", []):
+                        btype = block.get("type", "")
+                        if btype == "text":
+                            text = block.get("text", "")
+                            if text:
+                                _turn_text_parts.append(text)
+                                content_parts.append(text)
+                                if callback:
+                                    callback(text)
+                        elif btype == "tool_use":
+                            logger.debug("[CODEX-RAW-TOOL] block=%s", json.dumps(block, default=str, ensure_ascii=False))
+                            _block_id = block.get("id", "")
+                            _block_entry = {
+                                "name": block.get("name", ""),
+                                "arguments": block.get("input", {}),
+                                "id": _block_id,
+                            }
+                            # Dedup: Codex may send the same tool_use block
+                            # multiple times for the same msg_id (incremental updates).
+                            # First time: input={} (empty), later: input={real args}.
+                            # Replace by id instead of blindly appending.
+                            _existing_idx = None
+                            for _i, _tc in enumerate(_turn_tool_calls):
+                                if _tc.get("id") == _block_id:
+                                    _existing_idx = _i
+                                    break
+                            if _existing_idx is not None:
+                                _turn_tool_calls[_existing_idx] = _block_entry
+                            else:
+                                _turn_tool_calls.append(_block_entry)
+                            _pending_tool_ids.add(_block_id)
+                            # Remember the unwrapped tool name for this
+                            # id across the whole stream, not just the
+                            # current turn. Used when tool_result comes
+                            # back after the tool_use's turn has been
+                            # flushed (common when CC emits many tool
+                            # calls in quick succession).
+                            try:
+                                from core.llm_client import unwrap_mcp_tool
+                                _persist_name, _ = unwrap_mcp_tool(
+                                    block.get("name", ""),
+                                    block.get("input", {}) or {})
+                                if _block_id and _persist_name:
+                                    _stream_tc_names[_block_id] = _persist_name
+                                    _hb_state["last_dispatched_tc"] = (
+                                        f"{_persist_name}({_block_id[:8]})")
+                            except Exception:
+                                pass
+                            # Unwrap MCP wrapper for display:
+                            # mcp__pawflow__use_tool(tool_name=X, arguments={...})
+                            # → X({...})  (with alias resolution: shell→bash etc.)
+                            _tc_name = block.get("name", "")
+                            _tc_args = block.get("input", {})
+                            from core.llm_client import unwrap_mcp_tool
+                            _tc_name, _tc_args = unwrap_mcp_tool(_tc_name, _tc_args)
+                            # Don't emit SSE for empty-arg tool calls — likely
+                            # an incremental update that will be followed by the
+                            # real one with actual arguments.
+                            if not _tc_args or _tc_args == {} or _tc_args == "{}":
+                                logger.warning("[codex] skipping SSE for empty tool_use %s (id=%s) — awaiting args",
+                                             _tc_name, _block_id)
+                                continue
+                            # Skip bash with empty/missing/whitespace command
+                            if _tc_name == "bash" and isinstance(_tc_args, dict) and not str(_tc_args.get("command", "")).strip():
+                                logger.warning("[codex] skipping SSE for bash with empty command (id=%s)", _block_id)
+                                _record_phantom(_tc_name, _block_id)
+                                continue
+                            # Skip any tool where ALL string values are empty
+                            if isinstance(_tc_args, dict) and _tc_args and all(
+                                    not str(v).strip() for v in _tc_args.values()):
+                                logger.warning("[codex] skipping SSE for %s with all-empty args (id=%s)", _tc_name, _block_id)
+                                _record_phantom(_tc_name, _block_id)
+                                continue
+                            # Skip meta tools from SSE
+                            if _tc_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
+                                continue
+                            _tc_event = {
+                                "tool": _tc_name,
+                                "arguments": _tc_args,
+                                "tc_id": _block_id,
+                                "agent_name": agent_name,
+                                "llm_service": getattr(self, '_agent_service', ""),
+                                "via": "codex",
+                                "ts": time.time(),
+                            }
+                            if _parent_tc_id:
+                                _tc_event["parent_tc_id"] = _parent_tc_id
+                            # IMMUTABLE RULE: stdout → LLMMessage → writer
+                            # → transcript/shared/ctx → SSE (post-write).
+                            # Flush THIS tool_use block now via
+                            # block_callback so the UI sees tool_call
+                            # live (lets the user click BG/Kill while
+                            # the tool is still running). Waiting for
+                            # the turn boundary would hide the tool_call
+                            # until AFTER tool_result landed — same
+                            # block of SSE, no way to interject.
+                            _emitted_sse_tcs.add(_block_id)
+                            if block_callback:
+                                try:
+                                    _bc_payload = {
+                                        "id": _block_id,
+                                        "name": block.get("name", "") or _tc_name,
+                                        "arguments": block.get("input", _tc_args),
+                                        "thinking": _turn_thinking,
+                                    }
+                                    if _parent_tc_id:
+                                        _bc_payload["parent_tc_id"] = _parent_tc_id
+                                    block_callback("tool_use", _bc_payload)
+                                    # Thinking consumed by block_callback
+                                    # (attached to the tc_msg). Clear so
+                                    # end-of-turn flush doesn't re-emit.
+                                    _turn_thinking = ""
+                                except Exception as _bc_err:
+                                    logger.error(
+                                        "[codex] block_callback tool_use failed: %s",
+                                        _bc_err, exc_info=True)
+                            # Register the CC tool_use id so tool_relay_service
+                            # can match it when the MCP bridge forwards the
+                            # same call (its request_id is a different uuid).
+                            # Required for kill / background to target the
+                            # right in-flight call when CC runs tools in //.
+                            try:
+                                from core.background_tool import (
+                                    enqueue_cc_tc, _args_hash,
+                                )
+                                from core.llm_client import unwrap_mcp_tool
+                                _match_name, _match_args = unwrap_mcp_tool(
+                                    _tc_name, _tc_args or {})
+                                enqueue_cc_tc(
+                                    conv_id, agent_name, _block_id,
+                                    _match_name, _args_hash(_match_args))
+                            except Exception as _ee:
+                                logger.debug(
+                                    "[codex] enqueue_cc_tc skipped: %s",
+                                    _ee)
+                        elif btype == "thinking":
+                            thinking = block.get("thinking", "")
+                            _has_sig = bool(block.get("signature"))
+                            logger.info(
+                                "[codex-stream] thinking block: len=%d sig=%s preview=%r",
+                                len(thinking), _has_sig, thinking[:120])
+                            if thinking:
+                                # Raw reasoning text exposed (rare now;
+                                # Anthropic redacts by default). Persist
+                                # verbatim.
+                                _turn_thinking = thinking
+                            elif _has_sig:
+                                # Redacted thinking: signature without
+                                # content. Mark the turn so _flush_turn
+                                # can synthesize a "Thought for Xs"
+                                # placeholder — user gets a visual cue
+                                # that reasoning happened even though
+                                # the API strips the text.
+                                _turn_thinking_redacted = True
+                                if _turn_thinking_start == 0.0:
+                                    _turn_thinking_start = time.time()
+                                _turn_thinking_end = time.time()
+                    # Update turn count on status
+                    _pub("heartbeat", {
+                        "agent_name": agent_name,
+                        "status": f"turn {_turn_count}",
+                        "iteration": _turn_count,
+                    })
+                    last_data = msg
+
+                elif etype == "user":
+                    # Tool results — capture for persistence + forward to webchat
+                    msg = event.get("message", {})
+                    for block in msg.get("content", []):
+                        if block.get("type") == "tool_result":
+                            logger.debug("[CODEX-RAW-RESULT] block=%s", json.dumps(block, default=str, ensure_ascii=False)[:2000])
+                            tc_id = block.get("tool_use_id", "")
+                            result_text = block.get("content", "")
+                            if isinstance(result_text, list):
+                                # Content blocks format
+                                result_text = " ".join(
+                                    b.get("text", "") for b in result_text
+                                    if isinstance(b, dict))
+                            result_str = str(result_text) if result_text else "(no output)"
+                            # Store for turn_callback persistence
+                            if tc_id:
+                                _tool_results[tc_id] = result_str
+                                _pending_tool_ids.discard(tc_id)
+                                _hb_state["last_tool_result_id"] = (
+                                    f"{tc_id[:8]}={len(result_str)}c")
+                                if not _pending_tool_ids:
+                                    _last_tool_result_time = time.monotonic()
+                            # Resolve tool name. Try the stream-scoped
+                            # map first (survives turn flushes), fall
+                            # back to _turn_tool_calls for robustness.
+                            # Without this, the compact_result short-
+                            # circuit would miss whenever the tool_use
+                            # was in a flushed earlier turn.
+                            _tr_name = _stream_tc_names.get(tc_id, "")
+                            if not _tr_name:
+                                _tr_name = tc_id
+                                for _tc in _turn_tool_calls:
+                                    if _tc.get("id") == tc_id:
+                                        from core.llm_client import unwrap_mcp_tool
+                                        _tr_name, _ = unwrap_mcp_tool(
+                                            _tc.get("name", tc_id), _tc.get("arguments", {}))
+                                        break
+                            # Skip meta tool results from SSE
+                            if _tr_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
+                                continue
+                            # Suppress the tool_result SSE iff we suppressed the
+                            # matching tool_call (phantom: empty args / empty
+                            # bash command / all-empty args — see filters above).
+                            # Output-based detection ("no command provided" in
+                            # result_str) was wrong in two ways — it swallowed
+                            # legitimate Read results containing the phrase in
+                            # source, AND legitimate bash output containing it
+                            # (git log picks up commit e59a188's own message:
+                            # 'Fix: scope "no command provided" phantom filter
+                            # to bash only' on any command touching this file).
+                            # Phantom detection is input-only.
+                            if tc_id and tc_id not in _emitted_sse_tcs:
+                                continue
+                            _tr_event = {
+                                "tool": _tr_name,
+                                "result": result_str[:300],
+                                "tc_id": tc_id,
+                                "agent_name": agent_name,
+                                "llm_service": getattr(self, '_agent_service', ""),
+                                "via": "codex",
+                            }
+                            if _parent_tc_id:
+                                _tr_event["parent_tc_id"] = _parent_tc_id
+                            # IMMUTABLE RULE: stdout → LLMMessage → writer
+                            # → transcript/shared/ctx → SSE (post-write).
+                            # Flush THIS tool_result block now via
+                            # block_callback. Paired with the live
+                            # tool_use flush above: the tc_msg landed
+                            # when CC emitted tool_use (UI saw it
+                            # live); the tr_msg lands here when the
+                            # result comes back. Together they replace
+                            # the previous end-of-turn bundle where
+                            # both landed together and the UI saw the
+                            # tool_call only AFTER the result was in.
+                            if block_callback:
+                                try:
+                                    _br_payload = {
+                                        "tc_id": tc_id,
+                                        "tool": _tr_name,
+                                        "result": result_str,
+                                    }
+                                    if _parent_tc_id:
+                                        _br_payload["parent_tc_id"] = _parent_tc_id
+                                    block_callback("tool_result", _br_payload)
+                                    # Consumed by block_callback: drop
+                                    # from _tool_results so end-of-turn
+                                    # flush doesn't double-persist.
+                                    _tool_results.pop(tc_id, None)
+                                except Exception as _br_err:
+                                    logger.error(
+                                        "[codex] block_callback tool_result failed: %s",
+                                        _br_err, exc_info=True)
+                            # compact_result is terminal: once CC has
+                            # delivered the summary, everything it emits
+                            # afterwards is post-summary fluff we don't
+                            # ingest (and CC often just stalls waiting
+                            # for more input until the 180s watchdog
+                            # fires). Treat it like compact_boundary —
+                            # flush the current turn and kill CC now so
+                            # the caller (_summarize_via_cc) wakes up
+                            # immediately instead of after a 3-minute
+                            # stall timeout.
+                            if _tr_name == "compact_result":
+                                logger.info(
+                                    "[codex] compact_result "
+                                    "delivered — flushing + killing CC "
+                                    "to end stream")
+                                try:
+                                    _flush_turn()
+                                except Exception as _fe:
+                                    logger.error(
+                                        "[codex] pre-compact_result "
+                                        "flush failed: %s",
+                                        _fe, exc_info=True)
+                                self._kill_codex_hard(proc)
+                                _compact_result_done = True
+                                break
+                    if _compact_result_done:
+                        break
+
+                elif etype == "content_block_delta":
+                    delta = event.get("delta", {})
+                    _delta_type = delta.get("type", "")
+                    # Extended thinking is streamed as a sequence of
+                    # content_block_delta events carrying `thinking_delta`
+                    # (with `delta.thinking` = chunk) and a trailing
+                    # `signature_delta` (with `delta.signature`). CC's
+                    # session.jsonl typically persists the final
+                    # `thinking` block with thinking="" + signature only
+                    # (redacted at rest), so the ONLY place the raw
+                    # reasoning text is visible is on the wire here.
+                    # Without this branch the pipeline sees
+                    # `turn_thinking=0` even when the model produced
+                    # real reasoning.
+                    text = delta.get("text", "")
+                    thinking_delta = delta.get("thinking", "")
+                    if thinking_delta or _delta_type == "thinking_delta":
+                        # Some server versions put the chunk in
+                        # `delta.thinking`, others use a nested shape;
+                        # cover both.
+                        _chunk = thinking_delta or delta.get("text", "")
+                        if _chunk:
+                            _turn_thinking += _chunk
+                            logger.debug(
+                                "[codex-stream] thinking_delta: +%d (total=%d)",
+                                len(_chunk), len(_turn_thinking))
+                    elif text:
+                        _turn_text_parts.append(text)
+                        content_parts.append(text)
+                        if callback:
+                            callback(text)
+
+                elif etype == "result":
+                    # Final result — flush last turn and exit the loop
+                    _flush_turn()
+                    # Check for API errors (auth failure, rate limit, etc.)
+                    if event.get("is_error") or event.get("subtype") == "error_during_execution":
+                        _err_text = event.get("result", "")
+                        _errors = event.get("errors", [])
+                        if _errors:
+                            _err_text = _err_text or "; ".join(
+                                e.get("message", str(e)) if isinstance(e, dict) else str(e)
+                                for e in _errors)
+                            logger.error("[codex] errors: %s", _errors)
+                        # Dump the full event body + any stderr lines we've
+                        # accumulated — useful when the "error" is an opaque
+                        # "empty or malformed response" (CC's HTTP client
+                        # sometimes swallows the upstream body and we need
+                        # stderr or the raw event to see what really failed).
+                        try:
+                            _stderr_snapshot = "".join(
+                                getattr(self, "_stderr_buffer", []) or [])[-4000:]
+                            # api_error_status = HTTP status CC's http
+                            # client actually received (None = never got
+                            # a response). duration_api_ms = how long CC
+                            # waited for the response — a few ms means
+                            # the connection failed fast (DNS/refused),
+                            # hundreds of ms means the server answered
+                            # (so the bug is upstream of CC's parser).
+                            _api_status = event.get("api_error_status")
+                            _api_ms = event.get("duration_api_ms")
+                            _term = event.get("terminal_reason", "")
+                            _stop = event.get("stop_reason", "")
+                            _usage = event.get("usage", {}) or {}
+                            logger.error(
+                                "[codex] is_error result: "
+                                "api_error_status=%r duration_api_ms=%r "
+                                "terminal_reason=%r stop_reason=%r "
+                                "subtype=%r _err_text=%r stderr_tail=%r",
+                                _api_status, _api_ms, _term, _stop,
+                                event.get("subtype"),
+                                _err_text[:500], _stderr_snapshot)
+                            # Full event dump at DEBUG — re-enable at
+                            # INFO only when investigating an is_error
+                            # failure (e.g. zero-iteration / proxy
+                            # intercept). Happy path never reaches here.
+                            if logger.isEnabledFor(logging.DEBUG):
+                                import json as _json
+                                logger.debug(
+                                    "[codex] is_error full event: %s",
+                                    _json.dumps(event, default=str,
+                                                 ensure_ascii=False)[:4000])
+                        except Exception:
+                            logger.debug("exception suppressed", exc_info=True)
+                        _lower = _err_text.lower()
+                        _is_auth = (
+                            "authentication" in _lower
+                            or "401" in _err_text
+                            or "not logged in" in _lower
+                            or "please run /login" in _lower
+                            or "unauthorized" in _lower
+                        )
+                        if _is_auth:
+                            if not _auth_retried:
+                                _auth_retried = True
+                                # Step 1: force-refresh the current pool
+                                # credential. 'Not logged in' often just
+                                # means the access_token expired; the
+                                # refresh_token is usually still valid.
+                                # Only if refresh ALSO fails do we mark
+                                # the slot dead and rotate.
+                                _bad_idx = getattr(
+                                    self, '_current_pool_index', _resume_pool_idx)
+                                _refreshed = False
+                                try:
+                                    if _bad_idx >= 0:
+                                        _refreshed = self._force_refresh_pool_entry(_bad_idx)
+                                except Exception as _rf_err:
+                                    logger.warning(
+                                        "[codex] force-refresh pool[%s] "
+                                        "failed: %s", _bad_idx, _rf_err)
+                                # Always invalidate the CC session — the
+                                # old jsonl was bound to the dead token
+                                # and CC won't accept a new token on the
+                                # same --resume session.
+                                if conv_id:
+                                    try:
+                                        ConversationStore.instance().set_extra(
+                                            conv_id,
+                                            f"codex_session:{agent_name or 'default'}",
+                                            "")
+                                    except Exception:
+                                        logger.debug("exception suppressed", exc_info=True)
+                                try:
+                                    if _refreshed:
+                                        logger.warning(
+                                            "[codex] auth failure "
+                                            "('%s') — refreshed pool[%s], "
+                                            "retrying same slot",
+                                            _err_text[:100], _bad_idx)
+                                        self._setup_credentials(
+                                            workdir, pool_index=_bad_idx)
+                                    else:
+                                        _tried = getattr(self, '_tried_pool_idx', set())
+                                        _tried = set(_tried) | {_bad_idx}
+                                        self._tried_pool_idx = _tried
+                                        logger.warning(
+                                            "[codex] auth failure "
+                                            "('%s') — refresh failed, "
+                                            "rotating OAuth pool (tried=%s)",
+                                            _err_text[:100], sorted(_tried))
+                                        self._setup_credentials(
+                                            workdir, pool_index=-1,
+                                            exclude_indices=_tried)
+                                except Exception as _ref_err:
+                                    raise LLMClientError(
+                                        f"Codex auth failed and "
+                                        f"recovery failed: {_ref_err}") from None
+                                raise _Codex401Retry()
+                            raise LLMClientError(
+                                f"Codex auth failed (all pool "
+                                f"credentials exhausted): {_err_text[:300]}")
+                        if event.get("subtype") == "error_during_execution":
+                            # Include the error code/text so LLMClient retry loop can match it
+                            raise LLMClientError(f"Codex error: {_err_text[:300]}")
+                        # is_error without error_during_execution: API error (500, 429, etc.)
+                        # Raise so it reaches the retry loop in LLMClient
+                        if _err_text:
+                            raise LLMClientError(f"Codex API error: {_err_text[:300]}")
+                        logger.warning("[codex] result has is_error=True but no details")
+                    result_text = event.get("result", "")
+                    if not turn_callback and result_text and not content_parts:
+                        content_parts.append(result_text)
+                        if callback:
+                            callback(result_text)
+                    last_data = event
+                    # Publish token stats for the webchat
+                    _usage = event.get("usage", {})
+                    # Total input = direct + cache_read + cache_creation
+                    _total_in = (_usage.get("input_tokens", 0)
+                                 + _usage.get("cache_read_input_tokens", 0)
+                                 + _usage.get("cache_creation_input_tokens", 0))
+                    _total_out = _usage.get("output_tokens", 0)
+                    # model is in modelUsage keys, not at top level
+                    _model_usage = event.get("modelUsage", {})
+                    # Fallback: if usage is empty, sum from modelUsage
+                    if not _total_in and not _total_out and _model_usage:
+                        for _mu in _model_usage.values():
+                            _total_in += (_mu.get("inputTokens", 0)
+                                          + _mu.get("input_tokens", 0)
+                                          + _mu.get("cacheReadInputTokens", 0)
+                                          + _mu.get("cache_read_input_tokens", 0)
+                                          + _mu.get("cacheCreationInputTokens", 0)
+                                          + _mu.get("cache_creation_input_tokens", 0))
+                            _total_out += (_mu.get("outputTokens", 0)
+                                           + _mu.get("output_tokens", 0))
+                    logger.info("[codex] result: usage=%s, modelUsage=%s, tokens=%d/%d",
+                                _usage, _model_usage, _total_in, _total_out)
+                    # Prefer event.get("model") (CC's authoritative
+                    # answer for this turn). When absent, prefer the
+                    # REQUESTED model if present in modelUsage — picking
+                    # the first dict key is non-deterministic and can
+                    # land on a side-task model (e.g. haiku used for
+                    # summarization while opus runs the turn), giving
+                    # the wrong contextWindow.
+                    _event_model = event.get("model") or ""
+                    if _event_model:
+                        _result_model = _event_model
+                    elif _model_usage and model in _model_usage:
+                        _result_model = model
+                    elif _model_usage:
+                        _result_model = list(_model_usage.keys())[0]
+                    else:
+                        _result_model = model
+                    if _total_in or _total_out:
+                        # Get the msg_id of the last assistant message (from turn_callback)
+                        _last_msg_id = ""
+                        try:
+                            _last_msg_id = getattr(self, '_last_turn_msg_id', "") or ""
+                        except Exception:
+                            logger.debug("exception suppressed", exc_info=True)
+                        # Context-fill: exact value from CC stream's last
+                        # assistant.message.usage (prompt size at that point).
+                        # Budget comes from CC itself: result.modelUsage[model]
+                        # .contextWindow is CC's authoritative value
+                        # (src/utils/context.ts::getContextWindowForModel) —
+                        # accounts for 200k default, [1m] suffix beta,
+                        # CLAUDE_CODE_MAX_CONTEXT_TOKENS overrides, etc.
+                        # Using it here keeps PawFlow's gauge aligned with
+                        # what CC itself sees as "context full", so the
+                        # percentage where CC auto-compacts (≈98% of the
+                        # effective window, cf. AUTOCOMPACT_BUFFER_TOKENS
+                        # in src/services/compact/autoCompact.ts) matches
+                        # what the user reads on screen. No hardcoded
+                        # model → budget map on our side.
+                        _ctx_used = (_latest_usage.get("input_tokens", 0)
+                                     + _latest_usage.get("cache_creation_input_tokens", 0)
+                                     + _latest_usage.get("cache_read_input_tokens", 0))
+                        _cc_mu = _model_usage.get(_result_model) if _model_usage else None
+                        _cc_ctx_window = 0
+                        if isinstance(_cc_mu, dict):
+                            _cc_ctx_window = int(_cc_mu.get("contextWindow")
+                                                  or _cc_mu.get("context_window")
+                                                  or 0)
+                        # No iterate-and-pick-first fallback: that path
+                        # silently returned haiku's 200k when modelUsage
+                        # held both haiku (side-task) and opus (turn),
+                        # giving a wrong gauge. If _result_model has no
+                        # contextWindow, leave _cc_ctx_window=0 and skip
+                        # the gauge update for this event.
+                        # Per-stream cache keyed by (conv, agent) — the
+                        # singleton self._codex_context_window was clobbered
+                        # across concurrent streams (memory_extract /
+                        # _compact / multi-agent), so an opus turn read
+                        # back haiku's 200k after an unrelated stream had
+                        # written it.
+                        _cw_key = (conv_id or "", agent_name or "")
+                        _cw_map = getattr(self, '_codex_context_window_by_stream', None)
+                        if _cw_map is None:
+                            _cw_map = {}
+                            self._codex_context_window_by_stream = _cw_map
+                        if _cc_ctx_window > 0:
+                            _cw_map[_cw_key] = _cc_ctx_window
+                        _ctx_max = int(_cc_ctx_window
+                                       or _cw_map.get(_cw_key, 0)
+                                       or 0)
+                        # No 200k default. If CC didn't report
+                        # contextWindow on this result, emit ctx_max=0 and
+                        # let the UI skip the gauge — better than a
+                        # fictional budget.
+                        _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
+                        _pub("message_meta", {
+                            "msg_id": _last_msg_id,
+                            "agent_name": agent_name,
+                            "source": {
+                                "type": "agent", "name": agent_name,
+                                "llm_service": getattr(self, '_agent_service', ""),
+                                "provider": "codex",
+                                "model": _result_model,
+                                "tokens_in": _total_in,
+                                "tokens_out": _total_out,
+                            },
+                            "model": _result_model,
+                            "provider": "codex",
+                            "tokens_in": _total_in,
+                            "tokens_out": _total_out,
+                            "context_used": _ctx_used,
+                            "context_max": _ctx_max,
+                            "context_pct": _ctx_pct,
+                            "num_turns": event.get("num_turns", _turn_count),
+                            "duration_ms": event.get("duration_ms", 0),
+                        })
+                    # If one or more preempts were injected via stdin
+                    # BEFORE this result event, CC may already be processing
+                    # them in a new turn (observed live: CC reads stdin right
+                    # after emitting `result` and starts a fresh assistant
+                    # turn). Breaking here would kill the subprocess while
+                    # CC is generating the preempt's response, losing it.
+                    # Decision flow (deterministic via CC's session jsonl):
+                    #   - 'done': every queued preempt has an assistant
+                    #      message AFTER it in jsonl → break safely.
+                    #   - 'pending': preempt visible in jsonl AFTER last
+                    #      assistant → CC has read stdin and WILL respond;
+                    #      keep the stream open with NO timeout (response
+                    #      may take up to ~250s for complex queries).
+                    #   - 'unread'/'unknown' after 3s poll: stdin not seen
+                    #      by CC → likely lost; break and let PendingQueue
+                    #      re-trigger on the next turn.
+                    if getattr(self, '_preempt_pending', 0) > 0:
+                        _sent = list(getattr(self, '_sent_preempt_texts', []))
+                        # Source priority:
+                        #   1. _live_session.session_id (REUSE only) —
+                        #      pinned at register time, the actual
+                        #      session_id CC is writing under. Immune
+                        #      to extras/self clobbers.
+                        #   2. local `session_id` — read from extras
+                        #      at stream entry (line 1017). Persistent
+                        #      source for NEW spawns where the live
+                        #      session doesn't exist yet.
+                        #   3. last_data['session_id'] — from the
+                        #      result event we JUST received. CC's
+                        #      authoritative reply.
+                        #   4. self._current_session_id — last fallback,
+                        #      volatile.
+                        # If all four are empty, an invariant was
+                        # broken upstream (CC never emitted init OR
+                        # extras was wiped between entry and now);
+                        # raise so the bug surfaces instead of
+                        # silently mis-declaring the preempt lost.
+                        _sid = ((_live_session.session_id
+                                 if _is_reuse and _live_session else "")
+                                or session_id
+                                or last_data.get('session_id', '')
+                                or getattr(self, '_current_session_id', '')
+                                or '')
+                        if not _sid:
+                            raise RuntimeError(
+                                "[codex] preempt-check cannot "
+                                "resolve session_id from any source "
+                                f"(reuse={_is_reuse}, "
+                                f"live={getattr(_live_session, 'session_id', None) if _live_session else None!r}, "
+                                f"local={session_id!r}, "
+                                f"last_data={last_data.get('session_id', '')!r}, "
+                                f"self={getattr(self, '_current_session_id', '')!r}) "
+                                "— a previous invariant was violated "
+                                "(CC didn't emit init? extras wiped? "
+                                "_cleanup_proc cleared self mid-stream?). "
+                                "Refusing to silently mis-declare "
+                                "preempt lost.")
+                        _jsonl = os.path.join(
+                            workdir, 'projects',
+                            self._codex_project_key(workdir),
+                            f"{_sid}.jsonl")
+                        _pstatus = self._check_codex_preempt_in_jsonl(_jsonl, _sent)
+                        # CC writes a stdin preempt to its session jsonl
+                        # the moment it reads from stdin, which can happen
+                        # ~tens of ms AFTER it emits result. If we don't
+                        # see the preempt yet, poll briefly for it to land
+                        # before deciding the preempt was lost.
+                        if _pstatus in ('unread', 'unknown'):
+                            _poll_until = time.monotonic() + 3.0
+                            while time.monotonic() < _poll_until:
+                                time.sleep(0.2)
+                                if proc.poll() is not None:
+                                    break
+                                _pstatus = self._check_codex_preempt_in_jsonl(
+                                    _jsonl, _sent)
+                                if _pstatus not in ('unread', 'unknown'):
+                                    break
+                        if _pstatus == 'done':
+                            # CC integrated the preempt mid-turn; the just-
+                            # emitted assistant message IS the response.
+                            logger.info(
+                                "[codex] result emitted; jsonl shows "
+                                "all %d preempt(s) answered inline — break",
+                                len(_sent))
+                            self._had_preempts_this_turn = True
+                            self._preempt_pending = 0
+                            self._sent_preempt_texts = []
+                            self._result_emitted = True
+                            break
+                        if _pstatus == 'pending':
+                            # CC has read stdin (preempt is in jsonl) but
+                            # has not yet produced the response. CC WILL
+                            # respond — there is no useful upper bound on
+                            # how long that takes (could be 250s for a
+                            # complex query). Keep the stream open with NO
+                            # timeout: the for-loop blocks on stdout for
+                            # the next assistant event, and EOF on proc
+                            # death exits cleanly via the finally block.
+                            logger.info(
+                                "[codex] result emitted; CC has read "
+                                "%d preempt(s) (jsonl=pending) — keeping "
+                                "stream open with NO timeout, waiting for "
+                                "CC's response", self._preempt_pending)
+                            self._had_preempts_this_turn = True
+                            self._preempt_pending = 0
+                            continue
+                        # 'unread' / 'unknown' after polling: CC has not
+                        # acknowledged stdin. Most likely it exited or is
+                        # silently stuck. Don't wait further; let pawflow
+                        # re-deliver via PendingQueue on the next turn.
+                        # _had_preempts_this_turn stays False so the
+                        # caller knows to re-trigger if drained user msgs
+                        # exist.
+                        logger.warning(
+                            "[codex] result emitted; %d preempt(s) "
+                            "NOT visible in jsonl after 3s poll "
+                            "(status=%s) — preempt likely lost, breaking. "
+                            "PendingQueue will re-trigger.",
+                            self._preempt_pending, _pstatus)
+                        self._preempt_pending = 0
+                        self._sent_preempt_texts = []
+                        self._result_emitted = True
+                        break
+                    # CC emitted its final result. Mark this so future
+                    # preempts are refused (caller routes via PendingQueue).
+                    self._result_emitted = True
+                    break
+
+            # Loop exited naturally (result break or stdout EOF). If a
+            # compact_boundary fired during this stream, raise now — all
+            # pre-compact events have been drained through turn_callback
+            # via the per-msg_id rollover in the main loop.
+            if _compact_pending[0]:
+                from core.llm_client import CCCompactDetected
+                raise CCCompactDetected("CC auto-compact detected")
+
+            # Clean result-event exit: no compact, no watchdog stall kill.
+            # Promote to keep-alive so `finally` retains proc + reader +
+            # pool container for the next turn's reuse. proc.poll() must
+            # still be None — a racy EOF break between here and finally
+            # would leave us registering a dead session. Ephemeral streams
+            # (_live_key is None) never keep alive.
+            _stall_killed_flag = bool(getattr(self, '_stall_killed', False))
+            _keep_alive = (
+                _live_key is not None
+                and bool(getattr(self, '_result_emitted', False))
+                and not _stall_killed_flag
+                and proc.poll() is None
+            )
+
+        except _Codex401Retry:
+            # 401 mid-stream: credentials already refreshed, retry once.
+            # Evict BEFORE recursing so the retry doesn't re-adopt the
+            # about-to-be-killed proc from the registry.
+            if _live_key is not None:
+                _live_reg.evict(_live_key, "auth_401")
+            logger.info("[codex] retrying after 401 token refresh")
+            return self._stream_codex(
+                messages, model, temperature, max_tokens, tools, callback,
+                turn_callback=turn_callback, block_callback=block_callback,
+                _is_auth_retry=True)
+        except BaseException as _dispatch_exc:
+            # ANY other exception in the dispatch loop (CCCompactDetected,
+            # KeyboardInterrupt, AgentCancelled, programming bugs, etc.):
+            # 1. Evict the live-session entry IMMEDIATELY so a concurrent
+            #    reuse lookup cannot adopt this about-to-die proc. The
+            #    finally block evicts too, but that runs AFTER `raise`
+            #    propagates through intermediate frames — a concurrent
+            #    turn that calls `_live_reg.get(key)` in that window
+            #    would get a session pointing at a dying subprocess.
+            # 2. Force `_keep_alive = False` so the finally path takes
+            #    the teardown branch unconditionally (the normal keep-
+            #    alive computation happens AFTER the while loop; if an
+            #    exception escapes the loop, that computation never
+            #    ran — but defense-in-depth in case someone later adds
+            #    a keep-alive assignment earlier in the flow).
+            # 3. Kill hard NOW, not just in finally. `_cleanup_proc` in
+            #    finally does `proc.kill()` + pool release (which is
+            #    `docker rm -f` in the 1:1 model, so the container IS
+            #    nuked). Calling `_kill_codex_hard` here is belt-and-
+            #    suspenders: it adds a container-side pgid kill that
+            #    reaps any Node workers CC forked BEFORE the docker rm
+            #    tears down the namespace. Redundant but cheap; keeps
+            #    the exception teardown path symmetric with the explicit
+            #    kill paths (compact_boundary, compact_result, phantom).
+            # BaseException (not just Exception) catches AgentCancelled /
+            # SystemExit / KeyboardInterrupt too — those also leave a
+            # live proc behind if we don't tear down here.
+            if _live_key is not None:
+                try:
+                    _live_reg.evict(_live_key, "dispatch_exception")
+                except Exception:
+                    logger.debug("early-evict failed", exc_info=True)
+            _keep_alive = False
+            try:
+                self._kill_codex_hard(proc)
+            except Exception:
+                logger.debug("kill_cc_hard in except failed", exc_info=True)
+            logger.info(
+                "[codex] dispatch loop aborted by %s: %.200s",
+                type(_dispatch_exc).__name__, str(_dispatch_exc))
+            raise
+        finally:
+            # Stop compact stall watchdog
+            _watchdog_stop.set()
+            # Cancel compact-drain timeout timer if still pending
+            # (loop exited cleanly before deadline, or via an exception
+            # that wasn't the compact path at all).
+            try:
+                _t = _compact_drain_timer[0]
+                if _t is not None:
+                    _t.cancel()
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
+            # Flush any pending turn (ensures last text is persisted even if interrupted)
+            try:
+                _flush_turn()
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
+
+            if _keep_alive:
+                # Retain proc + reader + pool container for reuse. Skip
+                # _cleanup_proc / pool release / token revoke — those are
+                # lifecycle-scoped to the live session, not the turn.
+                # The reader daemon's per-line touch already keeps
+                # last_used fresh — no end-of-stream touch needed.
+                try:
+                    if _is_reuse:
+                        pass  # nothing to do; reader keeps last_used fresh
+                    else:
+                        # CC's session_id captured during this stream's
+                        # init event (line 1908) AND/OR returned in the
+                        # final result event. Either source is the
+                        # authoritative jsonl filename CC is writing
+                        # to — pin it on the live session so post-
+                        # result preempt checks (and any future
+                        # introspection) can locate the file without
+                        # going through volatile state (extras, self).
+                        _live_session_id = (
+                            getattr(self, '_current_session_id', '')
+                            or last_data.get('session_id', '')
+                            or '')
+                        if not _live_session_id:
+                            # Hard invariant: a live session that gets
+                            # registered must know its CC session_id —
+                            # that's the whole point of keep-alive.
+                            # Without it, future REUSEs cannot inspect
+                            # CC's jsonl, preempt-loss check goes blind,
+                            # and the bug we're fixing returns.
+                            raise RuntimeError(
+                                "[codex-live] keep-alive register called "
+                                "without a session_id (init event not "
+                                "seen and result event lacks session_id) "
+                                "— refusing to register a blind live "
+                                "session. Falling through to teardown.")
+                        _session = CodexLiveSession(
+                            proc=proc,
+                            event_q=_event_q,
+                            reader_thread=_reader_thread,
+                            stop_event=_reader_stop,
+                            pool_container=self._pool_container_name,
+                            workdir=workdir,
+                            service_id=_svc_id,
+                            svc_pool_idx=_svc_pool_idx,
+                            session_id=_live_session_id,
+                            mcp_internal_token=_mcp_internal_token,
+                            hb_state=_hb_state,
+                        )
+                        _live_reg.register(_live_key, _session)
+                        # Start the idle sweeper on first register — no
+                        # work until there's a session to sweep.
+                        _live_reg.ensure_sweeper(
+                            killer=self._kill_codex_hard)
+                except Exception:
+                    logger.warning(
+                        "[codex-live] register/touch failed; falling back "
+                        "to full teardown", exc_info=True)
+                    _keep_alive = False  # fall through to teardown below
+                else:
+                    # Still recover refreshed OAuth tokens from workdir
+                    # — CC may have refreshed mid-turn and we want them
+                    # persisted for resume-without-live-session paths.
+                    try:
+                        self._recover_tokens(workdir)
+                    except Exception:
+                        logger.debug(
+                            "_recover_tokens failed", exc_info=True)
+
+            if not _keep_alive:
+                # Full teardown: evict any live-session entry first so
+                # the next turn doesn't re-adopt the dead proc, then
+                # kill + recover + revoke as before.
+                if _is_reuse and _live_key is not None:
+                    _live_reg.evict(_live_key, "turn_failed")
+                # Cleanup process — _cleanup_proc captures stderr internally
+                _stderr = self._cleanup_proc(proc)
+                # Recover refreshed tokens from workdir (Codex may have refreshed them)
+                self._recover_tokens(workdir)
+                # Revoke the internal-auth token minted for this CC invocation —
+                # scoped to the lifetime of this stream, not retained across calls.
+                # Without this, tokens accumulate in core.internal_auth._tokens
+                # until server restart (memory-only, but a lingering valid token
+                # leaked from .mcp.json or process env stays replayable).
+                if _mcp_internal_token:
+                    try:
+                        from core.internal_auth import revoke_token
+                        revoke_token(_mcp_internal_token)
+                    except Exception:
+                        logger.debug("internal-auth revoke failed", exc_info=True)
+
+            # Release the live-session turn lock acquired at REUSE entry
+            # (line 1111). Held across the entire stream call so concurrent
+            # callers — bg_bucket_builder threads, next user turn's
+            # bg_streaming thread, etc. — don't push rogue input onto the
+            # in-flight session's stdin. WITHOUT this release, the first
+            # successful REUSE held the lock forever (acquire had no
+            # corresponding release on success path) and every subsequent
+            # turn that hit REUSE blocked indefinitely on
+            # turn_lock.acquire(). Symptom in the wild: user sends a
+            # second message, agent stream starts, log stops on
+            # `codex stream: conv_id=...`, no spawn / no REUSE log,
+            # 4+ minutes of silent freeze before the user gives up.
+            # RLock release is balanced with the single acquire at 1111;
+            # do it inside the finally so we cover normal return AND any
+            # exception that propagates through the streaming body.
+            if _owns_turn_lock and _live_session is not None:
+                try:
+                    _live_session.turn_lock.release()
+                except Exception:
+                    logger.debug(
+                        "turn_lock release failed (likely already released "
+                        "via the early-error path at line 1129)",
+                        exc_info=True)
+                _owns_turn_lock = False
+
+        # Don't error on non-zero exit if we got a successful result
+        # (process was killed after break on result event — that's expected).
+        # `_compact_result_done` counts: when the sentinel compact session
+        # delivers its payload via the compact_result tool, we
+        # intentionally SIGKILL CC before the final result event can
+        # fire (otherwise CC stalls waiting for another input). The
+        # payload IS the successful outcome; treat the 137 exit the
+        # same as a clean result-event break.
+        _got_result = (
+            bool(last_data.get("session_id") or last_data.get("result"))
+            or _compact_result_done)
+        _was_compact_stall = (proc.returncode == -9 and _stall_start_time > 0 and not _got_assistant)
+        # Tool-result / no-assistant stalls are PawFlow-watchdog kills. CC
+        # produced work up to that point; the kill is our own recovery
+        # action, not a user-facing failure. Tag the exception so the
+        # retry loop in LLMClient.complete_stream treats it as retryable
+        # (same path as compact_stall) instead of surfacing an error to
+        # the user on the first attempt.
+        _was_tool_stall = bool(self._stall_killed) and not _was_compact_stall
+        if proc.returncode and proc.returncode != 0 and not _got_result:
+            if _stderr:
+                logger.error("Codex CLI stderr: %.500s", _stderr)
+            if _was_compact_stall:
+                _reason = "compact_stall"
+            elif _was_tool_stall:
+                _reason = "tool_stall"
+            else:
+                _reason = ""
+            raise LLMClientError(
+                f"Codex CLI stream exited with code {proc.returncode}"
+                + (f" ({_reason})" if _reason else "")
+                + (f": {_stderr[:200]}" if _stderr else ""))
+
+        # If turn_callback handled all turns, don't return content
+        # (prevents agent loop from persisting the same text again)
+        full_content = "" if turn_callback else "".join(content_parts)
+
+        new_session = last_data.get("session_id", "")
+        if new_session:
+            # Persist session_id in conversation store (NOT on self — client is shared)
+            if conv_id:
+                try:
+                    from core.conversation_store import ConversationStore
+                    ConversationStore.instance().set_extra(
+                        conv_id, f"codex_session:{agent_name or 'default'}",
+                        new_session)
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
+
+        # Context-fill semantics: report the LAST assistant event's per-call
+        # usage (real prompt size at end of turn, ≤ context_max), NOT the
+        # `result.usage` summed across sub-calls (which balloons cache_read to
+        # N×prefix and makes the UI clamp at 100%). `_latest_usage` is captured
+        # at every assistant event in the stream loop.
+        _u_final = _latest_usage or last_data.get("usage", {})
+        _ti_in = _u_final.get("input_tokens", 0)
+        _ti_creation = _u_final.get("cache_creation_input_tokens", 0)
+        _ti_read = _u_final.get("cache_read_input_tokens", 0)
+        _to = _u_final.get("output_tokens", 0)
+        if not (_ti_in or _ti_creation or _ti_read or _to):
+            for _mu in last_data.get("modelUsage", {}).values():
+                _ti_in += _mu.get("inputTokens", 0) + _mu.get("input_tokens", 0)
+                _ti_read += _mu.get("cacheReadInputTokens", 0) + _mu.get("cache_read_input_tokens", 0)
+                _ti_creation += _mu.get("cacheCreationInputTokens", 0) + _mu.get("cache_creation_input_tokens", 0)
+                _to += _mu.get("outputTokens", 0) + _mu.get("output_tokens", 0)
+        _ti = _ti_in + _ti_creation + _ti_read
+        return LLMResponse(
+            content=full_content,
+            model=last_data.get("model", model),
+            tokens_in=_ti_in,
+            tokens_out=_to,
+            total_tokens=_ti + _to,
+            cache_creation_tokens=_ti_creation,
+            cache_read_tokens=_ti_read,
+            finish_reason="stop",
+            raw=last_data,
         )
-        if last_error and not turn_callback:
-            response.content = (response.content + ("\n\n" if response.content else "")
-                                + f"[codex error: {last_error}]").strip()
-
-        if compact_required:
-            # CC-equivalent signal: agent_core catches CCCompactDetected,
-            # runs PawFlow's bucket compact, then restarts a fresh codex
-            # call (with `exec resume <thread_id>` since we persisted it).
-            raise CCCompactDetected(
-                f"codex usage {usage.get('_total_used', 0)}/{ctx_window} ≥ {int(_PAWFLOW_COMPACT_THRESHOLD * 100)}%")
-        return response

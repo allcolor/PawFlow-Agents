@@ -105,14 +105,18 @@ class LLMConnectionService(BaseService):
         try:
             _ctt = int(self.config.get("compact_target_tokens", 0) or 0)
             _mcs = int(self.config.get("max_context_size", 0) or 0)
+            _cthp = int(self.config.get("compact_threshold_pct", 0) or 0)
         except (TypeError, ValueError):
-            _ctt, _mcs = 0, 0
+            _ctt, _mcs, _cthp = 0, 0, 0
         if _ctt > 0 and _mcs > 0 and _ctt > int(_mcs * 0.4):
             raise ServiceError(
                 f"compact_target_tokens ({_ctt}) must be ≤ 40% of "
                 f"max_context_size ({_mcs}) = {int(_mcs * 0.4)} — got "
                 f"{_ctt / _mcs * 100:.1f}%."
             )
+        if _cthp < 0 or _cthp > 100:
+            raise ServiceError(
+                f"compact_threshold_pct must be in [0, 100], got {_cthp}")
         return {"provider": self.provider, "ready": True}
 
     def _close_connection(self):
@@ -360,6 +364,21 @@ class LLMConnectionService(BaseService):
                     "0 = use 25% of max_context_size (the legacy default). "
                     "Must be ≤ 40% of max_context_size (rejected at install time "
                     "otherwise) so the post-compact context still has room to grow."
+                ),
+            },
+            "compact_threshold_pct": {
+                "type": "integer", "default": 0,
+                "description": (
+                    "Proactive compact trigger, in percent of max_context_size. "
+                    "PawFlow checks at the start of every agent iteration: if "
+                    "the current messages-token count exceeds this threshold, "
+                    "PawFlow compacts BEFORE the next LLM call. "
+                    "0 = no proactive compact (defer to the underlying CLI's "
+                    "mechanism, e.g. CC's compact_boundary). With CC + "
+                    "threshold > 0, both triggers stay active — whichever "
+                    "fires first wins. With codex/gemini the CLI never "
+                    "auto-compacts, so threshold = 0 means no auto-compact at "
+                    "all. Range [0, 100]."
                 ),
             },
             "max_iterations": {

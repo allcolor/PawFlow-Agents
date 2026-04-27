@@ -2368,10 +2368,24 @@ class LLMCodexMixin(CodexSessionMixin):
                         "context_pct": _ctx_pct_live,
                         "live": True,
                     })
-                    if _ctx_max_live > 0 and _ctx_used_live >= int(_ctx_max_live * 0.8):
+                    # Service-config compact threshold. 0 = no end-of-turn
+                    # compact trigger (defer to the next turn's pre-call
+                    # check in agent_core, or simply let the context grow
+                    # for codex/gemini which have no CLI auto-compact).
+                    # N>0 = trigger end-of-turn compact at N%, raising
+                    # CCCompactDetected so the agent_loop runs a compact
+                    # before the next call. The next-call pre-check will
+                    # also fire at N% — redundant but cheap.
+                    try:
+                        _cthp = int((getattr(self, "_config_ref", None) or {})
+                                    .get("compact_threshold_pct", 0) or 0)
+                    except (TypeError, ValueError):
+                        _cthp = 0
+                    if (_cthp > 0 and _ctx_max_live > 0
+                            and _ctx_used_live >= int(_ctx_max_live * _cthp / 100)):
                         logger.warning(
-                            "[codex] usage %d/%d crossed PawFlow compact threshold (80%%)",
-                            _ctx_used_live, _ctx_max_live)
+                            "[codex] usage %d/%d crossed PawFlow compact threshold (%d%%)",
+                            _ctx_used_live, _ctx_max_live, _cthp)
                         self._compacting = True
                         _compact_pending[0] = True
                     self._result_emitted = True

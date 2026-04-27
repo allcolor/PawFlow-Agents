@@ -635,12 +635,51 @@ class AgentCoreMixin:
                     emitter.on_iteration_start(
                         iteration, current_round, ctx["max_iterations"],
                         max_rounds, tools_called, poll_silent)
+                    # Read the service-config proactive-compact threshold.
+                    # `compact_threshold_pct` is in [0, 100]:
+                    #   0   = no proactive PawFlow compact (defer entirely to
+                    #         the CLI's mechanism — e.g. CC's compact_boundary,
+                    #         or for codex/gemini, no auto-compact at all).
+                    #   N>0 = compact when tokens(messages) ≥ N% of max_ctx,
+                    #         BEFORE the next LLM call. For CC this is
+                    #         additive on top of compact_boundary — first
+                    #         trigger to fire wins.
+                    _compact_pct = 0
+                    try:
+                        _cfg_for_pct = (getattr(compact_client, "config", None)
+                                        or getattr(compact_client, "_config_ref", None)
+                                        or getattr(getattr(compact_client, "_client", None),
+                                                   "_config_ref", None)
+                                        or {})
+                        _compact_pct = int(_cfg_for_pct.get("compact_threshold_pct", 0) or 0)
+                    except (TypeError, ValueError):
+                        _compact_pct = 0
+                    _trigger_frac = (_compact_pct / 100.0) if _compact_pct > 0 else 0.0
+
                     # Claude-code: CC session and PawFlow ctx MUST stay
                     # identical. On a new session we feed the full PawFlow
                     # ctx (already compacted at load time if needed).
                     # On resume, CC's jsonl is the authoritative continuation
                     # — we don't re-send messages.
                     if ctx.get("_is_claude_code"):
+                        # Optional proactive compact for CC when
+                        # `compact_threshold_pct > 0`: fire BEFORE letting
+                        # CC see the over-budget context. Both this and
+                        # CC's own `compact_boundary` event remain active;
+                        # whichever fires first compacts. Skip when
+                        # threshold = 0 (default) — CC's mechanism handles it.
+                        if _trigger_frac > 0:
+                            _max_ctx = ctx.get("max_context_size", 64000)
+                            _cpt = ctx.get("chars_per_token", 0)
+                            messages[:] = self._compact(
+                                copy.deepcopy(messages), compact_client, _max_ctx,
+                                trigger_fraction=_trigger_frac,
+                                conversation_id=conversation_id,
+                                agent_name=ctx.get("active_agent_name") or "",
+                                tool_defs=ctx.get("tool_defs"),
+                                chars_per_token=_cpt,
+                                user_id=user_id,
+                            )
                         llm_context = list(messages)
                     else:
                         _max_ctx = ctx.get("max_context_size", 64000)
@@ -650,18 +689,30 @@ class AgentCoreMixin:
                         if iteration == 1:
                             self._microcompact_time_based(messages)
 
-                        # Auto-trigger compact via _compact's own
-                        # trigger_fraction (defaults to 0.8): fires when
-                        # real-token usage hits 80% of max_context_size.
-                        # Guarantees output ≤ 0.25 × max_context (cap).
-                        llm_context = self._compact(
-                            copy.deepcopy(messages), compact_client, _max_ctx,
-                            conversation_id=conversation_id,
-                            agent_name=ctx.get("active_agent_name") or "",
-                            tool_defs=ctx.get("tool_defs"),
-                            chars_per_token=_cpt,
-                            user_id=user_id,
-                        )
+                        # codex / gemini / etc. — the CLI never auto-compacts
+                        # (codex's `model_auto_compact_token_limit` is set
+                        # very high by PawFlow, gemini doesn't have one), so
+                        # threshold = 0 means no auto-compact at all and the
+                        # context grows until the LLM rejects an over-budget
+                        # call. With threshold > 0, fire the proactive
+                        # compact at that fraction. Guarantees output ≤
+                        # compact_target_tokens (or 0.25 × max_context).
+                        if _trigger_frac > 0:
+                            llm_context = self._compact(
+                                copy.deepcopy(messages), compact_client, _max_ctx,
+                                trigger_fraction=_trigger_frac,
+                                conversation_id=conversation_id,
+                                agent_name=ctx.get("active_agent_name") or "",
+                                tool_defs=ctx.get("tool_defs"),
+                                chars_per_token=_cpt,
+                                user_id=user_id,
+                            )
+                        else:
+                            # threshold = 0: no proactive compact, send the
+                            # raw messages (PawFlow's reactive compact at the
+                            # *_compact site below — e.g. context-overflow
+                            # retry — still applies as a safety net).
+                            llm_context = list(messages)
 
                     # Pre-injection char count for CPT calibration
                     _pre_inject_chars = self._estimate_tokens(

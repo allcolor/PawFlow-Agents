@@ -2328,19 +2328,26 @@ class LLMCodexMixin(CodexSessionMixin):
                                 "— refusing to register a blind live "
                                 "session. Falling through to teardown.")
                         _session = CodexLiveSession(
+                            container_name=self._pool_container_name,
+                            workdir=workdir,
+                            service_id=_svc_id,
+                            svc_pool_idx=_svc_pool_idx,
                             proc=proc,
                             event_q=_event_q,
                             reader_thread=_reader_thread,
                             stop_event=_reader_stop,
                             pool_container=self._pool_container_name,
-                            workdir=workdir,
-                            service_id=_svc_id,
-                            svc_pool_idx=_svc_pool_idx,
                             session_id=_live_session_id,
                             mcp_internal_token=_mcp_internal_token,
                             hb_state=_hb_state,
                         )
-                        _live_reg.register(_live_key, _session)
+                        # CodexLiveRegistry.register signature differs from
+                        # CC's: it takes (key, container_name, workdir,
+                        # service_id) not (key, session). Pre-build the
+                        # session above for parity with CC's structure, then
+                        # call register with the legacy positional contract.
+                        _live_reg.register(_live_key, self._pool_container_name,
+                                            workdir, service_id=_svc_id)
                         # Start the idle sweeper on first register — no
                         # work until there's a session to sweep.
                         _live_reg.ensure_sweeper(

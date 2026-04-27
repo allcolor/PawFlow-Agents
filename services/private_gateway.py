@@ -76,22 +76,85 @@ def _save_bans():
 
 
 def _load_bans():
-    """Load banned IPs from disk on startup."""
+    """Load banned IPs from disk on startup.
+
+    Skips entries for IPs that should never have been banned in the first
+    place (loopback / RFC1918 / docker bridge — see _is_local_or_private).
+    Pre-fix releases banned the user's LAN IP after the codex MCP bridge
+    cookie-auth cascade; clean those up at boot so the rule kicks in
+    even for already-persisted bans.
+    """
     if not _paths.GATEWAY_BANS_FILE.exists():
         return
     try:
         data = json.loads(_paths.GATEWAY_BANS_FILE.read_text(encoding="utf-8"))
         now = time.time()
+        skipped_local = 0
         with _lock:
             for ip, st in data.items():
-                if st.get("banned_until", 0) > now:
-                    _ip_state[ip] = st
+                if st.get("banned_until", 0) <= now:
+                    continue
+                if _is_local_or_private(ip):
+                    skipped_local += 1
+                    continue
+                _ip_state[ip] = st
+        if skipped_local:
+            logger.info(
+                "Discarded %d stale local/docker-IP ban(s) at boot "
+                "(local IPs are no longer ban-eligible).", skipped_local)
+            # Rewrite the file so the discarded entries don't reappear.
+            _save_bans()
         logger.info("Loaded %d gateway ban(s) from disk", len(_ip_state))
     except Exception as e:
         logger.warning("Failed to load gateway bans: %s", e)
 
 
+# `_is_local_or_private` is defined below — forward-declare via a stub so
+# the boot-time `_load_bans()` call can reach it before the real impl.
+def _is_local_or_private(ip: str) -> bool:  # noqa: F811  (real impl below)
+    if not ip:
+        return True
+    try:
+        import ipaddress
+        addr = ipaddress.ip_address(ip)
+        return (addr.is_loopback or addr.is_private or addr.is_link_local
+                or addr.is_reserved or addr.is_unspecified)
+    except (ValueError, TypeError):
+        return True
+
+
 _load_bans()
+
+
+def _is_local_or_private(ip: str) -> bool:
+    """True for IPs that PawFlow's gateway must NEVER ban: loopback,
+    RFC1918 private ranges (10/8, 172.16/12, 192.168/16), CGNAT
+    (100.64/10), link-local (169.254/16), IPv6 loopback / link-local /
+    ULA. Server-spawned components — the CC / codex / gemini Docker
+    containers, the user's relay running on the LAN, anything in the
+    docker bridge subnet — all live on these ranges and a failed auth
+    attempt from one of them must not lock out everything else on the
+    same source IP.
+
+    Public IPs (failed attempts from the open internet) still get
+    banned per the original 5-failures → 24h policy.
+    """
+    if not ip:
+        return True  # missing addr — treat as local, don't ban anything
+    try:
+        import ipaddress
+        addr = ipaddress.ip_address(ip)
+        return (
+            addr.is_loopback
+            or addr.is_private
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_unspecified
+        )
+    except (ValueError, TypeError):
+        # Unparseable — be safe and DON'T ban (better to miss a ban than
+        # to lock out a legit user with a weird X-Forwarded-For header).
+        return True
 
 
 def _get_ip_state(ip: str) -> dict:
@@ -102,6 +165,10 @@ def _get_ip_state(ip: str) -> dict:
 
 
 def is_banned(ip: str) -> bool:
+    # Local / docker-bridge / RFC1918 IPs are never banned — see
+    # `_is_local_or_private` for the policy rationale.
+    if _is_local_or_private(ip):
+        return False
     with _lock:
         st = _ip_state.get(ip)
         if not st:
@@ -115,6 +182,8 @@ def is_banned(ip: str) -> bool:
 
 
 def get_cooldown_remaining(ip: str) -> float:
+    if _is_local_or_private(ip):
+        return 0.0
     st = _get_ip_state(ip)
     if st["failures"] <= 0:
         return 0.0
@@ -125,6 +194,12 @@ def get_cooldown_remaining(ip: str) -> float:
 
 
 def record_failure(ip: str):
+    # Local / docker-bridge / RFC1918 IPs are never recorded as failures.
+    # A failed auth from a server-spawned MCP bridge or the user's
+    # LAN relay must not pollute the ban counter — doing so would
+    # eventually lock out every legitimate component sharing that IP.
+    if _is_local_or_private(ip):
+        return
     with _lock:
         st = _ip_state.setdefault(ip, {"failures": 0, "last_attempt": 0.0, "banned_until": 0.0})
         st["failures"] += 1

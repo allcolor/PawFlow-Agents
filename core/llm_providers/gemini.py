@@ -1992,15 +1992,12 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     continue
 
                 if etype == "thought":
+                    # Same pattern as CC: accumulate into _turn_thinking, let
+                    # _flush_turn pass it via turn_callback(text, tc, thinking).
                     content = event.get("content", "") or event.get("text", "") or ""
                     if content:
                         _turn_thinking = (_turn_thinking + content
                                           if _turn_thinking else content)
-                        if thinking_callback:
-                            try:
-                                thinking_callback(content)
-                            except Exception:
-                                logger.debug("thinking_callback failed", exc_info=True)
                     continue
 
                 if etype == "tool_use":

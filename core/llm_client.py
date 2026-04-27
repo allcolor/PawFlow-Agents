@@ -846,8 +846,12 @@ class LLMClient(
                                                   call_event_cid=call_event_cid,
                                                   call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "codex":
+                # No `thinking_callback` — codex/gemini follow CC's pattern:
+                # the parser accumulates reasoning into `_turn_thinking` and
+                # passes it as the 3rd positional to `turn_callback(text, tc,
+                # thinking)` at flush time. A separate live thinking_callback
+                # would duplicate the same text and double-publish.
                 result = self._stream_codex(messages, mdl, temperature, max_tokens, tools, callback,
-                                              thinking_callback=thinking_callback,
                                               turn_callback=turn_callback,
                                               block_callback=block_callback,
                                               call_user_id=call_user_id,
@@ -857,7 +861,6 @@ class LLMClient(
                                               call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "gemini":
                 result = self._stream_gemini(messages, mdl, temperature, max_tokens, tools, callback,
-                                               thinking_callback=thinking_callback,
                                                turn_callback=turn_callback,
                                                block_callback=block_callback,
                                                call_user_id=call_user_id,

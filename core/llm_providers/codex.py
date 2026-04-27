@@ -2006,16 +2006,15 @@ class LLMCodexMixin(CodexSessionMixin):
                         continue
 
                     if itype == "reasoning":
+                        # Same pattern as CC: accumulate into _turn_thinking,
+                        # let _flush_turn pass it via turn_callback(text, tc,
+                        # thinking). No live thinking_callback — that would
+                        # duplicate at the turn boundary.
                         if is_done:
                             txt = item.get("text", "") or ""
                             if txt:
                                 _turn_thinking = (_turn_thinking + txt
                                                   if _turn_thinking else txt)
-                                if thinking_callback:
-                                    try:
-                                        thinking_callback(txt)
-                                    except Exception:
-                                        logger.debug("thinking_callback failed", exc_info=True)
                         continue
 
                     if itype in ("mcp_tool_call", "command_execution"):

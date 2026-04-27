@@ -1449,6 +1449,18 @@ class LLMCodexMixin(CodexSessionMixin):
         content_parts: List[str] = []  # final result text
         last_data: dict = {}
         _turn_count = 0
+        # Per-invocation unique stream ID. Codex's `item_<N>` IDs reset
+        # to 1 on every `exec`/`exec resume` invocation, AND on resume
+        # the thread_id stays the same — so `thread_id:item_1` collides
+        # across turns of the same conversation. The chat UI matches
+        # tool_call ↔ tool_result by `data-tc-id` via `querySelector`,
+        # which finds the FIRST element — i.e. the OLD turn's tool_call,
+        # already resolved — and the new turn's result never attaches.
+        # Generate a fresh random suffix at stream start so every
+        # tool_call element gets a globally-unique tc_id within the
+        # conversation, regardless of resume / thread reuse.
+        import secrets as _secrets
+        _stream_uniq = _secrets.token_hex(4)
 
         # Per-turn accumulator
         _turn_text_parts: List[str] = []
@@ -2097,9 +2109,15 @@ class LLMCodexMixin(CodexSessionMixin):
                             # Prepending the codex thread_id makes the id
                             # globally unique inside the conversation.
                             _raw_iid = iid or f"codex-{_turn_count}-{len(_turn_tool_calls)}"
-                            _tid = getattr(self, '_current_session_id', '') or ''
-                            _block_id = (f"{_tid}:{_raw_iid}"
-                                         if _tid and _raw_iid else _raw_iid)
+                            # Use the per-invocation random suffix
+                            # `_stream_uniq` (defined at function entry).
+                            # `thread_id` does NOT work — on resume, codex
+                            # reuses the same thread_id and resets `item_N`
+                            # to 1, so `thread_id:item_1` collides across
+                            # turns of the same conversation, matching the
+                            # OLD DOM element via querySelector and dropping
+                            # the new result.
+                            _block_id = f"{_stream_uniq}:{_raw_iid}"
                             _block_entry = {
                                 "name": _raw_name,
                                 "arguments": _raw_args,
@@ -2175,13 +2193,12 @@ class LLMCodexMixin(CodexSessionMixin):
                             continue
 
                         if is_done:
-                            # Same prefix as item.started — must match the
-                            # one stored in `_turn_tool_calls` so the result
-                            # attaches and the SSE tc_id matches the
-                            # tool_call SSE element.
-                            _tid = getattr(self, '_current_session_id', '') or ''
-                            tc_id = (f"{_tid}:{iid}"
-                                     if _tid and iid else iid)
+                            # Same prefix as item.started (`_stream_uniq`),
+                            # must match the one stored in
+                            # `_turn_tool_calls` so the result attaches
+                            # and the SSE tc_id matches the tool_call SSE
+                            # element.
+                            tc_id = f"{_stream_uniq}:{iid}" if iid else ""
                             _result = item.get("result", item.get("output", None))
                             # Unwrap the MCP envelope so the UI sees the real
                             # tool output, not raw JSON. MCP servers (like our

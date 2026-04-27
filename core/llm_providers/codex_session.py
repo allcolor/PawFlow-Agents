@@ -716,9 +716,12 @@ class CodexSessionMixin:
                     config_path, relay_url)
         return config_path, internal_token
 
-    # Codex doesn't have CC's `--disallowedTools` concept (its toolset is
-    # MCP-only by default — no built-in fs/bash tools to disable). Kept as
-    # an empty string for symmetry with the CC mixin's _DISALLOWED_BUILTIN_TOOLS.
+    # Codex's equivalent of CC's `--disallowedTools` is per-feature
+    # `--disable <name>` (see `codex features list`) plus per-tool
+    # `-c tools.<name>=false` overrides for hosted Responses-API tools.
+    # `_build_codex_cmd` below applies the full block list — the legacy
+    # _DISALLOWED_BUILTIN_TOOLS string is kept empty just so the symbol
+    # stays defined in case any cross-provider helper introspects it.
     _DISALLOWED_BUILTIN_TOOLS = ""
 
     def _build_codex_cmd(self, model: str,
@@ -749,7 +752,38 @@ class CodexSessionMixin:
             "--json",
             "--skip-git-repo-check",
             "--dangerously-bypass-approvals-and-sandbox",
-            "--disable", "shell_tool",
+        ])
+        # Disable EVERY codex builtin tool that's `stable + enabled by
+        # default` (per `codex features list`) so the model is forced to
+        # reach for PawFlow's MCP bridge for filesystem / shell / browser
+        # / image-gen / desktop-control. Mirror of CC's --disallowedTools
+        # for claude-code. Without this, codex calls its native shell /
+        # browser / etc. against the container's local filesystem (NOT
+        # the user's /workspace) and silently fails or leaks state.
+        # Web_search emits as item.type='web_search' (hosted OpenAI tool,
+        # not in `features list`) — not blockable via --disable, would
+        # need a separate config knob; tracked separately.
+        for _builtin in (
+            "shell_tool",         # shell exec
+            "shell_snapshot",     # shell-state snapshot/restore
+            "unified_exec",       # generic exec
+            "apps",               # OS-app launcher
+            "browser_use",        # browser automation
+            "in_app_browser",     # in-app browser
+            "computer_use",       # desktop control (mouse/kbd)
+            "image_generation",   # DALL-E image gen
+        ):
+            codex_args.extend(["--disable", _builtin])
+        # Hosted Responses-API tools (NOT in `codex features list`,
+        # toggled via config.toml `tools.<name>`). Pass via -c so the
+        # config setting overrides whatever the codex binary defaults to.
+        # `web_search` was observed firing as item.type='web_search' in
+        # production logs even with all features --disabled.
+        for _hosted in (
+            "web_search",
+        ):
+            codex_args.extend(["-c", f"tools.{_hosted}=false"])
+        codex_args.extend([
             "--model", model or "gpt-5.2-codex",
             "-",  # read prompt from stdin
         ])

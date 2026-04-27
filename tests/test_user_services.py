@@ -692,7 +692,32 @@ class TestResourceConflict:
         assert sdef.service_id == "bot2"
 
     # Relay / toolRelay no longer have port+path uniqueness: each service_id
-    # gets its own /ws/relay/<service_id> route on the main HTTP listener.
+    # gets its own route on the main HTTP listener.
+
+    def test_tool_relay_connect_marks_started_and_ignores_legacy_port_path(self):
+        """toolRelay registers on the main listener and reports connected."""
+        from services.tool_relay_service import ToolRelayService
+
+        listener = MagicMock()
+        with patch(
+            "services.http_listener_service.HTTPListenerService.all_instances",
+            return_value={9090: listener},
+        ):
+            svc = ToolRelayService({
+                "_service_id": "_tool_relay",
+                "token": "tok",
+                "port": 12345,
+                "path": "/legacy-dead-path",
+            })
+            svc.connect()
+
+        assert svc.is_connected()
+        listener.register_route.assert_called_once()
+        assert listener.register_route.call_args.args[1] == "/ws/tools/_tool_relay"
+
+        svc.disconnect()
+        listener.unregister_routes.assert_called_once_with("_tool_relay")
+        assert not svc.is_connected()
 
     def test_update_config_conflict(self):
         """Changing port to conflict with existing = blocked."""

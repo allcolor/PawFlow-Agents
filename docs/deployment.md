@@ -140,7 +140,7 @@ PawFlow runs as one container in a pod/task. Claude Code and relays run as **sid
 |----------|--------|-------------|
 | `PAWFLOW_EXEC_MODE` | PawFlow | Set to `sidecar` (auto-detected in K8s/ECS) |
 | `PAWFLOW_CLAUDE_SIDECAR_URL` | PawFlow | WebSocket URL of Claude Code sidecar (e.g., `ws://localhost:9092`) |
-| `PAWFLOW_TOOL_RELAY_URL` | Claude Code sidecar | Tool relay WebSocket URL (e.g., `ws://pawflow:9091/ws/tools`) |
+| `PAWFLOW_TOOL_RELAY_URL` | Claude Code sidecar | Tool relay WebSocket URL on the main PawFlow listener (e.g., `ws://pawflow:9090/ws/tools/_tool_relay`) |
 | `PAWFLOW_TOOL_RELAY_TOKEN` | Claude Code sidecar | Auth token for tool relay |
 
 ### 3a. Kubernetes (EKS / GKE / AKS)
@@ -174,7 +174,7 @@ spec:
             - containerPort: 9092
           env:
             - name: PAWFLOW_TOOL_RELAY_URL
-              value: ws://localhost:9091/ws/tools
+              value: ws://localhost:9090/ws/tools/_tool_relay
             - name: PAWFLOW_TOOL_RELAY_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -229,7 +229,7 @@ spec:
       "image": "pawflow-claude-code:latest",
       "command": ["python3", "/opt/pawflow/claude_sidecar.py"],
       "environment": [
-        {"name": "PAWFLOW_TOOL_RELAY_URL", "value": "ws://localhost:9091/ws/tools"}
+        {"name": "PAWFLOW_TOOL_RELAY_URL", "value": "ws://localhost:9090/ws/tools/_tool_relay"}
       ],
       "mountPoints": [{"sourceVolume": "shared-data", "containerPath": "/workspace/data"}]
     },
@@ -264,7 +264,7 @@ services:
     image: pawflow-claude-code:latest
     entrypoint: ["python3", "/opt/pawflow/claude_sidecar.py"]
     environment:
-      PAWFLOW_TOOL_RELAY_URL: ws://pawflow:9091/ws/tools
+      PAWFLOW_TOOL_RELAY_URL: ws://pawflow:9090/ws/tools/_tool_relay
       PAWFLOW_TOOL_RELAY_TOKEN: ${TOOL_RELAY_TOKEN}
     volumes:
       - pawflow-data:/workspace/data

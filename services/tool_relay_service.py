@@ -111,12 +111,15 @@ class ToolRelayService(BaseService):
         if not instances:
             logger.warning('ToolRelayService %s: no HTTPListenerService running yet, route not registered',
                            self._service_id)
+            self._connection = None
+            self._initialized = False
             return
         listener = next(iter(instances.values()))
         route = f'/ws/tools/{self._service_id}'
         self._route_path = route
         listener.register_route('GET', route, self._service_id, callback=None, ws_handler=self._handle_ws)
         self._connection = listener
+        self._initialized = True
         logger.info('ToolRelayService %s registered on main listener path %s', self._service_id, route)
 
     def disconnect(self):
@@ -125,7 +128,9 @@ class ToolRelayService(BaseService):
                 self._connection.unregister_routes(self._service_id)
             except Exception as e:
                 logger.error('Failed to unregister tool relay route %s: %s', self._route_path, e, exc_info=True)
-            self._connection = None
+        self._connection = None
+        self._initialized = False
+        self._route_path = ''
 
     def _handle_ws(self, sock, path_params, meta):
         import asyncio

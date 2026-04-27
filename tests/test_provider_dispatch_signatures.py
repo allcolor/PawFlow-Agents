@@ -99,3 +99,68 @@ def test_dispatch_kwargs_match_signatures():
                     f"signature or remove it from the dispatch.")
     if failures:
         raise AssertionError("\n".join(failures))
+
+
+def test_provider_mixins_have_no_method_collisions():
+    """Each provider's per-CLI helper methods must NOT collide.
+
+    `LLMClient` inherits from `LLMClaudeCodeMixin`, `LLMCodexMixin`, and
+    `LLMGeminiMixin` (each with their own session mixin). Two mixins
+    defining a method with the same name silently let Python's MRO pick
+    one — and the wrong provider's implementation runs. The bug shipped
+    in `a443a68` (codex's `_setup_credentials` was shadowed by CC's,
+    sending codex calls through CC's auth pool + claude pool) is exactly
+    that.
+
+    Convention enforced here: every method on a provider mixin (or its
+    session mixin) MUST be prefixed with the CLI name (`_cc_`, `_codex_`,
+    `_gemini_`) UNLESS it is one of the OK_TO_COLLIDE exceptions below.
+    """
+    from core.llm_providers.claude_code import LLMClaudeCodeMixin as CC
+    from core.llm_providers.codex import LLMCodexMixin as CX
+    from core.llm_providers.gemini import LLMGeminiMixin as GM
+    from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin as CCS
+    from core.llm_providers.codex_session import CodexSessionMixin as CXS
+    from core.llm_providers.gemini_session import GeminiSessionMixin as GMS
+
+    def _own(c):
+        return set(c.__dict__.keys()) - {
+            "__module__", "__qualname__", "__doc__",
+            "__dict__", "__weakref__",
+        }
+
+    cc_all = _own(CC) | _own(CCS)
+    cx_all = _own(CX) | _own(CXS)
+    gm_all = _own(GM) | _own(GMS)
+
+    # Names that may legitimately appear identically on multiple mixins:
+    #   - Constants / regex whose value is identical across CLIs.
+    #   - `_get_tool_relay_info` is a classmethod returning the SHARED
+    #     PawFlow tool relay service — codex/gemini delegate to CC's.
+    #   - `_pool_counter` / `_pool_lock` are accessed via
+    #     `<Mixin>._pool_counter` (class-name prefix), so per-class
+    #     state is preserved despite the name collision.
+    OK_TO_COLLIDE = {
+        "_DISALLOWED_BUILTIN_TOOLS",
+        "_LEGACY_IMAGE_RE",
+        "_OAUTH_REFRESH_MIN_TTL_SEC",
+        "_get_tool_relay_info",
+        "_pool_counter",
+        "_pool_lock",
+    }
+
+    failures = []
+    for label, a, b in (
+        ("CC ∩ codex", cc_all, cx_all),
+        ("CC ∩ gemini", cc_all, gm_all),
+        ("codex ∩ gemini", cx_all, gm_all),
+    ):
+        bad = (a & b) - OK_TO_COLLIDE
+        if bad:
+            failures.append(
+                f"{label}: {sorted(bad)} — these names collide on "
+                f"LLMClient and Python's MRO will silently pick one. "
+                f"Rename with the CLI prefix (`_cc_*` / `_codex_*` / "
+                f"`_gemini_*`) or add to OK_TO_COLLIDE if intentional.")
+    if failures:
+        raise AssertionError("\n\n".join(failures))

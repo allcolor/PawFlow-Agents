@@ -64,7 +64,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
     # ── Process management ──────────────────────────────────────────
 
-    def send_user_message(self, text: str, attachments: list = None):
+    def _cc_send_user_message(self, text: str, attachments: list = None):
         """Send a user message to the running Claude Code subprocess (preempt).
 
         Uses stream-json input format to inject a new user message while

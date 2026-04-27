@@ -299,7 +299,7 @@ class CodexSessionMixin:
     differ:
       1. CLI command         (`codex exec --json` vs `claude -p`)
       2. JSON event schema   (handled in `_consume_codex_stream`)
-      3. Image attachments   (codex — see `_extract_images` in the provider)
+      3. Image attachments   (codex — see `_codex_extract_images` in the provider)
       4. Credentials format  (codex auth.json vs CC .credentials.json)
     Everything else (tool relay info, workdir layout, env, MCP config
     plumbing) is PawFlow infrastructure and identical across CLIs.
@@ -311,7 +311,7 @@ class CodexSessionMixin:
     _pool_counter = 0
     _pool_lock = __import__('threading').Lock()
 
-    def _resolve_service_tokens(self, pool_index: int = -1) -> dict:
+    def _codex_resolve_service_tokens(self, pool_index: int = -1) -> dict:
         """Resolve codex tokens from the credentials pool. Mirror of CC.
 
         Returns {"access_token", "refresh_token", "expires_at",
@@ -345,7 +345,7 @@ class CodexSessionMixin:
             "account": cred.get("account", ""),
         }
 
-    def _force_refresh_pool_entry(self, pool_index: int) -> bool:
+    def _codex_force_refresh_pool_entry(self, pool_index: int) -> bool:
         """Force-refresh access_token for pool[pool_index]. Mirror of CC.
 
         On failure, drops the slot from the pool entirely (a credential
@@ -394,12 +394,12 @@ class CodexSessionMixin:
         return True
 
     @staticmethod
-    def _refresh_oauth_token(refresh_token: str) -> dict:
+    def _codex_refresh_oauth_token(refresh_token: str) -> dict:
         """Wrapper around module-level refresh_oauth_token, signature-compat
         with ClaudeCodeSessionMixin._refresh_oauth_token."""
         return refresh_oauth_token(refresh_token)
 
-    def _get_session_workdir(self, conversation_id: str,
+    def _codex_get_session_workdir(self, conversation_id: str,
                               agent_name: str = "",
                               user_id: str = "") -> str:
         """Per-session codex workdir. Mirror of CC — same path layout, only
@@ -472,11 +472,11 @@ class CodexSessionMixin:
 
     _OAUTH_REFRESH_MIN_TTL_SEC = 30 * 60
 
-    def _setup_credentials(self, workdir: str, pool_index: int = -1,
+    def _codex_setup_credentials(self, workdir: str, pool_index: int = -1,
                             exclude_indices=None):
         """Write codex auth.json in <workdir>/.codex/ for codex CLI auth.
 
-        Mirror of CC's _setup_credentials. The four touchpoint differences:
+        Mirror of CC's _codex_setup_credentials. The four touchpoint differences:
           - File: `<workdir>/.codex/auth.json` (vs CC's `<workdir>/.credentials.json`)
           - Schema: `{OPENAI_API_KEY, tokens:{access_token, refresh_token,
                       id_token, account_id}, last_refresh}` (vs CC's `claudeAiOauth`)
@@ -549,7 +549,7 @@ class CodexSessionMixin:
                     logger.info("[codex] pool[%d] %s — refreshing", _pidx,
                                 "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
                     try:
-                        new_tokens = self._refresh_oauth_token(refresh_token)
+                        new_tokens = self._codex_refresh_oauth_token(refresh_token)
                         access_token = new_tokens["access_token"]
                         refresh_token = new_tokens.get("refresh_token", refresh_token)
                         id_token = new_tokens.get("id_token", id_token) or id_token
@@ -604,12 +604,12 @@ class CodexSessionMixin:
             json.dump(auth_blob, f)
         os.chmod(auth_path, 0o600)
 
-    def _recover_tokens(self, workdir: str):
+    def _codex_recover_tokens(self, workdir: str):
         """Read back tokens from <workdir>/.codex/auth.json after a run.
 
         Codex may have refreshed access_token mid-turn (via /v1/oauth/token).
         If we see a new value vs what we wrote, persist it back to the pool
-        slot we picked at _setup_credentials time.
+        slot we picked at _codex_setup_credentials time.
         """
         auth_path = os.path.join(workdir, ".codex", "auth.json")
         if not os.path.exists(auth_path):
@@ -624,7 +624,7 @@ class CodexSessionMixin:
             if not new_access:
                 return
             _pidx = getattr(self, '_current_pool_index', -1)
-            _current = self._resolve_service_tokens(pool_index=_pidx)
+            _current = self._codex_resolve_service_tokens(pool_index=_pidx)
             if new_access == _current.get("access_token", ""):
                 return
             _service_id = getattr(self, '_agent_service', '') or ''
@@ -637,7 +637,7 @@ class CodexSessionMixin:
         except Exception as e:
             logger.debug("[codex] token recovery failed: %s", e)
 
-    def _setup_mcp_config(self, workdir: str, user_id: str = "",
+    def _codex_setup_mcp_config(self, workdir: str, user_id: str = "",
                            conversation_id: str = "",
                            agent_name: str = "") -> tuple:
         """Write MCP config to <workdir>/.codex/config.toml.
@@ -646,7 +646,7 @@ class CodexSessionMixin:
         internal_token lifecycle and MUST call core.internal_auth.revoke_token
         once the codex invocation ends.
 
-        Mirror of CC's _setup_mcp_config; only the file format differs
+        Mirror of CC's _codex_setup_mcp_config; only the file format differs
         (codex uses TOML for config.toml, CC uses JSON for .mcp.json).
         """
         mcp_bridge = "/opt/pawflow/mcp_bridge.py"

@@ -218,10 +218,20 @@ class AgentLoopTask(
             _key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
             with inst._active_contexts_lock:
                 _cc = inst._active_claude_client.get(_key)
-            if _cc and hasattr(_cc, 'cancel_claude_code'):
-                _cc.cancel_claude_code(force=True)
-                # Reset catch-up index so next run re-scans from last own message
-                _cc._cc_catchup_idx = 0
+            if _cc:
+                # Provider-agnostic cancel: each CLI provider exposes its
+                # own `cancel_<cli>` method (CC writes ESC on stdin, codex /
+                # gemini kill the proc). Pick the one matching this client's
+                # provider — hasattr() probing the CC-only name silently
+                # skipped cancel for codex/gemini agents.
+                _cancel_fn = (
+                    getattr(_cc, 'cancel_claude_code', None)
+                    or getattr(_cc, 'cancel_codex', None)
+                    or getattr(_cc, 'cancel_gemini', None)
+                )
+                if _cancel_fn:
+                    _cancel_fn(force=True)
+                    _cc._cc_catchup_idx = 0
         try:
             from services.tool_relay_service import ToolRelayService
             ToolRelayService.cancel_agent(conversation_id, agent_name)

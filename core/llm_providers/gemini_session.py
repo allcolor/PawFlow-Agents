@@ -273,7 +273,7 @@ class GeminiSessionMixin:
     _pool_counter = 0
     _pool_lock = __import__('threading').Lock()
 
-    def _resolve_service_tokens(self, pool_index: int = -1) -> dict:
+    def _gemini_resolve_service_tokens(self, pool_index: int = -1) -> dict:
         import time as _t
         svc_id = getattr(self, '_agent_service', '') or ''
         pool = _load_credentials_pool(svc_id)
@@ -300,7 +300,7 @@ class GeminiSessionMixin:
             "account": cred.get("account", ""),
         }
 
-    def _force_refresh_pool_entry(self, pool_index: int) -> bool:
+    def _gemini_force_refresh_pool_entry(self, pool_index: int) -> bool:
         svc_id = getattr(self, '_agent_service', '') or ''
         pool = _load_credentials_pool(svc_id)
         if pool_index < 0 or pool_index >= len(pool):
@@ -338,10 +338,10 @@ class GeminiSessionMixin:
         return True
 
     @staticmethod
-    def _refresh_oauth_token(refresh_token: str) -> dict:
+    def _gemini_refresh_oauth_token(refresh_token: str) -> dict:
         return refresh_oauth_token(refresh_token)
 
-    def _get_session_workdir(self, conversation_id: str,
+    def _gemini_get_session_workdir(self, conversation_id: str,
                               agent_name: str = "",
                               user_id: str = "") -> str:
         """Per-session gemini workdir.
@@ -406,11 +406,11 @@ class GeminiSessionMixin:
 
     _OAUTH_REFRESH_MIN_TTL_SEC = 30 * 60
 
-    def _setup_credentials(self, workdir: str, pool_index: int = -1,
+    def _gemini_setup_credentials(self, workdir: str, pool_index: int = -1,
                             exclude_indices=None):
         """Write oauth_creds.json under <workdir>/.gemini/.
 
-        Mirror of CC/codex _setup_credentials. Touchpoint differences:
+        Mirror of CC/codex _gemini_setup_credentials. Touchpoint differences:
           - File: <workdir>/.gemini/oauth_creds.json
           - Schema: {access_token, refresh_token, scope, token_type:"Bearer",
                      expiry_date} (Google standard OAuth2 format)
@@ -473,7 +473,7 @@ class GeminiSessionMixin:
                     logger.info("[gemini] pool[%d] %s — refreshing", _pidx,
                                 "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
                     try:
-                        new_tokens = self._refresh_oauth_token(refresh_token)
+                        new_tokens = self._gemini_refresh_oauth_token(refresh_token)
                         access_token = new_tokens["access_token"]
                         refresh_token = new_tokens.get("refresh_token", refresh_token)
                         expires_at = new_tokens["expires_at"]
@@ -522,7 +522,7 @@ class GeminiSessionMixin:
                 json.dump({"accounts": {account: {}}, "active": account}, f)
             os.chmod(accounts_path, 0o600)
 
-    def _recover_tokens(self, workdir: str):
+    def _gemini_recover_tokens(self, workdir: str):
         """Read back tokens from <workdir>/.gemini/oauth_creds.json."""
         creds_path = os.path.join(workdir, ".gemini", "oauth_creds.json")
         if not os.path.exists(creds_path):
@@ -536,7 +536,7 @@ class GeminiSessionMixin:
             if not new_access:
                 return
             _pidx = getattr(self, '_current_pool_index', -1)
-            _current = self._resolve_service_tokens(pool_index=_pidx)
+            _current = self._gemini_resolve_service_tokens(pool_index=_pidx)
             if new_access == _current.get("access_token", ""):
                 return
             _service_id = getattr(self, '_agent_service', '') or ''
@@ -547,7 +547,7 @@ class GeminiSessionMixin:
         except Exception as e:
             logger.debug("[gemini] token recovery failed: %s", e)
 
-    def _setup_mcp_config(self, workdir: str, user_id: str = "",
+    def _gemini_setup_mcp_config(self, workdir: str, user_id: str = "",
                            conversation_id: str = "",
                            agent_name: str = "") -> tuple:
         """Write MCP config to <workdir>/.gemini/settings.json.

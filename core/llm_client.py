@@ -583,6 +583,28 @@ class LLMClient(
         except Exception:
             logger.debug("exception suppressed", exc_info=True)
 
+    def send_user_message(self, text: str, attachments: list = None):
+        """Provider-agnostic preempt entrypoint.
+
+        Each provider's mixin defines its own `_<cli>_send_user_message`
+        (CC writes the message on stdin, codex/gemini kill the proc so the
+        agent loop retries with the new prompt). Without this dispatch,
+        Python's MRO would resolve to whichever mixin happens to be listed
+        first in `LLMClient`'s bases — the wrong implementation would run
+        for two of the three providers.
+        """
+        if self.provider == "claude-code":
+            fn = getattr(self, "_cc_send_user_message", None)
+        elif self.provider == "codex":
+            fn = getattr(self, "_codex_send_user_message", None)
+        elif self.provider == "gemini":
+            fn = getattr(self, "_gemini_send_user_message", None)
+        else:
+            return False
+        if fn is None:
+            return False
+        return fn(text, attachments)
+
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "LLMClient":
         """Create from a config dict (may be LazyResolveDict).

@@ -58,13 +58,13 @@ class LLMCodexMixin(CodexSessionMixin):
     """
 
     # Session/workdir methods inherited from ClaudeCodeSessionMixin:
-    # _get_session_workdir, _codex_env, _setup_credentials,
-    # _recover_tokens, _setup_mcp_config, _build_codex_cmd,
+    # _codex_get_session_workdir, _codex_env, _codex_setup_credentials,
+    # _codex_recover_tokens, _codex_setup_mcp_config, _build_codex_cmd,
     # _get_tool_relay_info, _DISALLOWED_BUILTIN_TOOLS
 
     # ── Process management ──────────────────────────────────────────
 
-    def send_user_message(self, text: str, attachments: list = None):
+    def _codex_send_user_message(self, text: str, attachments: list = None):
         """Send a user message to the running Codex subprocess (preempt).
 
         Uses stream-json input format to inject a new user message while
@@ -116,7 +116,7 @@ class LLMCodexMixin(CodexSessionMixin):
             conv_id = getattr(self, '_conversation_id', "")
             agent_name = getattr(self, '_agent_name', "")
             if conv_id and agent_name:
-                catchup = self._build_catchup_context(conv_id, agent_name)
+                catchup = self._codex_build_catchup_context(conv_id, agent_name)
                 if catchup:
                     text = catchup + "\n\n" + text
 
@@ -359,7 +359,7 @@ class LLMCodexMixin(CodexSessionMixin):
             return 'unread'
         return 'done'
 
-    def _cleanup_proc(self, proc) -> str:
+    def _codex_cleanup_proc(self, proc) -> str:
         """Clean up a Codex subprocess. Returns captured stderr.
 
         Pool/proc state pinned to `proc` (via _pf_container set at spawn)
@@ -375,7 +375,7 @@ class LLMCodexMixin(CodexSessionMixin):
         # Release pool slot from proc-pinned container (race-safe).
         _pool_name = getattr(proc, '_pf_container', '') or ''
         if _pool_name:
-            self._pool_release(_pool_name)
+            self._codex_pool_release(_pool_name)
         # Clear self.* mirrors only if they still point at THIS stream's
         # values — leave another concurrent stream's mirror intact.
         if getattr(self, '_codex_proc', None) is proc:
@@ -430,7 +430,7 @@ class LLMCodexMixin(CodexSessionMixin):
     _LEGACY_IMAGE_RE = re.compile(
         r'\s*\[image:\s*image_\d+_\d+\.[A-Za-z0-9]+\s*\]\s*')
 
-    def _scrub_legacy_image_placeholders(self, session_file: str) -> None:
+    def _codex_scrub_legacy_image_placeholders(self, session_file: str) -> None:
         """Rewrite a codex .jsonl session file in place, stripping
         legacy ``[image: image_<ts>_<n>.<ext>]`` markers from user text.
 
@@ -506,7 +506,7 @@ class LLMCodexMixin(CodexSessionMixin):
             "\\", "/").split("/", 1)[-1]
         return "-cc-sessions-" + rel.replace("/", "-").replace("_", "-")
 
-    def _pool_popen(self, workdir: str, cmd: list, **popen_kwargs) -> tuple:
+    def _codex_pool_popen(self, workdir: str, cmd: list, **popen_kwargs) -> tuple:
         """Launch claude inside a pool container via docker exec.
 
         Returns (proc, pool_container_name). Caller must release
@@ -538,7 +538,7 @@ class LLMCodexMixin(CodexSessionMixin):
             **popen_kwargs)
         return proc, container
 
-    def _pool_release(self, container_name):
+    def _codex_pool_release(self, container_name):
         """Release a pool container slot."""
         if container_name:
             try:
@@ -550,7 +550,7 @@ class LLMCodexMixin(CodexSessionMixin):
     # ── Streaming ───────────────────────────────────────────────────
 
     @staticmethod
-    def _extract_images(messages, user_id: str, conversation_id: str) -> list:
+    def _codex_extract_images(messages, user_id: str, conversation_id: str) -> list:
         """Extract images from the LAST user message only.
 
         Removes image blocks from ALL messages (so they don't bloat the text
@@ -566,11 +566,11 @@ class LLMCodexMixin(CodexSessionMixin):
         """
         if not user_id:
             raise ValueError(
-                "_extract_images: user_id is required to resolve image_ref "
+                "_codex_extract_images: user_id is required to resolve image_ref "
                 "attachments (owner-scoped access control)")
         if not conversation_id:
             raise ValueError(
-                "_extract_images: conversation_id is required to resolve "
+                "_codex_extract_images: conversation_id is required to resolve "
                 "image_ref attachments (files belong to a conversation)")
         import base64 as _b64
         image_blocks = []
@@ -678,7 +678,7 @@ class LLMCodexMixin(CodexSessionMixin):
         return image_blocks
 
     @staticmethod
-    def _build_stdin_with_system(system_prompt: str, user_text: str) -> str:
+    def _codex_build_stdin_with_system(system_prompt: str, user_text: str) -> str:
         """Combine system prompt and user text for text-mode input."""
         if not system_prompt:
             return user_text
@@ -687,7 +687,7 @@ class LLMCodexMixin(CodexSessionMixin):
             + "\n</system_instructions>\n\n" + user_text
         )
 
-    def _build_catchup_context(self, conv_id: str, agent_name: str) -> str:
+    def _codex_build_catchup_context(self, conv_id: str, agent_name: str) -> str:
         """Build catch-up text from messages other agents sent since our last turn.
 
         Reads the PARENT conversation's context for this agent (sub-agents
@@ -806,7 +806,7 @@ class LLMCodexMixin(CodexSessionMixin):
         Returns: (proc, pool_container_name, mcp_internal_token).
         """
         from core.llm_client import LLMClientError
-        mcp_path, _mcp_internal_token = self._setup_mcp_config(
+        mcp_path, _mcp_internal_token = self._codex_setup_mcp_config(
             workdir, user_id, conv_id, agent_name)
 
         # The pool's per-exec mount-namespace binds /cc_sessions/<user>
@@ -864,7 +864,7 @@ class LLMCodexMixin(CodexSessionMixin):
         # existing jsonl; skip for NEW sessions.
         if session_id and _exists:
             try:
-                self._scrub_legacy_image_placeholders(_expected_session_file)
+                self._codex_scrub_legacy_image_placeholders(_expected_session_file)
             except Exception as _scrub_err:
                 logger.warning("[codex] session scrub failed (%s): %s",
                                session_id[:8], _scrub_err)
@@ -873,7 +873,7 @@ class LLMCodexMixin(CodexSessionMixin):
         self._pool_container_name = None
 
         try:
-            proc, self._pool_container_name = self._pool_popen(
+            proc, self._pool_container_name = self._codex_pool_popen(
                 workdir, cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -1008,8 +1008,8 @@ class LLMCodexMixin(CodexSessionMixin):
         # Extract images BEFORE serialization (they'll be sent as content blocks).
         # user_id + conv_id are REQUIRED — FileStore enforces owner×conv
         # access control, and a missing identifier silently drops the
-        # user's image. _extract_images raises if either is empty.
-        image_blocks = self._extract_images(
+        # user's image. _codex_extract_images raises if either is empty.
+        image_blocks = self._codex_extract_images(
             messages, user_id=user_id, conversation_id=conv_id)
 
         # Always load session_id from the store for THIS conversation
@@ -1047,7 +1047,7 @@ class LLMCodexMixin(CodexSessionMixin):
         else:
             system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
 
-        initial_text = self._build_stdin_with_system(system_prompt, user_text)
+        initial_text = self._codex_build_stdin_with_system(system_prompt, user_text)
         logger.debug("[codex] prompt: system=%d user=%d images=%d msgs=%d session=%s",
                      len(system_prompt), len(user_text), len(image_blocks), len(messages),
                      "resume" if session_id else "new")
@@ -1055,7 +1055,7 @@ class LLMCodexMixin(CodexSessionMixin):
         logger.info("codex stream: conv_id='%s' user='%s' agent='%s' session='%s'",
                      conv_id, user_id, agent_name, session_id[:12] if session_id else "new")
 
-        workdir = self._get_session_workdir(conv_id, agent_name, user_id)
+        workdir = self._codex_get_session_workdir(conv_id, agent_name, user_id)
         # Resume with same credential that created the session (approach 3)
         _resume_pool_idx = -1
         if session_id and conv_id:
@@ -1064,7 +1064,7 @@ class LLMCodexMixin(CodexSessionMixin):
                     conv_id, f"codex_pool_idx:{agent_name or 'default'}") or -1)
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
-        self._setup_credentials(workdir, pool_index=_resume_pool_idx)
+        self._codex_setup_credentials(workdir, pool_index=_resume_pool_idx)
         # Store pool index for this session
         if conv_id and hasattr(self, '_current_pool_index'):
             try:
@@ -1087,7 +1087,7 @@ class LLMCodexMixin(CodexSessionMixin):
         # Intentionally NOT `getattr(...) or -1`: `or` coerces 0 to -1,
         # silently mapping OAuth pool slot 0 onto the api-key sentinel.
         # The getattr default handles the "attr never set" case (api-key
-        # mode: _setup_credentials early-returns before assigning the
+        # mode: _codex_setup_credentials early-returns before assigning the
         # attr).
         _svc_pool_idx = int(getattr(self, '_current_pool_index', -1))
         # _is_ephemeral resolved earlier at function entry from
@@ -1187,7 +1187,7 @@ class LLMCodexMixin(CodexSessionMixin):
         # from other agents that CC hasn't seen (arrived after CC's last turn)
         catchup_text = ""
         if session_id and conv_id and agent_name:
-            catchup_text = self._build_catchup_context(conv_id, agent_name)
+            catchup_text = self._codex_build_catchup_context(conv_id, agent_name)
 
         # Send initial message as stream-json (keep stdin open for preempt/interrupt)
         try:
@@ -1458,7 +1458,7 @@ class LLMCodexMixin(CodexSessionMixin):
             """Check for new messages from other agents and inject via stdin."""
             if not conv_id or not agent_name:
                 return
-            catchup = self._build_catchup_context(conv_id, agent_name)
+            catchup = self._codex_build_catchup_context(conv_id, agent_name)
             if not catchup:
                 return
             _p = getattr(self, '_codex_proc', None)
@@ -1933,7 +1933,7 @@ class LLMCodexMixin(CodexSessionMixin):
         # `if proc.returncode ...` branch that stays skipped on the
         # keep-alive path (proc still running → returncode=None). Setting
         # to "" here keeps the name bound even if finally takes the
-        # keep-alive branch that skips _cleanup_proc.
+        # keep-alive branch that skips _codex_cleanup_proc.
         _stderr = ""
 
         try:
@@ -2238,7 +2238,7 @@ class LLMCodexMixin(CodexSessionMixin):
             #    exception escapes the loop, that computation never
             #    ran — but defense-in-depth in case someone later adds
             #    a keep-alive assignment earlier in the flow).
-            # 3. Kill hard NOW, not just in finally. `_cleanup_proc` in
+            # 3. Kill hard NOW, not just in finally. `_codex_cleanup_proc` in
             #    finally does `proc.kill()` + pool release (which is
             #    `docker rm -f` in the 1:1 model, so the container IS
             #    nuked). Calling `_kill_codex_hard` here is belt-and-
@@ -2284,7 +2284,7 @@ class LLMCodexMixin(CodexSessionMixin):
 
             if _keep_alive:
                 # Retain proc + reader + pool container for reuse. Skip
-                # _cleanup_proc / pool release / token revoke — those are
+                # _codex_cleanup_proc / pool release / token revoke — those are
                 # lifecycle-scoped to the live session, not the turn.
                 # The reader daemon's per-line touch already keeps
                 # last_used fresh — no end-of-stream touch needed.
@@ -2345,10 +2345,10 @@ class LLMCodexMixin(CodexSessionMixin):
                     # — CC may have refreshed mid-turn and we want them
                     # persisted for resume-without-live-session paths.
                     try:
-                        self._recover_tokens(workdir)
+                        self._codex_recover_tokens(workdir)
                     except Exception:
                         logger.debug(
-                            "_recover_tokens failed", exc_info=True)
+                            "_codex_recover_tokens failed", exc_info=True)
 
             if not _keep_alive:
                 # Full teardown: evict any live-session entry first so
@@ -2356,10 +2356,10 @@ class LLMCodexMixin(CodexSessionMixin):
                 # kill + recover + revoke as before.
                 if _is_reuse and _live_key is not None:
                     _live_reg.evict(_live_key, "turn_failed")
-                # Cleanup process — _cleanup_proc captures stderr internally
-                _stderr = self._cleanup_proc(proc)
+                # Cleanup process — _codex_cleanup_proc captures stderr internally
+                _stderr = self._codex_cleanup_proc(proc)
                 # Recover refreshed tokens from workdir (Codex may have refreshed them)
-                self._recover_tokens(workdir)
+                self._codex_recover_tokens(workdir)
                 # Revoke the internal-auth token minted for this CC invocation —
                 # scoped to the lifetime of this stream, not retained across calls.
                 # Without this, tokens accumulate in core.internal_auth._tokens

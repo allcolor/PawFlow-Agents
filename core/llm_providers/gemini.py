@@ -1208,6 +1208,9 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     "[gemini] %d image attachment(s) ignored — gemini -p "
                     "stdin is text-only; pipe vision via MCP tools instead",
                     len(image_blocks))
+            # Prompt-based gauge estimate — see codex.py for the same fix.
+            # gemini's reported input_tokens sums internal iterations.
+            prompt_chars = len(initial_text)
             proc.stdin.write(initial_text)
             proc.stdin.flush()
             try:
@@ -2116,6 +2119,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         except Exception as _br_err:
                             logger.error("[gemini] block_callback tool_result failed: %s",
                                          _br_err, exc_info=True)
+                    # Flush this tool's pair immediately — same fix as codex.
+                    _flush_turn()
                     continue
 
                 if etype == "result":
@@ -2428,25 +2433,24 @@ class LLMGeminiMixin(GeminiSessionMixin):
         # N×prefix and makes the UI clamp at 100%). `_latest_usage` is captured
         # at every assistant event in the stream loop.
         _u_final = _latest_usage or last_data.get("usage", {})
-        _ti_in = _u_final.get("input_tokens", 0)
-        _ti_creation = _u_final.get("cache_creation_input_tokens", 0)
-        _ti_read = _u_final.get("cache_read_input_tokens", 0)
+        _ti_in_raw = _u_final.get("input_tokens", 0)
         _to = _u_final.get("output_tokens", 0)
-        if not (_ti_in or _ti_creation or _ti_read or _to):
+        if not (_ti_in_raw or _to):
             for _mu in last_data.get("modelUsage", {}).values():
-                _ti_in += _mu.get("inputTokens", 0) + _mu.get("input_tokens", 0)
-                _ti_read += _mu.get("cacheReadInputTokens", 0) + _mu.get("cache_read_input_tokens", 0)
-                _ti_creation += _mu.get("cacheCreationInputTokens", 0) + _mu.get("cache_creation_input_tokens", 0)
+                _ti_in_raw += _mu.get("inputTokens", 0) + _mu.get("input_tokens", 0)
                 _to += _mu.get("outputTokens", 0) + _mu.get("output_tokens", 0)
-        _ti = _ti_in + _ti_creation + _ti_read
+        # Same fix as codex: gemini's `input_tokens` sums every internal
+        # iteration's prompt size, so it balloons the gauge and triggers
+        # spurious compacts. Use a prompt-based estimate.
+        _ti_estimate = int(prompt_chars / 3.5) + 8000 if prompt_chars > 0 else _ti_in_raw
         return LLMResponse(
             content=full_content,
             model=last_data.get("model", model),
-            tokens_in=_ti_in,
+            tokens_in=_ti_estimate,
             tokens_out=_to,
-            total_tokens=_ti + _to,
-            cache_creation_tokens=_ti_creation,
-            cache_read_tokens=_ti_read,
+            total_tokens=_ti_estimate + _to,
+            cache_creation_tokens=0,
+            cache_read_tokens=0,
             finish_reason="stop",
             raw=last_data,
         )

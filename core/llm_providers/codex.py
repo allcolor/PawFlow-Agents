@@ -2165,6 +2165,16 @@ class LLMCodexMixin(CodexSessionMixin):
                                 except Exception as _br_err:
                                     logger.error("[codex] block_callback tool_result failed: %s",
                                                  _br_err, exc_info=True)
+                            # Flush THIS tool's pair (use+result) to the UI
+                            # immediately. Codex emits item.completed for each
+                            # tool as soon as the MCP call returns, so the
+                            # stream is already real-time — we just have to
+                            # forward the boundary. Without this flush every
+                            # tool waits for `turn.completed` (one final flush
+                            # for ALL tools), which is what made the user see
+                            # 6 tools appearing simultaneously instead of one
+                            # by one as they ran.
+                            _flush_turn()
                         continue
 
                     if itype not in getattr(self, '_codex_seen_unknown_itypes', set()):
@@ -2491,25 +2501,27 @@ class LLMCodexMixin(CodexSessionMixin):
         # N×prefix and makes the UI clamp at 100%). `_latest_usage` is captured
         # at every assistant event in the stream loop.
         _u_final = _latest_usage or last_data.get("usage", {})
-        _ti_in = _u_final.get("input_tokens", 0)
-        _ti_creation = _u_final.get("cache_creation_input_tokens", 0)
-        _ti_read = _u_final.get("cache_read_input_tokens", 0)
+        _ti_in_raw = _u_final.get("input_tokens", 0)
         _to = _u_final.get("output_tokens", 0)
-        if not (_ti_in or _ti_creation or _ti_read or _to):
+        if not (_ti_in_raw or _to):
             for _mu in last_data.get("modelUsage", {}).values():
-                _ti_in += _mu.get("inputTokens", 0) + _mu.get("input_tokens", 0)
-                _ti_read += _mu.get("cacheReadInputTokens", 0) + _mu.get("cache_read_input_tokens", 0)
-                _ti_creation += _mu.get("cacheCreationInputTokens", 0) + _mu.get("cache_creation_input_tokens", 0)
+                _ti_in_raw += _mu.get("inputTokens", 0) + _mu.get("input_tokens", 0)
                 _to += _mu.get("outputTokens", 0) + _mu.get("output_tokens", 0)
-        _ti = _ti_in + _ti_creation + _ti_read
+        # Codex's `turn.completed.usage.input_tokens` is the SUM of every
+        # internal iteration's prompt size (one user turn with 17 internal
+        # tool calls reports input_tokens ≈ 17× actual prompt). Using that
+        # value as `tokens_in` makes the gauge balloon and triggers a
+        # PawFlow compact after a couple of messages on a 1M context.
+        # Use a prompt-based estimate that reflects what we actually sent.
+        _ti_estimate = int(prompt_chars / 3.5) + 8000 if prompt_chars > 0 else _ti_in_raw
         return LLMResponse(
             content=full_content,
             model=last_data.get("model", model),
-            tokens_in=_ti_in,
+            tokens_in=_ti_estimate,
             tokens_out=_to,
-            total_tokens=_ti + _to,
-            cache_creation_tokens=_ti_creation,
-            cache_read_tokens=_ti_read,
+            total_tokens=_ti_estimate + _to,
+            cache_creation_tokens=0,
+            cache_read_tokens=0,
             finish_reason="stop",
             raw=last_data,
         )

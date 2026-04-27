@@ -21,10 +21,13 @@ token, and verification is a DB lookup.
 Persistence
 -----------
 Per the PawFlow no-timeout / long-running session contract, capability tokens
-MUST survive a server restart. We persist to SQLite in
-`<runtime>/capabilities.db`; on `init_db()` we open the file (creating tables
-if missing) and purge expired rows. WAL mode is enabled so concurrent reads
-do not block writes.
+MUST survive a server restart. We persist as JSON in `<runtime>/capabilities.json`
+(atomic temp+rename writes, single-process owner). SQLite was rejected: the
+user runs the project from a Windows shell over `\\wsl$\…`, and SQLite's
+byte-range locking is unreliable on SMB — every CREATE TABLE / INSERT
+returned `database is locked` even after WAL was disabled. JSON is read in
+full at boot and rewritten on every mutation; volume is small (a few hundred
+tokens at most) so this is comfortably below any realistic latency budget.
 
 Failure rate-limit
 ------------------
@@ -38,14 +41,15 @@ any attacker can re-trigger it with the same brute-force.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import secrets
-import sqlite3
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -98,88 +102,153 @@ class CapabilityClaims:
 
 # --- Internal state ---------------------------------------------------------
 
-# Single global lock guarding _DB_PATH + _FAILURES_BY_IP. SQLite has its own
-# locking but we still serialise our access at the Python level so the rate-
-# limit dict mutations stay consistent under concurrent verifies.
+# Single global lock guarding _STORE_PATH + _ROWS + _FAILURES_BY_IP.
+# Every mutation snapshots to disk while holding the lock.
 _LOCK = threading.RLock()
-_DB_PATH: Optional[Path] = None
+_STORE_PATH: Optional[Path] = None
+_ROWS: Dict[str, "_Row"] = {}  # token → row
 
 # Rate limit on verify failures (memory-only).
 _FAIL_RATE_LIMIT_THRESHOLD = 20
 _FAIL_RATE_WINDOW_SEC = 60
-_FAILURES_BY_IP: dict[str, tuple[int, float]] = {}
+_FAILURES_BY_IP: Dict[str, tuple[int, float]] = {}
 
 
-def _connect() -> sqlite3.Connection:
-    """Open a fresh SQLite connection. SQLite connections are NOT thread-safe
-    by default, so we open one per call and let the caller close it (via
-    `with` context manager).
+@dataclass
+class _Row:
+    """In-memory row mirroring the on-disk JSON entry."""
+    token: str
+    resource_type: str
+    resource_id: str
+    user_id: str
+    conversation_id: str
+    session_id: str
+    issued_at: int
+    expires_at: int
 
-    WAL is only attempted on local filesystems. On UNC paths (`\\\\wsl$\\…`,
-    SMB shares, mapped network drives) WAL needs mmap'd shared memory that
-    SMB doesn't support — `PRAGMA journal_mode=WAL` returns "database is
-    locked" and aborts the boot. We fall back to the default rollback
-    journal in that case; functionally equivalent for our write rate, just
-    slightly worse concurrent-read scaling.
+
+# --- Persistence -----------------------------------------------------------
+
+
+def _load_from_disk() -> Dict[str, _Row]:
+    """Load the rows file. Returns {} on missing/empty/corrupt — those are
+    recoverable states (fresh boot, partial write that was atomically
+    discarded). A genuinely corrupt file is logged loudly but doesn't take
+    the boot down — auth tokens are recoverable by re-issue.
     """
-    if _DB_PATH is None:
-        raise RuntimeError(
-            "capability_auth: init_db() must be called before any other API")
-    conn = sqlite3.connect(str(_DB_PATH), timeout=10.0, isolation_level=None)
-    if _supports_wal(_DB_PATH):
-        conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    if _STORE_PATH is None or not _STORE_PATH.exists():
+        return {}
+    try:
+        raw = _STORE_PATH.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("[capability] read failed for %s: %s — starting empty",
+                       _STORE_PATH, e)
+        return {}
+    if not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.error(
+            "[capability] %s is not valid JSON (%s) — starting empty. "
+            "Existing tokens are lost; re-issue on next request.",
+            _STORE_PATH, e)
+        return {}
+    if not isinstance(data, list):
+        logger.error(
+            "[capability] %s root is %s, expected list — starting empty",
+            _STORE_PATH, type(data).__name__)
+        return {}
+    rows: Dict[str, _Row] = {}
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            row = _Row(
+                token=str(entry["token"]),
+                resource_type=str(entry["resource_type"]),
+                resource_id=str(entry["resource_id"]),
+                user_id=str(entry["user_id"]),
+                conversation_id=str(entry.get("conversation_id", "")),
+                session_id=str(entry.get("session_id", "")),
+                issued_at=int(entry["issued_at"]),
+                expires_at=int(entry["expires_at"]),
+            )
+        except (KeyError, ValueError, TypeError) as e:
+            logger.warning(
+                "[capability] dropping malformed row %r: %s", entry, e)
+            continue
+        rows[row.token] = row
+    return rows
 
 
-def _supports_wal(path: Path) -> bool:
-    """True if the filesystem holding `path` supports SQLite WAL.
+def _save_to_disk_locked() -> None:
+    """Snapshot _ROWS to disk. MUST be called with _LOCK held.
 
-    UNC / network paths don't (no mmap'd shared memory). Detection is
-    string-based for now — robust enough for the WSL/SMB case that
-    triggered the bug, doesn't need fstatfs gymnastics.
+    Atomic via tmp+os.replace — partial writes never become visible. On
+    write failure we keep the in-memory state and log; the next mutation
+    will retry. Persisting is best-effort, not transactional, because
+    losing a few capability tokens (worst case) just forces re-issue,
+    which is what would happen on token expiry anyway.
     """
-    s = str(path)
-    return not (s.startswith("\\\\") or s.startswith("//"))
+    if _STORE_PATH is None:
+        return
+    payload = json.dumps(
+        [asdict(r) for r in _ROWS.values()],
+        ensure_ascii=False, separators=(",", ":"))
+    tmp = _STORE_PATH.with_suffix(_STORE_PATH.suffix + ".tmp")
+    try:
+        _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, _STORE_PATH)
+    except OSError as e:
+        logger.error(
+            "[capability] failed to persist %s: %s — in-memory state kept",
+            _STORE_PATH, e)
+        # Best-effort cleanup of the temp file; ignore if even that fails.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 # --- Public API -------------------------------------------------------------
 
 
+def _require_initialized() -> None:
+    if _STORE_PATH is None:
+        raise RuntimeError("capability_auth.init_db() must be called before use")
+
+
 def init_db(db_path) -> None:
     """Initialise the capability store. Idempotent: safe to call multiple
-    times (creates the file/tables if missing, no-ops otherwise) and resets
-    the in-memory rate-limit counters.
+    times (creates the parent dir + JSON file if missing, no-ops otherwise)
+    and resets the in-memory rate-limit counters.
+
+    The argument name is `db_path` for backwards compatibility with the
+    SQLite-era callers; we transparently use the same path with a `.json`
+    extension if the caller gave us `.db`.
 
     Must be called once at server boot before any issue/verify/revoke.
     """
-    global _DB_PATH
+    global _STORE_PATH
     with _LOCK:
-        _DB_PATH = Path(db_path)
-        _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with _connect() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS capabilities (
-                    token           TEXT PRIMARY KEY,
-                    resource_type   TEXT NOT NULL,
-                    resource_id     TEXT NOT NULL,
-                    user_id         TEXT NOT NULL,
-                    conversation_id TEXT NOT NULL DEFAULT '',
-                    session_id      TEXT NOT NULL DEFAULT '',
-                    issued_at       INTEGER NOT NULL,
-                    expires_at      INTEGER NOT NULL
-                )
-            """)
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS ix_cap_resource "
-                "ON capabilities(resource_type, resource_id)")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS ix_cap_session "
-                "ON capabilities(session_id)")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS ix_cap_expires "
-                "ON capabilities(expires_at)")
+        p = Path(db_path)
+        # Migrate the legacy .db extension transparently — the caller
+        # (cli.py) was hard-coded to `capabilities.db` from the SQLite era.
+        if p.suffix == ".db":
+            p = p.with_suffix(".json")
+        _STORE_PATH = p
+        _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _ROWS.clear()
+        _ROWS.update(_load_from_disk())
         _FAILURES_BY_IP.clear()
+        if not _STORE_PATH.exists():
+            _save_to_disk_locked()
     purge_expired()
+    logger.info(
+        "[capability] store ready at %s (%d row(s) loaded)",
+        _STORE_PATH, len(_ROWS))
 
 
 def purge_expired() -> int:
@@ -189,14 +258,17 @@ def purge_expired() -> int:
     when an expired token is observed. Safe to call from any thread.
     Returns the number of rows deleted.
     """
+    _require_initialized()
     now = int(time.time())
-    with _LOCK, _connect() as conn:
-        cur = conn.execute(
-            "DELETE FROM capabilities WHERE expires_at <= ?", (now,))
-        deleted = cur.rowcount or 0
-    if deleted:
-        logger.info("[capability] purged %d expired capabilities", deleted)
-    return deleted
+    with _LOCK:
+        expired = [t for t, r in _ROWS.items() if r.expires_at <= now]
+        for t in expired:
+            _ROWS.pop(t, None)
+        if expired:
+            _save_to_disk_locked()
+    if expired:
+        logger.info("[capability] purged %d expired capabilities", len(expired))
+    return len(expired)
 
 
 def issue_capability(
@@ -224,19 +296,24 @@ def issue_capability(
         raise ValueError("user_id is required")
     if ttl_seconds <= 0:
         raise ValueError("ttl_seconds must be > 0")
+    _require_initialized()
 
     token = secrets.token_urlsafe(32)  # 256 bits of entropy
     now = int(time.time())
     expires_at = now + int(ttl_seconds)
-    with _LOCK, _connect() as conn:
-        conn.execute(
-            """INSERT INTO capabilities
-               (token, resource_type, resource_id, user_id,
-                conversation_id, session_id, issued_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (token, resource_type, resource_id, user_id,
-             conversation_id or "", session_id or "", now, expires_at),
-        )
+    row = _Row(
+        token=token,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        user_id=user_id,
+        conversation_id=conversation_id or "",
+        session_id=session_id or "",
+        issued_at=now,
+        expires_at=expires_at,
+    )
+    with _LOCK:
+        _ROWS[token] = row
+        _save_to_disk_locked()
     logger.debug(
         "[capability] issued %s for %s/%s user=%s conv=%s session=%s ttl=%ds",
         token[:8] + "…", resource_type, resource_id, user_id,
@@ -271,6 +348,7 @@ def verify_capability(
     caller has a real client IP, otherwise rate-limit is disabled for that
     call (e.g. internal tests).
     """
+    _require_initialized()
     if not token:
         _record_failure(remote_ip)
         raise CapabilityNotFound("empty token")
@@ -279,22 +357,18 @@ def verify_capability(
         raise CapabilityRateLimited(
             f"too many verify failures from {remote_ip}")
 
-    with _LOCK, _connect() as conn:
-        row = conn.execute(
-            """SELECT token, resource_type, resource_id, user_id,
-                      conversation_id, session_id, issued_at, expires_at
-               FROM capabilities WHERE token = ?""",
-            (token,),
-        ).fetchone()
+    with _LOCK:
+        row = _ROWS.get(token)
 
     if row is None:
         _record_failure(remote_ip)
         raise CapabilityNotFound("unknown token")
 
     claims = CapabilityClaims(
-        token=row[0], resource_type=row[1], resource_id=row[2],
-        user_id=row[3], conversation_id=row[4], session_id=row[5],
-        issued_at=row[6], expires_at=row[7],
+        token=row.token, resource_type=row.resource_type,
+        resource_id=row.resource_id, user_id=row.user_id,
+        conversation_id=row.conversation_id, session_id=row.session_id,
+        issued_at=row.issued_at, expires_at=row.expires_at,
     )
 
     now = int(time.time())
@@ -357,27 +431,26 @@ def revoke_capability(
 
     Returns the number of rows deleted.
     """
+    _require_initialized()
     n_args = sum(1 for v in (token, resource_id, session_id) if v)
     if n_args != 1:
         raise ValueError(
             "revoke_capability requires exactly one of: "
             "token, resource_id, session_id")
-    with _LOCK, _connect() as conn:
+    with _LOCK:
         if token:
-            cur = conn.execute(
-                "DELETE FROM capabilities WHERE token = ?", (token,))
+            doomed = [token] if token in _ROWS else []
         elif resource_id:
-            cur = conn.execute(
-                "DELETE FROM capabilities WHERE resource_id = ?",
-                (resource_id,))
+            doomed = [t for t, r in _ROWS.items() if r.resource_id == resource_id]
         else:  # session_id
-            cur = conn.execute(
-                "DELETE FROM capabilities WHERE session_id = ?",
-                (session_id,))
-        deleted = cur.rowcount or 0
-    if deleted:
-        logger.debug("[capability] revoked %d row(s)", deleted)
-    return deleted
+            doomed = [t for t, r in _ROWS.items() if r.session_id == session_id]
+        for t in doomed:
+            _ROWS.pop(t, None)
+        if doomed:
+            _save_to_disk_locked()
+    if doomed:
+        logger.debug("[capability] revoked %d row(s)", len(doomed))
+    return len(doomed)
 
 
 def revoke_session_capabilities(session_id: str) -> int:
@@ -451,7 +524,8 @@ def _record_failure(ip: str) -> None:
 def _reset_for_tests() -> None:
     """Clear all in-memory state. Tests use this before init_db() to start
     from a clean slate. Production code MUST NOT call this."""
-    global _DB_PATH
+    global _STORE_PATH
     with _LOCK:
-        _DB_PATH = None
+        _STORE_PATH = None
+        _ROWS.clear()
         _FAILURES_BY_IP.clear()

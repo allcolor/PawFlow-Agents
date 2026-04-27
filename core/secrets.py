@@ -195,6 +195,26 @@ class SecretsManager:
         with self._lock:
             self._keyring[kid] = key
 
+    def derive_subkey(self, domain: bytes) -> bytes:
+        """HMAC-SHA256-derive a domain-bound 32-byte subkey from the
+        current master.
+
+        Use case: signing/verification helpers (cookie HMACs, capability
+        token integrity, etc.) want a key that's *bound to a domain
+        string* so that a forged value from one subsystem can't be
+        replayed in another. `domain` is a short ASCII tag, e.g.
+        `b"private-gateway-cookie"`.
+
+        Cheap (one HMAC) — callers can re-derive on every use and
+        don't have to cache. Rotates automatically when `set_current()`
+        flips the master.
+        """
+        if not isinstance(domain, (bytes, bytearray)) or not domain:
+            raise ValueError("domain must be non-empty bytes")
+        with self._lock:
+            master = self._keyring[self._current_kid]
+        return hmac.new(master, bytes(domain), hashlib.sha256).digest()
+
     def set_current(self, kid: str) -> None:
         """Switch new writes to kid. Reads still try every key in the
         keyring; this only changes which kid is stamped on new payloads."""

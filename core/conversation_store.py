@@ -914,17 +914,30 @@ class ConversationStore:
         """Atomically write extras JSON (tmp + rename).
 
         Callers MUST hold `_get_conv_lock(cid)`. With every reader also
-        holding the same lock, no concurrent file handle exists on the
-        destination, so `os.replace` cannot be blocked by our own reads.
-        A PermissionError here now means a legitimate OS-level issue
-        (disk permission, volume full, etc.) and is propagated to the
-        caller rather than masked by retries.
+        holding the same lock, no concurrent PawFlow file handle exists
+        on the destination. The retry loop below covers a different
+        case specific to Windows: anti-virus / Windows Defender /
+        OneDrive briefly hold an external read handle on freshly-
+        written files, which makes `os.replace` raise WinError 5 even
+        though no PawFlow code is touching the file. A handful of
+        short retries lets the AV scan finish and the rename succeed
+        — still atomic, just observably racy with the scanner.
         """
+        import time as _t
         path = self._extras_path(cid)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        _last_err: Optional[Exception] = None
+        for _attempt in range(8):
+            try:
+                tmp.replace(path)
+                return
+            except PermissionError as _pe:
+                _last_err = _pe
+                _t.sleep(0.025 * (1 + _attempt))  # 25, 50, 75, ... up to 200ms
+        raise _last_err if _last_err else RuntimeError(
+            "_write_extras: replace failed without an exception")
 
     # ══════════════════════════════════════════════════════════════════
     #  SINGLE READ POINT

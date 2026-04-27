@@ -34,7 +34,7 @@ class SecurityReport:
     production: bool = False
     secret_key_source: str = ""
     approval_fail_open: bool = False
-    capability_db_present: bool = False
+    capability_store_present: bool = False
     private_gateway_enabled: bool = False
     auth_enabled: bool = False
     listener_bind: str = ""
@@ -51,7 +51,7 @@ class SecurityReport:
             f"  approval policy  : "
             f"{'FAIL-OPEN (dev)' if self.approval_fail_open else 'fail-closed'}",
             f"  capability store : "
-            f"{'present' if self.capability_db_present else 'missing'}",
+            f"{'present' if self.capability_store_present else 'missing'}",
             f"  private gateway  : "
             f"{'enabled' if self.private_gateway_enabled else 'disabled'}",
             f"  auth enabled     : "
@@ -79,10 +79,10 @@ def _approval_fail_open() -> bool:
         "1", "true", "yes")
 
 
-def _capability_db_present() -> bool:
+def _capability_store_present() -> bool:
     try:
-        from core.paths import CAPABILITIES_DB
-        return CAPABILITIES_DB.exists()
+        from core.paths import CAPABILITIES_FILE
+        return CAPABILITIES_FILE.exists()
     except Exception:
         return False
 
@@ -129,7 +129,7 @@ def build_report() -> SecurityReport:
         production=is_production(),
         secret_key_source=_resolve_secret_key_source(),
         approval_fail_open=_approval_fail_open(),
-        capability_db_present=_capability_db_present(),
+        capability_store_present=_capability_store_present(),
         private_gateway_enabled=_private_gateway_enabled(),
         auth_enabled=_auth_enabled(),
         listener_bind=_listener_bind(),
@@ -154,10 +154,10 @@ def build_report() -> SecurityReport:
                 "HTTP listener bound to 0.0.0.0 — ensure the host "
                 "firewall / private gateway restrict who can reach it.")
     else:
-        if not rep.capability_db_present:
+        if not rep.capability_store_present:
             rep.warnings.append(
-                "capability store not yet initialised — init_db will "
-                "create it on the first sensitive route registration.")
+                "capability store file missing — cli.py should call "
+                "capability_auth.init_db() at boot before this report.")
     return rep
 
 

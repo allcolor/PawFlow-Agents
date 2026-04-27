@@ -22,6 +22,18 @@ def db(tmp_path):
     ca._reset_for_tests()
 
 
+def test_init_db_materializes_json_store(tmp_path):
+    ca._reset_for_tests()
+    db_path = tmp_path / "capabilities.db"
+    ca.init_db(db_path)
+
+    assert not db_path.exists()
+    json_path = tmp_path / "capabilities.json"
+    assert json_path.exists()
+    assert json_path.read_text(encoding="utf-8") == "[]"
+    ca._reset_for_tests()
+
+
 def test_issue_returns_token_and_verify_roundtrip(db):
     token = ca.issue_capability(
         "vnc", "sess1", "alice",

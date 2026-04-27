@@ -305,7 +305,10 @@ class FileStore:
     def _derive_gateway_key(self, file_id: str) -> str:
         """Derive a per-file gateway key using HMAC."""
         from core.secrets import get_secrets_manager
-        secret = get_secrets_manager()._key
+        # Domain-bind to "filestore-gateway" so the per-file HMAC can't
+        # be replayed against any other subsystem (cookie signer, etc.)
+        # that uses the same master through `derive_subkey`.
+        secret = get_secrets_manager().derive_subkey(b"filestore-gateway")
         return hmac.new(secret, f"file:{file_id}".encode(),
                         hashlib.sha256).hexdigest()[:32]
 

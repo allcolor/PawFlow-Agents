@@ -197,7 +197,6 @@ function updateActivePanel() {
     const timeStr = secs < 60 ? secs + 's' : Math.floor(secs/60) + 'm' + (secs%60) + 's';
     let statusParts = [];
     if (info.iteration) statusParts.push('iter ' + info.iteration);
-    if (info.round && info.maxRounds > 1) statusParts.push('round ' + info.round + '/' + info.maxRounds);
     if (info.totalTools > 0) statusParts.push(info.totalTools + ' tools');
     if (info.activeTools && info.activeTools.length > 1) {
       statusParts.push('[' + info.activeTools.join(', ') + ']');

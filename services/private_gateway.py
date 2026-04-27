@@ -32,8 +32,7 @@ _COOKIE_MAX_AGE = 30 * 86400  # 30 days
 
 def _signing_key() -> bytes:
     from core.secrets import get_secrets_manager
-    sm = get_secrets_manager()
-    return hmac.new(sm._key, b"private-gateway-cookie", hashlib.sha256).digest()
+    return get_secrets_manager().derive_subkey(b"private-gateway-cookie")
 
 
 def _make_cookie_value(ip: str) -> str:

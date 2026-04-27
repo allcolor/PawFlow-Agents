@@ -62,6 +62,38 @@ class LLMCodexMixin(CodexSessionMixin):
     # _codex_recover_tokens, _codex_setup_mcp_config, _build_codex_cmd,
     # _get_tool_relay_info, _DISALLOWED_BUILTIN_TOOLS
 
+    def _codex_context_window(self, model: str) -> int:
+        """Return Codex's effective context window for `model`.
+
+        Runtime provider/API metadata is authoritative when available. Codex
+        currently does not expose a reliable context window in stream-json
+        usage events, so PawFlow's required LLM service `max_context_size`
+        is the normal source of truth. Missing/invalid config is a hard
+        service configuration error, never a silent numeric fallback.
+        """
+        # Future-proof hook: if a runtime probe/cache is added later, it
+        # should write a positive per-model value here and that value wins.
+        runtime_windows = getattr(self, "_codex_context_windows", None)
+        if isinstance(runtime_windows, dict):
+            for key in (model, (model or "").lower()):
+                try:
+                    value = int(runtime_windows.get(key, 0) or 0)
+                except (TypeError, ValueError):
+                    value = 0
+                if value > 0:
+                    return value
+
+        cfg = getattr(self, "_config_ref", None) or {}
+        try:
+            value = int(cfg.get("max_context_size", 0) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value <= 0:
+            from core.llm_client import LLMClientError
+            raise LLMClientError(
+                "Codex LLM service is missing required max_context_size")
+        return value
+
     # ── Process management ──────────────────────────────────────────
 
     def _codex_send_user_message(self, text: str, attachments: list = None):
@@ -109,6 +141,12 @@ class LLMCodexMixin(CodexSessionMixin):
                 "[codex] preempt: killing in-flight CLI to interrupt "
                 "current turn — next turn will resume rollout with "
                 "new prompt: %.100s", text)
+            # Mark this stream so the post-loop exit-code check does
+            # NOT raise an LLMClientError on the non-zero return code
+            # — the kill is OUR action, not a CLI failure. The agent
+            # loop will simply pick up the queued message on the next
+            # iteration via PendingQueue.
+            self._preempt_killed = True
             try:
                 self._kill_codex_hard(proc)
             except Exception as _ke:
@@ -1453,10 +1491,7 @@ class LLMCodexMixin(CodexSessionMixin):
         # previous turn's stale value (or 0 if it's the first turn) until
         # codex emits an event we map to message_meta.
         try:
-            _ctx_max_init = (
-                self._codex_context_window(model)
-                if hasattr(self, '_codex_context_window')
-                else max_tokens or 1_000_000)
+            _ctx_max_init = self._codex_context_window(model)
             if prompt_tokens > 0 and _ctx_max_init > 0:
                 _pub("message_meta", {
                     "agent_name": agent_name,
@@ -1515,17 +1550,13 @@ class LLMCodexMixin(CodexSessionMixin):
         _latest_usage: dict = {}
         self._preempt_pending = 0  # reset at start of each stream
         self._had_preempts_this_turn = False
+        self._preempt_killed = False  # set True when send_user_message kills mid-turn
         self._result_emitted = False  # set True when CC emits final result
         self._compacting = False  # set True when CC compact_boundary fires
-        # CC's authoritative context window for the model in use is lifted
-        # from result.modelUsage[model].contextWindow on each result event
-        # and cached PER-STREAM in self._codex_context_window_by_stream
-        # (keyed by (conv_id, agent_name)). The old singleton scalar got
-        # clobbered across concurrent streams (memory_extract / _compact /
-        # multi-agent) on the shared provider — an opus turn would read
-        # back haiku's 200k after an unrelated stream had written it.
-        if not hasattr(self, '_codex_context_window_by_stream'):
-            self._codex_context_window_by_stream = {}
+        # Codex stream-json does not currently expose an authoritative
+        # per-result contextWindow. `_codex_context_window()` therefore uses
+        # provider metadata only if a future runtime probe populates it;
+        # otherwise it requires the LLM service `max_context_size`.
         # Track text of every preempt sent via stdin during this stream so
         # we can locate it in CC's session jsonl by content match. Used by
         # _check_codex_preempt_in_jsonl to determine whether CC has already
@@ -2302,10 +2333,7 @@ class LLMCodexMixin(CodexSessionMixin):
                                 )
                                 _mult2 = _rtm(getattr(self, "_config_ref", None) or {})
                                 prompt_tokens += _ct(result_str or "", multiplier=_mult2)
-                                _ctx_max_now = (
-                                    self._codex_context_window(model)
-                                    if hasattr(self, '_codex_context_window')
-                                    else 1_000_000)
+                                _ctx_max_now = self._codex_context_window(model)
                                 _pub("message_meta", {
                                     "agent_name": agent_name,
                                     "context_used": prompt_tokens,
@@ -2362,30 +2390,12 @@ class LLMCodexMixin(CodexSessionMixin):
                                  "num_turns": _turn_count}
                     _ctx_used_live = prompt_tokens
                     # `max_tokens` is the OUTPUT response limit (e.g. 0 when
-                    # no cap is set), NOT the context window. Reading the
-                    # window here would give us 0 most of the time, and the
-                    # threshold check below would silently skip every
-                    # compact. The per-tool gauge update at item.completed
-                    # already computes the right value via
-                    # `_codex_context_window(model)` with a 1M fallback —
-                    # use the same source of truth.
-                    _ctx_max_live = (
-                        self._codex_context_window(model)
-                        if hasattr(self, "_codex_context_window")
-                        else 0)
-                    if not _ctx_max_live:
-                        # Fall back to the agent service's configured
-                        # max_context_size, then to a 1M default — codex
-                        # itself does not self-report a window in the
-                        # `turn.completed.usage` event.
-                        try:
-                            _ctx_max_live = int(
-                                (getattr(self, "_config_ref", None) or {})
-                                .get("max_context_size", 0) or 0)
-                        except (TypeError, ValueError):
-                            _ctx_max_live = 0
-                    if not _ctx_max_live:
-                        _ctx_max_live = 1_000_000
+                    # no cap is set), NOT the context window. The context
+                    # window is provider/API metadata when Codex exposes it;
+                    # otherwise it is the required LLM service
+                    # `max_context_size`. Missing config is a hard service
+                    # configuration error, never a silent fallback.
+                    _ctx_max_live = self._codex_context_window(model)
                     _ctx_pct_live = _ctx_used_live / _ctx_max_live if _ctx_max_live > 0 else 0.0
                     _pub("message_meta", {
                         "agent_name": agent_name,
@@ -2669,7 +2679,19 @@ class LLMCodexMixin(CodexSessionMixin):
         # (same path as compact_stall) instead of surfacing an error to
         # the user on the first attempt.
         _was_tool_stall = bool(self._stall_killed) and not _was_compact_stall
-        if proc.returncode and proc.returncode != 0 and not _got_result:
+        # Preempt kills are OUR action — the user typed a new message and
+        # we tore down the in-flight CLI on purpose. The non-zero exit
+        # is expected, NOT a CLI failure. Swallow it cleanly so the
+        # agent loop sees a normal end-of-turn and proceeds to the
+        # PendingQueue drain on the next iteration. Without this branch
+        # the user sees "Codex CLI stream exited with code 1" AND the
+        # queued preempt message never gets a turn (the loop bails).
+        if self._preempt_killed and proc.returncode and proc.returncode != 0:
+            logger.info(
+                "[codex] preempt-kill exit=%s ignored — the next "
+                "iteration will pick up the queued message via "
+                "PendingQueue", proc.returncode)
+        elif proc.returncode and proc.returncode != 0 and not _got_result:
             if _stderr:
                 logger.error("Codex CLI stderr: %.500s", _stderr)
             if _was_compact_stall:

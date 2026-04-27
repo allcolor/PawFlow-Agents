@@ -80,6 +80,11 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 "[gemini] preempt: killing in-flight CLI to interrupt "
                 "current turn — next turn will resume with new prompt: %.100s",
                 text)
+            # Mark this stream so the post-loop exit-code check does
+            # NOT raise on the non-zero return code — the kill is OUR
+            # action, not a CLI failure. The agent loop will pick up
+            # the queued message via PendingQueue on the next iter.
+            self._preempt_killed = True
             try:
                 self._kill_gemini_hard(proc)
             except Exception as _ke:
@@ -1351,6 +1356,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         _latest_usage: dict = {}
         self._preempt_pending = 0  # reset at start of each stream
         self._had_preempts_this_turn = False
+        self._preempt_killed = False  # set True when send_user_message kills mid-turn
         self._result_emitted = False  # set True when CC emits final result
         self._compacting = False  # set True when CC compact_boundary fires
         # CC's authoritative context window for the model in use is lifted
@@ -2338,7 +2344,16 @@ class LLMGeminiMixin(GeminiSessionMixin):
         # (same path as compact_stall) instead of surfacing an error to
         # the user on the first attempt.
         _was_tool_stall = bool(self._stall_killed) and not _was_compact_stall
-        if proc.returncode and proc.returncode != 0 and not _got_result:
+        # Preempt kills are OUR action — the user typed a new message and
+        # we tore down the in-flight CLI on purpose. Swallow the
+        # non-zero exit cleanly so the agent loop sees a normal end-of-
+        # turn and the queued message gets a fresh turn via PendingQueue.
+        if self._preempt_killed and proc.returncode and proc.returncode != 0:
+            logger.info(
+                "[gemini] preempt-kill exit=%s ignored — the next "
+                "iteration will pick up the queued message via "
+                "PendingQueue", proc.returncode)
+        elif proc.returncode and proc.returncode != 0 and not _got_result:
             if _stderr:
                 logger.error("Gemini CLI stderr: %.500s", _stderr)
             if _was_compact_stall:

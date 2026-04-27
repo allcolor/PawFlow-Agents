@@ -2,7 +2,17 @@
 
 import pytest
 
+from core import paths
 from core import security_report as sr
+
+
+def test_capability_store_presence_uses_json_file(monkeypatch, tmp_path):
+    cap_file = tmp_path / "capabilities.json"
+    monkeypatch.setattr(paths, "CAPABILITIES_FILE", cap_file)
+    assert sr._capability_store_present() is False
+
+    cap_file.write_text("[]", encoding="utf-8")
+    assert sr._capability_store_present() is True
 
 
 def test_dev_mode_no_fatal(monkeypatch):

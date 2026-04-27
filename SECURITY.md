@@ -23,8 +23,9 @@ does not silently weaken the others.
 - Bound to `(resource_type, resource_id, user_id, conversation_id, login_session_id)`.
   Verification rejects on any mismatch — a token minted for `vnc` does
   NOT verify against `terminal`, even with the same resource_id.
-- Persisted in `data/runtime/capabilities.db` (SQLite). Active VNC /
-  terminal / code-server / port-forward sessions survive a server
+- Persisted in `data/runtime/capabilities.json` (atomic JSON store; SQLite
+  was avoided because WSL/SMB byte-range locking was unreliable). Active
+  VNC / terminal / code-server / port-forward sessions survive a server
   restart — the same URL keeps working.
 - TTL bound to the user's login session by default. `SecurityManager.logout`
   calls `revoke_session_capabilities(session_id)` so a leaked URL stops

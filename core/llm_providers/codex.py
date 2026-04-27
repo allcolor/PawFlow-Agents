@@ -825,31 +825,40 @@ class LLMCodexMixin(CodexSessionMixin):
             _container_workdir = f"/cc_sessions/{_rel_no_user}"
             _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
 
-        # Gate --resume on the jsonl actually existing at the expected
-        # path. If it doesn't, CC would silently create a NEW empty
-        # session under the same sid and we'd lose all history without
-        # any error. Fall back to a true NEW session (drop --resume),
-        # which is a well-defined state the caller can detect via the
-        # SESSION MISMATCH check downstream.
+        # Gate --resume on the rollout jsonl actually existing under
+        # CODEX_HOME. Codex stores sessions at
+        #   <CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<ts>-<sid>.jsonl
+        # NOT at CC's `projects/<proj_key>/<sid>.jsonl`. Cloning CC's
+        # path layout left this check ALWAYS failing for codex, so we
+        # were dropping --resume on every turn and codex started a
+        # fresh thread — the model lost all conversation history,
+        # answered questions like "what did we do?" with "context
+        # disponible, aucun changement de code effectué dans ce tour".
+        # Glob the codex layout to find the rollout file by sid suffix.
         _effective_session_id = session_id
         _expected_session_file = ""
         _exists = False
         if session_id:
-            _proj_key = self._codex_project_key(workdir)
-            _expected_session_file = os.path.join(
-                workdir, "projects", _proj_key, f"{session_id}.jsonl")
-            _exists = os.path.exists(_expected_session_file)
-            _size = os.path.getsize(_expected_session_file) if _exists else 0
-            if _exists:
+            import glob as _glob
+            # Codex writes under `<workdir>/.codex/sessions/...` because
+            # we set CODEX_HOME=<workdir>/.codex in the pool exec env.
+            _codex_sessions_root = os.path.join(workdir, ".codex", "sessions")
+            _matches = _glob.glob(
+                os.path.join(_codex_sessions_root, "**", f"rollout-*-{session_id}.jsonl"),
+                recursive=True)
+            if _matches:
+                _expected_session_file = _matches[0]
+                _exists = True
+                _size = os.path.getsize(_expected_session_file)
                 logger.info(
                     "codex RESUME: session_id=%s file_size=%d path=%s",
                     session_id, _size, _expected_session_file)
             else:
                 logger.warning(
-                    "codex NEW (resume jsonl MISSING at expected path): "
-                    "session_id=%s expected=%s — dropping --resume, "
-                    "starting fresh CC session",
-                    session_id, _expected_session_file)
+                    "codex NEW (rollout jsonl MISSING under %s): "
+                    "session_id=%s — dropping --resume, starting fresh "
+                    "codex session",
+                    _codex_sessions_root, session_id)
                 _effective_session_id = ""
 
         cmd = self._build_codex_cmd(model, _effective_session_id,

@@ -10,14 +10,15 @@ This document outlines the direction for PawFlow. Items are grouped by priority 
 
 The alpha release includes:
 
-- **AI Agent Orchestration** — Multi-agent conversations with Claude Code, OpenAI, Anthropic, and Gemini. Tool-use loops, delegation, plans, streaming.
-- **Pipeline Engine** — 101 task types, DAG execution, backpressure, checkpointing, crash recovery, CRON scheduling.
-- **80+ Built-in Tools** — Filesystem, bash, code editing, web fetch, image/video/audio generation, security scanning, memory, knowledge graph.
+- **AI Agent Orchestration** — Multi-agent conversations with Claude Code, Codex CLI, Gemini CLI, Anthropic API, OpenAI API, and OpenAI-compatible endpoints. Tool-use loops, delegation, plans, streaming, and provider-specific sessions.
+- **Pipeline Engine** — 100+ task types, DAG execution, backpressure, checkpointing, crash recovery, CRON scheduling, triggers, debugger, and flow versioning.
+- **90+ Built-in Tools** — Filesystem, bash, code editing, web fetch/search, desktop screen interaction, browser automation, image/video/audio/voice/3D generation, security scanning, memory, knowledge graph, plans, and resources.
+- **Shared Multi-Client Conversations** — Web chat, PawCode CLI, VS Code, API/channel clients, and flows can attach to the same conversation stream and state.
 - **Persistent Memory** — Semantic memory, knowledge graphs, agent diaries, project graphs that survive across conversations.
-- **Web Chat** — SSE streaming, file explorer, context editor, 60+ slash commands, @file mentions, multi-agent switching.
+- **Web Chat & Desktop Control** — SSE streaming, file explorer, context editor, 60+ slash commands, @file mentions, multi-agent switching, `/desktop`, VNC-style desktop sessions, screenshots, and audio-capable remote desktop notes.
 - **Authentication** — 9 OAuth providers, JWT tokens, API keys, RBAC.
 - **Docker Support** — Containerized deployment with relay for isolated tool execution.
-- **PawCode CLI** — Claude Code-compatible terminal client.
+- **PawCode CLI & VS Code** — Terminal and editor clients connected to the same PawFlow runtime.
 
 ---
 
@@ -82,8 +83,8 @@ Microsoft Teams, Matrix, Signal, IRC — building on the existing Telegram/Disco
 ### Themes
 User-selectable color themes for the web chat (dark, light, solarized, etc.).
 
-### Text-to-speech
-Play agent responses as audio in the web chat.
+### Voice UX polish
+Text-to-speech tooling exists through configured speech services; remaining work is tighter web chat playback controls and push-to-talk capture.
 
 ### OpenTelemetry tracing
 Spans for each task execution in the pipeline engine, exportable to Jaeger, Zipkin, etc.
@@ -110,6 +111,7 @@ These were shipped as part of the alpha development cycle:
 - i18n (English, French, Spanish)
 - Cluster mode with leader election
 - 13 built-in flow templates
+- Text-to-speech tool support via configured speech services
 
 ---
 

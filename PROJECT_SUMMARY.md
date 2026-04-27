@@ -19,7 +19,7 @@ Le coeur de valeur actuel est double :
 
 - `core/` : runtime agent et primitives principales.
   - exécution d'agents et boucles tool-use ;
-  - providers LLM (`Claude Code`, Anthropic, OpenAI, Gemini, endpoints compatibles OpenAI selon configuration) ;
+  - providers LLM (`Claude Code`, `Codex CLI`, `Gemini CLI`, Anthropic API, OpenAI API, endpoints compatibles OpenAI selon configuration) ;
   - mémoire, knowledge graph, diary, project graph ;
   - gestion des conversations, plans, tokens, fichiers, relay et handlers d'outils ;
   - backends de stockage et helpers de sécurité/contexte.
@@ -40,7 +40,7 @@ Le coeur de valeur actuel est double :
 - `services/` : services d'intégration et proxys.
   - authentification et providers OAuth ;
   - filesystem, terminal, browser, relay, gateway ;
-  - services média/image/audio/vidéo, voix et Pixazo ;
+  - services média/image/audio/vidéo, voix, 3D, desktop/browser et Pixazo ;
   - intégrations messaging et stockage.
 
 ### Interfaces et clients
@@ -99,8 +99,8 @@ Ces chiffres décrivent l'état du dépôt au 2026-04-27, hors interprétation f
 
 Le README annonce aussi :
 
-- 101 types de tâches dans le catalogue ;
-- 80+ outils intégrés ;
+- 100+ types de tâches dans le catalogue ;
+- 90+ outils intégrés ;
 - 60+ slash commands dans le web chat ;
 - 9 providers OAuth ;
 - 2500+ tests.
@@ -133,15 +133,17 @@ Le README annonce aussi :
 - Bash/terminal via relay.
 - Recherche de fichiers/contenu.
 - Web fetch/scraping.
-- Génération image, vidéo, audio, voix selon providers configurés.
+- Génération image, vidéo, audio, voix, 3D, upscale, try-on et lipsync selon providers configurés.
+- Desktop/screen/browser automation via relay/VNC selon configuration.
 - Scan sécurité et exécution de scripts.
 - Gestion de secrets, ressources, mémoire, KG et plans.
 
 ### Interfaces utilisateur
 
-- Web chat avec SSE, fichiers, contexte, slash commands et gestion conversations.
+- Web chat avec SSE, fichiers, contexte, slash commands, `/desktop` et gestion conversations.
 - PawCode CLI pour usage terminal.
 - Extension VS Code.
+- Conversations partagées entre web, CLI, VS Code, API/channels et flows.
 - Site statique de présentation.
 
 ### Authentification et déploiement

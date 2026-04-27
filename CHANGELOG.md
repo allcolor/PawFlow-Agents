@@ -12,7 +12,7 @@ First public release.
 
 **AI Agents**
 - Multi-agent conversations with tool-use loop (LLM → tool → LLM → ...)
-- 4 LLM providers: Claude Code (subprocess + MCP), Anthropic API, OpenAI API, Gemini CLI
+- 5+ LLM backends: Claude Code, Codex CLI, Gemini CLI, Anthropic API, OpenAI API, and OpenAI-compatible endpoints
 - Streaming SSE output to web chat and CLI
 - Plan system: structured plan creation, approval, assignment, verification
 - Context compaction with `{agent_name}.md` re-injection
@@ -20,16 +20,16 @@ First public release.
 - Cost tracking with per-conversation budget caps (`max_budget_usd`)
 - Force stop: Escape 1x = graceful, 2x = immediate kill
 
-**Tools (80+)**
+**Tools (90+)**
 - Filesystem: read, write, edit, glob, grep, list_dir, move, delete
-- Execution: bash, execute_script, run_in_background, screen
+- Execution and desktop: bash, execute_script, run_in_background, screen, browser, desktop/VNC-backed interaction
 - Web: web_fetch, web_search, web_screenshot
-- Media: generate_image, generate_video, generate_audio, see (vision)
+- Media: generate_image, generate_video, generate_audio, generate_3d, upscale_image, try_on, lipsync, clone_voice, speak, see (vision)
 - Git: git_log, git_diff, git_commit, git_branch
-- Multi-agent: delegate, manage_resource, ask_user
+- Multi-agent, plans, and resources: delegate, ask_user, create_plan, manage_plan, manage_resource, link_resource
 - Security: security_scan, validate_http_auth
 - MCP: connect to any MCP server, tools auto-discovered
-- All tools route through relay for sandboxed execution
+- All relay-backed tools route through the connected runtime for local or containerized execution
 
 **Cognitive Systems**
 - Memory: categorized facts with scopes and temporal validity
@@ -39,7 +39,7 @@ First public release.
 - Memory digests auto-injected into system prompt
 
 **Pipeline Engine**
-- 101 NiFi-style tasks across 5 categories (System, IO, Data, Control, AI)
+- 100+ NiFi-style tasks across 5 categories (System, IO, Data, Control, AI)
 - Batch, continuous, and CRON execution modes
 - Backpressure, checkpointing, crash recovery
 - Flow versioning with rollback
@@ -54,10 +54,12 @@ First public release.
 - File explorer with relay filesystem access
 - Context editor (view/edit agent context)
 - Conversation management with auto-titles
+- Shared conversation state across web, PawCode CLI, VS Code, APIs/channels, and flows
 - @file autocomplete from relay filesystem
 - 60+ slash commands
 - Drag & drop file attachments
 - Multi-agent support with agent switching
+- Desktop access via `/desktop`, screen interaction, and VNC-style sessions when configured
 
 **Infrastructure**
 - 9 OAuth2 providers (Google, GitHub, Microsoft, X, Facebook, Amazon, Telegram, Generic)
@@ -67,7 +69,8 @@ First public release.
 - Cluster mode with leader election
 - Audit logging, rate limiting, Prometheus metrics
 - HTTP listener service with SSL/TLS
-- PawCode CLI (Claude Code drop-in replacement)
+- PawCode CLI (Claude Code-compatible terminal client)
+- VS Code extension connected to the same relay/runtime model
 - 2589 tests
 
 ### Security

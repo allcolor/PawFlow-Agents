@@ -1,8 +1,6 @@
 # Task Catalog - PawFlow
 
-PawFlow ships **101 built-in tasks** organized into **5 categories**. Each task is a
-processing node in a flow: it receives a FlowFile, transforms or routes it, and
-emits one or more FlowFiles downstream.
+PawFlow ships **100+ built-in tasks** organized into **5 categories**. The exact count can change as handlers and adapters are registered. Each task is a processing node in a flow: it receives a FlowFile, transforms or routes it, and emits one or more FlowFiles downstream.
 
 Additionally, every agent tool is automatically exposed as a `tool.*` flow task
 via the ToolTaskAdapter, giving flows access to the full agent toolbox without
@@ -14,11 +12,11 @@ code duplication.
 
 | Category | Count | Purpose |
 |----------|------:|---------|
-| **System** | 11 | Core utilities: logging, attribute manipulation, scripting, scheduling |
-| **IO** | 51 | External I/O: files, HTTP, messaging, email, relays, auth, admin UI |
-| **Data** | 27 | Content transformation: JSON, CSV, XML, SQL, caching, LLM inference |
-| **Control** | 11 | Flow logic: routing, splitting, merging, throttling, signaling |
-| **AI** | 1 | Agent loop: LLM agent with tool-use (function calling) |
+| **System** | 11+ | Core utilities: logging, attribute manipulation, scripting, scheduling |
+| **IO** | 50+ | External I/O: files, HTTP, messaging, email, relays, auth, admin UI |
+| **Data** | 25+ | Content transformation: JSON, CSV, XML, SQL, caching, LLM inference |
+| **Control** | 10+ | Flow logic: routing, splitting, merging, throttling, signaling, subflows |
+| **AI** | 2+ | Agent loop and agent action runtime |
 
 ---
 
@@ -216,10 +214,14 @@ flow node, with the type `tool.<handler_name>`.
 - The output FlowFile contains the tool result as content, plus `tool.name` and
   `tool.status` attributes.
 
-**Excluded tools** (agent-internal, not useful as flow nodes):
-`get_tool_schema`, `use_tool`, `ScheduleWakeup`, `complete_task`,
-`verify_task`, `manage_resource`, `create_tool`, `pawflow_help`,
-`update_plan`, `create_plan`, `link_identity`, `browser_action`.
+**Excluded tools** (agent-internal, meta-tools, or control-plane actions):
+`get_tool_schema`, `use_tool`, `ScheduleWakeup`, `PushNotification`,
+`complete_task`, `verify_task`, `manage_resource`, `create_tool`,
+`pawflow_help`, `update_plan`, `create_plan`, `link_identity`,
+`browser_action`.
+
+For a fuller agent-facing catalog, including internal/control tools, see
+[Agent Tool Catalog](tool_catalog.md).
 
 **Available tool tasks include:**
 
@@ -235,11 +237,19 @@ flow node, with the type `tool.<handler_name>`.
 | `tool.edit_image` | Edit one or more existing images via the image model (requires a model that declares an `edit_image` operation in `pixazo_catalog.json`, e.g. `nano-banana`). |
 | `tool.generate_video` | Generate a video from text, image, video, or start+end frames. Supports text-to-video, image-to-video, video-edit, and frame-to-video modes via `image_url`, `video_url`, `end_image_url` params. |
 | `tool.generate_audio` | Generate audio via an audio model |
+| `tool.generate_3d` | Generate a 3D model from a prompt or image. |
+| `tool.upscale_image` | Upscale an image. |
 | `tool.upscale_video` | Upscale a video (SeedVR, Topaz). Requires `video_url`. |
 | `tool.describe_image` | Describe an image in natural language (Ideogram). Requires `image_url`. Returns `{description}`. |
 | `tool.remix_image` | Remix an image with a text prompt (Ideogram). Requires `prompt` + `image_url`. |
 | `tool.remove_background` | Remove background from an image (Bria RMBG 2.0). Requires `image_url`. |
+| `tool.try_on` | Virtual try-on from person and garment images. |
+| `tool.lipsync` | Lip-sync face media to an audio track. |
 | `tool.speech_to_video` | Speech-to-video from image + audio (Wan 2.2 S2V). Requires `image_url` + `audio_url`. |
+| `tool.train_image_model` | Train/fine-tune an image model or LoRA where supported. |
+| `tool.clone_voice` | Register or reuse a voice clone from a reference audio sample. |
+| `tool.speak` | Synthesize speech with a registered voice clone. |
+| `tool.delete_voice` | Delete a voice clone and cached renderings. |
 | `tool.get_image_model_info` | Get info about available image models |
 | `tool.remember` | Store a memory in the agent's memory |
 | `tool.recall` | Recall memories by keyword search |
@@ -271,9 +281,6 @@ flow node, with the type `tool.<handler_name>`.
 | `tool.kg_stats` | Get knowledge graph statistics |
 | `tool.query_graph` | Run a graph query |
 | `tool.kg_god_nodes` | Find highly connected nodes in the knowledge graph |
-| `tool.kg_surprises` | Find surprising patterns in the knowledge graph |
-| `tool.kg_hyperedges` | Query hyperedges in the knowledge graph |
-| `tool.kg_communities` | Detect communities in the knowledge graph |
 | `tool.read` | Read a file |
 | `tool.write` | Write a file |
 | `tool.edit` | Edit a file (find and replace) |
@@ -288,10 +295,14 @@ flow node, with the type `tool.<handler_name>`.
 | `tool.glob` | Find files matching a glob pattern |
 | `tool.grep` | Search file contents with regex |
 | `tool.bash` | Run a bash command |
+| `tool.Monitor` | Run a command and return early on exit or regex match |
+| `tool.browser` | Run browser automation actions through the browser service |
 | `tool.notebook_edit` | Edit a Jupyter notebook cell |
 | `tool.copy` | Copy a file |
 | `tool.see` | View an image or screenshot |
 | `tool.delete_tool` | Delete a user-created dynamic tool |
+| `tool.learn` | Extract useful learnings from conversation history |
+| `tool.link_resource` | Link or unlink a relay/resource binding |
 | `tool.approve_plan` | Approve a plan for execution |
 | `tool.assign_plan` | Assign a plan to an agent |
 | `tool.cancel_plan` | Cancel an active plan |

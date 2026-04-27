@@ -15,7 +15,7 @@ Run Claude Code CLI inside a container instead of directly on the host.
 ### Build the image
 
 ```bash
-# From the PyFi2 root
+# From the PawFlow repository root
 bash docker/claude-code/build.sh
 ```
 

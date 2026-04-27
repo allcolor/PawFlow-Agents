@@ -18,14 +18,15 @@
 
 ---
 
-PawFlow is a self-hosted platform for running autonomous AI agents backed by a visual pipeline engine. No vendor lock-in, no cloud dependency — deploy on your hardware and connect any LLM.
+PawFlow is a self-hosted runtime for autonomous AI agents, shared conversations, relay-backed tools, multimodal generation, desktop automation, and deterministic workflows. No vendor lock-in, no cloud dependency — deploy on your hardware and connect the LLM backends you choose.
 
 **What makes it different:**
 
-- **Full agent autonomy** — Claude Code, Anthropic API, OpenAI, Gemini with tool-use loops, multi-agent delegation, persistent memory, and knowledge graphs
-- **Pipeline engine** — NiFi-style DAG execution with 101 task types, backpressure, checkpointing, crash recovery, and a visual flow editor
-- **80+ built-in tools** — filesystem, bash, code editing, web scraping, image/video/audio generation, security scanning, and more
-- **Self-hosted** — your conversations, memories, and code stay on your machines
+- **Full agent autonomy** — Claude Code, Codex, Gemini CLI, Anthropic API, OpenAI API, and OpenAI-compatible endpoints with tool-use loops, multi-agent delegation, persistent memory, and knowledge graphs
+- **Shared multi-client conversations** — web chat, PawCode CLI, VS Code, API clients, and channel flows can work against the same persistent conversation
+- **Pipeline engine** — NiFi-style DAG execution with 100+ task types, backpressure, checkpointing, crash recovery, and flow tooling
+- **90+ built-in tools** — filesystem, bash, code editing, web/search, desktop screen control, image/video/audio/3D generation, voice clone, security scanning, and more
+- **Self-hosted relay model** — your conversations, memories, code, filesystem access, and desktop control stay on infrastructure you operate
 
 ## Quick Start
 
@@ -75,16 +76,16 @@ echo '{"type":"user","message":{"role":"user","content":"hello"}}' | \
 │  ┌──────────┐  ┌──────────┐  ┌─────────┐  ┌────────────────┐  │
 │  │  Agents  │  │ Pipeline │  │   Auth   │  │  Web Chat UI   │  │
 │  │  (LLM +  │  │  Engine  │  │ Gateway  │  │  (SSE, files,  │  │
-│  │  tools)  │  │ (101     │  │ (9 OAuth │  │   context,     │  │
+│  │  tools)  │  │ (100+    │  │ (9 OAuth │  │   context,     │  │
 │  │          │  │  tasks)  │  │ provid.) │  │   commands)    │  │
 │  └────┬─────┘  └──────────┘  └──────────┘  └────────────────┘  │
 │       │                                                         │
 │  ┌────┴─────────────────────────────────────────────────────┐  │
-│  │              80+ Tool Handlers (via relay)                │  │
-│  │  bash, read, write, edit, glob, grep, web_fetch,         │  │
-│  │  generate_image, generate_video, security_scan,          │  │
-│  │  remember, recall, kg_add, kg_query, diary_write,        │  │
-│  │  project_graph, execute_script, delegate, ...            │  │
+│  │              90+ Tool Handlers (via relay)                │  │
+│  │  bash, read, write, edit, glob, grep, web_search,        │  │
+│  │  screen, browser, generate_image, generate_video,        │  │
+│  │  generate_audio, generate_3d, clone_voice, speak,        │  │
+│  │  remember, kg_add, project_graph, delegate, plans, ...   │  │
 │  └──────────────────────────┬───────────────────────────────┘  │
 │                             │ WebSocket                        │
 └─────────────────────────────┼──────────────────────────────────┘
@@ -101,12 +102,14 @@ The **server** hosts the API, agent orchestration, pipeline engine, and web UI. 
 
 | Provider | Mode | Features |
 |---|---|---|
-| **Claude Code** | Subprocess + MCP | Full tool use via relay, session persistence, thinking |
+| **Claude Code** | CLI subprocess/container + MCP | Full tool use via relay, session persistence, thinking |
+| **Codex CLI** | CLI subprocess/container | Coding-agent sessions, container pool, streaming JSON handling |
+| **Gemini CLI** | CLI subprocess/container | Gemini-backed coding-agent sessions and streaming |
 | **Anthropic API** | Direct HTTP | Streaming, tool use, vision, extended thinking |
 | **OpenAI API** | Direct HTTP | Streaming, tool use, vision, JSON mode |
-| **Gemini CLI** | Subprocess | Streaming |
+| **OpenAI-compatible** | Direct HTTP | Local/self-hosted and third-party compatible endpoints via `base_url` |
 
-Switch providers per agent, per conversation, or globally. Self-hosted LLMs work via the OpenAI-compatible endpoint (`base_url` override).
+Switch providers per agent, per conversation, or globally. Self-hosted and third-party LLMs can use the OpenAI-compatible endpoint (`base_url` override). See [LLM Providers](docs/llm_providers.md).
 
 ## Agent Capabilities
 
@@ -139,15 +142,15 @@ Memory digests and diary entries are automatically injected into the system prom
 
 ## Pipeline Engine
 
-101 tasks across 5 categories for data processing workflows:
+100+ tasks across 5 categories for data processing workflows:
 
 | Category | Count | Examples |
 |----------|-------|----------|
-| **System** | 11 | log, wait, executeScript, cronTrigger, listFiles |
-| **IO** | 51 | HTTP, Telegram, Discord, Slack, WhatsApp, S3, GCS, Azure, SFTP, Kafka, MQTT, email |
-| **Data** | 27 | transformJSON, inferLLM, executeSQL, compressContent, validateJSON |
-| **Control** | 11 | routeOnAttribute, splitContent, mergeContent, controlRate |
-| **AI** | 1 | agentLoop (the full LLM agent with tool-use cycle) |
+| **System** | 11+ | log, wait, executeScript, cronTrigger, listFiles |
+| **IO** | 50+ | HTTP, Telegram, Discord, Slack, WhatsApp, S3, GCS, Azure, SFTP, Kafka, MQTT, email, chat UI, relay |
+| **Data** | 25+ | transformJSON, inferLLM, executeSQL, compressContent, validateJSON, Avro/Parquet |
+| **Control** | 10+ | routeOnAttribute, splitContent, mergeContent, controlRate, subflows, wait/notify |
+| **AI** | 2+ | agentLoop, agentActions, tool-use cycle |
 
 Flows are defined in JSON, executed as DAGs, and support backpressure, checkpointing, crash recovery, parameter contexts, subflows, and CRON scheduling.
 
@@ -171,11 +174,13 @@ Expressions resolve through a cascade: secrets → flow parameters → conversat
 ## Web Chat
 
 - Real-time streaming via SSE
+- Shared conversations across web, PawCode CLI, VS Code, API clients, and channel flows
 - File explorer with relay filesystem access
 - Context editor (view/edit agent context)
 - Conversation management with auto-titles
-- Drag & drop file attachments
-- 60+ slash commands (`/agent`, `/memory`, `/relay`, `/run`, `/plan`, ...)
+- Drag & drop file attachments and FileStore outputs
+- 60+ slash commands (`/agent`, `/memory`, `/relay`, `/run`, `/plan`, `/desktop`, ...)
+- Desktop/VNC entry points plus relay-backed `screen` actions
 - Escape key: 1x = graceful interrupt, 2x = force stop
 - Multi-agent with agent switching
 
@@ -213,7 +218,7 @@ See `.env.example` for environment variables.
 ## Tests
 
 ```bash
-pytest tests/ -v    # 2500+ tests across 30+ test files
+pytest tests/ -v    # 2500+ tests across 100+ test files
 ```
 
 ## Documentation
@@ -225,7 +230,16 @@ pytest tests/ -v    # 2500+ tests across 30+ test files
 | [Cognitive Tools](docs/COGNITIVE_TOOLS.md) | Memory, KG, diary, project graph (21 tools) |
 | [Expression Language](docs/EXPRESSION_LANGUAGE.md) | 40+ operators, scopes, cascade |
 | [Slash Commands](docs/SLASH_COMMANDS.md) | All webchat commands |
-| [Task Catalog](docs/tasks.md) | 101 tasks with descriptions |
+| [LLM Providers](docs/llm_providers.md) | OpenAI, Anthropic, Claude Code, Codex, Gemini, compatible APIs |
+| [PawCode CLI](docs/pawcode.md) | Terminal client and auto-relay |
+| [VS Code Extension](docs/vscode.md) | Editor client and TypeScript relay |
+| [Multi-Client Conversations](docs/multi_client_conversations.md) | Shared runtime across web, CLI, VS Code, API, channels |
+| [Desktop/VNC](docs/desktop_vnc.md) | noVNC desktop, screen tool, audio notes |
+| [Media Tools](docs/media_tools.md) | Image/video/audio/3D/voice tools |
+| [Tool Catalog](docs/tool_catalog.md) | Agent-facing tools |
+| [Services Catalog](docs/services.md) | Service types and provider integrations |
+| [Task Catalog](docs/tasks.md) | Built-in flow tasks and tool tasks |
+| [Security Model](docs/security_model.md) | Trust boundaries and production checklist |
 | [Deployment](docs/deployment.md) | Local, Docker, production |
 | [Docker](docs/docker.md) | Docker setup, relay mode |
 | [Filesystem](docs/filesystem.md) | Relay, backends, permissions |

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PawFlow — AI Agent + ETL Orchestration Platform</title>
+  <title>PawFlow — AI Agent, Desktop, and Flow Orchestration Platform</title>
   <link rel="icon" href="assets/logo.png" type="image/png">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
@@ -22,7 +22,7 @@
       <a href="#architecture">Architecture</a>
       <a href="#channels">Channels</a>
       <a href="#get-started">Get Started</a>
-      <a href="https://github.com/pawflow/pawflow" class="btn btn-outline" target="_blank">GitHub</a>
+      <a href="https://github.com/allcolor/PawFlow-Agents" class="btn btn-outline" target="_blank">GitHub</a>
       <a href="/docs" class="btn btn-primary">Documentation</a>
     </div>
     <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')">
@@ -41,17 +41,17 @@
     <div class="hero-badge">Open Source · MIT License</div>
     <h1>AI Agents Meet<br><span class="gradient-text">Deterministic Pipelines</span></h1>
     <p class="hero-sub">
-      PawFlow is the first platform where AI agents <em>design</em> workflows and a
-      deterministic ETL engine <em>executes</em> them. Reliably. Every time.
+      PawFlow combines multi-provider AI agents, shared conversations, desktop tools,
+      multimodal generation, and deterministic flows that can keep running after the chat ends.
     </p>
     <div class="hero-actions">
       <a href="#get-started" class="btn btn-primary btn-lg">Get Started</a>
       <a href="#architecture" class="btn btn-outline btn-lg">How It Works</a>
     </div>
     <div class="hero-stats">
-      <div class="stat"><span class="stat-num">152</span><span class="stat-label">Task Types</span></div>
-      <div class="stat"><span class="stat-num">5+</span><span class="stat-label">Channels</span></div>
-      <div class="stat"><span class="stat-num">30+</span><span class="stat-label">LLM Providers</span></div>
+      <div class="stat"><span class="stat-num">100+</span><span class="stat-label">Task Types</span></div>
+      <div class="stat"><span class="stat-num">8+</span><span class="stat-label">Clients & Channels</span></div>
+      <div class="stat"><span class="stat-num">5+</span><span class="stat-label">LLM Backends</span></div>
       <div class="stat"><span class="stat-num">∞</span><span class="stat-label">Custom Flows</span></div>
     </div>
   </div>
@@ -64,7 +64,7 @@
       <div class="col">
         <h2 class="section-label">The Problem</h2>
         <h3>AI agents are creative.<br>But creativity ≠ reliability.</h3>
-        <p>Every existing platform puts the LLM in the execution loop. That means your 7 AM email digest might not send because the agent "decided" it wasn't relevant. Your cron job might hallucinate. Your pipeline might behave differently every run.</p>
+        <p>Pure chat agents are great at exploration, but fragile for recurring operations. A 7 AM digest, webhook, or data sync should not depend on a fresh model decision at every run unless you explicitly want that behavior.</p>
       </div>
       <div class="col">
         <h2 class="section-label">The Solution</h2>
@@ -79,7 +79,7 @@
 <section id="features" class="section">
   <div class="container">
     <h2 class="section-title">Everything You Need</h2>
-    <p class="section-desc">A complete platform for AI-powered automation — not just another LLM wrapper.</p>
+    <p class="section-desc">A self-hosted runtime for agentic coding, desktop automation, multimodal tools, and repeatable flows.</p>
 
     <div class="features-grid">
       <div class="feature-card feature-card-wide">
@@ -92,7 +92,7 @@
 
       <div class="feature-card">
         <div class="feature-icon">⚡</div>
-        <h3>152 Task Types</h3>
+        <h3>100+ Task Types</h3>
         <p>From Kafka to S3, MQTT to SQL, CSV to Parquet — a full ETL toolkit. Plus HTTP listeners, webhooks, rate control, deduplication, and merge/split/routing.</p>
       </div>
 
@@ -117,7 +117,7 @@
       <div class="feature-card">
         <div class="feature-icon">🎨</div>
         <h3>Media Generation</h3>
-        <p>Generate images, video, and audio directly from agent conversations. Built-in support for multiple providers — no external tools needed.</p>
+        <p>Generate images, video, audio, voice, 3D assets, try-on outputs, lipsync clips, and upscaled images directly from agent conversations and flows.</p>
       </div>
 
       <div class="feature-card">
@@ -133,7 +133,7 @@
 <section id="architecture" class="section section-dark">
   <div class="container">
     <h2 class="section-title">The Architecture Difference</h2>
-    <p class="section-desc">Why PawFlow is fundamentally different from every other AI platform.</p>
+    <p class="section-desc">Agents can explore, build, and delegate; flows handle the repeatable parts with explicit structure.</p>
 
     <div class="arch-comparison">
       <div class="arch-card arch-others">
@@ -246,17 +246,14 @@
 <section class="section">
   <div class="container">
     <h2 class="section-title">Bring Your Own Model</h2>
-    <p class="section-desc">PawFlow works with any LLM provider — cloud or local. Switch models per-agent, per-conversation.</p>
+    <p class="section-desc">Run agents through API providers or provider CLIs, with model selection per agent or conversation.</p>
     <div class="providers-grid">
-      <div class="provider">OpenAI</div>
-      <div class="provider">Anthropic</div>
-      <div class="provider">Google Gemini</div>
-      <div class="provider">xAI Grok</div>
-      <div class="provider">DeepSeek</div>
-      <div class="provider">Mistral</div>
-      <div class="provider">Ollama</div>
-      <div class="provider">vLLM</div>
-      <div class="provider">Any OpenAI-compatible</div>
+      <div class="provider">Claude Code</div>
+      <div class="provider">Codex CLI</div>
+      <div class="provider">Gemini CLI</div>
+      <div class="provider">OpenAI API</div>
+      <div class="provider">Anthropic API</div>
+      <div class="provider">OpenAI-compatible</div>
     </div>
   </div>
 </section>
@@ -269,22 +266,22 @@
       <div class="install-step">
         <div class="step-num">1</div>
         <h3>Clone & Install</h3>
-        <div class="code-inline">git clone https://github.com/pawflow/pawflow<br>cd pawflow && pip install -e .</div>
+        <div class="code-inline">git clone https://github.com/allcolor/PawFlow-Agents<br>cd PawFlow-Agents && pip install -e .</div>
       </div>
       <div class="install-step">
         <div class="step-num">2</div>
         <h3>Configure</h3>
-        <div class="code-inline">cp config/example.env .env<br># Add your LLM API key</div>
+        <div class="code-inline">cp .env.example .env<br># Add at least one LLM backend</div>
       </div>
       <div class="install-step">
         <div class="step-num">3</div>
         <h3>Launch</h3>
-        <div class="code-inline">pawflow start<br># Open http://localhost:9090/chat</div>
+        <div class="code-inline">python cli.py run --flow data/deployments/global/pawflow-agent.json<br># Open http://localhost:9090/chat</div>
       </div>
     </div>
     <div class="cta-row">
       <a href="/docs" class="btn btn-primary btn-lg">Read the Docs</a>
-      <a href="https://github.com/pawflow/pawflow" class="btn btn-outline btn-lg" target="_blank">View on GitHub</a>
+      <a href="https://github.com/allcolor/PawFlow-Agents" class="btn btn-outline btn-lg" target="_blank">View on GitHub</a>
     </div>
   </div>
 </section>
@@ -299,7 +296,7 @@
       </div>
       <div class="footer-links">
         <a href="/docs">Documentation</a>
-        <a href="https://github.com/pawflow/pawflow">GitHub</a>
+        <a href="https://github.com/allcolor/PawFlow-Agents">GitHub</a>
         <a href="#features">Features</a>
         <a href="#architecture">Architecture</a>
       </div>

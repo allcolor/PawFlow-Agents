@@ -139,6 +139,12 @@ PLANS_DIR = RUNTIME_DIR / "plans"
 # Claude Code sessions
 CLAUDE_SESSIONS_DIR = RUNTIME_DIR / "sessions" / "claude"
 
+# Codex CLI sessions (per-conv workdir, mirrors CLAUDE_SESSIONS_DIR layout)
+CODEX_SESSIONS_DIR = RUNTIME_DIR / "sessions" / "codex"
+
+# Gemini CLI sessions (per-conv workdir, mirrors CLAUDE_SESSIONS_DIR layout)
+GEMINI_SESSIONS_DIR = RUNTIME_DIR / "sessions" / "gemini"
+
 # Project graphs (AST cache)
 GRAPHS_DIR = RUNTIME_DIR / "graphs"
 

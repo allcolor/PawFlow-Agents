@@ -1950,32 +1950,22 @@ class LLMCodexMixin(CodexSessionMixin):
                 # with thinking blocks redacted (thinking="" + signature).
                 logger.debug("[codex-raw] %s %.500s", etype, json.dumps(event))
 
-                if etype == "system":
-                    # Capture AND persist session_id from init event immediately.
-                    # Must be in ConversationStore before any preempt triggers
-                    # _prepare_agent_context (which checks for session to skip compact).
-                    sid = event.get("session_id", "")
+                if etype == "thread.started":
+                    sid = event.get("thread_id", "") or ""
                     if sid:
                         self._current_session_id = sid
-                    subtype = event.get("subtype", "")
-                    # Only the init event announces a (re)used session. Other
-                    # system events (compact_boundary, status, etc.) also
-                    # carry session_id — without this guard each one logged
-                    # "NEW session" with the same sid, flooding the logs.
-                    if sid and conv_id and subtype == "init":
+                    if sid and conv_id:
                         _tag = (f"{user_id[:6] or '?'}/{conv_id[:8] or '?'}/"
                                 f"{agent_name or 'default'}")
                         if session_id and sid != session_id:
                             logger.warning(
-                                "[codex][%s] SESSION MISMATCH: sent --resume %s but CC returned %s "
-                                "(resume FAILED — CC created new session)",
+                                "[codex][%s] SESSION MISMATCH: sent resume %s but codex returned %s",
                                 _tag, session_id[:12], sid[:12])
                         elif session_id and sid == session_id:
-                            logger.info("[codex][%s] RESUME OK: session %s reused",
+                            logger.info("[codex][%s] RESUME OK: thread %s reused",
                                         _tag, sid[:12])
                         else:
-                            logger.info("[codex][%s] NEW session: %s",
-                                        _tag, sid[:12])
+                            logger.info("[codex][%s] NEW thread: %s", _tag, sid[:12])
                         try:
                             from core.conversation_store import ConversationStore
                             ConversationStore.instance().set_extra(
@@ -1984,140 +1974,66 @@ class LLMCodexMixin(CodexSessionMixin):
                                 sid)
                         except Exception:
                             logger.debug("exception suppressed", exc_info=True)
-                    # compact_boundary → drain CC stream + PawFlow compact; init → arm stall watchdog
-                    if subtype == "compact_boundary" or (
-                            subtype == "status" and event.get("status") == "compacting"):
-                        # Sentinel sessions (_compact, _memory_extract, …)
-                        # are themselves PawFlow compactions. If CC saturates
-                        # mid-summarization, let it run its own internal
-                        # compact — interrupting would either loop forever
-                        # (compact-of-compact) or destroy the in-flight
-                        # summarization. Preempt-on-compact only applies
-                        # to normal user sessions where PawFlow's bucket
-                        # cache produces a better result than CC's auto.
-                        _is_sentinel = conv_id.startswith("_") if conv_id else False
-                        if _is_sentinel:
-                            logger.info("[codex] CC self-compacting in "
-                                         "sentinel '%s' — letting it continue",
-                                         conv_id)
-                            continue
-                        if _compact_pending[0]:
-                            continue
-                        logger.warning(
-                            "[codex] CC compacting detected (subtype=%s) "
-                            "— flushing pre-compact turn, killing CC, "
-                            "PawFlow will compact", subtype)
-                        # Set BEFORE killing so any racing send_user_message
-                        # from another thread sees the flag and refuses,
-                        # routing the user message via PendingQueue.
-                        self._compacting = True
-                        _compact_pending[0] = True
-                        # compact_boundary is the LAST useful event from CC
-                        # for this turn — everything that follows is CC's own
-                        # summary + post-compact work we do NOT want
-                        # ingested. Do not drain. But the turn that fired
-                        # compact may still hold unflushed events in the
-                        # per-turn accumulator: if CC streamed
-                        # tool_use + tool_result + assistant text inside the
-                        # same msg_id and compact_boundary fired before the
-                        # next msg_id rollover, those items were only in
-                        # CC's .jsonl and never made it to the PawFlow
-                        # transcript / webchat. Force-flush now so nothing
-                        # emitted pre-compact is lost.
-                        try:
-                            _flush_turn()
-                        except Exception as _fe:
-                            logger.error(
-                                "[codex] pre-compact flush failed: %s",
-                                _fe, exc_info=True)
-                        # Kill host AND container-side claude. Without the
-                        # container-side kill the claude CLI survives as an
-                        # orphan inside the pool container and keeps running
-                        # in parallel with the replacement session PawFlow
-                        # is about to spawn.
-                        self._kill_codex_hard(proc)
-                        break
-                    if subtype == "init":
-                        _stall_start_time = time.monotonic()
-                        _got_assistant = False
-                        logger.info("[codex][%s/%s/%s] init — stall watchdog armed (%.0fs timeout)",
-                                    user_id[:6] or '?', conv_id[:8] or '?',
-                                    agent_name or 'default', _STALL_TIMEOUT)
+                    _stall_start_time = time.monotonic()
+                    logger.info("[codex][%s/%s/%s] thread.started — stall watchdog armed (%.0fs timeout)",
+                                user_id[:6] or '?', conv_id[:8] or '?',
+                                agent_name or 'default', _STALL_TIMEOUT)
                     continue
 
-                if etype == "assistant":
-                    # Got a response — stall watchdog disarmed
-                    _got_assistant = True
-                    _last_tool_result_time = 0.0
+                if etype == "turn.started":
+                    if _turn_count > 0:
+                        _flush_turn()
+                        _inject_catchup()
+                    _turn_count += 1
+                    continue
 
-                    msg = event.get("message", {})
-                    msg_id = msg.get("id", "")
-                    # Capture freshest usage — each assistant event carries
-                    # message.usage with current prompt size (input + cache).
-                    # Emit a live `message_meta` so the webchat gauge updates
-                    # mid-turn instead of waiting for the final `result`.
-                    # Skip when usage didn't actually change (CC sometimes
-                    # re-emits the same assistant event for incremental
-                    # blocks of the same msg_id).
-                    _u = msg.get("usage")
-                    if isinstance(_u, dict) and _u != _latest_usage:
-                        _latest_usage = _u
-                        _ctx_used_live = (_u.get("input_tokens", 0)
-                                          + _u.get("cache_creation_input_tokens", 0)
-                                          + _u.get("cache_read_input_tokens", 0))
-                        # Only CC's own contextWindow (cached from the
-                        # previous result.modelUsage), scoped per-stream
-                        # to avoid singleton pollution across concurrent
-                        # streams — no service-config or 200k default.
-                        # Until the first result event lands, _ctx_max_live
-                        # stays 0 and the UI skips the gauge (truth over
-                        # pretend number).
-                        _cw_map_live = getattr(self, '_codex_context_window_by_stream', None) or {}
-                        _ctx_max_live = int(_cw_map_live.get(
-                            (conv_id or "", agent_name or ""), 0) or 0)
-                        _ctx_pct_live = (_ctx_used_live / _ctx_max_live
-                                         if _ctx_max_live > 0 else 0.0)
-                        _pub("message_meta", {
-                            "msg_id": msg_id,
-                            "agent_name": agent_name,
-                            "context_used": _ctx_used_live,
-                            "context_max": _ctx_max_live,
-                            "context_pct": _ctx_pct_live,
-                            "live": True,  # flag: mid-turn (real, not estimate)
-                        })
+                if etype in ("item.started", "item.updated", "item.completed"):
+                    item = event.get("item", {}) or {}
+                    itype = item.get("type", "")
+                    iid = item.get("id", "") or ""
+                    is_done = (etype == "item.completed")
 
-                    # Codex sends INCREMENTAL updates for the same message:
-                    # event 1: [thinking], event 2: [text], event 3: [tool_use]
-                    # Each event has ONLY the new block, not all blocks.
-                    # Same msg_id = same turn → just append (don't clear).
-                    if msg_id and msg_id != _current_msg_id:
-                        # New message — flush previous turn
-                        if _turn_count > 0:
-                            _flush_turn()
-                            _inject_catchup()
-                        _turn_count += 1
-                        _current_msg_id = msg_id
-                    for block in msg.get("content", []):
-                        btype = block.get("type", "")
-                        if btype == "text":
-                            text = block.get("text", "")
+                    if itype == "agent_message":
+                        _got_assistant = True
+                        _last_tool_result_time = 0.0
+                        if is_done:
+                            text = item.get("text", "") or ""
                             if text:
                                 _turn_text_parts.append(text)
                                 content_parts.append(text)
                                 if callback:
                                     callback(text)
-                        elif btype == "tool_use":
-                            logger.debug("[CODEX-RAW-TOOL] block=%s", json.dumps(block, default=str, ensure_ascii=False))
-                            _block_id = block.get("id", "")
+                        continue
+
+                    if itype == "reasoning":
+                        if is_done:
+                            txt = item.get("text", "") or ""
+                            if txt:
+                                _turn_thinking = (_turn_thinking + txt
+                                                  if _turn_thinking else txt)
+                                if thinking_callback:
+                                    try:
+                                        thinking_callback(txt)
+                                    except Exception:
+                                        logger.debug("thinking_callback failed", exc_info=True)
+                        continue
+
+                    if itype in ("mcp_tool_call", "command_execution"):
+                        if itype == "mcp_tool_call":
+                            _raw_name = item.get("tool_name", "") or item.get("tool", "") or "use_tool"
+                            _raw_args = item.get("arguments", {}) or {}
+                        else:
+                            _raw_name = "shell"
+                            _raw_args = {"command": item.get("command", "") or "",
+                                          "cwd": item.get("cwd", "") or ""}
+
+                        if etype == "item.started":
+                            _block_id = iid or f"codex-{_turn_count}-{len(_turn_tool_calls)}"
                             _block_entry = {
-                                "name": block.get("name", ""),
-                                "arguments": block.get("input", {}),
+                                "name": _raw_name,
+                                "arguments": _raw_args,
                                 "id": _block_id,
                             }
-                            # Dedup: Codex may send the same tool_use block
-                            # multiple times for the same msg_id (incremental updates).
-                            # First time: input={} (empty), later: input={real args}.
-                            # Replace by id instead of blindly appending.
                             _existing_idx = None
                             for _i, _tc in enumerate(_turn_tool_calls):
                                 if _tc.get("id") == _block_id:
@@ -2128,49 +2044,28 @@ class LLMCodexMixin(CodexSessionMixin):
                             else:
                                 _turn_tool_calls.append(_block_entry)
                             _pending_tool_ids.add(_block_id)
-                            # Remember the unwrapped tool name for this
-                            # id across the whole stream, not just the
-                            # current turn. Used when tool_result comes
-                            # back after the tool_use's turn has been
-                            # flushed (common when CC emits many tool
-                            # calls in quick succession).
+                            from core.llm_client import unwrap_mcp_tool
+                            _tc_name, _tc_args = unwrap_mcp_tool(_raw_name, _raw_args)
                             try:
-                                from core.llm_client import unwrap_mcp_tool
-                                _persist_name, _ = unwrap_mcp_tool(
-                                    block.get("name", ""),
-                                    block.get("input", {}) or {})
-                                if _block_id and _persist_name:
-                                    _stream_tc_names[_block_id] = _persist_name
+                                if _block_id and _tc_name:
+                                    _stream_tc_names[_block_id] = _tc_name
                                     _hb_state["last_dispatched_tc"] = (
-                                        f"{_persist_name}({_block_id[:8]})")
+                                        f"{_tc_name}({_block_id[:8]})")
                             except Exception:
                                 pass
-                            # Unwrap MCP wrapper for display:
-                            # mcp__pawflow__use_tool(tool_name=X, arguments={...})
-                            # → X({...})  (with alias resolution: shell→bash etc.)
-                            _tc_name = block.get("name", "")
-                            _tc_args = block.get("input", {})
-                            from core.llm_client import unwrap_mcp_tool
-                            _tc_name, _tc_args = unwrap_mcp_tool(_tc_name, _tc_args)
-                            # Don't emit SSE for empty-arg tool calls — likely
-                            # an incremental update that will be followed by the
-                            # real one with actual arguments.
                             if not _tc_args or _tc_args == {} or _tc_args == "{}":
-                                logger.warning("[codex] skipping SSE for empty tool_use %s (id=%s) — awaiting args",
-                                             _tc_name, _block_id)
+                                logger.warning("[codex] skipping SSE for empty tool_use %s (id=%s)",
+                                               _tc_name, _block_id)
                                 continue
-                            # Skip bash with empty/missing/whitespace command
                             if _tc_name == "bash" and isinstance(_tc_args, dict) and not str(_tc_args.get("command", "")).strip():
                                 logger.warning("[codex] skipping SSE for bash with empty command (id=%s)", _block_id)
                                 _record_phantom(_tc_name, _block_id)
                                 continue
-                            # Skip any tool where ALL string values are empty
                             if isinstance(_tc_args, dict) and _tc_args and all(
                                     not str(v).strip() for v in _tc_args.values()):
                                 logger.warning("[codex] skipping SSE for %s with all-empty args (id=%s)", _tc_name, _block_id)
                                 _record_phantom(_tc_name, _block_id)
                                 continue
-                            # Skip meta tools from SSE
                             if _tc_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
                                 continue
                             _tc_event = {
@@ -2184,99 +2079,40 @@ class LLMCodexMixin(CodexSessionMixin):
                             }
                             if _parent_tc_id:
                                 _tc_event["parent_tc_id"] = _parent_tc_id
-                            # IMMUTABLE RULE: stdout → LLMMessage → writer
-                            # → transcript/shared/ctx → SSE (post-write).
-                            # Flush THIS tool_use block now via
-                            # block_callback so the UI sees tool_call
-                            # live (lets the user click BG/Kill while
-                            # the tool is still running). Waiting for
-                            # the turn boundary would hide the tool_call
-                            # until AFTER tool_result landed — same
-                            # block of SSE, no way to interject.
                             _emitted_sse_tcs.add(_block_id)
                             if block_callback:
                                 try:
                                     _bc_payload = {
                                         "id": _block_id,
-                                        "name": block.get("name", "") or _tc_name,
-                                        "arguments": block.get("input", _tc_args),
+                                        "name": _raw_name,
+                                        "arguments": _raw_args,
                                         "thinking": _turn_thinking,
                                     }
                                     if _parent_tc_id:
                                         _bc_payload["parent_tc_id"] = _parent_tc_id
                                     block_callback("tool_use", _bc_payload)
-                                    # Thinking consumed by block_callback
-                                    # (attached to the tc_msg). Clear so
-                                    # end-of-turn flush doesn't re-emit.
                                     _turn_thinking = ""
                                 except Exception as _bc_err:
-                                    logger.error(
-                                        "[codex] block_callback tool_use failed: %s",
-                                        _bc_err, exc_info=True)
-                            # Register the CC tool_use id so tool_relay_service
-                            # can match it when the MCP bridge forwards the
-                            # same call (its request_id is a different uuid).
-                            # Required for kill / background to target the
-                            # right in-flight call when CC runs tools in //.
+                                    logger.error("[codex] block_callback tool_use failed: %s",
+                                                 _bc_err, exc_info=True)
                             try:
-                                from core.background_tool import (
-                                    enqueue_cc_tc, _args_hash,
-                                )
-                                from core.llm_client import unwrap_mcp_tool
-                                _match_name, _match_args = unwrap_mcp_tool(
-                                    _tc_name, _tc_args or {})
-                                enqueue_cc_tc(
-                                    conv_id, agent_name, _block_id,
-                                    _match_name, _args_hash(_match_args))
+                                from core.background_tool import enqueue_cc_tc, _args_hash
+                                enqueue_cc_tc(conv_id, agent_name, _block_id,
+                                              _tc_name, _args_hash(_tc_args))
                             except Exception as _ee:
-                                logger.debug(
-                                    "[codex] enqueue_cc_tc skipped: %s",
-                                    _ee)
-                        elif btype == "thinking":
-                            thinking = block.get("thinking", "")
-                            _has_sig = bool(block.get("signature"))
-                            logger.info(
-                                "[codex-stream] thinking block: len=%d sig=%s preview=%r",
-                                len(thinking), _has_sig, thinking[:120])
-                            if thinking:
-                                # Raw reasoning text exposed (rare now;
-                                # Anthropic redacts by default). Persist
-                                # verbatim.
-                                _turn_thinking = thinking
-                            elif _has_sig:
-                                # Redacted thinking: signature without
-                                # content. Mark the turn so _flush_turn
-                                # can synthesize a "Thought for Xs"
-                                # placeholder — user gets a visual cue
-                                # that reasoning happened even though
-                                # the API strips the text.
-                                _turn_thinking_redacted = True
-                                if _turn_thinking_start == 0.0:
-                                    _turn_thinking_start = time.time()
-                                _turn_thinking_end = time.time()
-                    # Update turn count on status
-                    _pub("heartbeat", {
-                        "agent_name": agent_name,
-                        "status": f"turn {_turn_count}",
-                        "iteration": _turn_count,
-                    })
-                    last_data = msg
+                                logger.debug("[codex] enqueue_cc_tc skipped: %s", _ee)
+                            continue
 
-                elif etype == "user":
-                    # Tool results — capture for persistence + forward to webchat
-                    msg = event.get("message", {})
-                    for block in msg.get("content", []):
-                        if block.get("type") == "tool_result":
-                            logger.debug("[CODEX-RAW-RESULT] block=%s", json.dumps(block, default=str, ensure_ascii=False)[:2000])
-                            tc_id = block.get("tool_use_id", "")
-                            result_text = block.get("content", "")
-                            if isinstance(result_text, list):
-                                # Content blocks format
-                                result_text = " ".join(
-                                    b.get("text", "") for b in result_text
-                                    if isinstance(b, dict))
-                            result_str = str(result_text) if result_text else "(no output)"
-                            # Store for turn_callback persistence
+                        if is_done:
+                            tc_id = iid
+                            _result = item.get("result", item.get("output", None))
+                            try:
+                                if isinstance(_result, (dict, list)):
+                                    result_str = json.dumps(_result, ensure_ascii=False, default=str)
+                                else:
+                                    result_str = str(_result) if _result is not None else ""
+                            except Exception:
+                                result_str = repr(_result)
                             if tc_id:
                                 _tool_results[tc_id] = result_str
                                 _pending_tool_ids.discard(tc_id)
@@ -2284,58 +2120,11 @@ class LLMCodexMixin(CodexSessionMixin):
                                     f"{tc_id[:8]}={len(result_str)}c")
                                 if not _pending_tool_ids:
                                     _last_tool_result_time = time.monotonic()
-                            # Resolve tool name. Try the stream-scoped
-                            # map first (survives turn flushes), fall
-                            # back to _turn_tool_calls for robustness.
-                            # Without this, the compact_result short-
-                            # circuit would miss whenever the tool_use
-                            # was in a flushed earlier turn.
-                            _tr_name = _stream_tc_names.get(tc_id, "")
-                            if not _tr_name:
-                                _tr_name = tc_id
-                                for _tc in _turn_tool_calls:
-                                    if _tc.get("id") == tc_id:
-                                        from core.llm_client import unwrap_mcp_tool
-                                        _tr_name, _ = unwrap_mcp_tool(
-                                            _tc.get("name", tc_id), _tc.get("arguments", {}))
-                                        break
-                            # Skip meta tool results from SSE
+                            _tr_name = _stream_tc_names.get(tc_id, "") or tc_id
                             if _tr_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
                                 continue
-                            # Suppress the tool_result SSE iff we suppressed the
-                            # matching tool_call (phantom: empty args / empty
-                            # bash command / all-empty args — see filters above).
-                            # Output-based detection ("no command provided" in
-                            # result_str) was wrong in two ways — it swallowed
-                            # legitimate Read results containing the phrase in
-                            # source, AND legitimate bash output containing it
-                            # (git log picks up commit e59a188's own message:
-                            # 'Fix: scope "no command provided" phantom filter
-                            # to bash only' on any command touching this file).
-                            # Phantom detection is input-only.
                             if tc_id and tc_id not in _emitted_sse_tcs:
                                 continue
-                            _tr_event = {
-                                "tool": _tr_name,
-                                "result": result_str[:300],
-                                "tc_id": tc_id,
-                                "agent_name": agent_name,
-                                "llm_service": getattr(self, '_agent_service', ""),
-                                "via": "codex",
-                            }
-                            if _parent_tc_id:
-                                _tr_event["parent_tc_id"] = _parent_tc_id
-                            # IMMUTABLE RULE: stdout → LLMMessage → writer
-                            # → transcript/shared/ctx → SSE (post-write).
-                            # Flush THIS tool_result block now via
-                            # block_callback. Paired with the live
-                            # tool_use flush above: the tc_msg landed
-                            # when CC emitted tool_use (UI saw it
-                            # live); the tr_msg lands here when the
-                            # result comes back. Together they replace
-                            # the previous end-of-turn bundle where
-                            # both landed together and the UI saw the
-                            # tool_call only AFTER the result was in.
                             if block_callback:
                                 try:
                                     _br_payload = {
@@ -2346,451 +2135,61 @@ class LLMCodexMixin(CodexSessionMixin):
                                     if _parent_tc_id:
                                         _br_payload["parent_tc_id"] = _parent_tc_id
                                     block_callback("tool_result", _br_payload)
-                                    # Consumed by block_callback: drop
-                                    # from _tool_results so end-of-turn
-                                    # flush doesn't double-persist.
                                     _tool_results.pop(tc_id, None)
                                 except Exception as _br_err:
-                                    logger.error(
-                                        "[codex] block_callback tool_result failed: %s",
-                                        _br_err, exc_info=True)
-                            # compact_result is terminal: once CC has
-                            # delivered the summary, everything it emits
-                            # afterwards is post-summary fluff we don't
-                            # ingest (and CC often just stalls waiting
-                            # for more input until the 180s watchdog
-                            # fires). Treat it like compact_boundary —
-                            # flush the current turn and kill CC now so
-                            # the caller (_summarize_via_cc) wakes up
-                            # immediately instead of after a 3-minute
-                            # stall timeout.
-                            if _tr_name == "compact_result":
-                                logger.info(
-                                    "[codex] compact_result "
-                                    "delivered — flushing + killing CC "
-                                    "to end stream")
-                                try:
-                                    _flush_turn()
-                                except Exception as _fe:
-                                    logger.error(
-                                        "[codex] pre-compact_result "
-                                        "flush failed: %s",
-                                        _fe, exc_info=True)
-                                self._kill_codex_hard(proc)
-                                _compact_result_done = True
-                                break
-                    if _compact_result_done:
-                        break
+                                    logger.error("[codex] block_callback tool_result failed: %s",
+                                                 _br_err, exc_info=True)
+                        continue
 
-                elif etype == "content_block_delta":
-                    delta = event.get("delta", {})
-                    _delta_type = delta.get("type", "")
-                    # Extended thinking is streamed as a sequence of
-                    # content_block_delta events carrying `thinking_delta`
-                    # (with `delta.thinking` = chunk) and a trailing
-                    # `signature_delta` (with `delta.signature`). CC's
-                    # session.jsonl typically persists the final
-                    # `thinking` block with thinking="" + signature only
-                    # (redacted at rest), so the ONLY place the raw
-                    # reasoning text is visible is on the wire here.
-                    # Without this branch the pipeline sees
-                    # `turn_thinking=0` even when the model produced
-                    # real reasoning.
-                    text = delta.get("text", "")
-                    thinking_delta = delta.get("thinking", "")
-                    if thinking_delta or _delta_type == "thinking_delta":
-                        # Some server versions put the chunk in
-                        # `delta.thinking`, others use a nested shape;
-                        # cover both.
-                        _chunk = thinking_delta or delta.get("text", "")
-                        if _chunk:
-                            _turn_thinking += _chunk
-                            logger.debug(
-                                "[codex-stream] thinking_delta: +%d (total=%d)",
-                                len(_chunk), len(_turn_thinking))
-                    elif text:
-                        _turn_text_parts.append(text)
-                        content_parts.append(text)
-                        if callback:
-                            callback(text)
+                    if itype not in getattr(self, '_codex_seen_unknown_itypes', set()):
+                        if not hasattr(self, '_codex_seen_unknown_itypes'):
+                            self._codex_seen_unknown_itypes = set()
+                        self._codex_seen_unknown_itypes.add(itype)
+                        logger.warning("[codex] unknown item type %r in %s body=%s",
+                                       itype, etype, json.dumps(event)[:400])
+                    continue
 
-                elif etype == "result":
-                    # Final result — flush last turn and exit the loop
+                if etype == "turn.completed":
                     _flush_turn()
-                    # Check for API errors (auth failure, rate limit, etc.)
-                    if event.get("is_error") or event.get("subtype") == "error_during_execution":
-                        _err_text = event.get("result", "")
-                        _errors = event.get("errors", [])
-                        if _errors:
-                            _err_text = _err_text or "; ".join(
-                                e.get("message", str(e)) if isinstance(e, dict) else str(e)
-                                for e in _errors)
-                            logger.error("[codex] errors: %s", _errors)
-                        # Dump the full event body + any stderr lines we've
-                        # accumulated — useful when the "error" is an opaque
-                        # "empty or malformed response" (CC's HTTP client
-                        # sometimes swallows the upstream body and we need
-                        # stderr or the raw event to see what really failed).
-                        try:
-                            _stderr_snapshot = "".join(
-                                getattr(self, "_stderr_buffer", []) or [])[-4000:]
-                            # api_error_status = HTTP status CC's http
-                            # client actually received (None = never got
-                            # a response). duration_api_ms = how long CC
-                            # waited for the response — a few ms means
-                            # the connection failed fast (DNS/refused),
-                            # hundreds of ms means the server answered
-                            # (so the bug is upstream of CC's parser).
-                            _api_status = event.get("api_error_status")
-                            _api_ms = event.get("duration_api_ms")
-                            _term = event.get("terminal_reason", "")
-                            _stop = event.get("stop_reason", "")
-                            _usage = event.get("usage", {}) or {}
-                            logger.error(
-                                "[codex] is_error result: "
-                                "api_error_status=%r duration_api_ms=%r "
-                                "terminal_reason=%r stop_reason=%r "
-                                "subtype=%r _err_text=%r stderr_tail=%r",
-                                _api_status, _api_ms, _term, _stop,
-                                event.get("subtype"),
-                                _err_text[:500], _stderr_snapshot)
-                            # Full event dump at DEBUG — re-enable at
-                            # INFO only when investigating an is_error
-                            # failure (e.g. zero-iteration / proxy
-                            # intercept). Happy path never reaches here.
-                            if logger.isEnabledFor(logging.DEBUG):
-                                import json as _json
-                                logger.debug(
-                                    "[codex] is_error full event: %s",
-                                    _json.dumps(event, default=str,
-                                                 ensure_ascii=False)[:4000])
-                        except Exception:
-                            logger.debug("exception suppressed", exc_info=True)
-                        _lower = _err_text.lower()
-                        _is_auth = (
-                            "authentication" in _lower
-                            or "401" in _err_text
-                            or "not logged in" in _lower
-                            or "please run /login" in _lower
-                            or "unauthorized" in _lower
-                        )
-                        if _is_auth:
-                            if not _auth_retried:
-                                _auth_retried = True
-                                # Step 1: force-refresh the current pool
-                                # credential. 'Not logged in' often just
-                                # means the access_token expired; the
-                                # refresh_token is usually still valid.
-                                # Only if refresh ALSO fails do we mark
-                                # the slot dead and rotate.
-                                _bad_idx = getattr(
-                                    self, '_current_pool_index', _resume_pool_idx)
-                                _refreshed = False
-                                try:
-                                    if _bad_idx >= 0:
-                                        _refreshed = self._force_refresh_pool_entry(_bad_idx)
-                                except Exception as _rf_err:
-                                    logger.warning(
-                                        "[codex] force-refresh pool[%s] "
-                                        "failed: %s", _bad_idx, _rf_err)
-                                # Always invalidate the CC session — the
-                                # old jsonl was bound to the dead token
-                                # and CC won't accept a new token on the
-                                # same --resume session.
-                                if conv_id:
-                                    try:
-                                        ConversationStore.instance().set_extra(
-                                            conv_id,
-                                            f"codex_session:{agent_name or 'default'}",
-                                            "")
-                                    except Exception:
-                                        logger.debug("exception suppressed", exc_info=True)
-                                try:
-                                    if _refreshed:
-                                        logger.warning(
-                                            "[codex] auth failure "
-                                            "('%s') — refreshed pool[%s], "
-                                            "retrying same slot",
-                                            _err_text[:100], _bad_idx)
-                                        self._setup_credentials(
-                                            workdir, pool_index=_bad_idx)
-                                    else:
-                                        _tried = getattr(self, '_tried_pool_idx', set())
-                                        _tried = set(_tried) | {_bad_idx}
-                                        self._tried_pool_idx = _tried
-                                        logger.warning(
-                                            "[codex] auth failure "
-                                            "('%s') — refresh failed, "
-                                            "rotating OAuth pool (tried=%s)",
-                                            _err_text[:100], sorted(_tried))
-                                        self._setup_credentials(
-                                            workdir, pool_index=-1,
-                                            exclude_indices=_tried)
-                                except Exception as _ref_err:
-                                    raise LLMClientError(
-                                        f"Codex auth failed and "
-                                        f"recovery failed: {_ref_err}") from None
-                                raise _Codex401Retry()
-                            raise LLMClientError(
-                                f"Codex auth failed (all pool "
-                                f"credentials exhausted): {_err_text[:300]}")
-                        if event.get("subtype") == "error_during_execution":
-                            # Include the error code/text so LLMClient retry loop can match it
-                            raise LLMClientError(f"Codex error: {_err_text[:300]}")
-                        # is_error without error_during_execution: API error (500, 429, etc.)
-                        # Raise so it reaches the retry loop in LLMClient
-                        if _err_text:
-                            raise LLMClientError(f"Codex API error: {_err_text[:300]}")
-                        logger.warning("[codex] result has is_error=True but no details")
-                    result_text = event.get("result", "")
-                    if not turn_callback and result_text and not content_parts:
-                        content_parts.append(result_text)
-                        if callback:
-                            callback(result_text)
-                    last_data = event
-                    # Publish token stats for the webchat
-                    _usage = event.get("usage", {})
-                    # Total input = direct + cache_read + cache_creation
-                    _total_in = (_usage.get("input_tokens", 0)
-                                 + _usage.get("cache_read_input_tokens", 0)
-                                 + _usage.get("cache_creation_input_tokens", 0))
-                    _total_out = _usage.get("output_tokens", 0)
-                    # model is in modelUsage keys, not at top level
-                    _model_usage = event.get("modelUsage", {})
-                    # Fallback: if usage is empty, sum from modelUsage
-                    if not _total_in and not _total_out and _model_usage:
-                        for _mu in _model_usage.values():
-                            _total_in += (_mu.get("inputTokens", 0)
-                                          + _mu.get("input_tokens", 0)
-                                          + _mu.get("cacheReadInputTokens", 0)
-                                          + _mu.get("cache_read_input_tokens", 0)
-                                          + _mu.get("cacheCreationInputTokens", 0)
-                                          + _mu.get("cache_creation_input_tokens", 0))
-                            _total_out += (_mu.get("outputTokens", 0)
-                                           + _mu.get("output_tokens", 0))
-                    logger.info("[codex] result: usage=%s, modelUsage=%s, tokens=%d/%d",
-                                _usage, _model_usage, _total_in, _total_out)
-                    # Prefer event.get("model") (CC's authoritative
-                    # answer for this turn). When absent, prefer the
-                    # REQUESTED model if present in modelUsage — picking
-                    # the first dict key is non-deterministic and can
-                    # land on a side-task model (e.g. haiku used for
-                    # summarization while opus runs the turn), giving
-                    # the wrong contextWindow.
-                    _event_model = event.get("model") or ""
-                    if _event_model:
-                        _result_model = _event_model
-                    elif _model_usage and model in _model_usage:
-                        _result_model = model
-                    elif _model_usage:
-                        _result_model = list(_model_usage.keys())[0]
-                    else:
-                        _result_model = model
-                    if _total_in or _total_out:
-                        # Get the msg_id of the last assistant message (from turn_callback)
-                        _last_msg_id = ""
-                        try:
-                            _last_msg_id = getattr(self, '_last_turn_msg_id', "") or ""
-                        except Exception:
-                            logger.debug("exception suppressed", exc_info=True)
-                        # Context-fill: exact value from CC stream's last
-                        # assistant.message.usage (prompt size at that point).
-                        # Budget comes from CC itself: result.modelUsage[model]
-                        # .contextWindow is CC's authoritative value
-                        # (src/utils/context.ts::getContextWindowForModel) —
-                        # accounts for 200k default, [1m] suffix beta,
-                        # CLAUDE_CODE_MAX_CONTEXT_TOKENS overrides, etc.
-                        # Using it here keeps PawFlow's gauge aligned with
-                        # what CC itself sees as "context full", so the
-                        # percentage where CC auto-compacts (≈98% of the
-                        # effective window, cf. AUTOCOMPACT_BUFFER_TOKENS
-                        # in src/services/compact/autoCompact.ts) matches
-                        # what the user reads on screen. No hardcoded
-                        # model → budget map on our side.
-                        _ctx_used = (_latest_usage.get("input_tokens", 0)
-                                     + _latest_usage.get("cache_creation_input_tokens", 0)
-                                     + _latest_usage.get("cache_read_input_tokens", 0))
-                        _cc_mu = _model_usage.get(_result_model) if _model_usage else None
-                        _cc_ctx_window = 0
-                        if isinstance(_cc_mu, dict):
-                            _cc_ctx_window = int(_cc_mu.get("contextWindow")
-                                                  or _cc_mu.get("context_window")
-                                                  or 0)
-                        # No iterate-and-pick-first fallback: that path
-                        # silently returned haiku's 200k when modelUsage
-                        # held both haiku (side-task) and opus (turn),
-                        # giving a wrong gauge. If _result_model has no
-                        # contextWindow, leave _cc_ctx_window=0 and skip
-                        # the gauge update for this event.
-                        # Per-stream cache keyed by (conv, agent) — the
-                        # singleton self._codex_context_window was clobbered
-                        # across concurrent streams (memory_extract /
-                        # _compact / multi-agent), so an opus turn read
-                        # back haiku's 200k after an unrelated stream had
-                        # written it.
-                        _cw_key = (conv_id or "", agent_name or "")
-                        _cw_map = getattr(self, '_codex_context_window_by_stream', None)
-                        if _cw_map is None:
-                            _cw_map = {}
-                            self._codex_context_window_by_stream = _cw_map
-                        if _cc_ctx_window > 0:
-                            _cw_map[_cw_key] = _cc_ctx_window
-                        _ctx_max = int(_cc_ctx_window
-                                       or _cw_map.get(_cw_key, 0)
-                                       or 0)
-                        # No 200k default. If CC didn't report
-                        # contextWindow on this result, emit ctx_max=0 and
-                        # let the UI skip the gauge — better than a
-                        # fictional budget.
-                        _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
-                        _pub("message_meta", {
-                            "msg_id": _last_msg_id,
-                            "agent_name": agent_name,
-                            "source": {
-                                "type": "agent", "name": agent_name,
-                                "llm_service": getattr(self, '_agent_service', ""),
-                                "provider": "codex",
-                                "model": _result_model,
-                                "tokens_in": _total_in,
-                                "tokens_out": _total_out,
-                            },
-                            "model": _result_model,
-                            "provider": "codex",
-                            "tokens_in": _total_in,
-                            "tokens_out": _total_out,
-                            "context_used": _ctx_used,
-                            "context_max": _ctx_max,
-                            "context_pct": _ctx_pct,
-                            "num_turns": event.get("num_turns", _turn_count),
-                            "duration_ms": event.get("duration_ms", 0),
-                        })
-                    # If one or more preempts were injected via stdin
-                    # BEFORE this result event, CC may already be processing
-                    # them in a new turn (observed live: CC reads stdin right
-                    # after emitting `result` and starts a fresh assistant
-                    # turn). Breaking here would kill the subprocess while
-                    # CC is generating the preempt's response, losing it.
-                    # Decision flow (deterministic via CC's session jsonl):
-                    #   - 'done': every queued preempt has an assistant
-                    #      message AFTER it in jsonl → break safely.
-                    #   - 'pending': preempt visible in jsonl AFTER last
-                    #      assistant → CC has read stdin and WILL respond;
-                    #      keep the stream open with NO timeout (response
-                    #      may take up to ~250s for complex queries).
-                    #   - 'unread'/'unknown' after 3s poll: stdin not seen
-                    #      by CC → likely lost; break and let PendingQueue
-                    #      re-trigger on the next turn.
-                    if getattr(self, '_preempt_pending', 0) > 0:
-                        _sent = list(getattr(self, '_sent_preempt_texts', []))
-                        # Source priority:
-                        #   1. _live_session.session_id (REUSE only) —
-                        #      pinned at register time, the actual
-                        #      session_id CC is writing under. Immune
-                        #      to extras/self clobbers.
-                        #   2. local `session_id` — read from extras
-                        #      at stream entry (line 1017). Persistent
-                        #      source for NEW spawns where the live
-                        #      session doesn't exist yet.
-                        #   3. last_data['session_id'] — from the
-                        #      result event we JUST received. CC's
-                        #      authoritative reply.
-                        #   4. self._current_session_id — last fallback,
-                        #      volatile.
-                        # If all four are empty, an invariant was
-                        # broken upstream (CC never emitted init OR
-                        # extras was wiped between entry and now);
-                        # raise so the bug surfaces instead of
-                        # silently mis-declaring the preempt lost.
-                        _sid = ((_live_session.session_id
-                                 if _is_reuse and _live_session else "")
-                                or session_id
-                                or last_data.get('session_id', '')
-                                or getattr(self, '_current_session_id', '')
-                                or '')
-                        if not _sid:
-                            raise RuntimeError(
-                                "[codex] preempt-check cannot "
-                                "resolve session_id from any source "
-                                f"(reuse={_is_reuse}, "
-                                f"live={getattr(_live_session, 'session_id', None) if _live_session else None!r}, "
-                                f"local={session_id!r}, "
-                                f"last_data={last_data.get('session_id', '')!r}, "
-                                f"self={getattr(self, '_current_session_id', '')!r}) "
-                                "— a previous invariant was violated "
-                                "(CC didn't emit init? extras wiped? "
-                                "_cleanup_proc cleared self mid-stream?). "
-                                "Refusing to silently mis-declare "
-                                "preempt lost.")
-                        _jsonl = os.path.join(
-                            workdir, 'projects',
-                            self._codex_project_key(workdir),
-                            f"{_sid}.jsonl")
-                        _pstatus = self._check_codex_preempt_in_jsonl(_jsonl, _sent)
-                        # CC writes a stdin preempt to its session jsonl
-                        # the moment it reads from stdin, which can happen
-                        # ~tens of ms AFTER it emits result. If we don't
-                        # see the preempt yet, poll briefly for it to land
-                        # before deciding the preempt was lost.
-                        if _pstatus in ('unread', 'unknown'):
-                            _poll_until = time.monotonic() + 3.0
-                            while time.monotonic() < _poll_until:
-                                time.sleep(0.2)
-                                if proc.poll() is not None:
-                                    break
-                                _pstatus = self._check_codex_preempt_in_jsonl(
-                                    _jsonl, _sent)
-                                if _pstatus not in ('unread', 'unknown'):
-                                    break
-                        if _pstatus == 'done':
-                            # CC integrated the preempt mid-turn; the just-
-                            # emitted assistant message IS the response.
-                            logger.info(
-                                "[codex] result emitted; jsonl shows "
-                                "all %d preempt(s) answered inline — break",
-                                len(_sent))
-                            self._had_preempts_this_turn = True
-                            self._preempt_pending = 0
-                            self._sent_preempt_texts = []
-                            self._result_emitted = True
-                            break
-                        if _pstatus == 'pending':
-                            # CC has read stdin (preempt is in jsonl) but
-                            # has not yet produced the response. CC WILL
-                            # respond — there is no useful upper bound on
-                            # how long that takes (could be 250s for a
-                            # complex query). Keep the stream open with NO
-                            # timeout: the for-loop blocks on stdout for
-                            # the next assistant event, and EOF on proc
-                            # death exits cleanly via the finally block.
-                            logger.info(
-                                "[codex] result emitted; CC has read "
-                                "%d preempt(s) (jsonl=pending) — keeping "
-                                "stream open with NO timeout, waiting for "
-                                "CC's response", self._preempt_pending)
-                            self._had_preempts_this_turn = True
-                            self._preempt_pending = 0
-                            continue
-                        # 'unread' / 'unknown' after polling: CC has not
-                        # acknowledged stdin. Most likely it exited or is
-                        # silently stuck. Don't wait further; let pawflow
-                        # re-deliver via PendingQueue on the next turn.
-                        # _had_preempts_this_turn stays False so the
-                        # caller knows to re-trigger if drained user msgs
-                        # exist.
+                    _u = event.get("usage", {}) or {}
+                    _input = int(_u.get("input_tokens", 0) or 0)
+                    _cached = int(_u.get("cached_input_tokens", 0) or 0)
+                    _output = int(_u.get("output_tokens", 0) or 0)
+                    _latest_usage = {
+                        "input_tokens": _input,
+                        "cached_input_tokens": _cached,
+                        "output_tokens": _output,
+                    }
+                    last_data = {"usage": _latest_usage,
+                                 "session_id": getattr(self, '_current_session_id', '') or '',
+                                 "model": model,
+                                 "num_turns": _turn_count}
+                    _ctx_used_live = int(prompt_chars / 3.5) + 8000 if 'prompt_chars' in dir() else _input
+                    _ctx_max_live = self._codex_context_window(model) if hasattr(self, '_codex_context_window') else 200_000
+                    _ctx_pct_live = _ctx_used_live / _ctx_max_live if _ctx_max_live > 0 else 0.0
+                    _pub("message_meta", {
+                        "agent_name": agent_name,
+                        "context_used": _ctx_used_live,
+                        "context_max": _ctx_max_live,
+                        "context_pct": _ctx_pct_live,
+                        "live": True,
+                    })
+                    if _ctx_max_live > 0 and _ctx_used_live >= int(_ctx_max_live * 0.8):
                         logger.warning(
-                            "[codex] result emitted; %d preempt(s) "
-                            "NOT visible in jsonl after 3s poll "
-                            "(status=%s) — preempt likely lost, breaking. "
-                            "PendingQueue will re-trigger.",
-                            self._preempt_pending, _pstatus)
-                        self._preempt_pending = 0
-                        self._sent_preempt_texts = []
-                        self._result_emitted = True
-                        break
-                    # CC emitted its final result. Mark this so future
-                    # preempts are refused (caller routes via PendingQueue).
+                            "[codex] usage %d/%d crossed PawFlow compact threshold (80%%)",
+                            _ctx_used_live, _ctx_max_live)
+                        self._compacting = True
+                        _compact_pending[0] = True
                     self._result_emitted = True
-                    break
+                    continue
+
+                if etype == "turn.failed":
+                    _err = event.get("error", event)
+                    raise LLMClientError(f"codex turn failed: {json.dumps(_err)[:300]}")
+
+                if etype == "error":
+                    _err = event.get("error", event)
+                    raise LLMClientError(f"codex error: {json.dumps(_err)[:300]}")
 
             # Loop exited naturally (result break or stdout EOF). If a
             # compact_boundary fired during this stream, raise now — all

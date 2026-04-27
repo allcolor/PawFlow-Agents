@@ -553,8 +553,15 @@ class FileStore:
         return self._base_dir / "_index.json"
 
     def _save_index(self):
-        try:
-            with self._store_lock:
+        # Hold `_store_lock` across the ENTIRE write+rename, not just the
+        # data-build step. Without it, concurrent _save_index calls (codex
+        # bulk-deletes 42 tool result files at end of turn, each triggers
+        # a save) race on the same `_index.tmp` file: thread A writes,
+        # thread B overwrites, A renames (ok), B renames → PermissionError
+        # (WinError 5 on Windows + WSL UNC mount, where the kernel holds
+        # the dst handle for tens of ms after the first replace).
+        with self._store_lock:
+            try:
                 data = {
                     fid: {
                         "filename": e["filename"],
@@ -572,12 +579,12 @@ class FileStore:
                     }
                     for fid, e in self._entries.items()
                 }
-            path = self._index_path()
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            tmp.replace(path)
-        except Exception as e:
-            logger.error("FileStore: failed to save index: %s", e)
+                path = self._index_path()
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(path)
+            except Exception as e:
+                logger.error("FileStore: failed to save index: %s", e)
 
     def _load_index(self):
         path = self._index_path()

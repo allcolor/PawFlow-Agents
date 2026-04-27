@@ -2311,6 +2311,25 @@ class LLMCodexMixin(CodexSessionMixin):
                                 logger.debug("live-gauge update failed", exc_info=True)
                         continue
 
+                    # Hosted Responses-API tool items (web_search, view_image,
+                    # image_generation, file_search). PawFlow disables them
+                    # via `tools.<name>=false` config, but codex emits a
+                    # "signal" item.started with empty query/action when
+                    # the model TRIED to use one anyway — the actual call
+                    # never executes. Silently ignore so the parser doesn't
+                    # log a warning on every turn.
+                    if itype in ("web_search", "view_image",
+                                 "image_generation", "file_search",
+                                 "image_generation_call",
+                                 "web_search_call",
+                                 "tool_search", "tool_search_call"):
+                        if etype == "item.started":
+                            logger.debug(
+                                "[codex] suppressed hosted-tool item: type=%s id=%s "
+                                "(disabled via config; model attempt ignored)",
+                                itype, iid)
+                        continue
+
                     if itype not in getattr(self, '_codex_seen_unknown_itypes', set()):
                         if not hasattr(self, '_codex_seen_unknown_itypes'):
                             self._codex_seen_unknown_itypes = set()

@@ -2361,12 +2361,31 @@ class LLMCodexMixin(CodexSessionMixin):
                                  "model": model,
                                  "num_turns": _turn_count}
                     _ctx_used_live = prompt_tokens
-                    # max_tokens = service-configured max_context_size. CC
-                    # overrides it on the fly with the model-reported value
-                    # (`result.modelUsage[model].contextWindow`); codex's
-                    # `turn.completed.usage` doesn't self-report a window,
-                    # so we just trust the service config.
-                    _ctx_max_live = max_tokens
+                    # `max_tokens` is the OUTPUT response limit (e.g. 0 when
+                    # no cap is set), NOT the context window. Reading the
+                    # window here would give us 0 most of the time, and the
+                    # threshold check below would silently skip every
+                    # compact. The per-tool gauge update at item.completed
+                    # already computes the right value via
+                    # `_codex_context_window(model)` with a 1M fallback —
+                    # use the same source of truth.
+                    _ctx_max_live = (
+                        self._codex_context_window(model)
+                        if hasattr(self, "_codex_context_window")
+                        else 0)
+                    if not _ctx_max_live:
+                        # Fall back to the agent service's configured
+                        # max_context_size, then to a 1M default — codex
+                        # itself does not self-report a window in the
+                        # `turn.completed.usage` event.
+                        try:
+                            _ctx_max_live = int(
+                                (getattr(self, "_config_ref", None) or {})
+                                .get("max_context_size", 0) or 0)
+                        except (TypeError, ValueError):
+                            _ctx_max_live = 0
+                    if not _ctx_max_live:
+                        _ctx_max_live = 1_000_000
                     _ctx_pct_live = _ctx_used_live / _ctx_max_live if _ctx_max_live > 0 else 0.0
                     _pub("message_meta", {
                         "agent_name": agent_name,

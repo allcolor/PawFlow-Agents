@@ -40,16 +40,59 @@ function renderCtxGauge(usage, opts) {
     + '</span>';
 }
 
+// Per-agent flag set by `markCompactJustHappened(agentName)` (wired to
+// the SSE `compact_progress stage=done` event). `setContextUsage`
+// requires it to be true to accept a decrease, and clears it after
+// consuming the drop. Without this, a stray late event from before a
+// turn-end could reduce the gauge by mistake.
+window._compactPending = window._compactPending || {};
+
+function markCompactJustHappened(agentName) {
+  if (!agentName) return;
+  window._compactPending[agentKey(agentName)] = true;
+}
+
 // Update cache and refresh all UI surfaces that display the gauge.
+//
+// Invariants enforced here, in line with the conversation-size physics:
+//   1. The gauge can only land on 0% on a brand-new empty conversation.
+//      A 0 update on an agent that already had a non-zero reading is a
+//      provider quirk (fallback / pre-prompt / cleared usage) — ignore.
+//   2. The gauge can only DECREASE when a compact has just happened
+//      for this agent. Otherwise an unsolicited drop (e.g. tool result
+//      cleanup that doesn't shrink the prompt, or a stale event) is
+//      ignored. The compact path explicitly opts in via
+//      `markCompactJustHappened(agent)` before its post-compact usage
+//      arrives.
+//
 // Real values from `message_meta` always clear the `estimated` flag and
 // reset the per-agent estimation accumulator (next chunks restart from 0).
 function setContextUsage(agentName, usage) {
   if (!agentName || !usage) return;
   const key = agentKey(agentName);
   const realUsed = usage.used || usage.context_used || 0;
+  const newMax = usage.max || usage.context_max || 0;
+  const cached = window._contextUsage[key];
+  const cachedUsed = (cached && cached.used) || 0;
+
+  // Rule 1: never demote a non-zero gauge back to zero.
+  if (realUsed === 0 && cachedUsed > 0) {
+    return;
+  }
+  // Rule 2: a strict decrease is only allowed when a compact for this
+  // agent has been signalled since the last accepted update. Any other
+  // drop is a UI artefact and is ignored.
+  if (realUsed < cachedUsed && !window._compactPending[key]) {
+    return;
+  }
+  // Accepted update — if a compact was pending, this is the post-compact
+  // baseline and the flag is consumed.
+  if (window._compactPending[key]) {
+    delete window._compactPending[key];
+  }
   window._contextUsage[key] = {
     used: realUsed,
-    max: usage.max || usage.context_max || 0,
+    max: newMax,
     pct: usage.pct || usage.context_pct || 0,
     estimated: false,
     // Pin the real baseline so subsequent estimation bumps compute
@@ -61,6 +104,16 @@ function setContextUsage(agentName, usage) {
   // on top of this fresh real value, not on top of stale chunks.
   window._contextEstChars = window._contextEstChars || {};
   window._contextEstChars[key] = 0;
+  // Keep the active-panel mirror (`activeInteractions`) in sync so the
+  // panel's per-agent row uses the same monotonic value. Direct
+  // mutations from elsewhere are gone — setContextUsage is the single
+  // entry point that enforces the invariants.
+  if (typeof activeInteractions !== 'undefined' && activeInteractions[key]) {
+    activeInteractions[key].contextUsed = realUsed;
+    activeInteractions[key].contextMax = newMax;
+    activeInteractions[key].contextPct =
+      usage.pct || usage.context_pct || (newMax > 0 ? realUsed / newMax : 0);
+  }
   _refreshGaugeSurfaces(key);
 }
 

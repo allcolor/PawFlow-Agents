@@ -349,33 +349,16 @@ function connectSSE(cid, onReady, opts) {
   // Per-message metadata: attaches model/tokens to the correct element by msg_id
   eventSource.addEventListener('message_meta', (e) => {
     const data = JSON.parse(e.data);
-    // Update active-panel context fill for the emitting agent (CC streams this
-    // per-turn even before `done` fires).
-    if (data.agent_name && typeof activeInteractions !== 'undefined') {
-      const aKey = agentKey(data.agent_name);
-      // Same guard as the persistent cache below: require used>0 unless the
-      // event explicitly marks itself as an estimated reset (compact). A bare
-      // used=0/max=200000 payload must NOT wipe the live gauge.
-      if (activeInteractions[aKey]
-          && (data.context_max || 0) > 0
-          && ((data.context_used || 0) > 0 || data.estimated)) {
-        activeInteractions[aKey].contextUsed = data.context_used || 0;
-        activeInteractions[aKey].contextMax = data.context_max || 0;
-        activeInteractions[aKey].contextPct = data.context_pct || 0;
-        updateActivePanel();
-      }
-    }
-    // Persistent cache — feeds header badge + Resource Panel gauge.
-    // Guard: silently drop spurious zero payloads (used=0/max=200000 from
-    // emitters that fell back to defaults without real provider usage) to
-    // avoid wiping the previously-displayed real value. Explicit resets
-    // (compact, etc.) carry estimated=true and ARE allowed through.
+    // Single update path — setContextUsage enforces the monotonic
+    // invariants (no demote-to-zero, no decrease without compact) and
+    // mirrors the value to both `_contextUsage` (header / Resource
+    // Panel) and `activeInteractions` (active-agents panel).
     if (data.agent_name && (data.context_max || 0) > 0
-        && ((data.context_used || 0) > 0 || data.estimated)
         && typeof setContextUsage === 'function') {
       setContextUsage(data.agent_name, {
         used: data.context_used, max: data.context_max, pct: data.context_pct,
       });
+      if (typeof updateActivePanel === 'function') updateActivePanel();
     }
     if (!data.msg_id) return;
     // Find the element by data-msgid and update metadata (replace if exists).
@@ -906,6 +889,13 @@ function connectSSE(cid, onReady, opts) {
     } else if (data.stage === 'done') {
       hideContextOp();
       const agent = data.agent || 'shared';
+      // Authorise the next gauge decrease for this agent — the
+      // post-compact `message_meta` will be smaller than the cached
+      // value by design. Without this, the monotonic guard in
+      // setContextUsage would reject the drop.
+      if (typeof markCompactJustHappened === 'function') {
+        markCompactJustHappened(agent);
+      }
       // Show TOTAL conversation msg count as the reference (what the
       // user thinks of as "the conversation size"). `before` is the
       // per-agent context pre-compact — meaningless to display
@@ -1093,26 +1083,10 @@ function connectSSE(cid, onReady, opts) {
       return;
     }
     _cancelledAgents.delete(doneAgent.toLowerCase());  // allow new events for next turn
-    // Stash final context fill on the active-panel entry (visible until next
-    // list_active poll clears the row).
-    if (doneAgent && typeof activeInteractions !== 'undefined') {
-      const _aKey = agentKey(doneAgent);
-      // Same guard as the persistent cache below: require used>0 unless the
-      // event explicitly marks itself as an estimated reset (compact).
-      if (activeInteractions[_aKey]
-          && (data.context_max || 0) > 0
-          && ((data.context_used || 0) > 0 || data.estimated)) {
-        activeInteractions[_aKey].contextUsed = data.context_used || 0;
-        activeInteractions[_aKey].contextMax = data.context_max || 0;
-        activeInteractions[_aKey].contextPct = data.context_pct || 0;
-      }
-    }
-    // Persistent cache — keeps gauge visible in header/Resource Panel
-    // after the agent leaves the active set. Same guard as message_meta:
-    // drop used=0 payloads (fallback emits) but allow explicit estimated=true
-    // resets (compact, etc.).
+    // Single update path — setContextUsage enforces the monotonic
+    // invariants and mirrors to both caches (active panel + header /
+    // Resource Panel).
     if (doneAgent && (data.context_max || 0) > 0
-        && ((data.context_used || 0) > 0 || data.estimated)
         && typeof setContextUsage === 'function') {
       setContextUsage(doneAgent, {
         used: data.context_used, max: data.context_max, pct: data.context_pct,

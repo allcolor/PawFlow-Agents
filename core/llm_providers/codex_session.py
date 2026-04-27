@@ -662,6 +662,14 @@ class CodexSessionMixin:
 
         from core.internal_auth import mint_token
         internal_token = mint_token()
+        # Sanity-check: an empty internal_token would silently kill MCP
+        # bridge auth (server rejects with `cookie_header has 1 parts`).
+        # Log presence + length so we can confirm it actually got minted.
+        logger.info("[codex] minted internal_token len=%d preview=%s relay_url=%s relay_token_set=%s",
+                    len(internal_token or ""),
+                    (internal_token[:8] + "…") if internal_token else "EMPTY",
+                    relay_url or "EMPTY",
+                    "yes" if relay_token else "no")
 
         # codex config.toml: the binary parses TOML, not JSON.
         # `model_auto_compact_token_limit = 999999999` disables codex's

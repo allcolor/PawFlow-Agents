@@ -1668,9 +1668,19 @@ class AgentCoreMixin:
                 else:
                     break
 
-            # Empty response synthesis (skip for claude-code — turn_callback
-            # already persisted all content, response_content is intentionally "")
-            if not response_content and not _fatal_error and not ctx.get("_is_claude_code"):
+            # Empty response synthesis (skip for claude-code / codex / gemini —
+            # all three CLI providers run turn_callback which already persisted
+            # the assistant text + tool_call + tool_result messages; the empty
+            # `response.content` is the *intended* signal, not a missing reply.
+            # Without this skip, an extra synthesis call fires after every
+            # codex/gemini turn and its response is silently dropped because
+            # turn_callback again returns empty.)
+            _is_cli_provider = (
+                ctx.get("_is_claude_code")
+                or ctx.get("active_llm_provider") in ("codex", "gemini")
+                or getattr(client, "provider", "") in ("codex", "gemini")
+            )
+            if not response_content and not _fatal_error and not _is_cli_provider:
                 logger.warning(f"[agent:{conversation_id[:8]}] empty response — forcing synthesis")
                 _pre = len(messages)
                 content, ti, to, fm = self._force_synthesis(

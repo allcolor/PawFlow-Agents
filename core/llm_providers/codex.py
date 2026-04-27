@@ -414,12 +414,16 @@ class LLMCodexMixin:
             itype = item.get("type", "")
             tc_id = item.get("id", "") or ""
             if itype == "mcp_tool_call":
-                _server = item.get("server", "") or ""
+                # Codex emits the bare proxy name (`use_tool`) under `tool`,
+                # with the real tool name nested inside `arguments.tool_name`.
+                # Pass the bare name through — `unwrap_mcp_tool` recognizes
+                # exactly `"use_tool"` / `"mcp__pawflow__use_tool"` and peels
+                # the wrapper off. Building `"<server>.<tool>"` here defeats
+                # that match and leaks the proxy name to the UI.
                 _tool = item.get("tool_name", "") or item.get("tool", "")
-                name = f"{_server}.{_tool}" if _server and _tool else (_tool or _server)
                 args = item.get("arguments", {}) or item.get("args", {}) or {}
                 result = item.get("result", item.get("output", None))
-                return (tc_id, name, args, result)
+                return (tc_id, _tool, args, result)
             if itype == "command_execution":
                 cmd = item.get("command", "") or ""
                 args = {"command": cmd, "cwd": item.get("cwd", "") or ""}

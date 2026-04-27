@@ -1249,6 +1249,11 @@ class LLMCodexMixin(CodexSessionMixin):
                     multiplier=_mult)
             except Exception:
                 prompt_tokens = int(len(initial_text) / 3.5)
+                logger.warning("[codex] count_messages_tokens failed, fell back to chars/3.5 → %d",
+                               prompt_tokens, exc_info=True)
+            logger.info(
+                "[codex] gauge: prompt_tokens=%d (msgs=%d, initial_text=%d chars, multiplier=%s)",
+                prompt_tokens, len(messages), len(initial_text), _mult if 'multiplier' in locals() or '_mult' in locals() else 'n/a')
             proc.stdin.write(initial_text)
             proc.stdin.flush()
             # Close stdin so codex sees EOF and starts processing the turn.

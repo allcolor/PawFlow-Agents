@@ -787,7 +787,19 @@ class AgentCoreMixin:
 
                     # LLM call
                     _tb = ctx.get("thinking_budget", 0)
-                    _is_claude_code = _client_provider == "claude-code"
+                    # `_is_claude_code` historically meant "this provider
+                    # uses turn_callback to persist content during streaming;
+                    # do NOT re-append response.content at end of turn".
+                    # Codex and gemini share that pattern (see
+                    # `turn_callback=_claude_code_turn_callback if
+                    # _client_provider in ("claude-code","codex","gemini")`
+                    # below). Without including them here, agent_core
+                    # double-persists at end of turn — codex emits an
+                    # extra empty assistant message because turn_callback
+                    # already pushed everything and response.content is
+                    # the concatenation of pieces already on disk.
+                    _is_claude_code = _client_provider in (
+                        "claude-code", "codex", "gemini")
 
                     _cc_turn_count = [0]
 

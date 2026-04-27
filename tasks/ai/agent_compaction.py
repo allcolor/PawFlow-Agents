@@ -586,7 +586,17 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         #      enforced ≤ 40% of max at service install time; runtime falls
         #      back to the formula if somehow that bound is exceeded here.
         #   2. legacy fraction (`target_fraction`, default 0.25 × max).
-        _cfg_ref = getattr(client, "_config_ref", None) or {}
+        # `client` here is typically the LLMConnectionService (which exposes
+        # the user-edited config via `.config`), not the inner LLMClient. Fall
+        # back to `client._config_ref` for the raw-LLMClient call sites, then
+        # to `client._client._config_ref` (service.client.config_ref) so all
+        # three shapes resolve. Earlier version only looked at `_config_ref`
+        # and silently missed services, leaving every compact on the legacy
+        # 25% fraction.
+        _cfg_ref = (getattr(client, "config", None)
+                    or getattr(client, "_config_ref", None)
+                    or getattr(getattr(client, "_client", None), "_config_ref", None)
+                    or {})
         try:
             _abs_cap = int(_cfg_ref.get("compact_target_tokens", 0) or 0)
         except (TypeError, ValueError):

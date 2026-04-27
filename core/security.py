@@ -309,6 +309,15 @@ class SecurityManager:
     def logout(self, session_id: str):
         self._sessions.pop(session_id, None)
         self._save_sessions()
+        # Drop every capability token (VNC, terminal, code-server, etc.)
+        # bound to this login session so a leaked URL stops working the
+        # moment the user logs out. capability_auth may not be initialised
+        # in tooling/tests — swallow that path.
+        try:
+            from core.capability_auth import revoke_session_capabilities
+            revoke_session_capabilities(session_id)
+        except Exception:
+            pass
 
     def check_permission(self, session: Session, permission: str) -> bool:
         """Check if a session has a specific permission."""

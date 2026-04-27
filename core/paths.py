@@ -153,6 +153,11 @@ SPILL_DIR = RUNTIME_DIR / "spill"
 
 # Runtime data files
 TOKEN_USAGE_FILE = RUNTIME_DIR / "token_usage.json"
+
+# Capability-auth registry (sensitive-route capability tokens, persisted so
+# active VNC / terminal / code-server / port-forward sessions survive a
+# server restart). See core/capability_auth.py.
+CAPABILITIES_DB = RUNTIME_DIR / "capabilities.db"
 POLL_SCHEDULE_FILE = RUNTIME_DIR / "poll_schedule.json"
 GATEWAY_BANS_FILE = RUNTIME_DIR / "gateway_bans.json"
 

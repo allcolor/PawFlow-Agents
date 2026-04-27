@@ -42,6 +42,15 @@ class PendingRequest:
     remote_addr: str = ""
     timestamp: float = field(default_factory=time.time)
 
+    # Authenticated identity, populated by the HTTP handler AFTER the session
+    # auth check passes. Routes downstream consume these to check ownership
+    # against capability tokens (see core.capability_auth.verify_capability).
+    # Empty when the request is on a public route (auth was skipped).
+    auth_user_id: str = ""
+    auth_role: str = ""
+    auth_session_id: str = ""
+    auth_is_api_key: bool = False
+
     # Response fields (filled by handleHTTPResponse task)
     response_status: int = 200
     response_headers: Dict[str, str] = field(default_factory=dict)
@@ -411,6 +420,24 @@ class _RequestHandler(BaseHTTPRequestHandler):
             remote_addr=self.client_address[0] if self.client_address else "",
         )
         req.mark("recv")
+
+        # Stamp the authenticated identity onto the request so downstream
+        # routes (capability checks, ownership filters, etc.) can resolve
+        # the requester without re-parsing cookies. `session` is set above
+        # by the auth block: a Session object for cookie/bearer login,
+        # the literal `True` for an API key (no Session object available),
+        # or None for a public route (auth was skipped).
+        if session is True:
+            req.auth_is_api_key = True
+        elif session is not None:
+            req.auth_user_id = getattr(session, "username", "") or ""
+            _role = getattr(session, "role", None)
+            # Role can be an enum or a plain string depending on the auth
+            # backend; serialise to lowercase string either way.
+            req.auth_role = (getattr(_role, "value", None)
+                              or str(_role) if _role else "").lower()
+            req.auth_session_id = getattr(session, "session_id", "") or ""
+            req.auth_is_api_key = False
 
         # Store in server's pending map
         self.server._pending_requests[req.request_id] = req
@@ -941,6 +968,15 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             # Session auth check for WebSocket connections
             # (skipped when internal-auth already cleared the request —
             # CC container / server-side relays have no user session).
+            # On success, captures the resolved identity into
+            # `_ws_auth_user_id` / `_ws_auth_role` / `_ws_auth_session_id` /
+            # `_ws_auth_is_api_key` so we can pass it through the WS
+            # handler's `meta` dict (capability checks downstream consume
+            # these the same way HTTP routes consume req.auth_*).
+            _ws_auth_user_id = ""
+            _ws_auth_role = ""
+            _ws_auth_session_id = ""
+            _ws_auth_is_api_key = False
             if not _internal_ok:
                 try:
                     from core.security import SecurityManager
@@ -963,16 +999,25 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                         sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
                         sock.close()
                         return
-                    _session_ok = bool(sm.get_session(ws_token))
-                    _apikey_ok = False if _session_ok else bool(sm.validate_api_key(ws_token))
-                    if not _session_ok and not _apikey_ok:
-                        logger.warning(
-                            "[ws] rejected %s on %s: session token present but "
-                            "invalid (not a live session nor API key)",
-                            _remote, path)
-                        sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
-                        sock.close()
-                        return
+                    _ws_session = sm.get_session(ws_token)
+                    if _ws_session is not None:
+                        _ws_auth_user_id = getattr(_ws_session, "username", "") or ""
+                        _r = getattr(_ws_session, "role", None)
+                        _ws_auth_role = ((getattr(_r, "value", None)
+                                           or str(_r)) if _r else "").lower()
+                        _ws_auth_session_id = getattr(_ws_session, "session_id", "") or ""
+                        _ws_auth_is_api_key = False
+                    else:
+                        _apikey_ok = bool(sm.validate_api_key(ws_token))
+                        if not _apikey_ok:
+                            logger.warning(
+                                "[ws] rejected %s on %s: session token present but "
+                                "invalid (not a live session nor API key)",
+                                _remote, path)
+                            sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
+                            sock.close()
+                            return
+                        _ws_auth_is_api_key = True
                 except Exception as e:
                     logger.error("WS session auth check failed: %s", e, exc_info=True)
                     sock.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
@@ -1018,6 +1063,15 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 "query": query,
                 "headers": headers,
                 "remote_addr": client_address[0] if client_address else "",
+                # Authenticated identity (mirrors PendingRequest.auth_*
+                # for HTTP). Empty when the upgrade went through the
+                # internal-auth bypass (CC container / server-spawned
+                # relays — no user session attached).
+                "auth_user_id": _ws_auth_user_id,
+                "auth_role": _ws_auth_role,
+                "auth_session_id": _ws_auth_session_id,
+                "auth_is_api_key": _ws_auth_is_api_key,
+                "auth_internal": _internal_ok,
             })
 
         except Exception as e:

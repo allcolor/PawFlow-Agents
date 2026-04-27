@@ -247,6 +247,14 @@ def cmd_start(args):
     if _killed:
         logger.info("Cleaned up %d orphan Docker container(s) from previous run", _killed)
 
+    # Initialise the capability-auth store before any HTTP/WS handler can
+    # reach it. The DB persists across restarts so VNC/terminal/code-server/
+    # port-forward sessions a user opened before the restart still match
+    # their capability tokens after.
+    from core.capability_auth import init_db as _init_capabilities
+    from core.paths import CAPABILITIES_DB
+    _init_capabilities(CAPABILITIES_DB)
+
     logger.info("Registering tasks...")
     from tasks import register_all_tasks
     register_all_tasks()

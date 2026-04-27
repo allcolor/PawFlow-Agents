@@ -2194,30 +2194,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             # until AFTER tool_result landed — same
                             # block of SSE, no way to interject.
                             _emitted_sse_tcs.add(_block_id)
-                            if block_callback:
-                                try:
-                                    _bc_payload = {
-                                        "id": _block_id,
-                                        "name": block.get("name", "") or _tc_name,
-                                        "arguments": block.get("input", _tc_args),
-                                        "thinking": _turn_thinking,
-                                    }
-                                    if _parent_tc_id:
-                                        _bc_payload["parent_tc_id"] = _parent_tc_id
-                                    block_callback("tool_use", _bc_payload)
-                                    # Thinking consumed by block_callback
-                                    # (attached to the tc_msg). Clear so
-                                    # end-of-turn flush doesn't re-emit.
-                                    _turn_thinking = ""
-                                except Exception as _bc_err:
-                                    logger.error(
-                                        "[claude-code] block_callback tool_use failed: %s",
-                                        _bc_err, exc_info=True)
-                            # Register the CC tool_use id so tool_relay_service
-                            # can match it when the MCP bridge forwards the
-                            # same call (its request_id is a different uuid).
-                            # Required for kill / background to target the
-                            # right in-flight call when CC runs tools in //.
+                            # Register the CC tool_use id BEFORE block_callback
+                            # — block_callback writes to the conversation store
+                            # (multi-second I/O on Windows when the writer queue
+                            # is busy), and during that wait the MCP bridge in
+                            # the CC container forwards the same call to the
+                            # relay. If we enqueue after block_callback, the
+                            # relay's pop_cc_tc misses (its 500ms retry is too
+                            # short to outwait a slow writer). The enqueue
+                            # itself is a tiny in-memory dict update, so doing
+                            # it first costs nothing.
                             try:
                                 from core.background_tool import (
                                     enqueue_cc_tc, _args_hash,
@@ -2232,6 +2218,22 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 logger.debug(
                                     "[claude-code] enqueue_cc_tc skipped: %s",
                                     _ee)
+                            if block_callback:
+                                try:
+                                    _bc_payload = {
+                                        "id": _block_id,
+                                        "name": block.get("name", "") or _tc_name,
+                                        "arguments": block.get("input", _tc_args),
+                                        "thinking": _turn_thinking,
+                                    }
+                                    if _parent_tc_id:
+                                        _bc_payload["parent_tc_id"] = _parent_tc_id
+                                    block_callback("tool_use", _bc_payload)
+                                    _turn_thinking = ""
+                                except Exception as _bc_err:
+                                    logger.error(
+                                        "[claude-code] block_callback tool_use failed: %s",
+                                        _bc_err, exc_info=True)
                         elif btype == "thinking":
                             thinking = block.get("thinking", "")
                             _has_sig = bool(block.get("signature"))

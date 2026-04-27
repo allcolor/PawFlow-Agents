@@ -2192,6 +2192,17 @@ class LLMCodexMixin(CodexSessionMixin):
                             if _parent_tc_id:
                                 _tc_event["parent_tc_id"] = _parent_tc_id
                             _emitted_sse_tcs.add(_block_id)
+                            # Enqueue BEFORE block_callback — the bridge in
+                            # the codex container forwards the MCP call to
+                            # the relay concurrently with the block_callback
+                            # store write. See claude_code.py for the long
+                            # form of this comment.
+                            try:
+                                from core.background_tool import enqueue_cc_tc, _args_hash
+                                enqueue_cc_tc(conv_id, agent_name, _block_id,
+                                              _tc_name, _args_hash(_tc_args))
+                            except Exception as _ee:
+                                logger.debug("[codex] enqueue_cc_tc skipped: %s", _ee)
                             if block_callback:
                                 try:
                                     _bc_payload = {
@@ -2207,12 +2218,6 @@ class LLMCodexMixin(CodexSessionMixin):
                                 except Exception as _bc_err:
                                     logger.error("[codex] block_callback tool_use failed: %s",
                                                  _bc_err, exc_info=True)
-                            try:
-                                from core.background_tool import enqueue_cc_tc, _args_hash
-                                enqueue_cc_tc(conv_id, agent_name, _block_id,
-                                              _tc_name, _args_hash(_tc_args))
-                            except Exception as _ee:
-                                logger.debug("[codex] enqueue_cc_tc skipped: %s", _ee)
                             continue
 
                         if is_done:

@@ -380,17 +380,23 @@ class TestSecretsManagerBytes:
         assert decrypted == data
 
     def test_integrity_check(self):
-        from core.secrets import SecretsManager
+        """Tampering must raise ValueError. Under v2 the message is
+        either 'AEAD decrypt failed' (when the ciphertext flips) or
+        'envelope is corrupted' (when the JSON envelope flips); both
+        are SecretDecryptError, a ValueError subclass."""
+        from core.secrets import SecretDecryptError, SecretsManager
         sm = SecretsManager(key="test_key")
         data = b"integrity test"
         encrypted = sm.encrypt_bytes(data)
-        # Tamper with data
+        # Flip a byte well inside the JSON envelope.
         tampered = encrypted[:20] + bytes([encrypted[20] ^ 0xFF]) + encrypted[21:]
-        with pytest.raises(ValueError, match="Integrity check failed"):
+        with pytest.raises(SecretDecryptError):
             sm.decrypt_bytes(tampered)
 
     def test_too_short(self):
-        from core.secrets import SecretsManager
+        """Bytes too short to be a legacy XOR payload (no PFSEC2\\0
+        magic header) raise SecretDecryptError — same ValueError-tree."""
+        from core.secrets import SecretDecryptError, SecretsManager
         sm = SecretsManager(key="test_key")
-        with pytest.raises(ValueError, match="too short"):
+        with pytest.raises(SecretDecryptError):
             sm.decrypt_bytes(b"short")

@@ -376,20 +376,42 @@ class ToolRelayService(BaseService):
                          if isinstance(info, dict)
                          and info.get("conv") == conversation_id
                          and (not agent_name or info.get("agent") == agent_name)]
+        _hook_total = 0
+        _hook_failed = 0
         for rid, info in to_cancel:
             cancel_evt = info.get("cancel")
+            cancel_evt_set = False
             if cancel_evt:
                 cancel_evt.set()
-            for hook in list(info.get("kill_hooks") or []):
+                cancel_evt_set = True
+            _hooks = list(info.get("kill_hooks") or [])
+            _success = 0
+            _failure = 0
+            for hook in _hooks:
                 try:
                     hook()
+                    _success += 1
                 except Exception as _he:
+                    _failure += 1
                     logger.warning(
                         "[tool-relay] kill_hook failed for %s tool=%s: %s",
                         rid, info.get("tool_name"), _he)
+            _hook_total += _success + _failure
+            _hook_failed += _failure
+            # Per-request structured trace so the cancellation path is
+            # observable in production logs without enabling debug.
+            logger.info(
+                "[tool-relay] cancel rid=%s tool=%s "
+                "cancel_event_set=%s kill_hook_count=%d kill_hook_success=%d "
+                "kill_hook_failed=%d",
+                rid, info.get("tool_name", "?"),
+                cancel_evt_set, len(_hooks), _success, _failure)
         if to_cancel:
-            logger.info("[tool-relay] cancelled %d in-flight request(s) for %s/%s",
-                        len(to_cancel), conversation_id, agent_name)
+            logger.info(
+                "[tool-relay] cancelled %d in-flight request(s) for %s/%s "
+                "(kill_hooks total=%d failed=%d)",
+                len(to_cancel), conversation_id, agent_name,
+                _hook_total, _hook_failed)
 
     @classmethod
     def uncancel_agent(cls, conversation_id: str, agent_name: str):

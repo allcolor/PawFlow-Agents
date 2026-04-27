@@ -268,6 +268,18 @@ def cmd_start(args):
     logger.info(f"  Chat:  http://{args.host}:{args.port}/chat")
     logger.info(f"  Admin: http://{args.host}:{args.port}/admin")
 
+    # Startup security report. In production mode
+    # (PAWFLOW_ENV=production / PAWFLOW_PUBLIC_MODE=true) this raises
+    # SystemExit if a critical setting is unsafe (weak default key,
+    # fail-open approval, ...). Always logs the snapshot.
+    try:
+        from core.security_report import build_report, enforce
+        enforce(build_report())
+    except SystemExit:
+        raise
+    except Exception as _se:
+        logger.warning("security report failed: %s", _se, exc_info=True)
+
     # Boot recovery: scan every conv/{agent}/pending.jsonl and wake agents
     # that had undelivered messages when the previous process died. Without
     # this, a message enqueued just before a crash would sit on disk with

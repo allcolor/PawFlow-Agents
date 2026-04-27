@@ -2099,8 +2099,18 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 if etype == "tool_result":
                     tc_id = event.get("call_id", "") or event.get("id", "") or ""
                     _result = event.get("output", event.get("result", event.get("content", None)))
+                    # Unwrap MCP envelope — see codex.py for the same fix.
                     try:
-                        if isinstance(_result, (dict, list)):
+                        if (isinstance(_result, dict)
+                                and isinstance(_result.get("content"), list)):
+                            _parts = []
+                            for _b in _result["content"]:
+                                if isinstance(_b, dict) and _b.get("type") == "text":
+                                    _parts.append(_b.get("text", ""))
+                            result_str = "\n".join(p for p in _parts if p)
+                            if not result_str:
+                                result_str = json.dumps(_result, ensure_ascii=False, default=str)
+                        elif isinstance(_result, (dict, list)):
                             result_str = json.dumps(_result, ensure_ascii=False, default=str)
                         else:
                             result_str = str(_result) if _result is not None else ""

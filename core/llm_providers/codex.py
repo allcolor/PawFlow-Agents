@@ -2146,8 +2146,25 @@ class LLMCodexMixin(CodexSessionMixin):
                         if is_done:
                             tc_id = iid
                             _result = item.get("result", item.get("output", None))
+                            # Unwrap the MCP envelope so the UI sees the real
+                            # tool output, not raw JSON. MCP servers (like our
+                            # pawflow bridge) wrap text results as
+                            # `{"content": [{"type": "text", "text": "..."}, ...]}`.
+                            # CC unwraps this in its `tool_result` handler
+                            # (claude_code.py L2272-2278); the cloned codex
+                            # parser was just `json.dumps`-ing the dict, hence
+                            # the raw `{"content":...}` blob in the chat UI.
                             try:
-                                if isinstance(_result, (dict, list)):
+                                if (isinstance(_result, dict)
+                                        and isinstance(_result.get("content"), list)):
+                                    _parts = []
+                                    for _b in _result["content"]:
+                                        if isinstance(_b, dict) and _b.get("type") == "text":
+                                            _parts.append(_b.get("text", ""))
+                                    result_str = "\n".join(p for p in _parts if p)
+                                    if not result_str:
+                                        result_str = json.dumps(_result, ensure_ascii=False, default=str)
+                                elif isinstance(_result, (dict, list)):
                                     result_str = json.dumps(_result, ensure_ascii=False, default=str)
                                 else:
                                     result_str = str(_result) if _result is not None else ""

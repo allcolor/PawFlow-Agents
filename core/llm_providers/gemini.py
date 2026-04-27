@@ -532,8 +532,12 @@ class LLMGeminiMixin(GeminiSessionMixin):
         # store) and CC surfaces "empty or malformed response (HTTP 200)".
         if _env.get("NODE_TLS_REJECT_UNAUTHORIZED"):
             _extra["NODE_TLS_REJECT_UNAUTHORIZED"] = _env["NODE_TLS_REJECT_UNAUTHORIZED"]
+        # Pass the FULL cmd list — gemini_pool prepends only the `gemini`
+        # binary; `cmd[0]=-p` is the prompt-mode flag and must stay (gemini
+        # falls into interactive REPL without it). CC strips its own `-p`
+        # because stream-json overrides; gemini doesn't have that fallback.
         proc = pool.exec_gemini(
-            container, _session_dir, cmd[1:],  # skip 'claude' binary
+            container, _session_dir, cmd,
             extra_env=_extra or None,
             **popen_kwargs)
         return proc, container

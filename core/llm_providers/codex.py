@@ -532,8 +532,13 @@ class LLMCodexMixin(CodexSessionMixin):
         # store) and CC surfaces "empty or malformed response (HTTP 200)".
         if _env.get("NODE_TLS_REJECT_UNAUTHORIZED"):
             _extra["NODE_TLS_REJECT_UNAUTHORIZED"] = _env["NODE_TLS_REJECT_UNAUTHORIZED"]
+        # Pass the FULL cmd list — codex_pool prepends only the `codex`
+        # binary, so `cmd[0]` (the `exec` subcommand) MUST stay. CC's
+        # equivalent strips `cmd[0]=-p` because stream-json forces print
+        # mode anyway, but for codex the first arg is the subcommand and
+        # dropping it makes codex fail with "unexpected argument '--json'".
         proc = pool.exec_codex(
-            container, _session_dir, cmd[1:],  # skip 'claude' binary
+            container, _session_dir, cmd,
             extra_env=_extra or None,
             **popen_kwargs)
         return proc, container

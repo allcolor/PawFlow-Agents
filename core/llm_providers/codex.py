@@ -1221,6 +1221,12 @@ class LLMCodexMixin(CodexSessionMixin):
                     "[codex] %d image attachment(s) ignored — codex exec "
                     "stdin is text-only; pipe vision via MCP tools instead",
                     len(image_blocks))
+            # prompt_chars feeds the live context gauge below — codex's
+            # `turn.completed.usage.input_tokens` is the SUM across every
+            # internal iteration (1 user turn with 17 tools → input_tokens
+            # is ~17× the actual prompt size), so we estimate from the
+            # prompt we actually sent.
+            prompt_chars = len(initial_text)
             proc.stdin.write(initial_text)
             proc.stdin.flush()
             # Close stdin so codex sees EOF and starts processing the turn.
@@ -2185,7 +2191,12 @@ class LLMCodexMixin(CodexSessionMixin):
                                  "model": model,
                                  "num_turns": _turn_count}
                     _ctx_used_live = int(prompt_chars / 3.5) + 8000 if 'prompt_chars' in dir() else _input
-                    _ctx_max_live = self._codex_context_window(model) if hasattr(self, '_codex_context_window') else 200_000
+                    # max_tokens = service-configured max_context_size. CC
+                    # overrides it on the fly with the model-reported value
+                    # (`result.modelUsage[model].contextWindow`); codex's
+                    # `turn.completed.usage` doesn't self-report a window,
+                    # so we just trust the service config.
+                    _ctx_max_live = max_tokens
                     _ctx_pct_live = _ctx_used_live / _ctx_max_live if _ctx_max_live > 0 else 0.0
                     _pub("message_meta", {
                         "agent_name": agent_name,

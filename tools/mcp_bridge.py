@@ -270,11 +270,18 @@ def _log(msg):
     global _log_file
     sys.stderr.write(f"[mcp-bridge] {msg}\n")
     sys.stderr.flush()
-    # Also write to file on workspace (readable from host)
+    # Also write to file readable from host. Each CLI exposes its own
+    # config dir env var (CC: CLAUDE_CONFIG_DIR, codex: CODEX_HOME,
+    # gemini: HOME). Try them in order, fall back to cwd.
     try:
         if _log_file is None:
             import os
-            _log_dir = os.environ.get("CLAUDE_CONFIG_DIR", "/workspace")
+            _log_dir = (
+                os.environ.get("CLAUDE_CONFIG_DIR")
+                or os.environ.get("CODEX_HOME")
+                or os.environ.get("HOME")
+                or os.getcwd()
+            )
             _log_file = open(os.path.join(_log_dir, "mcp_bridge.log"), "a", encoding="utf-8")
         _log_file.write(f"[mcp-bridge] {msg}\n")
         _log_file.flush()
@@ -285,10 +292,21 @@ def _log(msg):
 def main():
     relay_url = os.environ.get("PAWFLOW_TOOL_RELAY_URL", "")
     relay_token = os.environ.get("PAWFLOW_TOOL_RELAY_TOKEN", "")
+    internal_token = os.environ.get("PAWFLOW_INTERNAL_TOKEN", "")
     user_id = os.environ.get("PAWFLOW_USER_ID", "")
     conv_id = os.environ.get("PAWFLOW_CONVERSATION_ID", "")
     agent_name = os.environ.get("PAWFLOW_AGENT_NAME", "")
 
+    # Log presence (NOT value) of every PawFlow env var at boot — the
+    # codex / gemini MCP integrations have a history of dropping `env =
+    # {...}` from config.toml / settings.json silently when the bridge
+    # subprocess inherits an empty env. With this log we can confirm at
+    # a glance whether codex actually forwarded the env table or not.
+    _log(f"env-check: relay_url={'set' if relay_url else 'MISSING'} "
+         f"relay_token={'set' if relay_token else 'MISSING'} "
+         f"internal_token={'set' if internal_token else 'MISSING'} "
+         f"user_id={user_id or 'MISSING'} conv_id={conv_id or 'MISSING'} "
+         f"agent={agent_name or 'MISSING'}")
     _log(f"Starting MCP bridge: relay={relay_url}, user={user_id}, "
          f"conv={conv_id}, agent={agent_name}")
 

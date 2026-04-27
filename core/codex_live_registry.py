@@ -34,9 +34,8 @@ logger = logging.getLogger(__name__)
 #   conv_id      — ConversationStore session_id resume
 #   agent_name   — per-agent codex_session ConversationStore key
 #   service_id   — different service = different credentials
-# (svc_pool_idx is part of CC's LiveKey but codex's pool model differs;
-#  add it later when the structural clone of _stream_codex needs it.)
-CodexLiveKey = Tuple[str, str, str, str]
+#   svc_pool_idx — which credential slot within the service
+CodexLiveKey = Tuple[str, str, str, str, int]
 
 
 @dataclass
@@ -121,6 +120,13 @@ class CodexLiveRegistry:
     def register(self, key: CodexLiveKey,
                  container_name: str, workdir: str,
                  service_id: str = "") -> CodexLiveContainer:
+        # Pull svc_pool_idx out of the 5-tuple key so the container struct
+        # can surface it via /codex_live status without re-deriving from
+        # the dict key.
+        try:
+            _svc_pool_idx = int(key[4]) if len(key) >= 5 else -1
+        except (TypeError, ValueError, IndexError):
+            _svc_pool_idx = -1
         with self._lock:
             existing = self._containers.get(key)
             if existing and existing.container_name == container_name:
@@ -128,7 +134,7 @@ class CodexLiveRegistry:
                 return existing
             entry = CodexLiveContainer(
                 container_name=container_name, workdir=workdir,
-                service_id=service_id)
+                service_id=service_id, svc_pool_idx=_svc_pool_idx)
             self._containers[key] = entry
             logger.info("[codex-live] register %s container=%s",
                         _fmt_key(key), container_name)
@@ -187,12 +193,13 @@ class CodexLiveRegistry:
         with self._lock:
             out = []
             for key, entry in self._containers.items():
-                u, c, a, svc = key
+                u, c, a, svc, idx = key
                 out.append({
                     "user_id": u,
                     "conv_id": c,
                     "agent_name": a,
                     "service_id": svc,
+                    "svc_pool_idx": idx,
                     "container": entry.container_name,
                     "live": True,
                     "idle_seconds": int(now - entry.last_used),
@@ -241,5 +248,5 @@ class CodexLiveRegistry:
 
 
 def _fmt_key(key: CodexLiveKey) -> str:
-    u, c, a, s = key
+    u, c, a, s, idx = key
     return f"{u[:6] or '?'}/{c[:8] or '?'}/{a or 'default'}@{s or 'default'}"

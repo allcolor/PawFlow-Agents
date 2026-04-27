@@ -30,25 +30,65 @@ from typing import Dict, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Composite key: every dimension that would invalidate reuse if it drifts.
-#   user_id     — credential boundary + per-conv mount
-#   conv_id     — ConversationStore session_id resume
-#   agent_name  — per-agent codex_session ConversationStore key
-#   service_id  — different service = different credentials
+#   user_id      — credential boundary + per-conv mount
+#   conv_id      — ConversationStore session_id resume
+#   agent_name   — per-agent codex_session ConversationStore key
+#   service_id   — different service = different credentials
+# (svc_pool_idx is part of CC's LiveKey but codex's pool model differs;
+#  add it later when the structural clone of _stream_codex needs it.)
 CodexLiveKey = Tuple[str, str, str, str]
 
 
 @dataclass
-class CodexLiveContainer:
+class CodexLiveSession:
+    """A codex CLI session kept alive across turns of the same
+    (user, conv, agent, service, pool_idx) tuple.
+
+    Codex `exec --json` is one-shot — the process exits at end-of-turn.
+    What we keep alive is the CONTAINER (warm Docker namespace) plus the
+    session_id (so `codex exec resume <sid>` reattaches to the same
+    rollout file) plus the internal-auth token (so the MCP bridge keeps
+    using the same scoped credential across turns). proc / event_q /
+    reader_thread / stop_event are bound to a turn and reset on each
+    spawn — they live on the session for symmetry with CC's
+    CCLiveSession (where proc is long-lived) but are recycled per call.
+    """
     container_name: str
     workdir: str
     service_id: str
+    svc_pool_idx: int = -1
+    # Per-turn process state — reset on each spawn. Kept on the session
+    # so the dispatch loop, watchdog, and reader daemon can share a single
+    # source of truth.
+    proc: object = None              # subprocess.Popen of `codex exec`
+    event_q: object = None           # queue.Queue (reader → dispatch)
+    reader_thread: object = None     # threading.Thread (stdout drain)
+    stop_event: object = None        # threading.Event (shutdown signal)
+    pool_container: Optional[str] = None  # alias of container_name
+    # Persistent across turns:
+    session_id: str = ""             # codex thread_id (== rollout file id)
+    mcp_internal_token: Optional[str] = None
+    hb_state: Optional[Dict[str, object]] = None
     spawn_at: float = field(default_factory=time.monotonic)
     last_used: float = field(default_factory=time.monotonic)
     reuse_count: int = 0
+    # Serializes concurrent _stream_codex calls that would otherwise
+    # spawn parallel codex execs writing to the same session_id.
     turn_lock: object = field(default_factory=threading.RLock)
+
+    def is_alive(self) -> bool:
+        try:
+            return self.proc is None or self.proc.poll() is None
+        except Exception:
+            return False
 
     def idle_seconds(self) -> float:
         return time.monotonic() - self.last_used
+
+
+# Back-compat alias so older import sites (`CodexLiveContainer`) keep working
+# until they're migrated to the richer name.
+CodexLiveContainer = CodexLiveSession
 
 
 class CodexLiveRegistry:

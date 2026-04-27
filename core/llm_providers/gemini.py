@@ -2321,20 +2321,21 @@ class LLMGeminiMixin(GeminiSessionMixin):
                                 "seen and result event lacks session_id) "
                                 "— refusing to register a blind live "
                                 "session. Falling through to teardown.")
-                        _session = GeminiLiveSession(
+                        # Pass live-session fields through to the registry
+                        # — see codex for the same fix. Without this, REUSE
+                        # finds an entry with empty session_id / proc and
+                        # raises "data corruption?".
+                        _live_reg.register(
+                            _live_key, self._pool_container_name, workdir,
+                            service_id=_svc_id,
+                            session_id=_live_session_id,
                             proc=proc,
                             event_q=_event_q,
                             reader_thread=_reader_thread,
                             stop_event=_reader_stop,
-                            pool_container=self._pool_container_name,
-                            workdir=workdir,
-                            service_id=_svc_id,
-                            svc_pool_idx=_svc_pool_idx,
-                            session_id=_live_session_id,
                             mcp_internal_token=_mcp_internal_token,
                             hb_state=_hb_state,
                         )
-                        _live_reg.register(_live_key, _session)
                         # Start the idle sweeper on first register — no
                         # work until there's a session to sweep.
                         _live_reg.ensure_sweeper(

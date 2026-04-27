@@ -2404,13 +2404,24 @@ class LLMCodexMixin(CodexSessionMixin):
                             mcp_internal_token=_mcp_internal_token,
                             hb_state=_hb_state,
                         )
-                        # CodexLiveRegistry.register signature differs from
-                        # CC's: it takes (key, container_name, workdir,
-                        # service_id) not (key, session). Pre-build the
-                        # session above for parity with CC's structure, then
-                        # call register with the legacy positional contract.
-                        _live_reg.register(_live_key, self._pool_container_name,
-                                            workdir, service_id=_svc_id)
+                        # Pass the live-session fields through to the
+                        # registry so REUSE on the next turn has a real
+                        # session_id, proc, event_q, etc. — without these,
+                        # the reuse path raises
+                        # "REUSE entry has empty session_id ... data corruption?"
+                        # because the registry was building a bare entry with
+                        # default empties.
+                        _live_reg.register(
+                            _live_key, self._pool_container_name, workdir,
+                            service_id=_svc_id,
+                            session_id=_live_session_id,
+                            proc=proc,
+                            event_q=_event_q,
+                            reader_thread=_reader_thread,
+                            stop_event=_reader_stop,
+                            mcp_internal_token=_mcp_internal_token,
+                            hb_state=_hb_state,
+                        )
                         # Start the idle sweeper on first register — no
                         # work until there's a session to sweep.
                         _live_reg.ensure_sweeper(

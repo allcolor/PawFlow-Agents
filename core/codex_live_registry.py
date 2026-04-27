@@ -119,7 +119,14 @@ class CodexLiveRegistry:
 
     def register(self, key: CodexLiveKey,
                  container_name: str, workdir: str,
-                 service_id: str = "") -> CodexLiveContainer:
+                 service_id: str = "",
+                 session_id: str = "",
+                 proc=None,
+                 event_q=None,
+                 reader_thread=None,
+                 stop_event=None,
+                 mcp_internal_token: str = "",
+                 hb_state=None) -> CodexLiveContainer:
         # Pull svc_pool_idx out of the 5-tuple key so the container struct
         # can surface it via /codex_live status without re-deriving from
         # the dict key.
@@ -131,13 +138,40 @@ class CodexLiveRegistry:
             existing = self._containers.get(key)
             if existing and existing.container_name == container_name:
                 existing.last_used = time.monotonic()
+                # Refresh session_id + live-state fields on re-register so
+                # the next REUSE has the latest state (codex re-issues a
+                # session_id on `thread.started` if the previous one was
+                # invalidated).
+                if session_id:
+                    existing.session_id = session_id
+                if proc is not None:
+                    existing.proc = proc
+                if event_q is not None:
+                    existing.event_q = event_q
+                if reader_thread is not None:
+                    existing.reader_thread = reader_thread
+                if stop_event is not None:
+                    existing.stop_event = stop_event
+                if mcp_internal_token:
+                    existing.mcp_internal_token = mcp_internal_token
+                if hb_state is not None:
+                    existing.hb_state = hb_state
                 return existing
             entry = CodexLiveContainer(
                 container_name=container_name, workdir=workdir,
-                service_id=service_id, svc_pool_idx=_svc_pool_idx)
+                service_id=service_id, svc_pool_idx=_svc_pool_idx,
+                session_id=session_id,
+                proc=proc,
+                event_q=event_q,
+                reader_thread=reader_thread,
+                stop_event=stop_event,
+                mcp_internal_token=mcp_internal_token,
+                hb_state=hb_state,
+            )
             self._containers[key] = entry
-            logger.info("[codex-live] register %s container=%s",
-                        _fmt_key(key), container_name)
+            logger.info("[codex-live] register %s container=%s session_id=%s",
+                        _fmt_key(key), container_name,
+                        (session_id[:12] + "…") if session_id else "EMPTY")
             return entry
 
     def touch(self, key: CodexLiveKey, bump_reuse: bool = True):

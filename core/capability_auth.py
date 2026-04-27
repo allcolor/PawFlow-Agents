@@ -113,13 +113,33 @@ _FAILURES_BY_IP: dict[str, tuple[int, float]] = {}
 def _connect() -> sqlite3.Connection:
     """Open a fresh SQLite connection. SQLite connections are NOT thread-safe
     by default, so we open one per call and let the caller close it (via
-    `with` context manager)."""
+    `with` context manager).
+
+    WAL is only attempted on local filesystems. On UNC paths (`\\\\wsl$\\…`,
+    SMB shares, mapped network drives) WAL needs mmap'd shared memory that
+    SMB doesn't support — `PRAGMA journal_mode=WAL` returns "database is
+    locked" and aborts the boot. We fall back to the default rollback
+    journal in that case; functionally equivalent for our write rate, just
+    slightly worse concurrent-read scaling.
+    """
     if _DB_PATH is None:
         raise RuntimeError(
             "capability_auth: init_db() must be called before any other API")
     conn = sqlite3.connect(str(_DB_PATH), timeout=10.0, isolation_level=None)
-    conn.execute("PRAGMA journal_mode=WAL")
+    if _supports_wal(_DB_PATH):
+        conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+
+def _supports_wal(path: Path) -> bool:
+    """True if the filesystem holding `path` supports SQLite WAL.
+
+    UNC / network paths don't (no mmap'd shared memory). Detection is
+    string-based for now — robust enough for the WSL/SMB case that
+    triggered the bug, doesn't need fstatfs gymnastics.
+    """
+    s = str(path)
+    return not (s.startswith("\\\\") or s.startswith("//"))
 
 
 # --- Public API -------------------------------------------------------------

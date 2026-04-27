@@ -1041,11 +1041,12 @@ class LLMCodexMixin(CodexSessionMixin):
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
 
-        # Session-aware serialization:
+        # Session-aware serialization (identical contract to CC):
         # - New session (no session_id): feed the full PawFlow ctx ONCE.
-        # - Resume (session_id set): CC already has the history; send only
-        #   the new user message. The catch-up mechanism below injects
-        #   anything that arrived from other agents since last turn.
+        # - Resume (session_id set): codex already has the history in its
+        #   rollout; send only the new user message. The catch-up
+        #   mechanism below injects anything that arrived from other
+        #   agents since last turn.
         if session_id:
             system_prompt = ""
             last_user = ""

@@ -181,6 +181,14 @@ class GeminiLiveRegistry:
             self.kill_and_evict(k, f"idle>{int(ttl)}s")
         return len(victims)
 
+    def ensure_sweeper(self, killer=None) -> None:
+        """API-parity stub for the cloned _stream_gemini call site.
+
+        The sweeper is auto-started by `instance()`; the `killer` cb is
+        unused since the pool's release already kills the container.
+        """
+        return
+
     def _start_sweeper(self):
         if self._sweeper_started:
             return

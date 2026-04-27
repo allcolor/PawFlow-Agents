@@ -228,6 +228,19 @@ class CodexLiveRegistry:
             self.kill_and_evict(k, f"idle>{int(ttl)}s")
         return len(victims)
 
+    def ensure_sweeper(self, killer=None) -> None:
+        """Mirror of CC's `LiveSessionRegistry.ensure_sweeper(killer=)`.
+
+        Codex's sweeper is auto-started by `instance()` (it's a singleton
+        that hard-couples the sweeper lifecycle to the registry's first
+        access), so this is mostly a no-op kept for API parity with the
+        cloned `_stream_codex` body. The `killer` callback is ignored:
+        codex's sweeper releases via the pool, which already does the
+        equivalent kill (docker rm -f under the 1:1 model).
+        """
+        # No-op: _start_sweeper has already run via instance().
+        return
+
     def _start_sweeper(self):
         if self._sweeper_started:
             return

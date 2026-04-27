@@ -70,6 +70,27 @@ class ToolApprovalGate:
         "exec", "git_push", "git_checkout",
     })
 
+    # ── read_only mode allowlist ──────────────────────────────────────
+    # Tools the relay accepts when the conversation's permission_mode is
+    # 'read_only'. Allowlist (not blocklist) so any new tool added later
+    # is denied by default — fail-closed. The relay calls
+    # `is_read_only_allowed(tool_name, arguments)` to decide; the inner
+    # filesystem.<action> dispatch reuses _FS_EXEMPT.
+    READ_ONLY_ALLOWED = frozenset({
+        # File / dir read
+        "read", "list_dir", "stat", "exists", "glob", "grep",
+        "show_file",
+        # Memory / history (read)
+        "recall", "semantic_recall",
+        "read_history", "read_parent_context",
+        # Help / introspection
+        "pawflow_help", "get_tool_schema", "list_secrets",
+        # Web search (read-only by definition)
+        "web_search",
+        # User interaction (no data modification)
+        "notify_user", "ask_user",
+    })
+
     # ── See tool: file read is exempt, screenshot needs approval ──────
 
     _SEE_SCREEN_PATHS = frozenset({"screen", "screenshot"})
@@ -262,9 +283,17 @@ class ToolApprovalGate:
             logger.warning("Failed to publish tool approval request: %s", e)
             with cls._lock:
                 cls._pending.pop(request_id, None)
-            # If we can't show dialog, approve non-ALWAYS_ASK tools
-            if tool_name not in cls.ALWAYS_ASK:
-                return "approved"
+            # Fail-closed by default in production: if we can't show the
+            # dialog (no UI subscriber, bus broken, ...) the safe answer
+            # is `denied`, not silent approval. Set
+            # PAWFLOW_APPROVAL_FAIL_OPEN=true to keep the historical
+            # dev-friendly behaviour where non-ALWAYS_ASK tools get
+            # auto-approved instead.
+            import os
+            if os.environ.get("PAWFLOW_APPROVAL_FAIL_OPEN", "").lower() in (
+                    "1", "true", "yes"):
+                if tool_name not in cls.ALWAYS_ASK:
+                    return "approved"
             return "denied"
 
         # Block until user responds (60 seconds)
@@ -363,6 +392,32 @@ class ToolApprovalGate:
             store.set_extra(conversation_id, key, perms)
         except Exception as e:
             logger.warning("Failed to set tool permission: %s", e)
+
+    @classmethod
+    def is_read_only_allowed(cls, tool_name: str,
+                              arguments: Optional[dict] = None) -> bool:
+        """Single source of truth for which tools the read_only permission
+        mode lets through. Used by both `tool_relay_service` (gating MCP
+        execution) and any other call site that needs the same decision.
+
+        Returns True when the tool may run in read_only mode. Anything
+        not listed is denied — the allowlist is fail-closed by design,
+        so a brand-new tool added later is automatically denied until
+        an explicit entry classifies it.
+        """
+        if not tool_name:
+            return False
+        if tool_name in cls.READ_ONLY_ALLOWED:
+            return True
+        # filesystem.<action> dispatches against _FS_EXEMPT — same set the
+        # default mode treats as approval-exempt.
+        if tool_name == "filesystem" and isinstance(arguments, dict):
+            return arguments.get("action", "") in cls._FS_EXEMPT
+        # `see` is read-only iff the path isn't a screen/screenshot path.
+        if tool_name == "see" and isinstance(arguments, dict):
+            _path = (arguments.get("path", "") or "").lower().strip()
+            return _path not in cls._SEE_SCREEN_PATHS
+        return False
 
     @classmethod
     def get_mode(cls, conversation_id: str) -> str:

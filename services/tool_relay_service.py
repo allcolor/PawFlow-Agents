@@ -1155,19 +1155,16 @@ class ToolRelayService(BaseService):
                             return {"type": "result", "request_id": request_id,
                                     "data": f"Error: Command rejected by user: {_cmd[:100]}"}
             elif _perm_mode == "read_only":
-                _write_tools = {"write", "edit", "batch_edit", "apply_patch", "find_replace",
-                                "delete", "mkdir", "bash", "notebook_edit", "execute_script"}
-                _fs_write_actions = {"write_file", "edit", "batch_edit", "apply_patch",
-                                     "find_replace", "delete_file", "mkdir", "exec",
-                                     "git_commit", "git_push", "git_checkout"}
-                if tool_name in _write_tools:
+                # Allowlist (fail-closed): only tools explicitly classified
+                # as read-only safe are allowed; anything else — including
+                # any new tool added later — is denied. The classification
+                # lives on `ToolApprovalGate.is_read_only_allowed` so the
+                # relay and any other gate share the same source of truth.
+                from core.tool_approval import ToolApprovalGate
+                if not ToolApprovalGate.is_read_only_allowed(
+                        tool_name, arguments if isinstance(arguments, dict) else None):
                     return {"type": "result", "request_id": request_id,
-                            "data": "Error: write operations blocked (read-only mode)."}
-                if tool_name == "filesystem" and isinstance(arguments, dict):
-                    fs_action = arguments.get("action", "")
-                    if fs_action in _fs_write_actions:
-                        return {"type": "result", "request_id": request_id,
-                                "data": "Error: write operations blocked (read-only mode)."}
+                            "data": f"Error: tool '{tool_name}' is not allowed in read-only mode."}
             else:
                 # default / approve_edits — use approval gate
                 from core.tool_approval import ToolApprovalGate

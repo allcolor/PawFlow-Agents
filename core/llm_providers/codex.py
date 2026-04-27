@@ -139,8 +139,8 @@ class LLMCodexMixin(CodexSessionMixin):
         if force:
             logger.info("FORCE KILLING Codex subprocess (pid=%d)", proc.pid)
             self._codex_proc = None
-            # Kill the container-side claude CLI by its captured PID
-            # (from the shell wrapper's __PF_CLAUDE_PID=$$ preamble) AND
+            # Kill the container-side codex CLI by its captured PID
+            # (from the shell wrapper's __PF_CODEX_PID=$$ preamble) AND
             # the host-side docker exec wrapper. Without the container-side
             # kill, the CLI becomes an orphan (reparented to PID 1) and
             # keeps emitting tool calls / running auto-compact / writing
@@ -177,7 +177,7 @@ class LLMCodexMixin(CodexSessionMixin):
         the pool container, deterministically by PID.
 
         `proc.kill()` only reaps the host-side `docker exec` wrapper.
-        Without a container-side kill, the claude CLI becomes an orphan
+        Without a container-side kill, the codex CLI becomes an orphan
         (reparented to PID 1 inside the container) and keeps running —
         emitting tool calls via MCP, running its own auto-compact,
         writing to its session .jsonl — while PawFlow spawns a fresh
@@ -185,13 +185,13 @@ class LLMCodexMixin(CodexSessionMixin):
         the same files.
 
         The container-side PID is captured at spawn from the shell
-        wrapper's `__PF_CLAUDE_PID=$$` stderr preamble (see
-        `ClaudeCodePool.exec_claude`). Bash chain-execs into
-        setpriv → claude, so $$ stays constant across the three
-        processes — the captured PID IS claude's PID. Under docker
-        exec, bash is the session leader of its exec, so claude's PGID
+        wrapper's `__PF_CODEX_PID=$$` stderr preamble (see
+        `CodexPool.exec_codex`). Bash chain-execs into
+        setpriv → codex, so $$ stays constant across the three
+        processes — the captured PID IS codex's PID. Under docker
+        exec, bash is the session leader of its exec, so codex's PGID
         equals its PID. `kill -9 -<PID>` (negative) SIGKILLs the WHOLE
-        group, reaping claude AND every Node worker it forked. Without
+        group, reaping codex AND every worker it forked. Without
         the minus sign, orphaned workers survive and keep writing to
         the session jsonl.
         """
@@ -483,10 +483,12 @@ class LLMCodexMixin(CodexSessionMixin):
         _session_dir = f"/cc_sessions/{_rel}"
         # Pass API key / base URL / TLS skip to container if configured
         _extra = {}
-        if _env.get("ANTHROPIC_API_KEY"):
-            _extra["ANTHROPIC_API_KEY"] = _env["ANTHROPIC_API_KEY"]
-        if _env.get("ANTHROPIC_BASE_URL"):
-            _extra["ANTHROPIC_BASE_URL"] = _env["ANTHROPIC_BASE_URL"]
+        if _env.get("CODEX_API_KEY"):
+            _extra["CODEX_API_KEY"] = _env["CODEX_API_KEY"]
+        if _env.get("OPENAI_API_KEY"):
+            _extra["OPENAI_API_KEY"] = _env["OPENAI_API_KEY"]
+        if _env.get("OPENAI_BASE_URL"):
+            _extra["OPENAI_BASE_URL"] = _env["OPENAI_BASE_URL"]
         # NODE_TLS_REJECT_UNAUTHORIZED=0 is set by _codex_env only
         # for HTTPS relay-proxy URLs pointing at a LAN IP with a self-
         # signed cert. Without this passthrough the container still
@@ -891,20 +893,20 @@ class LLMCodexMixin(CodexSessionMixin):
                         if (_line.startswith("setsid: child ")
                                 and "did not exit normally" in _line):
                             continue
-                        # __PF_CLAUDE_PID=<pid>\n is the shell wrapper's
+                        # __PF_CODEX_PID=<pid>\n is the shell wrapper's
                         # spawn-time preamble. We capture it into
                         # proc._pf_pid below, log it at INFO as "captured
                         # container PID=<pid>", and that's the only value
                         # it has. Keeping the raw line in _stderr_buffer
                         # means every clean post-kill log surfaces as
-                        # "Codex CLI stderr: __PF_CLAUDE_PID=<pid>" at
+                        # "Codex CLI stderr: __PF_CODEX_PID=<pid>" at
                         # ERROR level — misleading (no error, just a
                         # leftover PID dump). Drop it after capture.
-                        if '__PF_CLAUDE_PID=' in _line:
+                        if '__PF_CODEX_PID=' in _line:
                             if not proc._pf_pid:
                                 try:
                                     _pid_str = _line.split(
-                                        '__PF_CLAUDE_PID=', 1)[1].strip()
+                                        '__PF_CODEX_PID=', 1)[1].strip()
                                     _pid_int = int(_pid_str)
                                     proc._pf_pid = _pid_int
                                     self._codex_container_pid = _pid_int

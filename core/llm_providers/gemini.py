@@ -57,158 +57,59 @@ class LLMGeminiMixin(GeminiSessionMixin):
         {"type": "result", ...}
     """
 
-    # Session/workdir methods inherited from ClaudeCodeSessionMixin:
+    # Session/workdir methods inherited from GeminiSessionMixin:
     # _gemini_get_session_workdir, _gemini_env, _gemini_setup_credentials,
-    # _gemini_recover_tokens, _gemini_setup_mcp_config, _build_codex_cmd,
+    # _gemini_recover_tokens, _gemini_setup_mcp_config, _build_gemini_cmd,
     # _get_tool_relay_info, _DISALLOWED_BUILTIN_TOOLS
 
     # ── Process management ──────────────────────────────────────────
 
     def _gemini_send_user_message(self, text: str, attachments: list = None):
-        """Send a user message to the running Codex subprocess (preempt).
+        """Inline-preempt entrypoint for Gemini CLI.
 
-        Uses stream-json input format to inject a new user message while
-        Codex is working — enables the same preempt behavior as
-        other LLM providers.
-
-        Args:
-            text: User message text.
-            attachments: Optional list of attachment dicts with base64 image data.
-
-        Sets _preempt_pending so _stream_gemini knows to NOT break
-        at the next result event — it must wait for the preempt's result too.
+        Gemini headless mode reads stdin as a single prompt blob. The stream
+        process closes stdin after the initial prompt so the CLI starts
+        processing, so we cannot inject another user message into the same
+        process. Preempt therefore mirrors Codex: kill the in-flight CLI and
+        return False so the agent loop routes the message through PendingQueue
+        and resumes on the next turn.
         """
-        # During PawFlow's sentinel sessions (_compact, _memory_extract, ...)
-        # the SAME client instance is repurposed: _conversation_id is set to
-        # the sentinel name and _gemini_proc points to a fresh subprocess
-        # spawned for that one-shot job. Writing a preempt to that stdin
-        # would land in the wrong stream. Refuse so the caller routes via
-        # the PendingQueue path.
-        _conv = getattr(self, '_conversation_id', '') or ''
-        if _conv.startswith('_'):
-            logger.info("Preempt arrived during sentinel '%s' — refusing send: %.100s",
-                        _conv, text)
-            return False
-        # Compact-in-progress: the reader thread has already (or is about to)
-        # kill the CC subprocess. Refuse immediately so the caller routes via
-        # the PendingQueue path — writing to a dying stdin would land the
-        # message in _inflight_preempts with a narrow race where the rescue
-        # handler may have already cleared the list.
-        if getattr(self, '_compacting', False):
-            logger.info("Preempt arrived during CC compact — refusing send: %.100s", text)
-            return False
         proc = getattr(self, '_gemini_proc', None)
-        if not proc or proc.poll() is not None:
-            logger.warning("No running Codex process to send message to")
-            return False
-        # If CC has already emitted its final result, sending via stdin is
-        # racy — CC may be tearing down. Refuse so the caller routes via
-        # PendingQueue.
-        if getattr(self, '_result_emitted', False):
-            logger.info("Preempt arrived after CC result — refusing send: %.100s", text)
-            return False
-        # Capture user-supplied text BEFORE catchup-prefix mutation; the
-        # original (or its non-empty suffix) is what we'll match against
-        # CC's session jsonl in _check_gemini_preempt_in_jsonl.
-        _original_text = text
-        try:
-            # Multi-agent catch-up: inject messages from other agents before user msg
-            conv_id = getattr(self, '_conversation_id', "")
-            agent_name = getattr(self, '_agent_name', "")
-            if conv_id and agent_name:
-                catchup = self._gemini_build_catchup_context(conv_id, agent_name)
-                if catchup:
-                    text = catchup + "\n\n" + text
-
-            # Build content: text + optional images
-            if attachments:
-                content = []
-                if text:
-                    content.append({"type": "text", "text": text})
-                for att in attachments:
-                    if isinstance(att, dict) and att.get("data"):
-                        mime = att.get("mime_type", "image/png")
-                        content.append({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": mime,
-                                "data": att["data"],
-                            },
-                        })
-            else:
-                content = text
-
-            msg = json.dumps({
-                "type": "user",
-                "message": {"role": "user", "content": content},
-            })
-            proc.stdin.write(msg + "\n")
-            proc.stdin.flush()
-            self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
-            # Remember the EXACT text we sent so the result-time jsonl
-            # check can locate it. Skip the multi-agent catchup prefix
-            # (built locally above) — only the user-supplied tail is
-            # written verbatim by CC. Use the original `text` parameter
-            # before catchup mutation for a clean match key.
+        if proc is not None and proc.poll() is None:
+            logger.info(
+                "[gemini] preempt: killing in-flight CLI to interrupt "
+                "current turn — next turn will resume with new prompt: %.100s",
+                text)
             try:
-                self._sent_preempt_texts.append(_original_text)
-            except AttributeError:
-                self._sent_preempt_texts = [_original_text]
-            logger.info("Sent preempt message to Codex (pending=%d): %.100s",
-                        self._preempt_pending, text)
-            return True
-        except (OSError, BrokenPipeError) as e:
-            logger.warning("Failed to send to Codex stdin: %s", e)
-            return False
+                self._kill_gemini_hard(proc)
+            except Exception as _ke:
+                logger.warning("[gemini] preempt kill failed: %s", _ke)
+        else:
+            logger.info(
+                "[gemini] preempt: no in-flight proc to interrupt — "
+                "PendingQueue will pick up: %.100s", text)
+        return False
 
     def cancel_gemini(self, force: bool = False):
-        """Cancel Codex subprocess.
+        """Cancel Gemini CLI subprocess.
 
-        force=False: graceful interrupt on stdin — Codex acknowledges
-                     and responds with a summary, then the stream loop exits
-                     normally on the result event. No kill.
-        force=True: kill immediately.
+        Gemini headless mode has no reliable stdin interrupt after the prompt
+        pipe has been closed, so both graceful and force cancellation tear down
+        the active CLI process and release its pool slot.
         """
         proc = getattr(self, '_gemini_proc', None)
         if not proc or proc.poll() is not None:
             return
 
-        if force:
-            logger.info("FORCE KILLING Codex subprocess (pid=%d)", proc.pid)
-            self._gemini_proc = None
-            # Kill the container-side claude CLI by its captured PID
-            # (from the shell wrapper's __PF_CLAUDE_PID=$$ preamble) AND
-            # the host-side docker exec wrapper. Without the container-side
-            # kill, the CLI becomes an orphan (reparented to PID 1) and
-            # keeps emitting tool calls / running auto-compact / writing
-            # to its session .jsonl.
-            self._kill_gemini_hard(proc)
-            # Pool mode: release the slot (the container stays up for
-            # other sessions; _kill_gemini_hard only killed the CLI inside it).
-            _pool_name = getattr(self, '_pool_container_name', None)
-            if _pool_name:
-                from core.gemini_pool import GeminiPool
-                GeminiPool.instance().release(_pool_name)
-                self._pool_container_name = None
-            self._current_session_id = ""
-            return
-
-        # Graceful interrupt: send interrupt message on stdin.
-        # Codex will stop what it's doing, summarize, and send
-        # a result event — the stream loop exits normally.
-        logger.info("Interrupting Codex subprocess (pid=%d)", proc.pid)
-        try:
-            if proc.stdin and not proc.stdin.closed:
-                msg = json.dumps({
-                    "type": "user",
-                    "message": {"role": "user",
-                                "content": "Stop what you're doing right now. I need your attention on something else. Finish your current response briefly and wait for the next message."},
-                })
-                proc.stdin.write(msg + "\n")
-                proc.stdin.flush()
-        except (OSError, BrokenPipeError):
-            pass
+        logger.info("KILLING Gemini subprocess (pid=%d, force=%s)", proc.pid, force)
+        self._gemini_proc = None
+        self._kill_gemini_hard(proc)
+        _pool_name = getattr(self, '_pool_container_name', None)
+        if _pool_name:
+            from core.gemini_pool import GeminiPool
+            GeminiPool.instance().release(_pool_name)
+            self._pool_container_name = None
+        self._current_session_id = ""
 
     def _kill_gemini_hard(self, proc) -> None:
         """Kill the gemini subprocess on BOTH the host and inside
@@ -223,7 +124,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         the same files.
 
         The container-side PID is captured at spawn from the shell
-        wrapper's `__PF_CLAUDE_PID=$$` stderr preamble (see
+        wrapper's `__PF_GEMINI_PID=$$` stderr preamble (see
         `ClaudeCodePool.exec_claude`). Bash chain-execs into
         setpriv → claude, so $$ stays constant across the three
         processes — the captured PID IS claude's PID. Under docker
@@ -241,7 +142,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         # `self` which is a singleton shared with concurrent streams
         # (main agent, compact, memory_extract, btw, sub-agents). A
         # later-spawned stream clobbers `self._pool_container_name` and
-        # `self._codex_container_pid` mid-flight; reading from proc ties
+        # `self._gemini_container_pid` mid-flight; reading from proc ties
         # the kill to the exact subprocess we're targeting.
         _container = getattr(proc, '_pf_container', '') or ''
         try:
@@ -365,7 +266,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         Pool/proc state pinned to `proc` (via _pf_container set at spawn)
         is the authoritative source — `self._pool_container_name` /
         `self._gemini_proc` / `self._current_session_id` /
-        `self._codex_container_pid` are SINGLETON state on a shared
+        `self._gemini_container_pid` are SINGLETON state on a shared
         provider used by concurrent streams (main agent, compact,
         memory-extract, btw, sub-agent). Reading the pool name from
         `self` would race: a concurrent _spawn_gemini_stream that just
@@ -384,7 +285,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 and _pool_name):
             self._pool_container_name = None
         try:
-            _self_pid = int(getattr(self, '_codex_container_pid', 0) or 0)
+            _self_pid = int(getattr(self, '_gemini_container_pid', 0) or 0)
         except (TypeError, ValueError):
             _self_pid = 0
         try:
@@ -392,7 +293,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         except (TypeError, ValueError):
             _proc_pid = 0
         if _self_pid and _self_pid == _proc_pid:
-            self._codex_container_pid = 0
+            self._gemini_container_pid = 0
             # Session id is paired with this PID — drop it too only
             # when we owned the slot.
             self._current_session_id = ""
@@ -521,10 +422,10 @@ class LLMGeminiMixin(GeminiSessionMixin):
         _session_dir = f"/cc_sessions/{_rel}"
         # Pass API key / base URL / TLS skip to container if configured
         _extra = {}
-        if _env.get("ANTHROPIC_API_KEY"):
-            _extra["ANTHROPIC_API_KEY"] = _env["ANTHROPIC_API_KEY"]
-        if _env.get("ANTHROPIC_BASE_URL"):
-            _extra["ANTHROPIC_BASE_URL"] = _env["ANTHROPIC_BASE_URL"]
+        if _env.get("GEMINI_API_KEY"):
+            _extra["GEMINI_API_KEY"] = _env["GEMINI_API_KEY"]
+        if _env.get("GEMINI_BASE_URL"):
+            _extra["GEMINI_BASE_URL"] = _env["GEMINI_BASE_URL"]
         # NODE_TLS_REJECT_UNAUTHORIZED=0 is set by _gemini_env only
         # for HTTPS relay-proxy URLs pointing at a LAN IP with a self-
         # signed cert. Without this passthrough the container still
@@ -802,7 +703,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         Side effects:
             - self._gemini_proc  (unless _ephemeral_stream)
             - self._pool_container_name
-            - self._codex_container_pid (= 0 initially; drain thread fills it)
+            - self._gemini_container_pid (= 0 initially; drain thread fills it)
             - self._stderr_buffer
             - proc._pf_container / proc._pf_pid
             - Starts a daemon cc-stderr-drain thread.
@@ -824,38 +725,41 @@ class LLMGeminiMixin(GeminiSessionMixin):
             _container_workdir = f"/cc_sessions/{_rel_no_user}"
             _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
 
-        # Gate --resume on the jsonl actually existing at the expected
-        # path. If it doesn't, CC would silently create a NEW empty
-        # session under the same sid and we'd lose all history without
-        # any error. Fall back to a true NEW session (drop --resume),
-        # which is a well-defined state the caller can detect via the
-        # SESSION MISMATCH check downstream.
+        # Gemini CLI stores session history under
+        # ~/.gemini/tmp/<project_hash>/chats/ and supports `--resume <id>`.
+        # Unlike the old CC-specific guard, do not drop --resume just because
+        # PawFlow cannot predict the project hash. We only locate the file as
+        # a best-effort hook for legacy scrub logic below.
         _effective_session_id = session_id
         _expected_session_file = ""
         _exists = False
         if session_id:
-            _proj_key = self._gemini_project_key(workdir)
-            _expected_session_file = os.path.join(
-                workdir, "projects", _proj_key, f"{session_id}.jsonl")
-            _exists = os.path.exists(_expected_session_file)
-            _size = os.path.getsize(_expected_session_file) if _exists else 0
-            if _exists:
-                logger.info(
-                    "codex RESUME: session_id=%s file_size=%d path=%s",
-                    session_id, _size, _expected_session_file)
-            else:
-                logger.warning(
-                    "codex NEW (resume jsonl MISSING at expected path): "
-                    "session_id=%s expected=%s — dropping --resume, "
-                    "starting fresh CC session",
-                    session_id, _expected_session_file)
-                _effective_session_id = ""
+            try:
+                import glob as _glob
+                _matches = []
+                for _ext in ("json", "jsonl"):
+                    _matches.extend(_glob.glob(os.path.join(
+                        workdir, ".gemini", "tmp", "*", "chats",
+                        f"{session_id}.{_ext}")))
+                if _matches:
+                    _expected_session_file = _matches[0]
+                    _exists = os.path.exists(_expected_session_file)
+                    _size = os.path.getsize(_expected_session_file) if _exists else 0
+                    logger.info(
+                        "gemini RESUME: session_id=%s file_size=%d path=%s",
+                        session_id, _size, _expected_session_file)
+                else:
+                    logger.info(
+                        "gemini RESUME: session_id=%s (session file not prelocated; passing --resume)",
+                        session_id)
+            except Exception as _loc_err:
+                logger.debug("[gemini] resume file lookup skipped: %s", _loc_err)
 
-        cmd = self._build_codex_cmd(model, _effective_session_id,
-                                     mcp_config_path=_mcp_arg,
-                                     workdir=workdir)
+        cmd = self._build_gemini_cmd(model, _effective_session_id,
+                                      mcp_config_path=_mcp_arg,
+                                      workdir=workdir)
 
-        logger.info("codex stream: cwd=%s cmd=%s",
+        logger.info("gemini stream: cwd=%s cmd=%s",
                      workdir, " ".join(str(c) for c in cmd[:20]))
         # Scrub legacy [image: image_<ts>_<n>.<ext>] placeholders from
         # user text fields. These were written before the vision-
@@ -866,7 +770,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         # purely cosmetic for the transcript AND prevents the bogus
         # see() calls. Only meaningful when we actually --resume an
         # existing jsonl; skip for NEW sessions.
-        if session_id and _exists:
+        if session_id and _exists and _expected_session_file.endswith(".jsonl"):
             try:
                 self._gemini_scrub_legacy_image_placeholders(_expected_session_file)
             except Exception as _scrub_err:
@@ -902,7 +806,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
             # Keep self.* mirrors for the codepath that still reads them
             # (cancel_codex force-stop, cleanup_proc) — but treat them
             # as best-effort hints, not authoritative for kill.
-            self._codex_container_pid = 0
+            self._gemini_container_pid = 0
             self._stderr_buffer = []
             def _drain_stderr():
                 try:
@@ -919,23 +823,23 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         if (_line.startswith("setsid: child ")
                                 and "did not exit normally" in _line):
                             continue
-                        # __PF_CLAUDE_PID=<pid>\n is the shell wrapper's
+                        # __PF_GEMINI_PID=<pid>\n is the shell wrapper's
                         # spawn-time preamble. We capture it into
                         # proc._pf_pid below, log it at INFO as "captured
                         # container PID=<pid>", and that's the only value
                         # it has. Keeping the raw line in _stderr_buffer
                         # means every clean post-kill log surfaces as
-                        # "Gemini CLI stderr: __PF_CLAUDE_PID=<pid>" at
+                        # "Gemini CLI stderr: __PF_GEMINI_PID=<pid>" at
                         # ERROR level — misleading (no error, just a
                         # leftover PID dump). Drop it after capture.
-                        if '__PF_CLAUDE_PID=' in _line:
+                        if '__PF_GEMINI_PID=' in _line:
                             if not proc._pf_pid:
                                 try:
                                     _pid_str = _line.split(
-                                        '__PF_CLAUDE_PID=', 1)[1].strip()
+                                        '__PF_GEMINI_PID=', 1)[1].strip()
                                     _pid_int = int(_pid_str)
                                     proc._pf_pid = _pid_int
-                                    self._codex_container_pid = _pid_int
+                                    self._gemini_container_pid = _pid_int
                                     logger.info(
                                         "[gemini] captured container PID=%d "
                                         "(container=%s)",
@@ -1056,7 +960,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                      len(system_prompt), len(user_text), len(image_blocks), len(messages),
                      "resume" if session_id else "new")
 
-        logger.info("codex stream: conv_id='%s' user='%s' agent='%s' session='%s'",
+        logger.info("gemini stream: conv_id='%s' user='%s' agent='%s' session='%s'",
                      conv_id, user_id, agent_name, session_id[:12] if session_id else "new")
 
         workdir = self._gemini_get_session_workdir(conv_id, agent_name, user_id)
@@ -1164,7 +1068,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 # the singleton sees the right value. Defence-in-depth.
                 self._current_session_id = session_id
                 try:
-                    self._codex_container_pid = int(getattr(
+                    self._gemini_container_pid = int(getattr(
                         proc, '_pf_pid', 0) or 0)
                 except (TypeError, ValueError):
                     pass

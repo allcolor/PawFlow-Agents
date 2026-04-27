@@ -101,6 +101,45 @@ def test_dispatch_kwargs_match_signatures():
         raise AssertionError("\n".join(failures))
 
 
+def test_gemini_provider_uses_gemini_runtime_contracts():
+    """Gemini must not accidentally resolve Codex helpers via LLMClient MRO."""
+    from core.llm_providers.gemini import LLMGeminiMixin
+    import core.gemini_pool
+
+    spawn_src = inspect.getsource(LLMGeminiMixin._spawn_gemini_stream)
+    pool_src = inspect.getsource(LLMGeminiMixin._gemini_pool_popen)
+    kill_src = inspect.getsource(LLMGeminiMixin._kill_gemini_hard)
+    drain_src = inspect.getsource(LLMGeminiMixin._spawn_gemini_stream)
+    gemini_pool_src = Path(core.gemini_pool.__file__).read_text(encoding="utf-8")
+
+    assert "_build_gemini_cmd" in spawn_src
+    assert "_build_codex_cmd" not in spawn_src
+    assert "GEMINI_API_KEY" in pool_src
+    assert "ANTHROPIC_API_KEY" not in pool_src
+    assert "__PF_GEMINI_PID" in kill_src + drain_src
+    assert "__PF_GEMINI_PID" in gemini_pool_src
+
+
+def test_codex_provider_uses_codex_runtime_contracts():
+    """Codex must keep its own pool/env/PID contract, not Claude's."""
+    from core.llm_providers.codex import LLMCodexMixin
+    import core.codex_pool
+
+    spawn_src = inspect.getsource(LLMCodexMixin._spawn_codex_stream)
+    pool_src = inspect.getsource(LLMCodexMixin._codex_pool_popen)
+    kill_src = inspect.getsource(LLMCodexMixin._kill_codex_hard)
+    drain_src = inspect.getsource(LLMCodexMixin._spawn_codex_stream)
+    codex_pool_src = Path(core.codex_pool.__file__).read_text(encoding="utf-8")
+
+    assert "_build_codex_cmd" in spawn_src
+    assert "CODEX_API_KEY" in pool_src
+    assert "OPENAI_API_KEY" in pool_src
+    assert "OPENAI_BASE_URL" in pool_src
+    assert "ANTHROPIC_API_KEY" not in pool_src
+    assert "__PF_CODEX_PID" in kill_src + drain_src
+    assert "__PF_CODEX_PID" in codex_pool_src
+
+
 def test_provider_mixins_have_no_method_collisions():
     """Each provider's per-CLI helper methods must NOT collide.
 

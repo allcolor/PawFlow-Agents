@@ -2068,7 +2068,23 @@ class LLMCodexMixin(CodexSessionMixin):
                                           "cwd": item.get("cwd", "") or ""}
 
                         if etype == "item.started":
-                            _block_id = iid or f"codex-{_turn_count}-{len(_turn_tool_calls)}"
+                            # Codex IDs (`item_1`, `item_2`, ...) reset on
+                            # every `exec --json` call — they are NOT globally
+                            # unique across turns of the same conversation,
+                            # unlike Anthropic's `tu_<uuid>`. The chat UI
+                            # matches tool_call ↔ tool_result by `tc_id` via
+                            # `document.querySelector('[data-tc-id="X"]')`,
+                            # which finds the FIRST element — i.e. the OLD
+                            # turn's tool_call, already resolved with a
+                            # `.tc-result`. _attachToolResult early-returns
+                            # on that, the NEW turn's tool_call never gets a
+                            # result, and the done-handler safety-net stamps
+                            # "[result not delivered]" on it.
+                            # Prepending the codex thread_id makes the id
+                            # globally unique inside the conversation.
+                            _raw_iid = iid or f"codex-{_turn_count}-{len(_turn_tool_calls)}"
+                            _block_id = (f"{thread_id}:{_raw_iid}"
+                                         if thread_id and _raw_iid else _raw_iid)
                             _block_entry = {
                                 "name": _raw_name,
                                 "arguments": _raw_args,
@@ -2144,7 +2160,12 @@ class LLMCodexMixin(CodexSessionMixin):
                             continue
 
                         if is_done:
-                            tc_id = iid
+                            # Same prefix as item.started — must match the
+                            # one stored in `_turn_tool_calls` so the result
+                            # attaches and the SSE tc_id matches the
+                            # tool_call SSE element.
+                            tc_id = (f"{thread_id}:{iid}"
+                                     if thread_id and iid else iid)
                             _result = item.get("result", item.get("output", None))
                             # Unwrap the MCP envelope so the UI sees the real
                             # tool output, not raw JSON. MCP servers (like our

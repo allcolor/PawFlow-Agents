@@ -1,270 +1,189 @@
-# Résumé du Projet PawFlow - Version 1.0.0
+# Résumé du Projet PawFlow - État actuel
 
-## ✅ Ce qui a été accompli
+**Date de mise à jour** : 2026-04-27  
+**Version package** : `1.0.0a1`  
+**Statut** : alpha fonctionnelle, APIs encore susceptibles d'évoluer
 
-### 1. Documentation Complète
+## Synthèse
 
-#### Documentation Technique
-- **docs/01_DOCUMENTATION_TECHNIQUE.md** - Documentation technique complète
-  - Architecture logicielle
-  - Concepts fondamentaux (FlowFile, Tasks, Services, Flows, Groups)
-  - Format JSON des flux
-  - Interfaces Task et Service
-  - Système de configuration et variables runtime
-  - API du moteur d'exécution
-  - Spécifications GUI
-  - Sécurité et tests
+PawFlow n'est plus un simple MVP de moteur de workflow. Le dépôt contient maintenant une plateforme self-hosted d'orchestration d'agents IA et de pipelines, positionnée comme **"Apache NiFi meets Claude Code"** : un serveur PawFlow, un moteur de flows DAG, un système d'agents multi-providers, un relay local pour l'accès aux fichiers/outils, une interface web, un client terminal PawCode, une extension VS Code, de la documentation et une suite de tests conséquente.
 
-- **docs/02_REFERENCE_TASKS_SERVICES.md** - Référence complète
-  - 30+ tâches définies avec schémas de paramètres
-  - 15+ services définis avec schémas de paramètres
-  - Exemples d'utilisation
-  - Types de données et attributs standards
+Le coeur de valeur actuel est double :
 
-### 2. Architecture Core
+1. **Agents autonomes outillés** : conversations multi-agents, providers LLM, tool-use loop, mémoire persistante, knowledge graph, diary agent, project graph, plans, délégation, streaming.
+2. **Moteur de pipelines** : exécution DAG de FlowFiles, catalogue de tâches, triggers, backpressure, checkpoints, crash recovery, provenance et intégrations IO/data/control.
 
-#### Classes Principales (core/__init__.py)
-- **FlowFile** : Représente une unité de données avec contenu et attributs
-- **Task** : Interface abstraite pour toutes les tâches
-- **Service** : Interface abstraite pour tous les services
-- **Flow** : Orchestration de tâches pour créer des pipelines
-- **TaskFactory** / **ServiceFactory** : Registres dynamiques de tâches/services
-- **Exceptions personnalisées** : TaskError, ServiceError, FlowError, etc.
+## Ce qui existe dans le dépôt
 
-#### Implémentations de Base
-- **base_task.py** : BaseTask avec résolution de variables et utilitaires communs
-- **base_service.py** : BaseService avec gestion du cycle de vie (connect/disconnect)
+### Runtime et coeur Python
 
-### 3. Tâches Implémentées (System)
+- `core/` : runtime agent et primitives principales.
+  - exécution d'agents et boucles tool-use ;
+  - providers LLM (`Claude Code`, Anthropic, OpenAI, Gemini, endpoints compatibles OpenAI selon configuration) ;
+  - mémoire, knowledge graph, diary, project graph ;
+  - gestion des conversations, plans, tokens, fichiers, relay et handlers d'outils ;
+  - backends de stockage et helpers de sécurité/contexte.
 
-#### Tasks Système (tasks/system/)
-1. **LogTask** - Logguer un message avec formatage et attributs
-2. **ReplaceTextTask** - Remplacer du texte (regex ou simple)
-3. **WaitTask** - Attendre une durée avant de continuer
-4. **FailTask** - Échouer explicitement un FlowFile
+- `engine/` : moteur de flows.
+  - parsing et validation de flows JSON ;
+  - exécution DAG ;
+  - checkpoints, crash recovery, triggers, provenance ;
+  - workers, scheduler, debugger, import NiFi et support cluster.
 
-### 4. Moteur d'Exécution (engine/)
+- `tasks/` : catalogue de tâches PawFlow.
+  - `system/` : log, wait, fail, replace text, hash, scripts, cron trigger, génération/listing de FlowFiles, reporting ;
+  - `io/` : HTTP, fichiers, SFTP/FTP, S3, GCS, Azure, Kafka, MQTT, email, Slack, Discord, Telegram, WhatsApp, web UI, relay, auth/session ;
+  - `data/` : JSON, XML, CSV, SQL, extraction texte, transformations, compression, Avro/Parquet, base64, cache, déduplication ;
+  - `control/` : routage, split/merge, rate limiting, ports, stop flow, execute flow, wait/notify ;
+  - `ai/` : agent loop et modules associés à l'exécution agent.
 
-- **executor.py** : FlowExecutor
-  - Exécution topologique des DAG de tâches
-  - Gestion des erreurs et retries
-  - Calcul des statistiques d'exécution
-  - Support des variables runtime
+- `services/` : services d'intégration et proxys.
+  - authentification et providers OAuth ;
+  - filesystem, terminal, browser, relay, gateway ;
+  - services média/image/audio/vidéo, voix et Pixazo ;
+  - intégrations messaging et stockage.
 
-- **parser.py** : FlowParser et FlowValidator
-  - Parsing de configurations JSON en objets Flow
-  - Validation structurelle et sémantique
-  - Détection de cycles dans le DAG
+### Interfaces et clients
 
-### 5. Configuration et Stockage (config/)
+- `cli.py` : CLI historique et point d'entrée `pawflow` déclaré dans `pyproject.toml`.
+  - commandes de run/validate/list/info ;
+  - démarrage API/UI ;
+  - import, triggers, cluster, réindex mémoire.
 
-- **config/__init__.py** : ConfigManager et Config
-  - Support de multiple backends (filesystem, SQLite, Git, PostgreSQL)
-  - Configuration globale de l'application
-  - Variables globales et overrides
+- `pawflow_cli/` : **PawCode**, client terminal façon Claude Code.
+  - mode interactif ;
+  - compatibilité stream JSON ;
+  - relay automatique du répertoire de travail ;
+  - commandes terminal, contexte, fichiers et agent.
 
-- **storage/** : Implémentations de stockage
-  - **filesystem_storage.py** : Stockage sur disque (fonctionnel)
-  - **sqlite_storage.py** : Stockage SQLite (fonctionnel)
-  - **git_storage.py** : Placeholder pour Git
-  - **postgres_storage.py** : Placeholder pour PostgreSQL
+- `pawflow_relay/` : relay local/host.
+  - expose fichiers, commandes shell et outils au serveur via WebSocket ;
+  - permet au serveur d'agir sur la machine utilisateur sans accès direct au filesystem.
 
-### 6. Tests et Exemples
+- `pawflow-vscode/` : extension VS Code TypeScript.
+  - chat PawFlow dans VS Code ;
+  - relay intégré ;
+  - commandes sur sélection et contexte projet.
 
-- **test_flow.py** : Script de test complet
-  - Test des tâches individuelles
-  - Test d'exécution de flux
-  - Validation du parser et validateur
+- `static/`, `pawflow-website/` et tâches `serve_*` : interface web, assets et site statique.
 
-### 7. Documentation et Configuration
+### Documentation
 
-- **README.md** : Documentation complète du projet
-  - Vue d'ensemble et architecture
-  - Structure du projet
-  - Installation et utilisation
-  - Exemples de code
-  - Roadmap
+La documentation présente dans `docs/` couvre notamment :
 
-- **requirements.txt** : Liste complète des dépendances
+- architecture interne ;
+- système agent ;
+- outils cognitifs : mémoire, KG, diary, project graph ;
+- expression language ;
+- slash commands ;
+- catalogue de tâches ;
+- déploiement Docker/local ;
+- filesystem relay ;
+- HTTP listener, provenance, Pixazo, voice clone ;
+- développement de tâches/services.
 
-## 📋 Structure du Projet
+Le `README.md` est aujourd'hui plus représentatif de la vision et de l'état courant que l'ancien résumé projet.
 
-```
-pawflow/
-├── core/                          # Interfaces et classes abstraites
-│   ├── __init__.py               # FlowFile, Task, Service, Flow, Factories
-│   ├── base_task.py              # BaseTask avec utilitaires
-│   └── base_service.py           # BaseService avec cycle de vie
-│
-├── tasks/                        # Implémentations de tâches
-│   ├── __init__.py               # Enregistrement des tâches
-│   └── system/                   # Tâches système
-│       ├── __init__.py           # register_system_tasks()
-│       ├── log_task.py           # LogTask
-│       ├── replace_text_task.py  # ReplaceTextTask
-│       ├── wait_task.py          # WaitTask
-│       └── fail_task.py          # FailTask
-│
-├── engine/                       # Moteur d'exécution
-│   ├── __init__.py               # Export FlowExecutor, FlowParser, FlowValidator
-│   ├── executor.py               # FlowExecutor
-│   └── parser.py                 # FlowParser, FlowValidator
-│
-├── config/                       # Configuration et stockage
-│   ├── __init__.py               # ConfigManager, Config
-│   └── storage/                  # Implémentations de stockage
-│       ├── __init__.py
-│       ├── filesystem_storage.py
-│       ├── sqlite_storage.py
-│       ├── git_storage.py        # Placeholder
-│       └── postgres_storage.py   # Placeholder
-│
-├── docs/                         # Documentation
-│   ├── 01_DOCUMENTATION_TECHNIQUE.md
-│   └── 02_REFERENCE_TASKS_SERVICES.md
-│
-├── test_flow.py                  # Script de test
-├── README.md                     # Documentation principale
-└── requirements.txt              # Dépendances
-```
+## Chiffres observés dans le dépôt
 
-## 🎯 Fonctionnalités Clés
+Ces chiffres décrivent l'état du dépôt au 2026-04-27, hors interprétation fonctionnelle fine :
 
-### ✅ Implémentées
-- [x] Interface Task avec schéma de paramètres
-- [x] Interface Service avec cycle de vie
-- [x] Classe FlowFile avec attributs
-- [x] FlowParser pour JSON → objets
-- [x] FlowValidator pour validation
-- [x] FlowExecutor pour exécution topologique
-- [x] Système de factories pour tâches/services
-- [x] BaseTask avec résolution de variables
-- [x] BaseService avec connect/disconnect
-- [x] ConfigManager pour configuration globale
-- [x] Stockage filesystem et SQLite
+| Zone | Volume observé |
+|---|---:|
+| Fichiers Python dans `core/` | 159 |
+| Fichiers Python dans `engine/` | 20 |
+| Fichiers Python dans `tasks/` | 131 |
+| Fichiers Python dans `services/` | 63 |
+| Fichiers de tests `tests/test_*.py` | 128 |
+| Documents dans `docs/` | 19 |
 
-### 🚧 À Implémenter (Roadmap)
+Le README annonce aussi :
 
-#### Version 1.1
-- [ ] Tâches de données (script, shell, convert, filter)
-- [ ] Tâches d'IO (HTTP, SFTP, S3, DB, File, Kafka)
-- [ ] Tâches de contrôle (route, split, merge, join, flow_call)
-- [ ] Services d'auth (OAuth2, Basic Auth, API Key)
-- [ ] Services de connectivité (DB, SFTP, S3, HTTP, Pulsar, Kafka)
-- [ ] Système de variables runtime complet
+- 101 types de tâches dans le catalogue ;
+- 80+ outils intégrés ;
+- 60+ slash commands dans le web chat ;
+- 9 providers OAuth ;
+- 2500+ tests.
 
-#### Version 1.2
-- [ ] GUI Streamlit - Editor (design de flux)
-- [ ] GUI Streamlit - Runtime (monitoring, logs, metrics)
-- [ ] Tests unitaires complets
-- [ ] Tests d'intégration
-- [ ] Tests de performance
-- [ ] Documentation utilisateur
+## Fonctionnalités clés implémentées ou présentes
 
-## 🔧 Comment Utiliser
+### Agents IA
 
-### 1. Créer un flux simple
+- Conversations agent avec streaming.
+- Tool-use loop et exécution d'outils via relay.
+- Multi-agent et délégation.
+- Plans structurés avec étapes, assignation et vérification.
+- Mémoire persistante, semantic recall, knowledge graph, diary agent.
+- Project graph basé sur AST/tree-sitter.
+- Providers LLM multiples et endpoint compatible OpenAI.
+- Modes de permission et contrôle d'accès aux outils selon configuration.
 
-```python
-from engine import FlowParser, FlowValidator, FlowExecutor
-from core import FlowFile
+### Pipelines
 
-flow_config = {
-    'id': 'mon-flux',
-    'name': 'Mon Flux',
-    'tasks': {
-        'log1': {
-            'type': 'log',
-            'parameters': {'message': 'Début', 'level': 'INFO'}
-        },
-        'replace': {
-            'type': 'replace_text',
-            'parameters': {
-                'search_pattern': 'test',
-                'replacement': 'TEST'
-            }
-        }
-    },
-    'relations': [
-        {'from': 'log1', 'to': 'replace', 'type': 'success'}
-    ]
-}
+- Flows JSON exécutés comme DAGs.
+- FlowFiles, relations, paramètres et contexte runtime.
+- Backpressure, checkpoints, reprise après crash.
+- CRON, file watcher, webhook/polling/event triggers selon modules présents.
+- Subflows, mapping de paramètres et import NiFi.
+- Debugger de flow, provenance, versioning et mode cluster.
 
-# Parser et valider
-flow = FlowParser.parse(flow_config)
-FlowValidator.validate(flow)
+### Outils et relay
 
-# Exécuter
-executor = FlowExecutor()
-input_ff = FlowFile(content=b'data', attributes={'filename': 'test.txt'})
-result = executor.execute_flow(flow, [input_ff])
+- Lecture/écriture/édition de fichiers.
+- Bash/terminal via relay.
+- Recherche de fichiers/contenu.
+- Web fetch/scraping.
+- Génération image, vidéo, audio, voix selon providers configurés.
+- Scan sécurité et exécution de scripts.
+- Gestion de secrets, ressources, mémoire, KG et plans.
 
-print(f"Succès: {result.success}")
-print(f"Durée: {result.duration_ms:.2f} ms")
-```
+### Interfaces utilisateur
 
-### 2. Créer une tâche personnalisée
+- Web chat avec SSE, fichiers, contexte, slash commands et gestion conversations.
+- PawCode CLI pour usage terminal.
+- Extension VS Code.
+- Site statique de présentation.
 
-```python
-from core import Task, FlowFile
-from typing import Dict, Any, List
+### Authentification et déploiement
 
-class MyTask(Task):
-    TYPE = "my_task"
-    NAME = "Ma Tâche"
-    DESCRIPTION = "Description"
-    
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        self.param1 = config.get('param1', 'default')
-    
-    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        # Traitement
-        return [flowfile]
-    
-    def get_parameter_schema(self) -> Dict[str, Any]:
-        return {
-            'param1': {
-                'type': 'string',
-                'required': True,
-                'description': 'Paramètre 1'
-            }
-        }
+- Auth username/password et OAuth.
+- JWT/API keys/RBAC selon modules présents.
+- Déploiement local et Docker.
+- Relay Docker ou natif.
 
-# Enregistrer
-from core import TaskFactory
-TaskFactory.register(MyTask)
-```
+## Points forts
 
-## 📊 Statistiques du Projet
+1. **Ambition produit cohérente** : PawFlow combine agents autonomes et moteur de pipelines au lieu de rester un simple wrapper LLM.
+2. **Architecture modulaire** : séparation nette entre core agent, engine, tasks, services, relay et clients.
+3. **Surface d'intégration large** : fichiers, shell, web, messaging, cloud storage, bases de données, médias, OAuth.
+4. **Approche self-hosted crédible** : le relay évite de donner au serveur un accès direct permanent au filesystem utilisateur.
+5. **Outillage de continuité agent** : mémoire, KG, diary, plans et project graph vont au-delà d'un chat stateless.
+6. **Couverture de tests significative** : le dépôt contient une vraie suite pytest, pas seulement un script de démonstration.
 
-- **Lignes de code** : ~4000+ lignes
-- **Fichiers créés** : 35+ fichiers
-- **Tâches définies** : 30+ (4 implémentées)
-- **Services définis** : 15+ (0 implémentés)
-- **Documentation** : 200+ pages Markdown
-- **Tests** : 1 script de test fonctionnel
+## Points de vigilance
 
-## 🎓 Points Forts
+- Le projet est explicitement en **alpha** : l'API publique, les formats JSON et les contrats internes peuvent encore bouger.
+- La documentation n'est pas uniformément au même niveau de fraîcheur. Certains anciens documents décrivent encore une phase MVP.
+- La surface fonctionnelle est très large : il faut distinguer les modules présents, les chemins testés et les intégrations réellement validées en production.
+- Certaines capacités dépendent de secrets, providers externes, relay actif ou environnement Docker/local correctement configuré.
+- Le README contient des chiffres de haut niveau utiles, mais ils doivent rester synchronisés avec le catalogue réel et les tests.
 
-1. **Architecture propre** : Séparation claire des concepts
-2. **Documentation exhaustive** : Spécifications complètes
-3. **Extensibilité** : Ajout facile de nouvelles tâches/services
-4. **Format JSON déclaratif** : Lisibilité et versioning
-5. **Validation** : Parser et validateur robustes
-6. **Tests** : Framework de test fonctionnel
+## Roadmap actuelle
 
-## 🚀 Prochaines Étapes
+D'après `ROADMAP.md`, les prochains axes importants sont :
 
-1. **Implémenter les tâches manquantes** (script, shell, HTTP, SFTP, S3, DB)
-2. **Implémenter les services** (auth, connectivité)
-3. **Développer la GUI Streamlit** (editor + runtime)
-4. **Ajouter les tests unitaires** (pytest)
-5. **Finaliser le système de variables runtime**
-6. **Documenter l'API publique**
+- input voix push-to-talk ;
+- isolation Git worktree pour agents parallèles ;
+- providers LLM additionnels : Ollama, Mistral, vLLM, LM Studio, Together.ai ;
+- MCP elicitation et exposition de PawFlow comme serveur MCP ;
+- client mobile PWA ;
+- éditeur visuel complet de flows ;
+- assistant d'installation ;
+- mode JSON headless ;
+- marketplace agents/skills/tools/MCP/tasks/flows.
 
----
+## Conclusion
 
-**Date** : 2026-03-03  
-**Version** : 1.0.0 (MVP)  
-**Statut** : Architecture de base fonctionnelle, documentation complète, tests de base
+PawFlow est passé d'une architecture de base à une plateforme agentique complète en alpha. Le résumé projet doit donc le présenter comme un système intégré : **serveur + agents + moteur de flows + relay + clients + documentation + tests**.
+
+L'ancien message "4 tâches implémentées / 0 service / 1 script de test" est obsolète. La bonne lecture actuelle est : un produit déjà substantiel, avec une architecture riche et beaucoup de modules présents, mais qui doit encore stabiliser ses contrats, clarifier ce qui est production-ready et garder sa documentation synchronisée avec le code.

@@ -65,102 +65,33 @@ class LLMCodexMixin(CodexSessionMixin):
     # ── Process management ──────────────────────────────────────────
 
     def _codex_send_user_message(self, text: str, attachments: list = None):
-        """Send a user message to the running Codex subprocess (preempt).
+        """Inline-preempt entrypoint. Always refuses for codex.
 
-        Uses stream-json input format to inject a new user message while
-        Codex is working — enables the same preempt behavior as
-        other LLM providers.
+        Codex `exec --json` is one-shot: stdin is read as a SINGLE blob
+        until EOF (verified empirically — codex blocks on read until we
+        close stdin, then processes the blob and exits). `_stream_codex`
+        therefore closes `proc.stdin` immediately after writing the
+        initial prompt (codex.py:1296) so the proc starts processing.
+        Once closed, no further writes are possible — attempting one
+        raises `ValueError: I/O operation on closed file`.
 
-        Args:
-            text: User message text.
-            attachments: Optional list of attachment dicts with base64 image data.
+        CC's stream-json multi-message protocol on a long-running proc
+        does NOT apply: codex has no equivalent of `--input-format
+        stream-json` for `exec`, only the experimental `app-server` mode
+        (different protocol, not used here).
 
-        Sets _preempt_pending so _stream_codex knows to NOT break
-        at the next result event — it must wait for the preempt's result too.
+        Returning False is the contract `agent_streaming.py:184` reads:
+        the caller falls through to PawFlow's PendingQueue, which
+        delivers the message as the FIRST input of the NEXT turn (which
+        respawns `codex exec resume <sid>` against the rollout). Output
+        already produced by the in-flight turn is preserved in the
+        rollout, so nothing is lost.
         """
-        # During PawFlow's sentinel sessions (_compact, _memory_extract, ...)
-        # the SAME client instance is repurposed: _conversation_id is set to
-        # the sentinel name and _codex_proc points to a fresh subprocess
-        # spawned for that one-shot job. Writing a preempt to that stdin
-        # would land in the wrong stream. Refuse so the caller routes via
-        # the PendingQueue path.
-        _conv = getattr(self, '_conversation_id', '') or ''
-        if _conv.startswith('_'):
-            logger.info("Preempt arrived during sentinel '%s' — refusing send: %.100s",
-                        _conv, text)
-            return False
-        # Compact-in-progress: the reader thread has already (or is about to)
-        # kill the CC subprocess. Refuse immediately so the caller routes via
-        # the PendingQueue path — writing to a dying stdin would land the
-        # message in _inflight_preempts with a narrow race where the rescue
-        # handler may have already cleared the list.
-        if getattr(self, '_compacting', False):
-            logger.info("Preempt arrived during CC compact — refusing send: %.100s", text)
-            return False
-        proc = getattr(self, '_codex_proc', None)
-        if not proc or proc.poll() is not None:
-            logger.warning("No running Codex process to send message to")
-            return False
-        # If CC has already emitted its final result, sending via stdin is
-        # racy — CC may be tearing down. Refuse so the caller routes via
-        # PendingQueue.
-        if getattr(self, '_result_emitted', False):
-            logger.info("Preempt arrived after CC result — refusing send: %.100s", text)
-            return False
-        # Capture user-supplied text BEFORE catchup-prefix mutation; the
-        # original (or its non-empty suffix) is what we'll match against
-        # CC's session jsonl in _check_codex_preempt_in_jsonl.
-        _original_text = text
-        try:
-            # Multi-agent catch-up: inject messages from other agents before user msg
-            conv_id = getattr(self, '_conversation_id', "")
-            agent_name = getattr(self, '_agent_name', "")
-            if conv_id and agent_name:
-                catchup = self._codex_build_catchup_context(conv_id, agent_name)
-                if catchup:
-                    text = catchup + "\n\n" + text
-
-            # Build content: text + optional images
-            if attachments:
-                content = []
-                if text:
-                    content.append({"type": "text", "text": text})
-                for att in attachments:
-                    if isinstance(att, dict) and att.get("data"):
-                        mime = att.get("mime_type", "image/png")
-                        content.append({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": mime,
-                                "data": att["data"],
-                            },
-                        })
-            else:
-                content = text
-
-            msg = json.dumps({
-                "type": "user",
-                "message": {"role": "user", "content": content},
-            })
-            proc.stdin.write(msg + "\n")
-            proc.stdin.flush()
-            self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
-            # Remember the EXACT text we sent so the result-time jsonl
-            # check can locate it. Skip the multi-agent catchup prefix
-            # (built locally above) — only the user-supplied tail is
-            # written verbatim by CC. Use the original `text` parameter
-            # before catchup mutation for a clean match key.
-            try:
-                self._sent_preempt_texts.append(_original_text)
-            except AttributeError:
-                self._sent_preempt_texts = [_original_text]
-            logger.info("Sent preempt message to Codex (pending=%d): %.100s",
-                        self._preempt_pending, text)
-            return True
-        except (OSError, BrokenPipeError) as e:
-            logger.warning("Failed to send to Codex stdin: %s", e)
-            return False
+        logger.info(
+            "[codex] preempt refused (codex exec is one-shot, stdin "
+            "closed after initial prompt) — caller routes via "
+            "PendingQueue: %.100s", text)
+        return False
 
     def cancel_codex(self, force: bool = False):
         """Cancel Codex subprocess.
@@ -1542,21 +1473,22 @@ class LLMCodexMixin(CodexSessionMixin):
         _compact_drain_timer = [None]
 
         def _inject_catchup():
-            """Check for new messages from other agents and inject via stdin."""
-            if not conv_id or not agent_name:
-                return
-            catchup = self._codex_build_catchup_context(conv_id, agent_name)
-            if not catchup:
-                return
-            _p = getattr(self, '_codex_proc', None)
-            if _p and _p.poll() is None:
-                msg = json.dumps({
-                    "type": "user",
-                    "message": {"role": "user", "content": catchup},
-                })
-                _p.stdin.write(msg + "\n")
-                _p.stdin.flush()
-                self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
+            """Mid-stream catchup is a no-op for codex.
+
+            Same constraint as `_codex_send_user_message` (the inline
+            preempt path): codex `exec --json` reads stdin as a single
+            blob, _stream_codex closes it after the initial prompt to
+            signal EOF, the proc then runs autonomously until the turn
+            completes. There is no protocol to inject additional user
+            messages into the same proc.
+
+            Catchup arriving while codex is mid-turn is therefore
+            deferred to the next turn: the message stays in the
+            PendingQueue / ConversationStore and the next call to
+            `_stream_codex` will pick it up as part of `catchup_text`
+            (prepended to the next `initial_text`).
+            """
+            return
 
         def _flush_turn():
             """Emit the accumulated turn via turn_callback."""

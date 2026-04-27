@@ -1052,6 +1052,17 @@ class LLMCodexMixin(CodexSessionMixin):
         else:
             system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
 
+        # First-turn-only: prepend the codex-specific MCP/workspace preamble.
+        # On a resumed session codex already has the preamble in its rollout
+        # so we don't re-emit it (would just bloat context). The preamble
+        # makes the MCP-only contract explicit — codex is heavily trained to
+        # prefer its native shell, even after we --disable shell_tool, the
+        # model needs to know to reach for `pawflow.use_tool` instead.
+        if not session_id:
+            system_prompt = (
+                self._CODEX_PAWFLOW_PREAMBLE
+                + ("\n" + system_prompt if system_prompt else "")
+            )
         initial_text = self._codex_build_stdin_with_system(system_prompt, user_text)
         logger.debug("[codex] prompt: system=%d user=%d images=%d msgs=%d session=%s",
                      len(system_prompt), len(user_text), len(image_blocks), len(messages),

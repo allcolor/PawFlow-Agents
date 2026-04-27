@@ -731,6 +731,13 @@ class CodexSessionMixin:
         --sandbox is REJECTED by `exec resume`; we pass
         `--dangerously-bypass-approvals-and-sandbox` instead which is
         accepted on both paths and disables the sandbox completely.
+
+        `--disable shell_tool` removes codex's NATIVE shell so the agent
+        can only reach files / commands through PawFlow's MCP bridge
+        (pawflow.use_tool). Without this codex would call its own bash
+        which sees the per-session workdir as cwd, NOT the user's
+        `/workspace` (a virtual MCP-only path), and silently fail with
+        "No such file or directory" while never reaching the relay.
         """
         codex_args = ["exec"]
         if session_id:
@@ -739,6 +746,7 @@ class CodexSessionMixin:
             "--json",
             "--skip-git-repo-check",
             "--dangerously-bypass-approvals-and-sandbox",
+            "--disable", "shell_tool",
             "--model", model or "gpt-5.2-codex",
             "-",  # read prompt from stdin
         ])
@@ -747,3 +755,25 @@ class CodexSessionMixin:
         # is unused but kept in the signature so the call site mirrors CC's.
         self._pool_codex_args = codex_args
         return codex_args
+
+    # System prompt prepend codex receives on the FIRST turn of every
+    # session. Resume turns rely on the rollout for prior instructions
+    # so this is one-shot per rollout. Stay short — codex weights system
+    # context heavily and over-instruction degrades reasoning quality.
+    _CODEX_PAWFLOW_PREAMBLE = (
+        "## PawFlow runtime\n"
+        "You are running inside PawFlow's container. The host's project lives at "
+        "`/workspace` — a VIRTUAL path that is ONLY reachable through the MCP "
+        "bridge (`pawflow.use_tool`). Your container's local filesystem (cwd, "
+        "`/`, etc.) is NOT the user's project.\n\n"
+        "Hard rules:\n"
+        "- For ANY file read/write/list, shell exec, search, screen capture, "
+        "clipboard, browser, etc., call `pawflow.use_tool(<tool_name>, {...})` "
+        "— never use built-in shell or file tools.\n"
+        "- Discover available tools via `pawflow.get_tool_schema()` first if "
+        "unsure. Common tools: `read`, `write`, `edit`, `bash`, `glob`, `grep`, "
+        "`list_dir`, `screen`, `web_fetch`.\n"
+        "- Paths starting with `/workspace/...` route through the relay; the "
+        "relay translates them to the host's actual project root. Do not "
+        "`cd /workspace` — it does not exist on the local filesystem.\n"
+    )

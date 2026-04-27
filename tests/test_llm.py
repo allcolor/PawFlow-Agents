@@ -146,7 +146,14 @@ class TestLLMConnectionService:
             svc.connect()
 
     def test_unknown_provider_raises(self):
-        svc = LLMConnectionService({"provider": "gemini", "api_key": "key"})
+        """An unregistered provider name must blow up at connect() time.
+        Use a name no provider could ever claim — 'gemini' used to be
+        unknown, then we shipped a real gemini CLI provider, so the
+        old probe value silently became valid."""
+        svc = LLMConnectionService({
+            "provider": "definitely-not-a-real-provider-xyz",
+            "api_key": "key",
+        })
         with pytest.raises(Exception):
             svc.connect()
 

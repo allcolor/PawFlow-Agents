@@ -1445,6 +1445,27 @@ class LLMCodexMixin(CodexSessionMixin):
                     "cid=%s: %s", event_type, _event_cid, _pub_err,
                     exc_info=True)
 
+        # Initial gauge publish: emit the start-of-turn `message_meta` SSE
+        # so the UI updates the gauge IMMEDIATELY — don't wait for the first
+        # tool / turn.completed event. Without this the gauge sits at the
+        # previous turn's stale value (or 0 if it's the first turn) until
+        # codex emits an event we map to message_meta.
+        try:
+            _ctx_max_init = (
+                self._codex_context_window(model)
+                if hasattr(self, '_codex_context_window')
+                else max_tokens or 1_000_000)
+            if prompt_tokens > 0 and _ctx_max_init > 0:
+                _pub("message_meta", {
+                    "agent_name": agent_name,
+                    "context_used": prompt_tokens,
+                    "context_max": _ctx_max_init,
+                    "context_pct": prompt_tokens / _ctx_max_init,
+                    "live": True,
+                })
+        except Exception:
+            logger.debug("initial-gauge publish failed", exc_info=True)
+
         # Read streaming output — accumulate per turn
         content_parts: List[str] = []  # final result text
         last_data: dict = {}
@@ -2260,6 +2281,34 @@ class LLMCodexMixin(CodexSessionMixin):
                             # 6 tools appearing simultaneously instead of one
                             # by one as they ran.
                             _flush_turn()
+                            # Live gauge update: tool result now joins codex's
+                            # in-memory context for the next iteration. Bump
+                            # prompt_tokens by the result's token count and
+                            # publish a fresh `message_meta` SSE so the UI
+                            # gauge moves forward at every tool, not only at
+                            # turn.completed (which fires once at end of
+                            # exec). Mirrors CC's per-result gauge update.
+                            try:
+                                from core.token_counter import (
+                                    count_tokens as _ct,
+                                    resolve_token_multiplier as _rtm,
+                                )
+                                _mult2 = _rtm(getattr(self, "_config_ref", None) or {})
+                                prompt_tokens += _ct(result_str or "", multiplier=_mult2)
+                                _ctx_max_now = (
+                                    self._codex_context_window(model)
+                                    if hasattr(self, '_codex_context_window')
+                                    else 1_000_000)
+                                _pub("message_meta", {
+                                    "agent_name": agent_name,
+                                    "context_used": prompt_tokens,
+                                    "context_max": _ctx_max_now,
+                                    "context_pct": (prompt_tokens / _ctx_max_now)
+                                                   if _ctx_max_now > 0 else 0.0,
+                                    "live": True,
+                                })
+                            except Exception:
+                                logger.debug("live-gauge update failed", exc_info=True)
                         continue
 
                     if itype not in getattr(self, '_codex_seen_unknown_itypes', set()):

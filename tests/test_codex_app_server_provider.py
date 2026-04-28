@@ -62,6 +62,8 @@ def test_codex_app_server_reasoning_is_wired():
     assert "item/reasoning/summaryTextDelta" in provider_src
     assert "item/reasoning/textDelta" in provider_src
     assert 'item.get("type") == "reasoning"' in provider_src
+    assert "_append_final_reasoning" in provider_src
+    assert "text in existing or existing in text" in provider_src
 
 
 

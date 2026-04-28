@@ -391,6 +391,15 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 except TypeError:
                     turn_callback(text, [])
 
+        def _append_final_reasoning(text: str) -> None:
+            text = (text or "").strip()
+            if not text:
+                return
+            existing = "".join(thinking_parts).strip()
+            if existing and (text in existing or existing in text):
+                return
+            thinking_parts.append(text)
+
         try:
             proc, container = self._codex_pool_popen(
                 workdir,
@@ -499,8 +508,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                                 text = part.get("text") or part.get("summary") or ""
                             else:
                                 text = str(part or "")
-                            if text:
-                                thinking_parts.append(text)
+                            _append_final_reasoning(text)
                         continue
 
                 if method == "item/started":

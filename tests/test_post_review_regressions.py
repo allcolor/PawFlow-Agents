@@ -104,3 +104,90 @@ def test_fwd_root_url_requires_explicit_trailing_slash_route():
     reg.register("GET", "/fwd/{forward_id}/{token}/",
                  "x", callback=lambda r: None)
     assert reg.match("GET", "/fwd/f/t/") is not None
+
+
+# ---------------------------------------------------------------------------
+# Approval gate failures must deny, not execute
+# ---------------------------------------------------------------------------
+
+
+def test_tool_relay_approval_exception_denies_without_executing(monkeypatch):
+    from services.tool_relay_service import ToolRelayService
+    from core.conversation_store import ConversationStore
+
+    class FakeRegistry:
+        executed = False
+
+        def execute(self, tool_name, arguments):
+            self.executed = True
+            return "should-not-run"
+
+    reg = FakeRegistry()
+    svc = ToolRelayService({})
+    monkeypatch.setattr(svc, "_get_registry", lambda *a, **k: reg)
+    monkeypatch.setattr(
+        ConversationStore, "instance",
+        staticmethod(lambda: (_ for _ in ()).throw(RuntimeError("store down"))))
+
+    result = svc._do_execute(
+        "rid1", "bash", {"command": "echo unsafe"},
+        "alice", "conv1", "agent1")
+
+    assert reg.executed is False
+    assert result["type"] == "result"
+    assert "approval check failed" in result["data"]
+    assert "approval check failed" in result["data"]
+
+
+# ---------------------------------------------------------------------------
+# Code-server WS sessions must use the code session id, not relay id
+# ---------------------------------------------------------------------------
+
+
+def test_code_server_ws_registers_browser_socket_under_session_id(tmp_path, monkeypatch):
+    from core.capability_auth import init_db
+    from services import code_server_proxy as csp
+
+    init_db(tmp_path / "capabilities.db")
+
+    class FakeSock:
+        closed = False
+
+        def sendall(self, data):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    class FakeRelay:
+        def _request(self, action, **kwargs):
+            assert action == "cs_ws_open"
+            return {"ok": True}
+
+    with csp._lock:
+        csp._sessions.clear()
+        csp._relay_to_session.clear()
+
+    session_id, token = csp.register_code_server(
+        "relay-1", 8765, FakeRelay(), owner_user_id="alice")
+    seen = {}
+
+    def fake_ws_recv(sock):
+        with csp._lock:
+            active = csp._sessions[session_id]["cs_ws_sessions"]
+            seen["count"] = len(active)
+            seen["sock"] = next(iter(active.values()))["browser_sock"]
+        return 0x08, b""
+
+    monkeypatch.setattr(csp, "_ws_recv", fake_ws_recv)
+    monkeypatch.setattr(csp, "_send_command_to_relay", lambda *a, **k: None)
+
+    sock = FakeSock()
+    csp.code_ws_proxy(
+        sock,
+        {"session_id": session_id, "token": token, "path": "websocket"},
+        {"auth_user_id": "alice", "remote_addr": "127.0.0.1", "headers": {}, "query": ""},
+    )
+
+    assert seen == {"count": 1, "sock": sock}
+    assert sock.closed is True

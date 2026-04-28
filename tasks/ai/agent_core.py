@@ -1031,6 +1031,49 @@ class AgentCoreMixin:
                                 # display_only NOT persisted — _classify_messages_for_display
                                 # reconstructs tool_call/tool_result from LLM context messages
 
+                    def _cli_block_callback(event_type, payload):
+                        """Persist one live CLI tool block through the writer.
+
+                        Codex emits item.started and item.completed for the
+                        same item. Waiting for turn_callback bundles the
+                        tool_call with the result, leaving no BG/Kill window.
+                        This callback keeps the visible=>persisted invariant by
+                        routing each live block through _append/ConversationWriter.
+                        """
+                        from core.llm_client import LLMToolCall, unwrap_mcp_tool
+
+                        _src = _agent_source()
+                        if event_type == "tool_use":
+                            _raw_name = payload.get("name", "")
+                            _raw_args = payload.get("arguments", {}) or {}
+                            _tool_name, _tool_args = unwrap_mcp_tool(_raw_name, _raw_args)
+                            tc_obj = LLMToolCall(
+                                id=payload.get("id", ""),
+                                name=_tool_name,
+                                arguments=_tool_args,
+                            )
+                            tools_called.append(tc_obj.name)
+                            ctx["_last_tool"] = tc_obj.name
+                            msg = LLMMessage(
+                                role="assistant", content="",
+                                tool_calls=[tc_obj],
+                                thinking=payload.get("thinking", "") or "",
+                                source=_src,
+                                conversation_id=conversation_id)
+                            _append(msg)
+                            return
+
+                        if event_type == "tool_result":
+                            _tool_name = payload.get("tool", "") or ""
+                            _result = payload.get("result", "") or "(no output)"
+                            msg = LLMMessage(
+                                role="tool",
+                                content=self._wrap_tool_output(_tool_name, _result),
+                                tool_call_id=payload.get("tc_id", ""),
+                                conversation_id=conversation_id)
+                            msg._tool_name = _tool_name
+                            _append(msg)
+
                     def _llm_call(msgs, ps=poll_silent):
                         # Per-call identity passed explicitly. Concurrent
                         # compact / memory-extract / sub-agent streams
@@ -1055,6 +1098,7 @@ class AgentCoreMixin:
                                 thinking_budget=_tb,
                                 thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None,
                                 turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "codex", "gemini") else None,
+                                block_callback=_cli_block_callback if _client_provider == "codex" else None,
                                 **_call_kwargs)
                         return client.complete(
                             messages=msgs, model=model or None,

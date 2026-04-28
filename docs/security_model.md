@@ -46,11 +46,10 @@ Use PawFlow secret storage or environment variables for API keys. Never hard-cod
 
 ## Production Checklist
 
-- Enable auth: `PAWFLOW_AUTH_ENABLED=true`.
-- Set a strong `PAWFLOW_SECRET_KEY`.
-- Restrict CORS to trusted origins.
-- Use HTTPS in front of PawFlow and VNC endpoints.
-- Enable rate limiting for public deployments.
+- Run with `PAWFLOW_PUBLIC_MODE=true` or `PAWFLOW_ENV=production` so unsafe boot settings become fatal.
+- Set a strong `PAWFLOW_SECRET_KEY_B64` (preferred) or `PAWFLOW_SECRET_KEY`; do not rely on the dev-only on-disk fallback.
+- Put PawFlow behind HTTPS / a trusted reverse proxy for public access.
+- Enable the private gateway for internet-facing demos.
 - Run untrusted workloads in Docker relay mode.
 - Avoid local desktop mode for public demos.
 - Configure per-agent tool restrictions.

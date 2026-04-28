@@ -656,112 +656,55 @@ scheduler.save_jobs()  # Persist jobs
 scheduler.load_jobs()  # Restore jobs
 ```
 
-### 13.4. REST API (FastAPI)
+### 13.4. Runtime HTTP Listener
 
-10 routers, 85+ endpoints. OpenAPI documentation at `/docs`.
-
-```bash
-python -m api.app --port 8000
-```
-
-| Router | Prefix | Description |
-|--------|--------|-------------|
-| auth | `/api/v1/auth` | Login, users, API keys, OAuth2, roles |
-| flows | `/api/v1/flows` | CRUD flows, validate, import/export |
-| execution | `/api/v1/execution` | Batch, continuous, inject, task actions |
-| monitoring | `/api/v1/monitoring` | Bulletins, provenance, streaming |
-| scheduler | `/api/v1/scheduler` | CRUD CRON jobs |
-| tasks | `/api/v1/tasks` | Types, parameter schemas |
-| workers | `/api/v1/workers` | Remote workers, health |
-| plugins | `/api/v1/plugins` | Install/uninstall/upload/export |
-| system | `/api/v1/system` | Health, info, security status |
-
-**Auth**: Bearer token (session or API key). If auth is disabled, open access.
+The current supported server entrypoint is the PawFlow listener/UI process:
 
 ```bash
-# Login
-TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}' | jq -r .session_id)
-
-# Use
-curl http://localhost:8000/api/v1/flows/ -H "Authorization: Bearer $TOKEN"
+python cli.py start --host 0.0.0.0 --port 9090
 ```
+
+| Route | Description |
+|--------|-------------|
+| `/chat` | Web chat UI |
+| `/admin` | Admin UI |
+| `/ws/relay` | PawFlow relay WebSocket |
+| `/ws/tools/_tool_relay` | Internal tool relay WebSocket |
+| `/vnc/<session>/<token>/...` | Capability-protected VNC/noVNC proxy |
+| `/terminal/<session>/<token>/...` | Capability-protected terminal proxy |
+| `/code/<session>/<token>/...` | Capability-protected code-server proxy |
+| `/fwd/<forward>/<token>/...` | Capability-protected port-forward proxy |
 
 ---
 
 ## 14. GUI - Technical Specifications
 
-### 14.1. GUI Architecture (Streamlit)
+### 14.1. Runtime UI Architecture
 
-```
-gui/
-├── __init__.py
-├── app.py                 # Main entry point
-├── config.py             # Streamlit configuration
-├── editor/               # Creation GUI
-│   ├── __init__.py
-│   ├── app.py           # Editor application
-│   ├── canvas.py        # Flow canvas
-│   ├── properties.py    # Properties panel
-│   └── components/
-│       ├── task_palette.py
-│       ├── flow_editor.py
-│       └── relation_editor.py
-└── runtime/              # Runtime GUI
-    ├── app.py           # Runtime application
-    ├── dashboard.py     # Main dashboard
-    ├── flow_viewer.py   # Flow visualization
-    ├── logs.py          # Log visualization
-    └── metrics.py       # Real-time metrics
-```
+PawFlow exposes the runtime through the listener/UI server and client integrations:
 
-### 14.2. Editor Screens
+| Surface | Description |
+|---|---|
+| Web chat | Main conversation UI at `/chat` |
+| Admin UI | Service, runtime, and configuration UI at `/admin` |
+| PawCode CLI | Terminal client using the same conversation runtime |
+| VS Code extension | Editor client with relay, resources, and approvals |
+| Relay WebSocket | `/ws/relay` for filesystem/exec relay connections |
+| Tool relay WebSocket | `/ws/tools/_tool_relay` for internal tool execution plumbing |
 
-#### 14.2.1. Main Page
-- List of existing flows
-- Create/Import/Export buttons
-- Search and filters
+### 14.2. Main Screens
 
-#### 14.2.2. Flow Canvas
-- Graphical visualization of tasks
-- Drag & drop tasks from the palette
-- Connect tasks via relations
-- Zoom and navigation
+- Conversation view with streaming assistant output, tool calls, tool results, approvals, background tools, and active-agent controls.
+- Admin/resource views for LLM services, relays, provider login, runtime status, and user-scoped resources.
+- Desktop/VNC, terminal, code-server, and port-forward views exposed through capability-protected routes.
 
-#### 14.2.3. Properties Panel
-- Edit parameters of the selected task
-- Real-time validation
-- Data preview
+### 14.3. Runtime Configuration
 
-#### 14.2.4. Service Manager
-- List of available services
-- Create/Edit services
-- Connection testing
-
-### 14.3. Runtime Screens
-
-#### 14.3.1. Main Dashboard
-- Overview of executions
-- Global statistics
-- Alerts and errors
-
-#### 14.3.2. Flow Visualization
-- Real-time task state
-- Data flow
-- Per-task metrics
-
-#### 14.3.3. Logs Viewer
-- Real-time logs
-- Filters and search
-- Log export
-
-#### 14.3.4. Runtime Configuration
-- Variable overrides
-- Parameter configuration
-- Flow deployment
-
----
+- LLM provider services and credentials
+- Relay configuration and exposed workspace directories
+- Approval mode and per-tool permissions
+- Capability-protected browser routes
+- Flow deployment and conversation-scoped parameters
 
 ## 15. Security and Authentication (RBAC)
 
@@ -796,44 +739,35 @@ security.set_oauth_config("google", {
 | **operator** | Execute, monitor |
 | **viewer** | Monitor (read-only) |
 
-### 15.3. REST API Auth
+### 15.3. Listener Auth
 
-The REST API uses middleware that supports:
-- **Bearer session token**: obtained via POST /api/v1/auth/login
-- **API key**: generated via the GUI or the API, grants admin access
-- **Disabled mode**: if auth is disabled, all endpoints are accessible
+The listener authenticates users through PawFlow session cookies/API keys and applies route-level capability tokens for browser-accessible runtime resources such as VNC, terminal, code-server, and port-forward routes.
 
 ---
 
 ## 16. Tests and Quality
 
-**758 tests**, all green.
-
 ```bash
-pytest tests/ -v                    # All tests
-pytest tests/ --cov=core --cov=engine --cov=tasks --cov=api --cov-report=term-missing
+pytest tests/ -v
+pytest tests/ --cov=core --cov=engine --cov=tasks --cov=services --cov-report=term-missing
 ```
 
-### 16.1. Test Files
+### 16.1. Test Areas
 
-| File | Tests | Domain |
-|------|-------|--------|
-| test_executor.py | 23 | FlowExecutor batch |
-| test_continuous_executor.py | 22 | ContinuousFlowExecutor |
-| test_api.py | 39 | REST API |
-| test_security_checkpoint.py | 29 | RBAC + Checkpoint |
-| test_storage_backends.py | 30 | Git, SQLite, Filesystem, StorageManager |
-| test_plugin_system.py | 21 | Plugins + .pfp export |
-| test_streaming.py | 27 | FlowFile streaming + spill |
-| test_new_io_tasks.py | 21 | XML, Email, Slack, SFTP |
-| test_tasks.py | 15 | Base tasks |
-| ... | ... | ... |
+| Area | Domain |
+|------|--------|
+| Engine | FlowExecutor, continuous execution, checkpoints |
+| Services | User services, listener, relay, provider connections |
+| Security | Auth, capabilities, approvals, encrypted secrets |
+| Agents | Compaction, provider dispatch, streaming, tools |
+| Storage | Filesystem, SQLite, Git-backed stores |
+| Media/tools | Image, video, audio, browser, filesystem tools |
 
 ### 16.2. Tools
 
 - **pytest** for tests
 - **pytest-cov** for coverage
-- **FastAPI TestClient** for API tests
+- **ruff** for fatal syntax/import checks
 
 ---
 
@@ -841,37 +775,25 @@ pytest tests/ --cov=core --cov=engine --cov=tasks --cov=api --cov-report=term-mi
 
 ### 17.1. Production Configuration
 
-```yaml
-# config/production.yaml
-storage:
-  type: postgres
-  host: db.example.com
-  port: 5432
-  database: pawflow
-  
-execution:
-  max_workers: 50
-  max_retries: 5
-  timeout: 600
-  
-monitoring:
-  enable_metrics: true
-  enable_tracing: true
-  log_level: INFO
+Set production-critical configuration through environment variables and service definitions:
+
+```bash
+PAWFLOW_ENV=production
+PAWFLOW_PUBLIC_MODE=true
+PAWFLOW_SECRET_KEY_B64=<base64-32-byte-key>
+PAWFLOW_AUTH_ENABLED=true
 ```
 
 ### 17.2. Docker Deployment
 
 ```dockerfile
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
-
 COPY . .
-
 RUN pip install -r requirements.txt
-
-CMD ["streamlit", "run", "gui/runtime/app.py"]
+CMD ["python", "cli.py", "start", "--host", "0.0.0.0", "--port", "9090"]
+```
 ```
 
 ---

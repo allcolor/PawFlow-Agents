@@ -202,7 +202,7 @@ Hyperedges detect group relationships where one entity has the same predicate po
 ```
 > kg_hyperedges()
 Group relationships:
-  PawFlow -> depends_on -> [tree-sitter, FastAPI, SQLAlchemy, Pydantic] (4 objects)
+  PawFlow -> depends_on -> [tree-sitter, pytest, cryptography, Pydantic] (4 objects)
   AuthGateway -> supports_provider -> [Google, GitHub, Microsoft, X, Facebook] (5 objects)
 ```
 
@@ -282,8 +282,8 @@ returns a JSON delta the server merges into the cached graph.
    re-parsed slice).
 5. **Server merges**: drops nodes/edges sourced from re-parsed or
    removed files, appends the new ones.
-6. **No file count cap** — the previous 500-file ceiling was lifted.
-   Memory cost grows roughly linearly with codebase size; tree-sitter
+6. **No file count cap**. Memory cost grows roughly linearly with
+   codebase size; tree-sitter
    itself handles real-world repos in the tens-of-thousands range
    without issue.
 7. **Cache hit**: if nothing changed and nothing was removed, the

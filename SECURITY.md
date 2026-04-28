@@ -20,8 +20,10 @@ does not silently weaken the others.
 - Module: `core/capability_auth.py` (storage), `core/capability_routes.py` (HTTP/WS adapters).
 - Issued at session-register time (`register_session`, `register_terminal`,
   `register_code_server`, `add_forward`, `register_audio_source`).
-- Bound to `(resource_type, resource_id, user_id, conversation_id, login_session_id)`.
-  Verification rejects on any mismatch — a token minted for `vnc` does
+- Bound to `(resource_type, resource_id, user_id, login_session_id)`, and
+  also `conversation_id` when the caller supplies one. Browser routes do
+  not rely on the URL carrying a conversation id; their effective boundary
+  is user + login session + resource + token. A token minted for `vnc` does
   NOT verify against `terminal`, even with the same resource_id.
 - Persisted in `data/runtime/capabilities.json` (atomic JSON store; SQLite
   was avoided because WSL/SMB byte-range locking was unreliable). Active
@@ -46,24 +48,22 @@ does not silently weaken the others.
 - Default: `default` mode — EXEMPT tools auto-approve, ALWAYS_ASK
   tools always prompt, anything in between asks once per session.
 - Production: when the SSE dialog cannot be shown,
-  `ToolApprovalGate.check` returns `denied` (fail-closed). Set
-  `PAWFLOW_APPROVAL_FAIL_OPEN=true` in dev to keep the historical
-  auto-approve-on-bus-failure behaviour. ALWAYS_ASK tools (bash,
-  store_secret, screen, ...) stay denied even when fail-open is on.
+  `ToolApprovalGate.check` returns `denied` (fail-closed). In development,
+  `PAWFLOW_APPROVAL_FAIL_OPEN=true` can be used to allow non-critical tools
+  during UI/event-bus debugging. ALWAYS_ASK tools (bash, store_secret,
+  screen, ...) stay denied even when fail-open is on.
 
 ## Secrets at rest
 
-- New format: `enc:v2:<base64>` (string) or `b"PFSEC2\0" + payload`
+- Format: `enc:v2:<base64>` (string) or `b"PFSEC2\0" + payload`
   (sidecar bytes). AEAD via `cryptography.AESGCM` (default) or
   `ChaCha20Poly1305`.
 - Master key resolution: `PAWFLOW_SECRET_KEY_B64` (raw 32 bytes,
   preferred) → `PAWFLOW_SECRET_KEY` (password, scrypt-derived) →
   generated `data/config/secret.key` (chmod 0600, dev only —
   production refuses to boot with this fallback).
-- Key rotation: `add_key(kid, key)` then `set_current(kid)` rewrites
-  every new payload under the new kid; old kids stay readable.
-- Legacy compatibility: pre-v2 `enc:<base64>` payloads still decrypt
-  (read-only) when the password matches. `encrypt()` always emits v2.
+- Key rotation: `add_key(kid, key)` then `set_current(kid)` writes
+  subsequent payloads under the selected kid.
 - Failure mode: AEAD-auth failure raises `SecretDecryptError`.
   PawFlow never silently returns the ciphertext as a fallback.
 
@@ -84,11 +84,11 @@ boot, `core.security_report.enforce` will:
 | Attacker | Defended by |
 |----------|-------------|
 | Anonymous internet peer | private gateway cookie (`_pf_gw`) + auth |
-| Authenticated user A snooping user B | per-route capability tokens (resource_type + user_id + conversation_id binding) |
+| Authenticated user A snooping user B | per-route capability tokens (resource_type + user_id + login-session/resource binding; conversation binding when available) |
 | Authenticated user A re-using their own URL on user B's resource | capability mismatch — verify rejects 403 |
 | Brute-force token guesser | 256-bit random token + per-IP rate limit |
 | Compromised user session (stolen cookie) | capabilities issued for that login session expire / revoke at logout |
-| Compromised secrets file | AEAD authenticated decrypt; tampering is detected; legacy payloads still readable |
+| Compromised secrets file | AEAD authenticated decrypt; tampering is detected |
 | Untrusted tool author | `read_only` mode (allowlist), approval gate (always-ask for bash/screen/store_secret/…) |
 | Operator misconfiguration in prod | startup security report blocks the boot on weak-key / fail-open |
 
@@ -108,7 +108,7 @@ boot, `core.security_report.enforce` will:
 - `tests/test_capability_auth.py` — issue / verify / revoke / persistence / rate limit.
 - `tests/test_route_security_matrix.py` — cross-user, expired, revoked, forge-cross-resource.
 - `tests/test_tool_approval_phase6.py` — read_only allowlist + fail-closed approval.
-- `tests/test_secrets_v2.py` — AEAD roundtrip, legacy compat, key rotation, tamper detection.
+- `tests/test_secrets_v2.py` — AEAD roundtrip, key rotation, tamper detection.
 - `tests/test_security_report.py` — production-boot policy.
 - `tests/test_user_services.py` — end-to-end resource lifecycle.
 

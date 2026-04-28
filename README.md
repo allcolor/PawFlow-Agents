@@ -38,9 +38,9 @@ cd PawFlow-Agents
 pip install -r requirements.txt
 
 # Start the server
-python cli.py run --flow data/deployments/global/pawflow-agent.json
+python cli.py start --host 0.0.0.0 --port 9090
 
-# Open the web chat at http://localhost:9090
+# Open the web chat at http://localhost:9090/chat
 ```
 
 ### With Docker
@@ -51,7 +51,7 @@ cd PawFlow-Agents
 cp .env.example .env   # edit .env with your secrets
 
 docker compose up -d
-# API available at http://localhost:8000
+# Web chat available at http://localhost:9090/chat
 ```
 
 ### PawCode CLI

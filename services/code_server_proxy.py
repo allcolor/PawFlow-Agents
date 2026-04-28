@@ -213,10 +213,12 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
     fwd_headers["Host"] = f"127.0.0.1:{port}"
     fwd_headers["Origin"] = f"http://127.0.0.1:{port}"
 
-    # Register browser socket BEFORE opening relay WS
+    # Register browser socket BEFORE opening relay WS. _sessions is keyed
+    # by code-server session_id, while _relay_to_session maps relay_id ->
+    # session_id for backend dispatch.
     with _lock:
-        if relay_id in _sessions:
-            _sessions[relay_id]["cs_ws_sessions"][ws_session_id] = {
+        if session_id in _sessions:
+            _sessions[session_id]["cs_ws_sessions"][ws_session_id] = {
                 "browser_sock": client_sock,
             }
 
@@ -233,15 +235,15 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
         if not isinstance(result, dict) or not result.get("ok"):
             err = result.get("error", "Unknown") if isinstance(result, dict) else str(result)
             with _lock:
-                if relay_id in _sessions:
-                    _sessions[relay_id]["cs_ws_sessions"].pop(ws_session_id, None)
+                if session_id in _sessions:
+                    _sessions[session_id]["cs_ws_sessions"].pop(ws_session_id, None)
             _ws_close(client_sock, 4002, f"Failed: {err}")
             return
     except Exception as e:
         logger.warning("Code WS proxy: cs_ws_open failed: %s", e)
         with _lock:
-            if relay_id in _sessions:
-                _sessions[relay_id]["cs_ws_sessions"].pop(ws_session_id, None)
+            if session_id in _sessions:
+                _sessions[session_id]["cs_ws_sessions"].pop(ws_session_id, None)
         _ws_close(client_sock, 4002, f"Failed: {e}")
         return
 
@@ -274,8 +276,8 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
             pass
 
         with _lock:
-            if relay_id in _sessions:
-                _sessions[relay_id]["cs_ws_sessions"].pop(ws_session_id, None)
+            if session_id in _sessions:
+                _sessions[session_id]["cs_ws_sessions"].pop(ws_session_id, None)
         try:
             client_sock.close()
         except Exception:

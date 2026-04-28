@@ -54,7 +54,7 @@ class StreamJsonMode:
             # Start relay (same as interactive PawCode)
             self._relay = RelayThread(
                 self.server_url, self.session_token, self.username,
-                self.directory, self.allow_exec,
+                self.directory,
                 docker_image=self.docker_image,
                 gateway_cookie=self.gateway_cookie,
             )

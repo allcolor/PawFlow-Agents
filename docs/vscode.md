@@ -34,7 +34,7 @@ Open the `pawflow-vscode` folder in VS Code and press `F5` to launch an Extensio
 | `pawflow.serverUrl` | PawFlow server URL, default `http://localhost:9090`. |
 | `pawflow.autoRelay` | Start the workspace relay automatically. |
 | `pawflow.allowExec` | Allow shell execution through the relay. |
-| `pawflow.pythonPath` | Legacy setting; the current relay is TypeScript-native. |
+| `pawflow.pythonPath` | Optional Python interpreter path for Python-backed helper commands. |
 
 ## Shared Runtime
 

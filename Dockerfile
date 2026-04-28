@@ -19,7 +19,7 @@ RUN groupadd -r pawflow && useradd -r -g pawflow -d /app -s /sbin/nologin pawflo
 
 USER pawflow
 
-EXPOSE 8000
+EXPOSE 9090
 
-# Default: run API server
-CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default: run the PawFlow listener/chat runtime.
+CMD ["python", "cli.py", "start", "--host", "0.0.0.0", "--port", "9090"]

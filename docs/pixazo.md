@@ -131,7 +131,7 @@ GET https://gateway.pixazo.ai/v2/requests/status/{request_id}
 | SDXL | Image Gen | all res | Free |
 | SeedVR Upscale | Image/Video Upscale | per gen | Free-$0.001 |
 | Stable Diffusion 3.5 | Text to Image | all res | $0.20 |
-| Stable Diffusion | Legacy models | all res | Free |
+| Stable Diffusion | Classic models | all res | Free |
 | Topaz | Video Upscale | per gen | not listed |
 | Tracks | Music Gen | per gen | not listed |
 | Trellis 3D | 3D Gen | all res | $0.35 |

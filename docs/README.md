@@ -40,13 +40,13 @@
 | [Relay Server Filesystem](relay_server_fs.md) | Relay filesystem server details |
 | [Example: Agent-Created Flow](examples/first_agent_flow.md) | Minimal daily digest flow pattern |
 
-## Historical / Planning
+## Planning and Deep References
 
 | Document | Description |
 |----------|-------------|
-| [Technical Reference](01_DOCUMENTATION_TECHNIQUE.md) | Older comprehensive technical reference |
-| [Tasks & Services Reference](02_REFERENCE_TASKS_SERVICES.md) | Older task/service schema reference |
-| [Roadmap Gaps](ROADMAP_GAPS.md) | Historical gap analysis and planned improvements |
+| [Technical Reference](01_DOCUMENTATION_TECHNIQUE.md) | Detailed technical reference |
+| [Tasks & Services Reference](02_REFERENCE_TASKS_SERVICES.md) | Task/service schema reference |
+| [Roadmap Gaps](ROADMAP_GAPS.md) | Release-readiness gaps and planned improvements |
 
 ## Quick Links
 

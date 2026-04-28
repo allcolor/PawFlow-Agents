@@ -1205,7 +1205,10 @@ class ToolRelayService(BaseService):
                     return {"type": "result", "request_id": request_id,
                             "data": f"Error: Tool '{tool_name}' was {approval} by the user."}
         except Exception as e:
-            logger.warning("Tool approval check failed: %s", e)
+            logger.error("Tool approval check failed; denying tool for safety: %s", e,
+                         exc_info=True)
+            return {"type": "result", "request_id": request_id,
+                    "data": "Error: tool approval check failed; denied for safety."}
 
         # Resolve env vars (all variables + secrets) and secret values (for redaction)
         _secret_values = set()

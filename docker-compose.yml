@@ -2,14 +2,12 @@ services:
   pawflow:
     build: .
     ports:
-      - "${PAWFLOW_PORT}:8000"
+      - "9090:9090"
     environment:
-      - PAWFLOW_CORS_ORIGINS=${PAWFLOW_CORS_ORIGINS}
       - PAWFLOW_SECRET_KEY=${PAWFLOW_SECRET_KEY}
-      - PAWFLOW_AUTH_ENABLED=${PAWFLOW_AUTH_ENABLED}
-      - PAWFLOW_RATE_LIMIT=${PAWFLOW_RATE_LIMIT}
-      - PAWFLOW_RATE_LIMIT_MAX=${PAWFLOW_RATE_LIMIT_MAX}
-      - PAWFLOW_MAX_BODY_SIZE=${PAWFLOW_MAX_BODY_SIZE}
+      - PAWFLOW_SECRET_KEY_B64=${PAWFLOW_SECRET_KEY_B64}
+      - PAWFLOW_ENV=${PAWFLOW_ENV}
+      - PAWFLOW_PUBLIC_MODE=${PAWFLOW_PUBLIC_MODE}
     volumes:
       - ./flows:/app/flows
       - ./config:/app/config
@@ -17,7 +15,7 @@ services:
       - ./plugins:/app/plugins
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/system/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -34,7 +32,7 @@ services:
       # if you want to inspect from outside).
       - /var/lib/pawflow/server-fs:/cc_sessions:rshared
     environment:
-      - PAWFLOW_SERVER=ws://pawflow:8000/ws/relay
+      - PAWFLOW_SERVER=ws://pawflow:9090/ws/relay
       - PAWFLOW_SERVER_MOUNT=/cc_sessions
     # FUSE in a container needs CAP_SYS_ADMIN, /dev/fuse, and an apparmor
     # profile that doesn't sandbox the mount syscall.

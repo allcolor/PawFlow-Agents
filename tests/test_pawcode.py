@@ -31,6 +31,42 @@ class TestPawCodeImports:
         from pawflow_cli.config import load_config, save_config, load_session
         assert load_config is not None
 
+    def test_stream_json_constructs_relay_with_keyword_docker_image(self, monkeypatch):
+        """stream-json must not pass allow_exec as RelayThread's docker_image."""
+        import io
+        import sys
+        from pawflow_cli import stream_json as sj
+
+        captured = {}
+
+        class FakeRelayThread:
+            def __init__(self, *args, **kwargs):
+                captured["args"] = args
+                captured["kwargs"] = kwargs
+
+            def start(self):
+                captured["started"] = True
+
+            def stop(self):
+                captured["stopped"] = True
+
+        class FakeAPI:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        monkeypatch.setattr(sj, "authenticate", lambda *a, **k: {
+            "token": "tok", "username": "alice"})
+        monkeypatch.setattr(sj, "AgentAPIClient", FakeAPI)
+        monkeypatch.setattr(sj, "RelayThread", FakeRelayThread)
+        monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+        monkeypatch.setattr(sys, "stdout", io.StringIO())
+
+        mode = sj.StreamJsonMode("http://server", ".", docker_image="img")
+        assert mode.run() == 0
+        assert captured["args"] == ("http://server", "tok", "alice", mode.directory)
+        assert captured["kwargs"]["docker_image"] == "img"
+        assert captured["started"] is True
+
 
 class TestRelayId:
     """Test relay ID generation consistency."""

@@ -2245,6 +2245,14 @@ class LLMCodexMixin(CodexSessionMixin):
                                     if _parent_tc_id:
                                         _bc_payload["parent_tc_id"] = _parent_tc_id
                                     block_callback("tool_use", _bc_payload)
+                                    # Consumed by block_callback: keep it out
+                                    # of the later turn_callback flush, which
+                                    # would otherwise emit the same tool_call
+                                    # together with a stale/empty result.
+                                    _turn_tool_calls = [
+                                        _tc for _tc in _turn_tool_calls
+                                        if _tc.get("id") != _block_id
+                                    ]
                                     _turn_thinking = ""
                                 except Exception as _bc_err:
                                     logger.error("[codex] block_callback tool_use failed: %s",

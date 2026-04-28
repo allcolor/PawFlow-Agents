@@ -11,17 +11,16 @@ Ce document décrit l'architecture interne de PawFlow, ses composants principaux
 │                              PawFlow Architecture                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  ┌──────────────┐  ┌───────────────────┐  ┌──────────┐  ┌────────────────┐ │
-│  │    Core       │  │      Engine       │  │   GUI    │  │   API REST     │ │
-│  │              │  │                   │  │ Streamlit│  │   FastAPI      │ │
-│  │ FlowFile     │  │ FlowExecutor      │  │ 5 pages  │  │ 10 routeurs    │ │
-│  │ Task/Service │  │ ContinuousExec.   │  │ Canvas   │  │ Auth MW       │ │
-│  │ Flow         │  │ Scheduler (CRON)  │  │ Editor   │  │ 85+ endpoints │ │
-│  │ Connection   │  │ CheckpointMgr     │  │ Monitor  │  │ OpenAPI       │ │
-│  │ Security     │  │ Provenance        │  │          │  │               │ │
-│  │ Plugin       │  │ VersionManager    │  │          │  │               │ │
-│  │ SpillTracker │  │ WorkerCoordinator │  │          │  │               │ │
-│  └──────────────┘  └───────────────────┘  └──────────┘  └────────────────┘ │
+│  ┌──────────────┐  ┌───────────────────┐  ┌──────────────┐  ┌────────────┐ │
+│  │    Core      │  │      Engine       │  │ Listener/UI  │  │  Clients   │ │
+│  │ FlowFile     │  │ FlowExecutor      │  │ /chat /admin │  │ Web / CLI  │ │
+│  │ Task/Service │  │ ContinuousExec.   │  │ WS relay     │  │ VS Code    │ │
+│  │ Flow         │  │ Scheduler (CRON)  │  │ Tool relay   │  │ Relays     │ │
+│  │ Connection   │  │ CheckpointMgr     │  │ Capabilities │  │ Providers  │ │
+│  │ Security     │  │ Provenance        │  │ Proxies      │  │            │ │
+│  │ Plugin       │  │ VersionManager    │  │              │  │            │ │
+│  │ SpillTracker │  │ WorkerCoordinator │  │              │  │            │ │
+│  └──────────────┘  └───────────────────┘  └──────────────┘  └────────────┘ │
 │                                                                              │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │                     Tasks (68) + Services (5)                        │   │
@@ -293,26 +292,26 @@ pm.uninstall("plugin-id")
 
 ---
 
-## API REST (FastAPI)
+## Runtime HTTP Listener
 
-10 routeurs, 85+ endpoints, auth middleware, documentation OpenAPI à `/docs`.
+The runtime exposes a listener/UI server:
 
 ```bash
-python -m api.app --port 8000
+python cli.py start --host 0.0.0.0 --port 9090
 ```
 
-| Routeur | Préfixe | Description |
-|---------|---------|-------------|
-| auth | `/api/v1/auth` | Login, users, API keys, OAuth2 |
-| flows | `/api/v1/flows` | CRUD flows, validate, import/export |
-| execution | `/api/v1/execution` | Batch, continu, inject, task actions |
-| monitoring | `/api/v1/monitoring` | Bulletins, provenance, streaming |
-| scheduler | `/api/v1/scheduler` | CRUD jobs CRON |
-| tasks | `/api/v1/tasks` | Types, schémas de paramètres |
-| workers | `/api/v1/workers` | Register, health, reset |
-| plugins | `/api/v1/plugins` | Install/uninstall/upload |
-| system | `/api/v1/system` | Health, info, security status |
+Important routes:
 
+| Route | Description |
+|---------|-------------|
+| `/chat` | Web chat UI |
+| `/admin` | Admin UI |
+| `/ws/relay` | PawFlow relay WebSocket |
+| `/ws/tools/_tool_relay` | Internal tool relay WebSocket |
+| `/vnc/<session>/<token>/...` | Capability-protected VNC/noVNC proxy |
+| `/terminal/<session>/<token>/...` | Capability-protected terminal proxy |
+| `/code/<session>/<token>/...` | Capability-protected code-server proxy |
+| `/fwd/<forward>/<token>/...` | Capability-protected port-forward proxy |
 ---
 
 ## Scheduler (CRON)
@@ -356,28 +355,14 @@ Le module `engine/cluster.py` fournit un mode cluster pour la coordination multi
 
 ## API Client
 
-Le client Python (`gui/services/api_client.py`) permet de piloter PawFlow depuis la GUI ou des scripts :
-
-```python
-from gui.services.api_client import APIClient
-
-client = APIClient(base_url="http://localhost:8000")
-client.login("admin", "admin")
-
-# Operations sur les flows
-flows = client.list_flows()
-client.start_continuous(flow_id)
-client.inject_flowfile(flow_id, content, attributes)
-```
+UI/runtime integrations use the listener routes above and the PawFlow relay/client APIs shipped in this repository.
 
 ---
 
 ## Deploiement Docker
+## Deploiement Docker
 
-PawFlow fournit un `Dockerfile` et un `docker-compose.yml` pour le deploiement containerise :
+PawFlow fournit un `Dockerfile` et un `docker-compose.yml` pour lancer le listener/UI sur le port `9090`, avec persistance sous `data/` et support des containers provider/relay quand Docker est disponible.
 
-- **api** : Serveur FastAPI (uvicorn) sur le port 8000
-- **gui** : Interface Streamlit sur le port 8501
-- **postgres** (optionnel) : PostgreSQL 16 avec persistence
-
+Voir **[deployment.md](deployment.md)** pour le guide complet.
 Voir **[deployment.md](deployment.md)** pour le guide complet.

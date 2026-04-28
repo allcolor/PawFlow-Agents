@@ -343,8 +343,8 @@ def cmd_start(args):
         except Exception as _cw_err:
             logger.error("ConversationWriter drain failed: %s", _cw_err,
                          exc_info=True)
-        # Nothing we spawned should outlive us. Reap every CC pool +
-        # VNC-login container we created before exiting.
+        # Nothing we spawned should outlive us. Reap provider pools and
+        # server-side provider login containers before exiting.
         _kill_spawned_docker_containers()
         os._exit(0)
 
@@ -352,18 +352,31 @@ def cmd_start(args):
     def _kill_spawned_docker_containers():
         """Hard-kill all containers this PawFlow server spawned.
 
-        Covers: pf-cc-pool-* (ClaudeCodePool) and
-                pawflow-claude-login-* (VNC login sessions).
+        Covers provider pool containers (`pf-*-pool-*`) and server-side
+        login containers (`pawflow-*-login-*`) for Claude Code, Codex, and
+        Gemini.
         """
-        try:
-            from core.claude_code_pool import ClaudeCodePool
-            ClaudeCodePool.instance().shutdown()
-        except Exception:
-            pass
+        for _pool_mod, _pool_cls in (
+            ("core.claude_code_pool", "ClaudeCodePool"),
+            ("core.codex_pool", "CodexPool"),
+            ("core.gemini_pool", "GeminiPool"),
+        ):
+            try:
+                import importlib as _importlib
+                getattr(_importlib.import_module(_pool_mod), _pool_cls).instance().shutdown()
+            except Exception:
+                pass
         try:
             import subprocess as _sp
             from core.docker_utils import docker_cmd
-            for _prefix in ("pf-cc-pool-", "pawflow-claude-login-"):
+            for _prefix in (
+                "pf-cc-pool-",
+                "pf-codex-pool-",
+                "pf-gemini-pool-",
+                "pawflow-claude-login-",
+                "pawflow-codex-login-",
+                "pawflow-gemini-login-",
+            ):
                 try:
                     _r = _sp.run(
                         docker_cmd() + ["ps", "-a", "-q",

@@ -39,7 +39,7 @@ Secrets are checked before parameters (first match wins):
 2. **User secrets** -- per-user encrypted secrets (`config/users/{username}/secrets.json`)
 3. **Global secrets** -- shared encrypted secrets (`config/global_secrets.json`)
 
-The overall resolution order is: **secrets cascade** -> **parameters cascade** -> **legacy variables**.
+The overall resolution order is: **secrets cascade** -> **parameters cascade** -> **runtime variables**.
 
 ### Forcing a Specific Scope
 

@@ -1,22 +1,22 @@
 # LLM Providers
 
-PawFlow can run agents through both direct API providers and CLI-backed coding agents. Providers are selected per agent through the `llm_service` field, so different agents in the same conversation can use different backends.
+PawFlow can run agents through direct HTTP APIs and through CLI-backed coding agents. Agents reference an LLM service by id, so different agents in the same conversation can use different backends.
 
 ## Provider Types
 
-| Provider | Mode | Best for | Notes |
+| Provider | Mode | Typical use | Notes |
 |---|---|---|---|
-| `openai` | Direct API | General agents, JSON mode, OpenAI-compatible endpoints | Supports `base_url` for local/self-hosted or compatible APIs. |
-| `anthropic` | Direct API | Claude API agents, vision, extended thinking | Uses Anthropic messages/tool APIs. |
-| Claude Code | CLI subprocess/container | Coding agents with Claude Code session semantics | Uses MCP/tool bridge and can run containerized. |
-| Codex CLI | CLI subprocess/container | Coding agents using Codex sessions | Uses per-user/conversation session state and a Codex container pool. |
-| Gemini CLI | CLI subprocess/container | Gemini-backed coding agents | Uses Gemini CLI session state and streaming. |
+| `openai` | Direct API | OpenAI and OpenAI-compatible endpoints | Set `api_key`, optional `base_url`, and `default_model`. |
+| `anthropic` | Direct API | Claude API agents | Set `api_key`, optional `base_url`, and `default_model`. |
+| `claude-code` / Claude Code | CLI container or subprocess | Coding agents using Claude Code sessions | Uses Claude credentials, session resume, and PawFlow tool bridge. |
+| `codex` / Codex CLI | CLI container or subprocess | Coding agents using Codex sessions | Uses Codex/OpenAI credentials and a Codex pool. |
+| `gemini` / Gemini CLI | CLI container or subprocess | Gemini-backed coding agents | Uses Gemini credentials, stream-json output, and Gemini session files. |
 
-The direct API providers are normal HTTP clients. The CLI providers launch and manage a provider CLI process, keep session metadata, and route tools through PawFlow's relay/MCP bridge where applicable.
+Direct API providers are normal HTTP clients. CLI providers launch a provider CLI, keep provider-specific session state, and route tools through PawFlow's relay/MCP bridge.
 
 ## Agent Configuration
 
-Agents reference an LLM service by id:
+Agents reference a service id:
 
 ```json
 {
@@ -29,7 +29,7 @@ Agents reference an LLM service by id:
 }
 ```
 
-The service id can also be resolved through the expression cascade:
+The service id can also be resolved through parameters:
 
 ```json
 {
@@ -39,47 +39,125 @@ The service id can also be resolved through the expression cascade:
 
 Resolution order is flow -> conversation -> user -> global -> environment.
 
-## OpenAI-Compatible Endpoints
+## LLM Service Fields
 
-For OpenAI-compatible providers, configure `base_url` on the LLM service. This is the preferred path for local/self-hosted model servers such as vLLM, LM Studio, Ollama-compatible gateways, or commercial APIs that expose an OpenAI-compatible surface.
+Common fields:
+
+| Field | Required | Description |
+|---|---:|---|
+| `provider` | yes | Provider name: `openai`, `anthropic`, `claude-code`, `codex`, `gemini`, or compatible aliases. |
+| `default_model` / `model` | yes | Model used when the agent does not override it. |
+| `api_key` | provider-dependent | API key or credential reference for direct API providers and key-based CLI auth. |
+| `base_url` | no | Alternate API endpoint. For Codex/OpenAI-compatible providers this maps to `OPENAI_BASE_URL`; for Gemini it maps to `GEMINI_BASE_URL`. |
+| `docker_image` | CLI providers | Container image used for server-side CLI sessions and pools. |
+| `max_context_size` | yes for CLI providers unless the CLI reports the window | Authoritative context window. PawFlow must not guess a hard default. |
+| `compact_target_tokens` | no | Target size after compaction. |
+| `compact_threshold_pct` | no | `0` disables proactive compaction. A positive value triggers compaction at that percentage of `max_context_size`. |
+| `token_multiplier` | no | Optional conservative multiplier for provider token estimates. |
+
+For context windows, the rule is strict: if the provider API/CLI reports the context window, that value is authoritative. Otherwise `max_context_size` from the LLM service is authoritative. If neither exists, the service is misconfigured and should fail loudly instead of using a hidden default.
+
+## Direct API Example
 
 ```json
 {
   "type": "llmConnection",
   "provider": "openai",
   "api_key": "${OPENAI_API_KEY}",
-  "base_url": "http://localhost:8000/v1",
-  "model": "local-model"
+  "base_url": "https://api.openai.com/v1",
+  "default_model": "gpt-5.5",
+  "max_context_size": 400000
 }
 ```
 
-## CLI Provider Sessions
+For local or compatible endpoints, change `base_url`:
 
-CLI-backed providers have extra lifecycle concerns:
+```json
+{
+  "type": "llmConnection",
+  "provider": "openai",
+  "api_key": "${LOCAL_OPENAI_API_KEY}",
+  "base_url": "http://localhost:8000/v1",
+  "default_model": "local-model",
+  "max_context_size": 128000
+}
+```
 
-- session directories are keyed by user, conversation, and agent;
-- invalidating a conversation clears stale Claude Code, Codex, and Gemini resume pointers;
-- live Codex/Gemini/Claude containers can be evicted when an agent or conversation is reset;
-- container pools enforce CPU, memory, idle timeout, and max active container settings.
+## Claude Code
 
-Relevant implementation areas:
+Claude Code can authenticate with an Anthropic API key or with its normal CLI login state.
 
-- `core/llm_providers/claude_code.py`
-- `core/llm_providers/codex.py`
-- `core/llm_providers/gemini.py`
-- `core/claude_code_pool.py`
-- `core/codex_pool.py`
-- `core/gemini_pool.py`
+Credential inputs:
+
+- `ANTHROPIC_API_KEY` or service `api_key`
+- `ANTHROPIC_BASE_URL` or service `base_url` when using a compatible Anthropic endpoint
+- Claude Code OAuth/session files when using CLI login
+
+Login options:
+
+1. `set_credentials`: paste or store an API key/session payload on the LLM service.
+2. Server login: PawFlow starts a tokenized VNC login session on the PawFlow server. The resulting URL is capability-protected and stores credentials back on the service.
+3. Relay login: a PawFlow relay runs the provider login on the user's relay host and returns the credential payload.
+
+Container notes:
+
+- Build/use an image containing the Claude CLI, Python, Git, and the PawFlow bridge.
+- Server-side login containers are named `pawflow-claude-login-*`.
+- Pool containers are named `pf-cc-pool-*`.
+
+## Codex CLI
+
+Codex uses OpenAI/Codex credentials and Codex session state.
+
+Credential inputs:
+
+- `CODEX_API_KEY` preferred when available
+- `OPENAI_API_KEY` for OpenAI-compatible Codex auth
+- `OPENAI_BASE_URL` from service `base_url` for compatible endpoints
+- Codex CLI login files when using OAuth/login mode
+
+Login options are the same as Claude Code: `set_credentials`, server login, or relay login. Server login containers are named `pawflow-codex-login-*`; pool containers are named `pf-codex-pool-*`.
+
+Operational notes:
+
+- Configure `max_context_size` on the service unless the Codex CLI reports the model context window.
+- `compact_threshold_pct=0` means no proactive compaction; use a positive percentage such as `90` to compact before the provider hard limit.
+- Preemption uses kill/resume semantics for long-running Codex turns.
+
+## Gemini CLI
+
+Gemini uses either API-key auth or Gemini CLI OAuth state.
+
+Credential inputs:
+
+- `GEMINI_API_KEY` or service `api_key`
+- `GEMINI_BASE_URL` from service `base_url` when using a compatible endpoint
+- Gemini CLI OAuth files such as `settings.json` and `oauth_creds.json`
+
+Login options are the same as other CLI providers: `set_credentials`, server login, or relay login. Server login containers are named `pawflow-gemini-login-*`; pool containers are named `pf-gemini-pool-*`.
+
+Operational notes:
+
+- Gemini sessions live under the Gemini CLI tmp/chat layout, not the Claude/Codex project layout.
+- Gemini stream-json is one-shot stdin. Preemption kills the active process and resumes from the provider session; it should not write to a closed stdin.
+- Configure `max_context_size` unless the Gemini CLI reports the context window.
 
 ## Tooling Differences
 
 | Capability | Direct API providers | CLI providers |
 |---|---|---|
-| Tool calls | Native tool/function calling through PawFlow | Provider CLI + PawFlow bridge/MCP where applicable |
-| Conversation state | PawFlow builds context | Provider CLI may keep/resume its own session |
-| Preemption | Messages are queued until turn completion | Some CLI providers can receive injected/preemptive messages |
-| Containerization | Not needed | Recommended for isolation and reproducibility |
-| Per-agent model switch | Service/model config | Provider CLI args/config |
+| Tool calls | Native PawFlow tool/function calling | Provider CLI plus PawFlow bridge/MCP where applicable |
+| Conversation state | PawFlow builds the context | Provider CLI may keep and resume its own session |
+| Preemption | Queued or provider-specific | Provider-specific; Claude can stream control, Codex/Gemini use kill/resume where needed |
+| Containerization | Optional | Recommended for isolation and reproducibility |
+| Context window | API/model metadata or service config | CLI-reported window or mandatory service `max_context_size` |
+
+## Security Notes
+
+- CLI providers are powerful coding agents. Run them in containers for public or multi-user deployments.
+- Browser-accessible provider login, code-server, terminal, VNC, and port-forward URLs should be capability-token protected.
+- Relays expose only the directory passed to the relay. Execution on a relay must remain an explicit `--allow-exec` decision by the user/operator.
+- Secrets should be stored through PawFlow secret storage, not committed in deployment JSON.
 
 ## Documentation Checklist For New Providers
 
@@ -88,10 +166,10 @@ When adding a provider, document:
 1. service type and required secrets;
 2. supported model names and default model;
 3. whether it is direct API or CLI-backed;
-4. streaming support;
-5. tool calling support;
-6. vision/file support;
+4. login modes and credential file locations;
+5. streaming and tool-call behavior;
+6. preemption/resume behavior;
 7. session persistence behavior;
-8. container requirements;
-9. cost tracking behavior;
+8. container requirements and image names;
+9. context-window source and compaction behavior;
 10. known limitations.

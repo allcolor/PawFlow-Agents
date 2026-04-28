@@ -37,7 +37,7 @@ PawFlow runs directly on the host. No containers.
 ### Start
 
 ```bash
-python cli.py --port 9090
+python cli.py start --host 0.0.0.0 --port 9090
 ```
 
 ### Claude Code
@@ -64,7 +64,7 @@ bash docker/claude-code/build.sh   # pawflow-claude-code:latest
 bash docker/relay-dev/build.sh     # pawflow-relay-dev:latest
 
 # Start PawFlow
-python cli.py --port 9090
+python cli.py start --host 0.0.0.0 --port 9090
 ```
 
 Enable containerization per service in the admin panel:
@@ -190,7 +190,7 @@ spec:
             - python3
             - /opt/pawflow/pawflow_relay.py
             - --server
-            - ws://localhost:9091/ws/relay
+            - ws://localhost:9090/ws/relay
             - --token
             - $(RELAY_TOKEN)
             - --relay-id
@@ -237,7 +237,7 @@ spec:
       "name": "relay",
       "image": "pawflow-relay-dev:latest",
       "command": ["python3", "/opt/pawflow/pawflow_relay.py",
-                   "--server", "ws://localhost:9091/ws/relay",
+                   "--server", "ws://localhost:9090/ws/relay",
                    "--dir", "/workspace", "--allow-exec"],
       "mountPoints": [{"sourceVolume": "shared-data", "containerPath": "/workspace"}]
     }
@@ -275,7 +275,7 @@ services:
       - python3
       - /opt/pawflow/pawflow_relay.py
       - --server
-      - ws://pawflow:9091/ws/relay
+      - ws://pawflow:9090/ws/relay
       - --token
       - ${RELAY_TOKEN}
       - --relay-id

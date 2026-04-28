@@ -74,7 +74,7 @@ First public release.
 - 2589 tests
 
 ### Security
-- Secrets encrypted at rest (XOR + PBKDF2 + HMAC)
+- Secrets encrypted at rest with AEAD v2
 - PBKDF2 password hashing (600K iterations)
 - `config/secret.key` excluded from version control
 - Configurable CORS, rate limiting, request size limits

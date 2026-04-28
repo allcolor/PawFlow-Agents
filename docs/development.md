@@ -214,55 +214,26 @@ pm.install("my-plugin-1.0.0.pfp")
 pm.load_all()
 ```
 
-Or via the REST API:
-```bash
-curl -X POST http://localhost:8000/api/v1/plugins/upload \
-  -F "file=@my-plugin-1.0.0.pfp" \
-  -H "Authorization: Bearer <token>"
-```
+Plugin upload is currently managed through the Python plugin APIs above. Add a documented HTTP endpoint only when it is implemented in the listener runtime.
 
 ---
 
-## REST API
+## Runtime Server
 
-The API is accessible at `http://localhost:8000` with Swagger documentation at `/docs`.
-
-### Start the API
+The public server entrypoint is the PawFlow listener/UI process:
 
 ```bash
-python -m api.app                    # port 8000
-python -m api.app --port 9000        # custom port
-python -m api.app --reload           # dev mode
+python cli.py start --host 0.0.0.0 --port 9090
 ```
 
-### Authentication
+Useful local URLs:
 
-```bash
-# Login (if auth is enabled)
-TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}' | jq -r .session_id)
-
-# Use the token
-curl http://localhost:8000/api/v1/flows/ -H "Authorization: Bearer $TOKEN"
-
-# Or use an API key
-curl http://localhost:8000/api/v1/flows/ -H "Authorization: Bearer <api_key>"
-```
-
-### Main endpoints
-
-| Prefix | Description |
-|--------|-------------|
-| `/api/v1/auth` | Login, logout, users, API keys, OAuth2, roles |
-| `/api/v1/flows` | CRUD flows, validate, import/export |
-| `/api/v1/execution` | Batch, continuous (start/stop/inject), task actions |
-| `/api/v1/monitoring` | Bulletins, provenance, streaming stats |
-| `/api/v1/scheduler` | CRUD CRON jobs, start/stop scheduler |
-| `/api/v1/tasks` | Task/service types and parameter schemas |
-| `/api/v1/workers` | Remote workers, health, register/unregister |
-| `/api/v1/plugins` | Install/uninstall/upload plugins |
-| `/api/v1/system` | Health, info, security status |
+| URL | Description |
+|---|---|
+| `http://localhost:9090/chat` | Web chat UI |
+| `http://localhost:9090/admin` | Admin UI |
+| `ws://localhost:9090/ws/relay` | PawFlow relay WebSocket |
+| `ws://localhost:9090/ws/tools/_tool_relay` | Internal tool relay WebSocket |
 
 ---
 
@@ -318,20 +289,16 @@ The FlowParser handles the `parameters` wrapping for JSON files, but tasks alway
 
 ---
 
-## Completed phases
+## Implementation Areas
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1 | Core (FlowFile, Task, Service, Flow, Executor) | ✅ Done |
-| 2 | Base tasks (log, replaceText, getFile, putFile, etc.) | ✅ Done |
-| 3 | Expression Language (`${...}`, Jinja2) | ✅ Done |
-| 4 | +30 tasks (SQL, JSON, CSV, cache, compress, etc.) | ✅ Done |
-| 5 | Services (DB, Cache, HTTP, LLM) | ✅ Done |
-| 6 | Runtime (continuous, scheduler, connections, backpressure) | ✅ Done |
-| 7 | Streamlit GUI (5 pages), CLI | ✅ Done |
-| 8 | Remote workers, streaming, plugins | ✅ Done |
-| 9 | Security (RBAC, OAuth2, sessions, API keys) | ✅ Done |
-| 10 | REST API (FastAPI, 85+ endpoints, auth middleware) | ✅ Done |
-| 10b | API Client, cluster mode, storage backends, NiFi converter | ✅ Done |
-| 11 | Docker deployment (Dockerfile, docker-compose, documentation) | ✅ Done |
-| 12 | Production hardening, observability, scaling | Planned |
+| Area | Description |
+|-------|-------------|
+| Core | FlowFile, Task, Service, Flow, Executor |
+| Tasks | Built-in data, filesystem, media, browser, and AI tasks |
+| Expression Language | `${...}` syntax, scope selection, operators, defaults |
+| Services | DB, cache, HTTP listener, LLM providers, relays |
+| Runtime | Continuous execution, scheduler, connections, backpressure |
+| UI and clients | Web chat, admin UI, PawCode CLI, VS Code extension |
+| Security | Auth, sessions, API keys, approvals, capabilities, encrypted secrets |
+| Deployment | Dockerfile, docker-compose, sidecar/local modes |
+| Observability | Logs, security report, runtime status, targeted tests |

@@ -2,6 +2,7 @@
 
 import json
 import queue
+import socket
 import threading
 import time
 import urllib.request
@@ -33,6 +34,19 @@ def _create_test_session():
 def _auth_headers(token):
     """Return headers dict with auth cookie."""
     return {"Cookie": f"pawflow_token={token}"}
+
+
+def _create_expired_test_session():
+    """Create an expired SecurityManager session and return the token."""
+    from core.security import SecurityManager, Role
+    sm = SecurityManager.get_instance()
+    if "expired_user" not in sm._users:
+        sm.create_user("expired_user", "test", Role.ADMIN)
+    user = sm.get_user("expired_user")
+    session = sm._create_session(user)
+    session.expires_at = time.time() - 10
+    sm._save_sessions()
+    return session.session_id
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +495,65 @@ class TestValidateHTTPAuthTask:
 # ---------------------------------------------------------------------------
 
 class TestHTTPListenerIntegration:
+
+    def test_listener_rejects_expired_http_session_before_route_dispatch(self):
+        """The central listener auth must not accept expired sessions.
+
+        SecurityManager.get_session() returns expired Session objects so
+        callers can try OAuth refresh; HTTPListenerService does not run
+        that refresh flow, so it must reject and revoke them instead of
+        stamping auth_user_id on sensitive route requests.
+        """
+        port = 19931
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+        svc.connect()
+        try:
+            token = _create_expired_test_session()
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/secure",
+                method="GET",
+                headers={"Cookie": f"pawflow_token={token}",
+                         "Accept": "application/json"},
+            )
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                urllib.request.urlopen(req, timeout=5)
+            assert exc.value.code == 401
+        finally:
+            svc.disconnect()
+
+    def test_listener_rejects_expired_websocket_session_before_upgrade(self):
+        port = 19932
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+        svc.connect()
+        try:
+            token = _create_expired_test_session()
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+                sock.sendall((
+                    "GET /ws/secure HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{port}\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                    "Sec-WebSocket-Version: 13\r\n"
+                    f"Cookie: pawflow_token={token}\r\n"
+                    "\r\n"
+                ).encode("ascii"))
+                data = sock.recv(1024)
+            assert b"401 Unauthorized" in data
+        finally:
+            svc.disconnect()
+
+    def test_builtin_health_endpoint_is_public(self):
+        port = 19933
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+        svc.connect()
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/health", timeout=5) as resp:
+                assert resp.status == 200
+                assert json.loads(resp.read().decode()) == {"ok": True}
+        finally:
+            svc.disconnect()
 
     def test_full_cycle(self):
         """Test: HTTP request -> httpReceiver -> handleHTTPResponse -> HTTP response."""

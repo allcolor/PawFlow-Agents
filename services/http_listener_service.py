@@ -283,6 +283,16 @@ class _RequestHandler(BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         query = self.path.split('?', 1)[1] if '?' in self.path else ""
 
+        # Built-in health endpoint for container/orchestrator checks. Keep it
+        # before auth/gateway routing; it returns no sensitive state.
+        if method == "GET" and path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return
+
         # Match route upfront to know if it's public (skip auth/gateway)
         # and/or private-only (reject external IPs).
         _match = self.server._route_registry.match(method, path)
@@ -325,6 +335,14 @@ class _RequestHandler(BaseHTTPRequestHandler):
                     if auth_header and auth_header.lower().startswith("bearer "):
                         token = auth_header[7:].strip()
                 session = sm.get_session(token) if token else None
+                if (session is not None and session is not True
+                        and getattr(session, "is_expired", False)):
+                    logger.info("Expired session rejected for %s", path)
+                    try:
+                        sm.logout(token)
+                    except Exception:
+                        logger.debug("expired session cleanup failed", exc_info=True)
+                    session = None
                 if not session and token:
                     session = True if sm.validate_api_key(token) else None
                 if not session:
@@ -1000,6 +1018,17 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                         sock.close()
                         return
                     _ws_session = sm.get_session(ws_token)
+                    if (_ws_session is not None
+                            and getattr(_ws_session, "is_expired", False)):
+                        logger.info("[ws] rejected %s on %s: expired session",
+                                    _remote, path)
+                        try:
+                            sm.logout(ws_token)
+                        except Exception:
+                            logger.debug("expired WS session cleanup failed", exc_info=True)
+                        sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
+                        sock.close()
+                        return
                     if _ws_session is not None:
                         _ws_auth_user_id = getattr(_ws_session, "username", "") or ""
                         _r = getattr(_ws_session, "role", None)

@@ -45,7 +45,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          pytest tests/ -x -q --tb=short --ignore=tests/test_http_listener.py
+          pytest tests/ -x -q --tb=short
 
   lint:
     runs-on: ubuntu-latest

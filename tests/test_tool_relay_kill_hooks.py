@@ -28,23 +28,24 @@ def _reset_inflight():
 
 def _make_inflight(rid: str, conv: str = "c1", agent: str = "claude"):
     cancel = threading.Event()
+    background = threading.Event()
     hooks: list = []
     ToolRelayService._inflight[rid] = {
         "conv": conv, "agent": agent,
-        "cancel": cancel, "kill_hooks": hooks,
+        "cancel": cancel, "background": background, "kill_hooks": hooks,
         "tool_name": "bash",
     }
-    return cancel, hooks
+    return cancel, background, hooks
 
 
 def test_cancel_agent_sets_cancel_event():
-    cancel, _ = _make_inflight("r1")
+    cancel, _, _ = _make_inflight("r1")
     ToolRelayService.cancel_agent("c1", "claude")
     assert cancel.is_set()
 
 
 def test_cancel_agent_invokes_kill_hooks():
-    cancel, hooks = _make_inflight("r1")
+    cancel, _, hooks = _make_inflight("r1")
     fired = []
     hooks.append(lambda: fired.append("a"))
     hooks.append(lambda: fired.append("b"))
@@ -53,8 +54,8 @@ def test_cancel_agent_invokes_kill_hooks():
 
 
 def test_cancel_agent_skips_other_conversations():
-    cancel_a, hooks_a = _make_inflight("rA", conv="cA")
-    cancel_b, hooks_b = _make_inflight("rB", conv="cB")
+    cancel_a, _, hooks_a = _make_inflight("rA", conv="cA")
+    cancel_b, _, hooks_b = _make_inflight("rB", conv="cB")
     fired = []
     hooks_a.append(lambda: fired.append("A"))
     hooks_b.append(lambda: fired.append("B"))
@@ -65,8 +66,8 @@ def test_cancel_agent_skips_other_conversations():
 
 
 def test_cancel_agent_skips_other_agents():
-    cancel_a, hooks_a = _make_inflight("rA", agent="claude")
-    cancel_b, hooks_b = _make_inflight("rB", agent="qwen")
+    cancel_a, _, hooks_a = _make_inflight("rA", agent="claude")
+    cancel_b, _, hooks_b = _make_inflight("rB", agent="qwen")
     fired = []
     hooks_a.append(lambda: fired.append("claude"))
     hooks_b.append(lambda: fired.append("qwen"))
@@ -75,7 +76,7 @@ def test_cancel_agent_skips_other_agents():
 
 
 def test_kill_hook_failure_does_not_block_others():
-    _, hooks = _make_inflight("r1")
+    _, _, hooks = _make_inflight("r1")
     fired = []
     def _bad():
         raise RuntimeError("boom")
@@ -84,6 +85,12 @@ def test_kill_hook_failure_does_not_block_others():
     # Must not raise
     ToolRelayService.cancel_agent("c1", "claude")
     assert fired == ["after"]
+
+
+def test_background_by_tc_id_matches_request_id_without_provider_tc_id():
+    _, background, _ = _make_inflight("rid-no-provider")
+    assert ToolRelayService.background_by_tc_id("rid-no-provider") is True
+    assert background.is_set()
 
 
 def test_register_kill_hook_appends_to_thread_local_list():

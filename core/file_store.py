@@ -556,13 +556,9 @@ class FileStore:
         return self._base_dir / "_index.json"
 
     def _save_index(self):
-        # Hold `_store_lock` across the ENTIRE write+rename, not just the
-        # data-build step. Without it, concurrent _save_index calls (codex
-        # bulk-deletes 42 tool result files at end of turn, each triggers
-        # a save) race on the same `_index.tmp` file: thread A writes,
-        # thread B overwrites, A renames (ok), B renames → PermissionError
-        # (WinError 5 on Windows + WSL UNC mount, where the kernel holds
-        # the dst handle for tens of ms after the first replace).
+        # Hold `_store_lock` across the entire write+replace sequence. End-of-turn
+        # cleanup can delete many tool-result files in quick succession, and each
+        # deletion saves the shared index.
         with self._store_lock:
             try:
                 data = {
@@ -583,11 +579,36 @@ class FileStore:
                     for fid, e in self._entries.items()
                 }
                 path = self._index_path()
-                tmp = path.with_suffix(".tmp")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_name(
+                    f"{path.name}.{os.getpid()}.{threading.get_ident()}."
+                    f"{uuid.uuid4().hex}.tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-                tmp.replace(path)
+                self._replace_index_tmp(tmp, path)
             except Exception as e:
                 logger.error("FileStore: failed to save index: %s", e)
+
+    @staticmethod
+    def _replace_index_tmp(tmp: Path, path: Path):
+        """Replace the index, tolerating short-lived Windows file handles."""
+        last_err: Optional[Exception] = None
+        try:
+            for attempt in range(8):
+                try:
+                    tmp.replace(path)
+                    return
+                except PermissionError as exc:
+                    last_err = exc
+                    time.sleep(0.025 * (attempt + 1))
+            raise last_err if last_err else RuntimeError(
+                "FileStore: index replace failed without an exception")
+        finally:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                logger.debug("FileStore: failed to remove temp index %s", tmp,
+                             exc_info=True)
 
     def _load_index(self):
         path = self._index_path()

@@ -181,6 +181,22 @@ class AgentLoopTask(
             return key in inst._active_contexts
 
     @classmethod
+    def is_conversation_active(cls, conversation_id: str) -> bool:
+        """True while any foreground agent turn is active for a conversation."""
+        if not conversation_id:
+            return False
+        inst = cls._live_instance
+        if not inst:
+            return False
+        with inst._active_lock:
+            if inst._active_conversations.get(conversation_id, 0) > 0:
+                return True
+        prefix = f"{conversation_id}:"
+        with inst._active_contexts_lock:
+            return any(k == conversation_id or k.startswith(prefix)
+                       for k in inst._active_contexts)
+
+    @classmethod
     def wake_agent(cls, conversation_id: str, agent_name: str,
                    reason: str = "", user_id: str = "", delay: float = 1.0):
         """Trigger an agent turn — no-op if it's already running.

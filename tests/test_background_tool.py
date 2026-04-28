@@ -7,6 +7,7 @@ Covers:
   - Placeholder/result/kill text shape (English, rule enforced)
 """
 
+import threading
 import time
 from unittest.mock import patch
 
@@ -115,3 +116,47 @@ def test_snapshot_does_not_consume_queue():
     bg.snapshot_cc_pending("c", "a")
     # Pop still works after multiple snapshots
     assert bg.pop_cc_tc("c", "a", "tool", h) == "toolu_X"
+
+
+def test_tool_relay_auto_backgrounds_without_provider_tc_id(monkeypatch):
+    """A long MCP/tool-relay call must not wait for a provider tool id.
+
+    Some callers only have the MCP request_id. The relay still has to return
+    a background placeholder before the outer transport timeout and inject the
+    real result when the worker finishes.
+    """
+    _reset_state()
+    from services.tool_relay_service import ToolRelayService
+
+    svc = ToolRelayService({})
+    monkeypatch.setattr(svc, "_auto_bg_after_seconds", 0.05)
+
+    release = threading.Event()
+    injected = []
+
+    def _slow_execute(request_id, tool_name, arguments, user_id, conversation_id, agent_name):
+        release.wait(timeout=2)
+        return {"type": "result", "request_id": request_id, "data": "done"}
+
+    def _capture_inject(tc_id, result_text, is_cancel=False):
+        injected.append((tc_id, result_text, is_cancel))
+
+    monkeypatch.setattr(svc, "_do_execute", _slow_execute)
+    monkeypatch.setattr(bg, "_inject_result", _capture_inject)
+
+    started = time.time()
+    result = svc._handle_execute(
+        "rid-no-provider-tc", "bash", {"command": "slow"},
+        "alice", "conv1", "agent1")
+    elapsed = time.time() - started
+
+    assert elapsed < 0.8
+    assert result["type"] == "result"
+    assert "[Running in background (tc_id=rid-no-provider-tc)]" in result["data"]
+
+    release.set()
+    deadline = time.time() + 2
+    while time.time() < deadline and not injected:
+        time.sleep(0.01)
+
+    assert injected == [("rid-no-provider-tc", "done", False)]

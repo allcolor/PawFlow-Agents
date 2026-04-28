@@ -164,6 +164,49 @@ class BgBucketBuilder:
         # decision changes — otherwise every shared write prints a
         # line.
         self._last_trigger_log: Dict[str, str] = {}
+        # Foreground user turns have priority over maintenance LLM work.
+        # maybe_trigger defers while a conversation is starting/running.
+        self._foreground_until: Dict[str, float] = {}
+        self._deferred_timers: Dict[str, threading.Timer] = {}
+
+    def note_foreground_activity(self, cid: str, seconds: float = 30.0) -> None:
+        """Mark a conversation as foreground-hot so bg jobs yield briefly."""
+        if not cid:
+            return
+        until = time.monotonic() + max(0.0, float(seconds))
+        with self._pending_lock:
+            self._foreground_until[cid] = max(
+                self._foreground_until.get(cid, 0.0), until)
+
+    def _foreground_active(self, cid: str) -> bool:
+        now = time.monotonic()
+        with self._pending_lock:
+            until = self._foreground_until.get(cid, 0.0)
+            if until and until <= now:
+                self._foreground_until.pop(cid, None)
+                until = 0.0
+        if until > now:
+            return True
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            return AgentLoopTask.is_conversation_active(cid)
+        except Exception:
+            return False
+
+    def _defer_trigger(self, cid: str, user_id: str, delay: float = 5.0) -> None:
+        def _run_deferred():
+            with self._pending_lock:
+                self._deferred_timers.pop(cid, None)
+            self.maybe_trigger(cid, user_id)
+
+        with self._pending_lock:
+            timer = self._deferred_timers.get(cid)
+            if timer is not None and timer.is_alive():
+                return
+            timer = threading.Timer(delay, _run_deferred)
+            timer.daemon = True
+            self._deferred_timers[cid] = timer
+        timer.start()
 
     def set_summarizer_resolver(
             self, resolver: Callable[[str], Tuple]) -> None:
@@ -387,6 +430,12 @@ class BgBucketBuilder:
                 f"below both triggers: seq_gap={seq_gap}<{msg_threshold} "
                 f"AND transcript_tokens_est={transcript_tokens_est}<"
                 f"{token_threshold}")
+            return
+
+        if self._foreground_active(cid):
+            self._defer_trigger(cid, user_id)
+            _log_once(
+                "foreground agent active/starting — deferring bg bucket job")
             return
 
         with self._pending_lock:

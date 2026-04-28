@@ -176,6 +176,40 @@ class TestFileStore(unittest.TestCase):
         assert len(fid) == 12
         assert fid.isalnum()
 
+    def test_save_index_retries_transient_permission_error(self):
+        file_path = Path(self._tmpdir) / "alice" / "conv" / "0000" / "abc123abc123_test.txt"
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(b"data")
+        self.store._entries["abc123abc123"] = {
+            "filename": "test.txt",
+            "path": str(file_path),
+            "content_type": "text/plain",
+            "size": 4,
+            "created_at": time.time(),
+            "conversation_id": "conv",
+            "user_id": "alice",
+            "access": "private",
+            "shared_with": [],
+            "ttl": 0,
+            "agent_name": "assistant",
+            "category": "tool_result",
+        }
+        original_replace = Path.replace
+        calls = {"permission_errors": 0}
+
+        def flaky_replace(path_obj, target):
+            if path_obj.name.startswith("_index.json.") and calls["permission_errors"] < 2:
+                calls["permission_errors"] += 1
+                raise PermissionError("transient Windows lock")
+            return original_replace(path_obj, target)
+
+        with patch("core.file_store.Path.replace", new=flaky_replace), \
+                patch("core.file_store.time.sleep"):
+            self.store._save_index()
+
+        assert calls["permission_errors"] == 2
+        assert (Path(self._tmpdir) / "_index.json").exists()
+
 
 # ── CreateFileHandler ────────────────────────────────────────────────
 

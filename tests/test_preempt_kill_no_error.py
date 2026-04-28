@@ -18,6 +18,7 @@ from pathlib import Path
 
 _CODEX = Path("core/llm_providers/codex.py").read_text(encoding="utf-8")
 _GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
+_AGENT_STREAMING = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
 
 
 def _has_preempt_killed_branch(src: str, label: str) -> None:
@@ -43,6 +44,18 @@ def test_codex_preempt_kill_does_not_raise():
 
 def test_gemini_preempt_kill_does_not_raise():
     _has_preempt_killed_branch(_GEMINI, "gemini")
+
+
+def test_preempt_kill_fast_restarts_streaming_loop():
+    """When Codex/Gemini kill on preempt, streaming must not wait for
+    the old loop's cleanup before starting the resume turn.
+    """
+    assert "_fast_restart_after_preempt = False" in _AGENT_STREAMING
+    assert "preempt killed provider CLI" in _AGENT_STREAMING
+    assert "self._conv_generation[_agent_key]" in _AGENT_STREAMING
+    assert "self._active_contexts.pop(_agent_key, None)" in _AGENT_STREAMING
+    assert "if not _fast_restart_after_preempt:" in _AGENT_STREAMING
+    assert "flowfile.set_content(_original_content)" in _AGENT_STREAMING
 
 
 # ---------------------------------------------------------------------------

@@ -295,6 +295,7 @@ class ToolRelayService(BaseService):
     # In-flight request_id → (conv_id, agent_name) for targeted cancellation
     _inflight: Dict[str, tuple] = {}
     _inflight_lock = threading.Lock()
+    _auto_bg_after_seconds: float = 295.0
 
     @classmethod
     def cancel_request(cls, request_id: str) -> bool:
@@ -344,6 +345,15 @@ class ToolRelayService(BaseService):
                         logger.info(
                             "[tool-relay] tc_id=%s already backgrounded (request_id=%s)",
                             tc_id, _rid)
+                        return True
+                if isinstance(info, dict) and (_rid == tc_id or info.get("bg_tc_id") == tc_id):
+                    bg_evt = info.get("background")
+                    if bg_evt and not bg_evt.is_set():
+                        bg_evt.set()
+                        logger.info("[tool-relay] backgrounded request_id=%s", _rid)
+                        return True
+                    elif bg_evt and bg_evt.is_set():
+                        logger.info("[tool-relay] request_id=%s already backgrounded", _rid)
                         return True
             # No match — report the available cc_tc_ids so we can see whether
             # the in-flight request registered a different id, or none at all.
@@ -962,6 +972,10 @@ class ToolRelayService(BaseService):
 
         # Mark as executing — cancel_event can abort, background_event
         # detaches the call (returns placeholder, thread keeps running).
+        # Use the provider-visible tool id when available; otherwise fall
+        # back to request_id so MCP calls without a mapped tool_call can
+        # still auto-background before the transport timeout.
+        bg_tc_id = cc_tc_id or request_id
         evt = threading.Event()
         cancel_event = threading.Event()
         background_event = threading.Event()
@@ -978,6 +992,7 @@ class ToolRelayService(BaseService):
                 "cancel": cancel_event,
                 "background": background_event,
                 "cc_tc_id": cc_tc_id,
+                "bg_tc_id": bg_tc_id,
                 "tool_name": tool_name,
                 "started_at": started_at,
                 "kill_hooks": kill_hooks,
@@ -1012,31 +1027,18 @@ class ToolRelayService(BaseService):
         exec_thread = threading.Thread(target=_exec, daemon=True)
         exec_thread.start()
 
-        # Wait for completion, cancel, or background (including auto-BG
-        # after 5 minutes — project rule: long-running tools must not
-        # block the agent loop).
-        _auto_bg_after = 300.0  # 5 min — matches UI expectation
+        # Wait for completion, cancel, or background. Auto-BG fires before
+        # the 300s transport ceiling so the caller receives a placeholder
+        # instead of a raw MCP timeout.
+        _auto_bg_after = float(getattr(self, "_auto_bg_after_seconds", 295.0) or 295.0)
         while not evt.is_set():
-            if cancel_event.wait(timeout=0.5):
-                # Cancelled — return interrupt result immediately. The
-                # daemon thread is abandoned; best-effort subprocess kill
-                # is the relay's responsibility.
-                result = {"type": "result", "request_id": request_id,
-                          "data": "[Interrupted by user — stop current work and respond to the new message]"}
-                with self._cache_lock:
-                    self._result_cache[request_id] = result
-                    self._executing.pop(request_id, None)
-                with self._inflight_lock:
-                    self._inflight.pop(request_id, None)
-                return result
-
-            # Auto-BG after 5 minutes — only meaningful when we have a
-            # cc_tc_id (LLM-API providers have their own backgrounding
-            # via agent_tool_exec.py).
-            if (cc_tc_id and not background_event.is_set()
-                    and time.time() - started_at >= _auto_bg_after):
+            _elapsed = time.time() - started_at
+            # Auto-BG must not depend on a provider tool_call id: direct
+            # MCP/tool-relay calls still need a placeholder before the
+            # outer transport timeout.
+            if not background_event.is_set() and _elapsed >= _auto_bg_after:
                 logger.info("[tool-relay] auto-background after %ds for tc_id=%s",
-                            int(_auto_bg_after), cc_tc_id)
+                            int(_auto_bg_after), bg_tc_id)
                 background_event.set()
 
             if background_event.is_set():
@@ -1044,7 +1046,7 @@ class ToolRelayService(BaseService):
                 # real result (or kill notice) as a user message when
                 # the daemon thread finishes.
                 placeholder = (
-                    f"[Running in background (tc_id={cc_tc_id})]\n"
+                    f"[Running in background (tc_id={bg_tc_id})]\n"
                     f"The actual result will be delivered in a separate "
                     f"user message once the tool completes. Continue your "
                     f"work — do not wait for it."
@@ -1090,15 +1092,29 @@ class ToolRelayService(BaseService):
                         logger.error("[tool-relay] bg inject failed for %s: %s",
                                      _tc, _ie)
 
-                if cc_tc_id:
-                    threading.Thread(
-                        target=_watch_bg_completion,
-                        args=(evt, _result_holder, cc_tc_id, conversation_id,
-                              agent_name, tool_name, user_id, cancel_event),
-                        daemon=True,
-                        name=f"bg-watch-{cc_tc_id[:12]}",
-                    ).start()
+                threading.Thread(
+                    target=_watch_bg_completion,
+                    args=(evt, _result_holder, bg_tc_id, conversation_id,
+                          agent_name, tool_name, user_id, cancel_event),
+                    daemon=True,
+                    name=f"bg-watch-{bg_tc_id[:12]}",
+                ).start()
 
+                with self._cache_lock:
+                    self._result_cache[request_id] = result
+                    self._executing.pop(request_id, None)
+                with self._inflight_lock:
+                    self._inflight.pop(request_id, None)
+                return result
+
+            _remaining = _auto_bg_after - (time.time() - started_at)
+            _wait = min(0.5, max(0.01, _remaining)) if _remaining > 0 else 0.01
+            if cancel_event.wait(timeout=_wait):
+                # Cancelled — return interrupt result immediately. The
+                # daemon thread is abandoned; best-effort subprocess kill
+                # is the relay's responsibility.
+                result = {"type": "result", "request_id": request_id,
+                          "data": "[Interrupted by user — stop current work and respond to the new message]"}
                 with self._cache_lock:
                     self._result_cache[request_id] = result
                     self._executing.pop(request_id, None)

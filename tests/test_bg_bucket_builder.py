@@ -508,8 +508,39 @@ def test_token_trigger_fires_below_msg_threshold(tmp_path, monkeypatch):
     bb._executor.shutdown(wait=False)
 
 
+def test_maybe_trigger_defers_while_foreground_is_starting(tmp_path, monkeypatch):
+    bb = BgBucketBuilder(max_workers=1)
+    submitted: List[str] = []
+    deferred: List[Tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        bb._executor, "submit",
+        lambda *a, **kw: submitted.append(a) or None)
+    monkeypatch.setattr(
+        bb, "_defer_trigger",
+        lambda cid, uid, delay=5.0: deferred.append((cid, uid)))
+    bb.set_summarizer_resolver(
+        lambda uid: (_fake_client(), 128000, "svc"))
+    bb.set_summarize_fn(_make_summarize_fn()[0])
+
+    cid = "cid_foreground"
+    bb._shared_seq_cache[cid] = L1_TRIGGER_MSGS + TAIL_RESERVE + 1
+    bb._pyramid_seq_cache[cid] = 0
+    bb._shared_unbucketed_rows_cache[cid] = L1_TRIGGER_MSGS + TAIL_RESERVE + 1
+    bb._transcript_chars_post_pyramid_cache[cid] = 0
+    bb.note_foreground_activity(cid, seconds=30)
+
+    bb.maybe_trigger(cid, "uid")
+
+    assert submitted == []
+    assert deferred == [(cid, "uid")]
+    with bb._pending_lock:
+        assert cid not in bb._pending
+    bb._executor.shutdown(wait=False)
+
+
 def test_no_trigger_below_both_thresholds(tmp_path, monkeypatch):
-    """Both triggers below threshold → no submit."""
+    """Both triggers below threshold -> no submit."""
     bb = BgBucketBuilder(max_workers=1)
     submitted: List[str] = []
     monkeypatch.setattr(

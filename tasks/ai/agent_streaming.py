@@ -52,7 +52,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         _stream_mark("imports")
 
         # Parse body for conversation_id and user text (lightweight, no LLM)
-        raw = flowfile.get_content().decode("utf-8", errors="replace")
+        _original_content = flowfile.get_content()
+        raw = _original_content.decode("utf-8", errors="replace")
         try:
             _body = json.loads(raw) if raw.strip().startswith("{") else {}
         except (json.JSONDecodeError, TypeError):
@@ -121,6 +122,12 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 _stamped_user["attachments"] = _attachments_body
             if not _skip_pre_persist:
                 try:
+                    try:
+                        from core.bg_bucket_builder import BgBucketBuilder
+                        BgBucketBuilder.instance().note_foreground_activity(
+                            conversation_id)
+                    except Exception:
+                        logger.debug("bg foreground hint failed", exc_info=True)
                     _cw = ConversationWriter.for_conversation(conversation_id)
                     _stream_mark("writer_obtained")
                     _cw.enqueue_message(
@@ -132,6 +139,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         "[agent:%s] pre-persist user message failed: %s",
                         conversation_id[:8], _pe)
 
+        _fast_restart_after_preempt = False
         if _already_active:
             # Sticky-mode rule: only preempt the running turn if the
             # incoming trigger matches its mode + source. Mismatches go
@@ -181,13 +189,27 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     flowfile.set_attribute("agent.conversation_id", conversation_id)
                     return [flowfile]
                 else:
-                    # send_user_message returned False — proc dead, compacting,
-                    # or CC already emitted its final result. Fall through to
-                    # the PendingQueue path to trigger a new turn. The user
-                    # message is already on disk (pre-persisted above).
+                    # send_user_message returned False. For Codex/Gemini this
+                    # can mean the provider killed the one-shot CLI and needs
+                    # an immediate resume turn. For non-kill cases we keep the
+                    # existing queue-and-wait behavior.
+                    _preempt_killed = bool(
+                        getattr(_active_client, "_preempt_killed", False)
+                        or getattr(_active_client, "_fast_restart_after_preempt", False)
+                    )
+                    if _preempt_killed:
+                        _fast_restart_after_preempt = True
+                        with self._conv_gen_lock:
+                            self._conv_generation[_agent_key] = (
+                                self._conv_generation.get(_agent_key, 0) + 1)
+                        logger.info(
+                            "[agent:%s] preempt killed provider CLI — fast-restarting %s",
+                            conversation_id[:8], _target or "default")
                     _already_active = False
                     with self._active_contexts_lock:
                         self._active_claude_client.pop(_agent_key, None)
+                        if _preempt_killed:
+                            self._active_contexts.pop(_agent_key, None)
 
             # Queue this user message in the agent's PendingQueue —
             # the active turn will drain at its end, or a wake will
@@ -212,7 +234,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                               "server_start_time": SERVER_START_TIME})
             flowfile.set_content(ack.encode("utf-8"))
             flowfile.set_attribute("agent.conversation_id", conversation_id)
-            return [flowfile]
+            if not _fast_restart_after_preempt:
+                return [flowfile]
+            flowfile.set_attribute("agent.fast_restart_after_preempt", "true")
+            flowfile.set_content(_original_content)
 
         # Mark active
         with self._active_lock:

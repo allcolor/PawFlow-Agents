@@ -62,6 +62,35 @@ class LLMGeminiMixin(GeminiSessionMixin):
     # _gemini_recover_tokens, _gemini_setup_mcp_config, _build_gemini_cmd,
     # _get_tool_relay_info, _DISALLOWED_BUILTIN_TOOLS
 
+    def _gemini_context_window(self, model: str) -> int:
+        """Return Gemini's effective context window for `model`.
+
+        Runtime provider/API metadata is authoritative when available.
+        Otherwise PawFlow's required LLM service `max_context_size` is
+        the source of truth. Missing/invalid config is a hard service
+        configuration error, never a silent numeric fallback.
+        """
+        runtime_windows = getattr(self, "_gemini_context_windows", None)
+        if isinstance(runtime_windows, dict):
+            for key in (model, (model or "").lower()):
+                try:
+                    value = int(runtime_windows.get(key, 0) or 0)
+                except (TypeError, ValueError):
+                    value = 0
+                if value > 0:
+                    return value
+
+        cfg = getattr(self, "_config_ref", None) or {}
+        try:
+            value = int(cfg.get("max_context_size", 0) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value <= 0:
+            from core.llm_client import LLMClientError
+            raise LLMClientError(
+                "Gemini LLM service is missing required max_context_size")
+        return value
+
     # ── Process management ──────────────────────────────────────────
 
     def _gemini_send_user_message(self, text: str, attachments: list = None):
@@ -1359,15 +1388,10 @@ class LLMGeminiMixin(GeminiSessionMixin):
         self._preempt_killed = False  # set True when send_user_message kills mid-turn
         self._result_emitted = False  # set True when CC emits final result
         self._compacting = False  # set True when CC compact_boundary fires
-        # CC's authoritative context window for the model in use is lifted
-        # from result.modelUsage[model].contextWindow on each result event
-        # and cached PER-STREAM in self._gemini_context_window_by_stream
-        # (keyed by (conv_id, agent_name)). The old singleton scalar got
-        # clobbered across concurrent streams (memory_extract / _compact /
-        # multi-agent) on the shared provider — an opus turn would read
-        # back haiku's 200k after an unrelated stream had written it.
-        if not hasattr(self, '_gemini_context_window_by_stream'):
-            self._gemini_context_window_by_stream = {}
+        # Gemini may report an authoritative context window in
+        # result.modelUsage[model].contextWindow. When present, the
+        # result handler caches it in self._gemini_context_windows; until
+        # then _gemini_context_window() uses the service max_context_size.
         # Track text of every preempt sent via stdin during this stream so
         # we can locate it in CC's session jsonl by content match. Used by
         # _check_gemini_preempt_in_jsonl to determine whether CC has already
@@ -2070,10 +2094,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         )
                         _mult2 = _rtm(getattr(self, "_config_ref", None) or {})
                         prompt_tokens += _ct(result_str or "", multiplier=_mult2)
-                        _ctx_max_now = (
-                            self._gemini_context_window(model)
-                            if hasattr(self, '_gemini_context_window')
-                            else 1_000_000)
+                        _ctx_max_now = self._gemini_context_window(model)
                         _pub("message_meta", {
                             "agent_name": agent_name,
                             "context_used": prompt_tokens,
@@ -2098,10 +2119,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                                 .get("compact_threshold_pct", 0) or 0)
                         except (TypeError, ValueError):
                             _cthp_mid = 0
-                        _ctx_max_mid = (
-                            self._gemini_context_window(model)
-                            if hasattr(self, '_gemini_context_window')
-                            else 1_000_000)
+                        _ctx_max_mid = self._gemini_context_window(model)
                         if (_cthp_mid > 0 and _ctx_max_mid > 0
                                 and prompt_tokens >= int(
                                     _ctx_max_mid * _cthp_mid / 100)):
@@ -2142,12 +2160,37 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         "cached_input_tokens": sum_cached,
                         "output_tokens": sum_out,
                     }
+                    _model_usage = (
+                        event.get("modelUsage") or event.get("model_usage")
+                        or _stats.get("modelUsage") or _stats.get("model_usage")
+                        or {})
+                    if isinstance(_model_usage, dict):
+                        for _m_key in (model, (model or "").lower()):
+                            _mu = _model_usage.get(_m_key)
+                            if not isinstance(_mu, dict):
+                                continue
+                            try:
+                                _ctx_win = int(
+                                    _mu.get("contextWindow")
+                                    or _mu.get("context_window")
+                                    or _mu.get("contextWindowTokens")
+                                    or _mu.get("context_window_tokens")
+                                    or 0)
+                            except (TypeError, ValueError):
+                                _ctx_win = 0
+                            if _ctx_win > 0:
+                                if not hasattr(self, "_gemini_context_windows"):
+                                    self._gemini_context_windows = {}
+                                self._gemini_context_windows[model] = _ctx_win
+                                self._gemini_context_windows[(model or "").lower()] = _ctx_win
+                                break
                     last_data = {"usage": _latest_usage,
                                  "session_id": getattr(self, '_current_session_id', '') or '',
                                  "model": model,
-                                 "num_turns": _turn_count or 1}
+                                 "num_turns": _turn_count or 1,
+                                 "modelUsage": _model_usage}
                     _ctx_used_live = prompt_tokens
-                    _ctx_max_live = self._gemini_context_window(model) if hasattr(self, '_gemini_context_window') else 1_000_000
+                    _ctx_max_live = self._gemini_context_window(model)
                     _ctx_pct_live = _ctx_used_live / _ctx_max_live if _ctx_max_live > 0 else 0.0
                     _pub("message_meta", {
                         "agent_name": agent_name,

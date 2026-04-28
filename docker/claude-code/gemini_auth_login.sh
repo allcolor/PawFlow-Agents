@@ -17,17 +17,25 @@ export USER="pawflow"
 # (see google-gemini/gemini-cli#5474).
 cd "$HOME"
 
-# Pre-create ~/.gemini and seed settings.json with selectedAuthType so the
-# first launch picks the OAuth-personal path immediately (no auth-type
-# selection menu). Without this seed the CLI would prompt interactively
-# for the auth type, which we can't drive headlessly.
+# Pre-create ~/.gemini and seed settings.json so the first launch picks the
+# OAuth-personal path immediately (no auth-type selection menu). Newer Gemini
+# CLI versions read security.auth.selectedType; keep the legacy root key too so
+# older images still work until they are rebuilt.
 mkdir -p "$HOME/.gemini"
 cat > "$HOME/.gemini/settings.json" 2>/dev/null <<'SETTINGS' || true
 {
   "theme": "Default",
-  "selectedAuthType": "oauth-personal"
+  "selectedAuthType": "oauth-personal",
+  "security": {
+    "auth": {
+      "selectedType": "oauth-personal"
+    }
+  }
 }
 SETTINGS
+# Env fallback for current Gemini CLI auth detection. It maps to the same
+# LOGIN_WITH_GOOGLE / oauth-personal path and avoids schema drift in settings.
+export GOOGLE_GENAI_USE_GCA="true"
 
 # Start virtual display
 Xvfb :99 -screen 0 1280x800x24 -ac &
@@ -57,16 +65,45 @@ export BROWSER="/usr/local/bin/open-browser"
 rm -f "$HOME/.gemini/oauth_creds.json" "$HOME/.gemini/google_accounts.json" 2>/dev/null
 
 # Gemini's OAuth bootstrap is TTY-sensitive: unlike Claude Code and Codex,
-# running it through a plain pipe can leave the noVNC display blank. Run it in
-# xterm so the CLI has a real terminal on the same X display that Chromium uses.
+# running it through a plain pipe can make the CLI take its non-interactive
+# auth path. Build a small inner script and run it directly inside xterm so
+# stdin/stdout/stderr stay attached to a real terminal. If `script(1)` exists,
+# use it to capture logs while preserving a pseudo-terminal for Gemini.
 GEMINI_LOG="/tmp/gemini-auth.log"
 : > "$GEMINI_LOG"
-xterm -fa Monospace -fs 14 -bg black -fg white -e bash -lc '
-  echo "Starting Gemini OAuth login..."
-  gemini 2>&1 | tee -a /tmp/gemini-auth.log
-  echo "Gemini process exited. Waiting for PawFlow to read credentials..."
-  sleep infinity
-' &
+cat > /tmp/gemini-login-inner.sh <<'INNER'
+#!/bin/bash
+set +e
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export HOME="/home/pawflow"
+export USER="pawflow"
+export DISPLAY=":99"
+export BROWSER="/usr/local/bin/open-browser"
+export GOOGLE_GENAI_USE_GCA="true"
+mkdir -p "$HOME/.gemini"
+cat > "$HOME/.gemini/settings.json" <<'SETTINGS'
+{
+  "theme": "Default",
+  "selectedAuthType": "oauth-personal",
+  "security": {
+    "auth": {
+      "selectedType": "oauth-personal"
+    }
+  }
+}
+SETTINGS
+
+echo "Starting Gemini OAuth login..."
+if command -v script >/dev/null 2>&1; then
+  script -q -f -c "gemini" /tmp/gemini-auth.log
+else
+  gemini
+fi
+echo "Gemini process exited. Waiting for PawFlow to read credentials..."
+sleep infinity
+INNER
+chmod +x /tmp/gemini-login-inner.sh
+xterm -fa Monospace -fs 14 -bg black -fg white -e /tmp/gemini-login-inner.sh &
 GEMINI_PID=$!
 
 # Keep waiting while the browser flow writes credentials. The status endpoint

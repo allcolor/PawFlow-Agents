@@ -1925,7 +1925,45 @@ class ConversationStore:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
             self._notify_bg_transcript_chars(
                 cid, self._row_payload_chars(line))
+            self._maybe_persist_context_usage_from_patch(cid, line)
 
+    def _maybe_persist_context_usage_from_patch(self, cid: str, line: Dict[str, Any]) -> None:
+        source = line.get("source")
+        if not isinstance(source, dict):
+            return
+        name = source.get("name") or source.get("agent")
+        used = source.get("context_used")
+        max_tokens = source.get("context_max")
+        if not name or used is None or max_tokens is None:
+            return
+        try:
+            used_i = int(used)
+            max_i = int(max_tokens)
+        except (TypeError, ValueError):
+            return
+        if max_i <= 0:
+            return
+        pct = source.get("context_pct")
+        try:
+            pct_f = float(pct) if pct is not None else used_i / max_i
+        except (TypeError, ValueError):
+            pct_f = used_i / max_i
+        ts = float(line.get("ts") or time.time())
+
+        data = self._read_extras(cid)
+        usage = dict(data.get("context_usage") or {})
+        prev = usage.get(name)
+        if isinstance(prev, dict) and float(prev.get("updated_at") or 0) > ts:
+            return
+        usage[name] = {"used": used_i, "max": max_i, "pct": pct_f, "updated_at": ts}
+        data["context_usage"] = usage
+        self._write_extras(cid, data)
+
+        with self._cache_lock:
+            if cid in self._cache:
+                self._cache[cid]["extra_keys"].add("context_usage")
+                self._cache[cid].setdefault("extras", {})["context_usage"] = usage
+                self._cache[cid]["updated_at"] = time.time()
     def message_count(self, cid: str) -> int:
         return self._load_cache(cid).get("msg_count", 0)
 

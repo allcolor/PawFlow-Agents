@@ -351,19 +351,15 @@ function syncActiveFromServer() {
         updatedAt: now,
       };
       // Hydrate persistent cache from server's persisted context_usage so the
-      // gauge renders on page reload before loadResources() finishes.
+      // gauge renders on page reload before loadResources() finishes. Route
+      // through setContextUsage so stale list_active payloads cannot demote a
+      // fresher SSE/resource-panel gauge.
       if (a.context_usage && a.context_usage.max) {
-        const _ck = agentKey(a.agent_name);
-        const _cu = a.context_usage;
-        // Only hydrate if cache is empty for this agent OR the server value
-        // is more recent — never overwrite a fresher value already in cache.
-        const _cached = window._contextUsage[_ck];
-        if (!_cached || !_cached.max) {
-          window._contextUsage[_ck] = {
-            used: _cu.used || 0, max: _cu.max, pct: _cu.pct || 0,
-            estimated: false, _baselineUsed: _cu.used || 0,
-          };
-        }
+        setContextUsage(a.agent_name, {
+          used: a.context_usage.used || 0,
+          max: a.context_usage.max || 0,
+          pct: a.context_usage.pct || 0,
+        });
       }
     }
     updateActivePanel();

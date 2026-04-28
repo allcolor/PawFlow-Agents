@@ -878,6 +878,7 @@ class LLMClient(
                                                        call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "gemini":
                 result = self._stream_gemini(messages, mdl, temperature, max_tokens, tools, callback,
+                                               thinking_budget=thinking_budget,
                                                turn_callback=turn_callback,
                                                block_callback=block_callback,
                                                call_user_id=call_user_id,

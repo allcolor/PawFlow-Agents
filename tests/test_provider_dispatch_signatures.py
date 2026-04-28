@@ -101,36 +101,38 @@ def test_dispatch_kwargs_match_signatures():
         raise AssertionError("\n".join(failures))
 
 
-def test_gemini_provider_uses_gemini_runtime_contracts():
-    """Gemini must not accidentally resolve Codex helpers via LLMClient MRO."""
+def test_gemini_provider_uses_acp_runtime_contracts():
+    """Gemini provider must use ACP, not the old headless stream-json path."""
     from core.llm_providers.gemini import LLMGeminiMixin
-    import core.gemini_pool
 
-    spawn_src = inspect.getsource(LLMGeminiMixin._spawn_gemini_stream)
-    pool_src = inspect.getsource(LLMGeminiMixin._gemini_pool_popen)
-    kill_src = inspect.getsource(LLMGeminiMixin._kill_gemini_hard)
-    drain_src = inspect.getsource(LLMGeminiMixin._spawn_gemini_stream)
-    gemini_pool_src = Path(core.gemini_pool.__file__).read_text(encoding="utf-8")
+    provider_src = inspect.getsource(LLMGeminiMixin)
+    stream_src = inspect.getsource(LLMGeminiMixin._stream_gemini)
+    proc_src = inspect.getsource(LLMGeminiMixin._gemini_acp_start_process)
+    settings_src = inspect.getsource(LLMGeminiMixin._gemini_acp_write_settings)
+    mcp_src = inspect.getsource(LLMGeminiMixin._gemini_acp_mcp_servers)
 
-    assert "_build_gemini_cmd" in spawn_src
-    assert "_build_codex_cmd" not in spawn_src
-    assert "GEMINI_API_KEY" in pool_src
-    assert "ANTHROPIC_API_KEY" not in pool_src
-    assert "__PF_GEMINI_PID" in kill_src + drain_src
-    assert "__PF_GEMINI_PID" in gemini_pool_src
-
-
-
+    assert '["--yolo", "--acp"]' in proc_src
+    assert '"session/new"' in provider_src
+    assert '"session/load"' in provider_src
+    assert '"session/prompt"' in stream_src
+    assert '"session/cancel"' in inspect.getsource(LLMGeminiMixin._gemini_send_user_message)
+    assert '"type": "image"' in inspect.getsource(LLMGeminiMixin._gemini_acp_image_item)
+    assert '"mimeType"' in inspect.getsource(LLMGeminiMixin._gemini_acp_image_item)
+    assert '"includeThoughts": True' in settings_src
+    assert '"thinkingLevel"' in settings_src
+    assert '"thinkingBudget"' in settings_src
+    assert '"/usr/bin/python3"' in mcp_src
 
 
 def test_gemini_flushes_pending_text_before_live_tool_callback():
-    """Gemini live tool_use must not overtake already-emitted text."""
+    """Gemini ACP tool calls must not overtake already-emitted text."""
     from core.llm_providers.gemini import LLMGeminiMixin
 
     src = inspect.getsource(LLMGeminiMixin._stream_gemini)
-    flush_idx = src.index("if block_callback and _turn_text_parts:")
-    callback_idx = src.index('block_callback("tool_use", _bc_payload)')
+    flush_idx = src.index("if block_callback and turn_text_parts:")
+    callback_idx = src.index('block_callback("tool_use", {')
     assert flush_idx < callback_idx
+
 
 
 def test_provider_mixins_have_no_method_collisions():

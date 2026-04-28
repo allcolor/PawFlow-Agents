@@ -373,19 +373,72 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             except Exception:
                 logger.debug("[codex-app] failed to restore pool index", exc_info=True)
 
-        self._codex_setup_credentials(workdir, pool_index=resume_pool_idx)
-        if conv_id and store is not None and hasattr(self, "_current_pool_index"):
-            try:
-                store.set_extra(conv_id, f"codex_app_pool_idx:{agent_name or 'default'}",
-                                self._current_pool_index)
-            except Exception:
-                logger.debug("[codex-app] failed to persist pool index", exc_info=True)
-        _, internal_token = self._codex_setup_mcp_config(
-            workdir, user_id=user_id, conversation_id=conv_id, agent_name=agent_name)
-
+        svc_id = getattr(self, "_agent_service", "") or ""
+        live_reg = None
+        live_key = None
+        live_session = None
+        owns_live_lock = False
+        is_reuse = False
+        internal_token = ""
         proc = None
         container = None
         stderr_lines: queue.Queue[str] = queue.Queue()
+
+        if conv_id and not is_ephemeral:
+            try:
+                from core.codex_live_registry import CodexLiveRegistry
+                live_reg = CodexLiveRegistry.instance()
+                live_key = (user_id, conv_id, agent_name or "default", svc_id,
+                            int(resume_pool_idx))
+                live_session = live_reg.get(live_key)
+                if live_session is not None and not live_session.is_alive():
+                    live_reg.evict(live_key, "dead_app_server")
+                    live_session = None
+                if live_session is not None:
+                    live_session.turn_lock.acquire()
+                    owns_live_lock = True
+                    if live_session.is_alive():
+                        live_reg.touch(live_key)
+                        is_reuse = True
+                        proc = live_session.proc
+                        container = live_session.container_name
+                        internal_token = live_session.mcp_internal_token or ""
+                        thread_id = live_session.session_id or thread_id
+                        if getattr(live_session, "event_q", None) is not None:
+                            stderr_lines = live_session.event_q
+                        if resume_pool_idx >= 0:
+                            self._current_pool_index = resume_pool_idx
+                        logger.info(
+                            "[codex-app-live] REUSE conv=%s agent=%s session=%s reuse=%d",
+                            conv_id[:8] or "?", agent_name, thread_id[:12],
+                            live_session.reuse_count)
+                    else:
+                        live_reg.evict(live_key, "dead_after_lock")
+                        live_session.turn_lock.release()
+                        owns_live_lock = False
+                        live_session = None
+            except Exception:
+                logger.debug("[codex-app-live] lookup failed", exc_info=True)
+                live_reg = None
+                live_key = None
+
+        if not is_reuse:
+            self._codex_setup_credentials(workdir, pool_index=resume_pool_idx)
+            if conv_id and store is not None and hasattr(self, "_current_pool_index"):
+                try:
+                    store.set_extra(conv_id, f"codex_app_pool_idx:{agent_name or 'default'}",
+                                    self._current_pool_index)
+                except Exception:
+                    logger.debug("[codex-app] failed to persist pool index", exc_info=True)
+            if live_reg is not None and conv_id and not is_ephemeral:
+                try:
+                    live_key = (user_id, conv_id, agent_name or "default", svc_id,
+                                int(getattr(self, "_current_pool_index", resume_pool_idx)))
+                except Exception:
+                    live_key = None
+            _, internal_token = self._codex_setup_mcp_config(
+                workdir, user_id=user_id, conversation_id=conv_id, agent_name=agent_name)
+
         active_key = (user_id, conv_id, agent_name, time.time())
         text_parts: List[str] = []
         turn_text_parts: List[str] = []
@@ -419,48 +472,52 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 return
             thinking_parts.append(text)
 
+        turn_failed = False
         try:
-            proc, container = self._codex_pool_popen(
-                workdir,
-                ["app-server"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-            )
-            self._codex_app_start_stderr_drain(proc, stderr_lines)
-            logger.info("[codex-app] started app-server conv=%s agent=%s thread=%s",
-                        conv_id[:8] or "?", agent_name, thread_id[:12] or "new")
-
-            self._codex_app_initialize(proc)
             thread_key = f"codex_app_server_thread:{agent_name or 'default'}"
-            if thread_id:
-                try:
-                    thread = self._codex_app_resume_thread(proc, thread_id, model)
-                except Exception as exc:
-                    if not self._codex_app_missing_rollout_error(exc):
-                        raise
-                    logger.warning(
-                        "[codex-app] stale thread id %s; starting a new thread", thread_id[:12])
-                    if conv_id and store is not None and not is_ephemeral:
-                        try:
-                            store.set_extra(conv_id, thread_key, "")
-                        except Exception:
-                            logger.debug("[codex-app] failed to clear stale thread id", exc_info=True)
-                    thread_id = ""
-                    initial_text = self._codex_app_full_initial_text(messages)
+            if not is_reuse:
+                proc, container = self._codex_pool_popen(
+                    workdir,
+                    ["app-server"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+                self._codex_app_start_stderr_drain(proc, stderr_lines)
+                logger.info("[codex-app] started app-server conv=%s agent=%s thread=%s",
+                            conv_id[:8] or "?", agent_name, thread_id[:12] or "new")
+
+                self._codex_app_initialize(proc)
+                if thread_id:
+                    try:
+                        thread = self._codex_app_resume_thread(proc, thread_id, model)
+                    except Exception as exc:
+                        if not self._codex_app_missing_rollout_error(exc):
+                            raise
+                        logger.warning(
+                            "[codex-app] stale thread id %s; starting a new thread", thread_id[:12])
+                        if conv_id and store is not None and not is_ephemeral:
+                            try:
+                                store.set_extra(conv_id, thread_key, "")
+                            except Exception:
+                                logger.debug("[codex-app] failed to clear stale thread id", exc_info=True)
+                        thread_id = ""
+                        initial_text = self._codex_app_full_initial_text(messages)
+                        thread = self._codex_app_start_thread(proc, model, container_dir)
+                else:
                     thread = self._codex_app_start_thread(proc, model, container_dir)
-            else:
-                thread = self._codex_app_start_thread(proc, model, container_dir)
-            thread_id = (thread or {}).get("id", "") or thread_id
-            if thread_id and conv_id and store is not None and not is_ephemeral:
-                try:
-                    store.set_extra(conv_id, thread_key, thread_id)
-                except Exception:
-                    logger.debug("[codex-app] failed to persist thread id", exc_info=True)
+                thread_id = (thread or {}).get("id", "") or thread_id
+                if thread_id and conv_id and store is not None and not is_ephemeral:
+                    try:
+                        store.set_extra(conv_id, thread_key, thread_id)
+                    except Exception:
+                        logger.debug("[codex-app] failed to persist thread id", exc_info=True)
+            elif not thread_id:
+                raise LLMClientError("codex app-server live session has no thread id")
             if not thread_id:
                 raise LLMClientError("codex app-server did not return a thread id")
 
@@ -599,31 +656,79 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 thinking="".join(thinking_parts).strip(),
             )
         except _CodexAppServerProtocolError as exc:
+            turn_failed = True
             raise LLMClientError(str(exc)) from exc
+        except Exception:
+            turn_failed = True
+            raise
         finally:
             lock = self._codex_app_ensure_lock()
             with lock:
                 active = getattr(self, "_codex_app_active", None)
                 if isinstance(active, dict):
                     active.pop(active_key, None)
-            if proc is not None:
-                try:
-                    if proc.poll() is None:
-                        proc.terminate()
-                except Exception:
-                    logger.debug("[codex-app] terminate failed", exc_info=True)
-            if internal_token:
-                try:
-                    from core.internal_auth import revoke_token
-                    revoke_token(internal_token)
-                except Exception:
-                    logger.debug("[codex-app] internal token revoke failed", exc_info=True)
             try:
                 self._codex_recover_tokens(workdir)
             except Exception:
                 logger.debug("[codex-app] token recovery failed", exc_info=True)
-            self._codex_pool_release(container)
+
+            proc_alive = False
+            if proc is not None:
+                try:
+                    proc_alive = proc.poll() is None
+                except Exception:
+                    proc_alive = False
+            keep_alive = (
+                not turn_failed
+                and proc_alive
+                and live_reg is not None
+                and live_key is not None
+                and bool(thread_id)
+                and bool(container)
+                and not is_ephemeral
+            )
+            if keep_alive:
+                try:
+                    live_reg.register(
+                        live_key, container, workdir,
+                        service_id=svc_id,
+                        session_id=thread_id,
+                        proc=proc,
+                        event_q=stderr_lines,
+                        mcp_internal_token=internal_token,
+                    )
+                    logger.info(
+                        "[codex-app-live] keep-alive conv=%s agent=%s session=%s",
+                        conv_id[:8] or "?", agent_name, thread_id[:12])
+                except Exception:
+                    logger.debug("[codex-app-live] register failed", exc_info=True)
+                    keep_alive = False
+
+            if not keep_alive:
+                if live_reg is not None and live_key is not None:
+                    try:
+                        live_reg.evict(live_key, "app_server_teardown")
+                    except Exception:
+                        logger.debug("[codex-app-live] evict failed", exc_info=True)
+                if proc is not None:
+                    try:
+                        if proc.poll() is None:
+                            proc.terminate()
+                    except Exception:
+                        logger.debug("[codex-app] terminate failed", exc_info=True)
+                if internal_token:
+                    try:
+                        from core.internal_auth import revoke_token
+                        revoke_token(internal_token)
+                    except Exception:
+                        logger.debug("[codex-app] internal token revoke failed", exc_info=True)
+                self._codex_pool_release(container)
             self._codex_app_log_stderr(stderr_lines)
+            if owns_live_lock and live_session is not None:
+                try:
+                    live_session.turn_lock.release()
+                except Exception:
+                    logger.debug("[codex-app-live] turn lock release failed", exc_info=True)
 
     def _codex_app_ensure_lock(self):
         lock = getattr(self, "_codex_app_lock", None)

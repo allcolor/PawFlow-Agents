@@ -257,17 +257,13 @@ def _get_sessions_base():
 
 
 class GeminiSessionMixin:
-    """Session/workdir management for the Gemini CLI.
+    """OAuth, workdir, and environment helpers for Gemini CLI/ACP.
 
-    Structural mirror of CodexSessionMixin / ClaudeCodeSessionMixin — same
-    method surface, same call sites in the stream loop. Only PawFlow-touchpoints
-    differ:
-      1. CLI command         (`gemini -p … --output-format stream-json`)
-      2. JSON event schema   (handled in `_consume_gemini_stream`)
-      3. Image attachments   (gemini accepts `--image` flag; provider extracts)
-      4. Credentials format  (gemini oauth_creds.json under ~/.gemini/)
-    Everything else (tool relay info, workdir layout, env construction,
-    MCP config plumbing) is PawFlow infrastructure and identical across CLIs.
+    The runtime provider speaks Gemini's Agent Client Protocol over stdio and
+    supplies MCP server configuration in the ACP `session/new` payload. This
+    mixin deliberately owns only reusable PawFlow infrastructure: credential
+    pool refresh, per-agent HOME/workdir layout, token recovery, and relay env
+    construction.
     """
 
     _pool_counter = 0
@@ -546,83 +542,3 @@ class GeminiSessionMixin:
             logger.info("[gemini] recovered refreshed tokens [pool:%d]", _pidx)
         except Exception as e:
             logger.debug("[gemini] token recovery failed: %s", e)
-
-    def _gemini_setup_mcp_config(self, workdir: str, user_id: str = "",
-                           conversation_id: str = "",
-                           agent_name: str = "") -> tuple:
-        """Write MCP config to <workdir>/.gemini/settings.json.
-
-        Returns (mcp_path, internal_token). Mirror of CC/codex; gemini
-        uses JSON for settings.json with `mcpServers` section (same
-        schema as CC's .mcp.json — it adopted CC's conventions).
-        """
-        mcp_bridge = "/opt/pawflow/mcp_bridge.py"
-        python_bin = "python3"
-
-        relay_url, relay_token = self._get_tool_relay_info()
-        if not relay_url:
-            logger.warning("No toolRelay service — gemini MCP bridge will have no tools")
-        if relay_url:
-            from core.docker_utils import get_host_ip
-            _host_ip = get_host_ip()
-            relay_url = relay_url.replace("localhost", _host_ip).replace("127.0.0.1", _host_ip)
-
-        from core.internal_auth import mint_token
-        internal_token = mint_token()
-
-        # gemini's settings.json. `contextPercentageThreshold` very high
-        # disables gemini's built-in chat compression so PawFlow's bucket
-        # compact owns the rollover.
-        settings = {
-            "contextPercentageThreshold": 0.99,
-            "mcpServers": {
-                "pawflow": {
-                    "command": python_bin,
-                    "args": [mcp_bridge],
-                    "env": {
-                        "PAWFLOW_TOOL_RELAY_URL": relay_url or "",
-                        "PAWFLOW_TOOL_RELAY_TOKEN": relay_token or "",
-                        "PAWFLOW_INTERNAL_TOKEN": internal_token,
-                        "PAWFLOW_USER_ID": user_id or "",
-                        "PAWFLOW_CONVERSATION_ID": conversation_id or "",
-                        "PAWFLOW_AGENT_NAME": agent_name or "",
-                    },
-                },
-            },
-        }
-        gemini_home = os.path.join(workdir, ".gemini")
-        os.makedirs(gemini_home, exist_ok=True)
-        config_path = os.path.join(gemini_home, "settings.json")
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2)
-        os.chmod(config_path, 0o600)
-        logger.info("[gemini] settings.json written: %s (relay=%s)",
-                    config_path, relay_url)
-        return config_path, internal_token
-
-    _DISALLOWED_BUILTIN_TOOLS = ""
-
-    def _build_gemini_cmd(self, model: str,
-                           session_id: str = "",
-                           mcp_config_path: str = "",
-                           workdir: str = "") -> list:
-        """Build the gemini CLI command.
-
-        Per `gemini --help`: `-p, --prompt <STRING>` enables headless mode
-        and is appended to whatever's read on stdin. We pass an empty
-        prompt-arg sentinel and write the full conversation on stdin in
-        the caller; this avoids blowing up the argv length on long
-        histories. NOTE: codex uses `-` as a stdin sentinel; gemini does
-        NOT — `-p -` would be interpreted as a literal one-character prompt.
-        """
-        gemini_args = [
-            "-p", " ",  # space sentinel; real prompt arrives on stdin
-            "--output-format", "stream-json",
-            "--yolo",   # auto-accept tool calls (PawFlow controls perms)
-        ]
-        if session_id:
-            gemini_args.extend(["--resume", session_id])
-        if model:
-            gemini_args.extend(["--model", model])
-        self._pool_gemini_args = gemini_args
-        return gemini_args

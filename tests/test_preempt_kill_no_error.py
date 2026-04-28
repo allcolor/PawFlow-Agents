@@ -1,45 +1,18 @@
-"""Lock the gemini preempt-kill flow against regression:
+"""Lock Gemini ACP preempt and conversation-store race regressions."""
 
-When `send_user_message` is called mid-turn, the provider tears down
-the in-flight CLI on purpose. The CLI exits non-zero — EXPECTED.
-The stream loop must NOT raise `LLMClientError` in that case;
-otherwise the user sees a red CLI stream error bubble AND the queued
-preempt message never gets a turn (the agent
-loop bails on the error before draining PendingQueue).
-
-Guard pattern: the `_preempt_killed` flag is set by the
-`*_send_user_message` preempt path and reset at the start of every
-stream. The post-loop exit-code check skips the raise when the flag
-is True.
-"""
-
-import re
 from pathlib import Path
 
 _GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 _AGENT_STREAMING = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
 
 
-def _has_preempt_killed_branch(src: str, label: str) -> None:
-    # 1. The flag is reset at every stream start.
-    assert "self._preempt_killed = False" in src, (
-        f"{label}: stream-start reset of _preempt_killed is missing")
-    # 2. The preempt entrypoint sets it to True before killing.
-    assert "self._preempt_killed = True" in src, (
-        f"{label}: send_user_message preempt path must set "
-        f"_preempt_killed before tearing down the CLI")
-    # 3. The post-loop check guards the LLMClientError raise.
-    pattern = re.compile(
-        r"if self\._preempt_killed and proc\.returncode"
-        r"\s+and\s+proc\.returncode != 0:")
-    assert pattern.search(src), (
-        f"{label}: missing `_preempt_killed` short-circuit before "
-        f"the LLMClientError raise on non-zero exit")
-
-
-
-def test_gemini_preempt_kill_does_not_raise():
-    _has_preempt_killed_branch(_GEMINI, "gemini")
+def test_gemini_acp_preempt_uses_cancel_notification():
+    """ACP preempt should cancel the active prompt without surfacing a CLI error."""
+    body = _GEMINI[_GEMINI.index("def _gemini_send_user_message"):]
+    body = body[:body.index("def cancel_gemini")]
+    assert '"session/cancel"' in body
+    assert "return False" in body
+    assert "_kill_gemini_hard" not in body
 
 
 def test_preempt_kill_fast_restarts_streaming_loop():

@@ -1,4 +1,4 @@
-"""Lock CLI context-window compact threshold checks against regressions."""
+"""Lock Gemini context-window and ACP gauge regressions."""
 
 from pathlib import Path
 
@@ -33,33 +33,15 @@ def test_gemini_context_window_fails_without_service_config():
         provider._gemini_context_window("gemini-3-pro")
 
 
-def _gemini_tool_result_block() -> str:
-    start = _GEMINI_SRC.index('if etype == "tool_result":')
-    end = _GEMINI_SRC.index('if etype == "result":', start)
-    return _GEMINI_SRC[start:end]
+def test_gemini_acp_result_uses_full_context_token_estimate_without_hard_fallback():
+    assert "count_messages_tokens" in _GEMINI_SRC
+    assert "prompt_tokens = _count_msgs(" in _GEMINI_SRC
+    response_start = _GEMINI_SRC.index("return LLMResponse(")
+    response_block = _GEMINI_SRC[response_start:response_start + 500]
+    assert "tokens_in=max(0, int(prompt_tokens or 0))" in response_block
+    assert "1_000_000" not in response_block and "1000000" not in response_block
 
 
-def _gemini_result_block() -> str:
-    start = _GEMINI_SRC.index('if etype == "result":')
-    end = _GEMINI_SRC.index('if etype == "error":', start)
-    return _GEMINI_SRC[start:end]
-
-
-def test_gemini_tool_result_uses_context_window_helper_without_hard_fallback():
-    block = _gemini_tool_result_block()
-    assert "self._gemini_context_window(model)" in block, (
-        "gemini tool_result must use _gemini_context_window(model) as "
-        "the single source of truth for the live gauge and compact gate")
-    assert "1_000_000" not in block and "1000000" not in block, (
-        "gemini tool_result must not silently fall back to a hard-coded "
-        "context window; missing max_context_size is a service config error")
-
-
-def test_gemini_result_uses_context_window_helper_without_hard_fallback():
-    block = _gemini_result_block()
-    assert "_ctx_max_live = self._gemini_context_window(model)" in block, (
-        "gemini result handler must use _gemini_context_window(model) as "
-        "the single source of truth for the context window")
-    assert "1_000_000" not in block and "1000000" not in block, (
-        "gemini result handler must not silently fall back to a hard-coded "
-        "context window; missing max_context_size is a service config error")
+def test_gemini_acp_mcp_uses_absolute_python():
+    assert '"command": "/usr/bin/python3"' in _GEMINI_SRC
+    assert '"/opt/pawflow/mcp_bridge.py"' in _GEMINI_SRC

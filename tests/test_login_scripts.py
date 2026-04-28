@@ -10,9 +10,23 @@ def test_gemini_server_login_runs_cli_inside_visible_tty():
     )
 
     assert "xterm" in script
-    assert "gemini 2>&1 | tee -a /tmp/gemini-auth.log" in script
+    assert "gemini 2>&1 | tee" not in script
+    assert "script -q -f -c \"gemini\" /tmp/gemini-auth.log" in script
+    assert "export GOOGLE_GENAI_USE_GCA=\"true\"" in script
     assert "printf '/exit" not in script
     assert "oauth_creds.json" in script
+
+
+def test_gemini_server_login_forces_google_oauth_auth_type():
+    script = (ROOT / "docker" / "claude-code" / "gemini_auth_login.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"security"' in script
+    assert '"auth"' in script
+    assert '"selectedType": "oauth-personal"' in script
+    assert '"selectedAuthType": "oauth-personal"' in script
+    assert 'export GOOGLE_GENAI_USE_GCA="true"' in script
 
 
 def test_all_server_login_scripts_keep_a_visible_tty():

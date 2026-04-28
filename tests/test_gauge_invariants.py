@@ -91,6 +91,16 @@ def test_resources_hydration_uses_setcontextusage():
     assert "window._contextUsage[aKeyLc] =" not in _RESOURCES_JS
 
 
+def test_active_poll_hydration_uses_setcontextusage():
+    """list_active may also lag behind SSE. It must not write `_contextUsage`
+    directly or it can make the header gauge bounce 30% -> 11% -> 30%."""
+    assert "setContextUsage(a.agent_name" in _ACTIVE_AGENTS_JS
+    active_poll = _ACTIVE_AGENTS_JS[_ACTIVE_AGENTS_JS.index("function syncActiveFromServer") :]
+    setter_body = _extract_function_body(_ACTIVE_AGENTS_JS, "setContextUsage")
+    outside_setter = active_poll.replace(setter_body, "")
+    assert "window._contextUsage[" not in outside_setter
+
+
 # ---------------------------------------------------------------------------
 # Tiny brace-counting JS function-body extractor — plenty for our checks.
 # ---------------------------------------------------------------------------

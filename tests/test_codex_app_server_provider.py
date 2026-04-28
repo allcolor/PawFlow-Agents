@@ -104,7 +104,20 @@ def test_codex_app_server_recovers_from_stale_thread_rollout():
     assert "stale thread id" in src
 
 
-def test_codex_app_server_reuses_codex_login_actions():
+def test_codex_app_server_registers_live_app_server_session():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    assert "CodexLiveRegistry" in src
+    assert "live_reg.register" in src
+    assert "[codex-app-live] keep-alive" in src
+    assert "live_reg.touch(live_key)" in src
+    assert "is_reuse" in src
+    assert "not turn_failed" in src
+    assert "proc_alive" in src
+    assert "live_session.turn_lock.acquire()" in src
+    assert "live_session.turn_lock.release()" in src
+
+
+
     actions = LLMConnectionService({}).get_service_actions()
     codex_actions = [a for a in actions if a["id"].startswith("codex_")]
     assert codex_actions

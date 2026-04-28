@@ -62,6 +62,29 @@ class TestConversationStore(unittest.TestCase):
         store = ConversationStore.instance()
         assert store.load("nonexistent") is None
 
+    def test_patch_message_persists_context_usage_extra(self):
+        store = ConversationStore.instance()
+        store.save("conv1", [{
+            "role": "assistant",
+            "content": "hello",
+            "msg_id": "m1",
+            "source": {"type": "agent", "name": "assistant"},
+        }], user_id="test")
+
+        store.patch_message("conv1", "m1", source={
+            "type": "agent",
+            "name": "assistant",
+            "provider": "codex-app-server",
+            "context_used": 573886,
+            "context_max": 1000000,
+            "context_pct": 0.573886,
+        })
+
+        usage = store.get_extra("conv1", "context_usage")
+        assert usage["assistant"]["used"] == 573886
+        assert usage["assistant"]["max"] == 1000000
+        assert usage["assistant"]["pct"] == 0.573886
+
 
     def test_delete(self):
         store = ConversationStore.instance()

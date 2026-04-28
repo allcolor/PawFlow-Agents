@@ -1205,9 +1205,30 @@ class AgentCoreMixin:
                             if not _sc:
                                 raise RuntimeError(
                                     "No summarizer_service configured. Cannot compact.")
+                            # Propagate the agent's configured
+                            # `compact_threshold_pct` as `trigger_fraction`
+                            # so the [compact] log shows the value the
+                            # operator actually set (90% here, not the
+                            # 0.8 default). `force=True` already bypasses
+                            # the trigger gate, but the log line is what
+                            # debugging eyes read first — a misleading
+                            # 0.8 sent every operator down the wrong
+                            # path before this. Falls back to 0.8 only
+                            # when no per-service threshold is set.
+                            _ccd_trigger_frac = 0.8
+                            try:
+                                _ccd_pct = int(
+                                    (getattr(client, "_config_ref", None)
+                                     or getattr(client, "config", None)
+                                     or {}).get("compact_threshold_pct", 0) or 0)
+                                if _ccd_pct > 0:
+                                    _ccd_trigger_frac = _ccd_pct / 100.0
+                            except (TypeError, ValueError):
+                                pass
                             messages = list(self._compact(
                                 _full_messages, _sc,
                                 max_tokens=ctx.get("max_context_size", 200000),
+                                trigger_fraction=_ccd_trigger_frac,
                                 conversation_id=conversation_id,
                                 agent_name=_agent_name,
                                 compact_instructions=ctx.get("compact_instructions", ""),

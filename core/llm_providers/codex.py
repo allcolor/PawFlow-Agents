@@ -2352,6 +2352,41 @@ class LLMCodexMixin(CodexSessionMixin):
                                 })
                             except Exception:
                                 logger.debug("live-gauge update failed", exc_info=True)
+                            # Mid-turn compact threshold check. Without this,
+                            # the only check happens at `turn.completed`,
+                            # so a long tool-heavy turn can blow past the
+                            # configured threshold and keep growing until
+                            # codex finally yields a final assistant
+                            # message. Re-evaluate after every tool result
+                            # and bail out (kill + raise CCCompactDetected
+                            # post-loop) the moment we cross the line.
+                            if not _compact_pending[0]:
+                                try:
+                                    _cthp_mid = int(
+                                        (getattr(self, "_config_ref", None) or {})
+                                        .get("compact_threshold_pct", 0) or 0)
+                                except (TypeError, ValueError):
+                                    _cthp_mid = 0
+                                _ctx_max_mid = self._codex_context_window(model)
+                                if (_cthp_mid > 0 and _ctx_max_mid > 0
+                                        and prompt_tokens >= int(
+                                            _ctx_max_mid * _cthp_mid / 100)):
+                                    logger.warning(
+                                        "[codex] mid-turn usage %d/%d crossed "
+                                        "PawFlow compact threshold (%d%%) — "
+                                        "killing codex to compact NOW",
+                                        prompt_tokens, _ctx_max_mid, _cthp_mid)
+                                    self._compacting = True
+                                    _compact_pending[0] = True
+                                    try:
+                                        self._kill_codex_hard(proc)
+                                    except Exception as _ke:
+                                        logger.warning(
+                                            "[codex] mid-turn compact kill "
+                                            "failed: %s", _ke)
+                                    # Loop will exit (proc dead). Post-
+                                    # loop branch raises CCCompactDetected.
+                                    break
                         continue
 
                     # Hosted Responses-API tool items (web_search, view_image,

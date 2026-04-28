@@ -59,6 +59,9 @@ def test_codex_app_server_reasoning_is_wired():
     assert "thinking_budget=thinking_budget" in complete_src
     assert "thinking_budget=thinking_budget" in stream_src
     assert "_codex_app_effort" in provider_src
+    assert "count_messages_tokens" in provider_src
+    assert "prompt_tokens" in provider_src
+    assert "tokens_in=max(0, int(prompt_tokens or 0))" in provider_src
     assert "item/reasoning/summaryTextDelta" in provider_src
     assert "item/reasoning/textDelta" in provider_src
     assert 'item.get("type") == "reasoning"' in provider_src

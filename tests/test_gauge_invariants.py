@@ -24,6 +24,7 @@ import pytest
 _ACTIVE_AGENTS_JS = Path(
     "tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
 _SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
+_RESOURCES_JS = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
 
 
 def test_set_context_usage_blocks_demote_to_zero():
@@ -81,6 +82,13 @@ def test_setcontextusage_mirrors_to_active_interactions():
     assert "activeInteractions[key].contextUsed = realUsed" in body, (
         "setContextUsage must mirror the accepted value into "
         "activeInteractions for the active-agents panel")
+
+
+def test_resources_hydration_uses_setcontextusage():
+    """list_resources may lag behind SSE, so Resource Panel hydration must
+    use setContextUsage instead of overwriting `_contextUsage` directly."""
+    assert "setContextUsage(a.name" in _RESOURCES_JS
+    assert "window._contextUsage[aKeyLc] =" not in _RESOURCES_JS
 
 
 # ---------------------------------------------------------------------------

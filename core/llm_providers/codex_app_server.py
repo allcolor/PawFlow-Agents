@@ -336,11 +336,30 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             except Exception:
                 logger.debug("[codex-app] failed to restore thread id", exc_info=True)
 
+        full_context_text = self._codex_app_full_initial_text(messages)
+        try:
+            from core.token_counter import (
+                count_messages_tokens as _count_msgs,
+                resolve_token_multiplier as _resolve_mult,
+            )
+            _mult = _resolve_mult(getattr(self, "_config_ref", None) or {})
+            prompt_tokens = _count_msgs(
+                [{"content": (m.content if hasattr(m, "content") else str(m))}
+                 for m in messages],
+                multiplier=_mult)
+        except Exception:
+            prompt_tokens = int(len(full_context_text) / 3.5)
+            logger.warning(
+                "[codex-app] count_messages_tokens failed, fell back to chars/3.5 -> %d",
+                prompt_tokens, exc_info=True)
+        logger.info(
+            "[codex-app] gauge: prompt_tokens=%d (msgs=%d, full_context=%d chars)",
+            prompt_tokens, len(messages), len(full_context_text))
         if thread_id:
             initial_text = self._codex_app_build_stdin_with_system(
                 "", self._codex_app_last_user_text(messages))
         else:
-            initial_text = self._codex_app_full_initial_text(messages)
+            initial_text = full_context_text
 
         workdir = self._codex_get_session_workdir(conv_id, agent_name, user_id)
         os.makedirs(workdir, exist_ok=True)
@@ -572,7 +591,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             return LLMResponse(
                 content=content,
                 model=model,
-                tokens_in=max(0, len(initial_text) // 4),
+                tokens_in=max(0, int(prompt_tokens or 0)),
                 tokens_out=max(0, len(content) // 4),
                 finish_reason="stop",
                 raw={"thread_id": thread_id, "turn_id": turn_id,

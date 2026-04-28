@@ -348,17 +348,16 @@ async function _renderResourcesData(data) {
         var primaryTitle = isPrimary ? 'Primary agent' : 'Set as primary';
         var primaryArrow = isPrimary ? '&#9654;' : '&#9655;';
         var autoconvTag = a.autoconv ? '<span style="font-size:9px;color:#4ecdc4;margin-left:2px;">' + String.fromCodePoint(0x1F504) + '</span>' : '';
-        // Hydrate the global cache from the server value so the header badge
-        // and subsequent in-place refreshes stay in sync without waiting for SSE.
+        // Hydrate the global cache through the same monotonic path used by
+        // SSE. list_resources can lag behind live message_meta/done events;
+        // writing `_contextUsage` directly here would make the gauge flicker
+        // backwards (e.g. 12% -> 11% -> 12%) until the next live update.
         if (a.context_usage && typeof setContextUsage === 'function') {
-          // Update cache silently: we're already inside a full render, so
-          // don't trigger recursive re-renders — just store the value.
-          window._contextUsage = window._contextUsage || {};
-          window._contextUsage[aKeyLc] = {
+          setContextUsage(a.name, {
             used: a.context_usage.used || 0,
             max: a.context_usage.max || 0,
             pct: a.context_usage.pct || 0,
-          };
+          });
         }
         liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + (a.scope||'') + '\',\'' + (a.autoconv||'') + '\');return false;">'
           + '<span style="cursor:pointer;font-size:10px;color:' + primaryColor + ';" title="' + primaryTitle + '"'

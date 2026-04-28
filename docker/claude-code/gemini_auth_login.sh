@@ -56,26 +56,48 @@ export BROWSER="/usr/local/bin/open-browser"
 # Clear stale credentials
 rm -f "$HOME/.gemini/oauth_creds.json" "$HOME/.gemini/google_accounts.json" 2>/dev/null
 
-# Open xterm for debugging alongside gemini
-xterm -fa Monospace -fs 14 -bg black -fg white -e bash &
+# Trigger OAuth flow. Gemini prints the Google OAuth URL to stdout; capture it
+# and open that exact URL in Chromium on the noVNC display. Relying only on
+# BROWSER is not enough across Gemini CLI versions: some builds leave the user
+# at the terminal prompt instead of launching the browser.
+GEMINI_LOG="/tmp/gemini-auth.log"
+: > "$GEMINI_LOG"
+(
+  printf '/exit\n' | gemini 2>&1 | tee -a "$GEMINI_LOG"
+) &
+GEMINI_PID=$!
 
-# Trigger OAuth flow — the first interactive run forces the browser dance
-# when no oauth_creds.json is present. We send a no-op prompt and exit
-# immediately (the auth side-effect persists oauth_creds.json + google_accounts.json).
-# Note: --prompt is non-interactive and skips OAuth; we MUST run interactive
-# without --prompt for the dance to fire.
-# A trick: pipe an empty input to make the CLI close after the OAuth lands.
-printf '/exit\n' | gemini || true
-
-echo "[gemini-auth-login] gemini OAuth flow completed"
-
-# Copy credentials to /workspace so the host-side action can pick them up.
-for f in "$HOME/.gemini/oauth_creds.json" "$HOME/.gemini/google_accounts.json"; do
-  if [ -f "$f" ]; then
-    echo "[gemini-auth-login] Found: $f"
-    cp "$f" "/workspace/$(basename $f)" 2>/dev/null || true
+AUTH_URL=""
+for _ in $(seq 1 120); do
+  AUTH_URL=$(grep -Eo 'https://accounts\.google\.com/o/oauth2/[^[:space:]]+' "$GEMINI_LOG" | head -n 1 || true)
+  if [ -n "$AUTH_URL" ]; then
+    echo "[gemini-auth-login] Opening OAuth URL in Chromium"
+    /usr/local/bin/open-browser "$AUTH_URL" >/tmp/gemini-browser.log 2>&1 &
+    break
   fi
+  if [ -f "$HOME/.gemini/oauth_creds.json" ]; then
+    break
+  fi
+  sleep 1
 done
+
+# Keep waiting while the browser flow writes credentials. The status endpoint
+# polls /workspace/oauth_creds.json, so copy as soon as files appear.
+for _ in $(seq 1 300); do
+  for f in "$HOME/.gemini/oauth_creds.json" "$HOME/.gemini/google_accounts.json"; do
+    if [ -f "$f" ]; then
+      echo "[gemini-auth-login] Found: $f"
+      cp "$f" "/workspace/$(basename "$f")" 2>/dev/null || true
+    fi
+  done
+  if [ -f "/workspace/oauth_creds.json" ]; then
+    break
+  fi
+  sleep 1
+done
+
+kill "$GEMINI_PID" 2>/dev/null || true
+wait "$GEMINI_PID" 2>/dev/null || true
 ls -la /workspace/oauth_creds.json 2>/dev/null || echo "[gemini-auth-login] WARNING: no oauth_creds.json found"
 
 # Signal completion

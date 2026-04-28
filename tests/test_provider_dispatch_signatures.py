@@ -140,6 +140,26 @@ def test_codex_provider_uses_codex_runtime_contracts():
     assert "__PF_CODEX_PID" in codex_pool_src
 
 
+def test_codex_flushes_pending_text_before_live_tool_callback():
+    """Codex live tool_use must not overtake already-emitted text."""
+    from core.llm_providers.codex import LLMCodexMixin
+
+    src = inspect.getsource(LLMCodexMixin._stream_codex)
+    flush_idx = src.index("if block_callback and _turn_text_parts:")
+    callback_idx = src.index('block_callback("tool_use", _bc_payload)')
+    assert flush_idx < callback_idx
+
+
+def test_gemini_flushes_pending_text_before_live_tool_callback():
+    """Gemini live tool_use must not overtake already-emitted text."""
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    src = inspect.getsource(LLMGeminiMixin._stream_gemini)
+    flush_idx = src.index("if block_callback and _turn_text_parts:")
+    callback_idx = src.index('block_callback("tool_use", _bc_payload)')
+    assert flush_idx < callback_idx
+
+
 def test_provider_mixins_have_no_method_collisions():
     """Each provider's per-CLI helper methods must NOT collide.
 

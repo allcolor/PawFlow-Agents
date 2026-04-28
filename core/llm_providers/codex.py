@@ -2148,6 +2148,14 @@ class LLMCodexMixin(CodexSessionMixin):
                                           "cwd": item.get("cwd", "") or ""}
 
                         if etype == "item.started":
+                            # Preserve visible ordering for live tool blocks:
+                            # Codex can complete an assistant text item before
+                            # starting a tool, but text is normally persisted at
+                            # turn flush while block_callback persists tool_use
+                            # immediately. Flush pending text first so the UI
+                            # shows "what I'm doing" before the toolcall/result.
+                            if block_callback and _turn_text_parts:
+                                _flush_turn()
                             # Codex IDs (`item_1`, `item_2`, ...) reset on
                             # every `exec --json` call — they are NOT globally
                             # unique across turns of the same conversation,

@@ -1956,6 +1956,11 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     continue
 
                 if etype == "tool_use":
+                    # Preserve visible ordering for live tool blocks: if Gemini
+                    # already emitted assistant text, persist it before the
+                    # tool_use block_callback publishes the live toolcall/result.
+                    if block_callback and _turn_text_parts:
+                        _flush_turn()
                     _block_id = event.get("call_id", "") or event.get("id", "") or f"gemini-{_turn_count}-{len(_turn_tool_calls)}"
                     _raw_name = event.get("name", "") or ""
                     _raw_args = event.get("args", {}) or event.get("arguments", {}) or {}

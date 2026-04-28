@@ -2058,6 +2058,67 @@ class LLMGeminiMixin(GeminiSessionMixin):
                                          _br_err, exc_info=True)
                     # Flush this tool's pair immediately — same fix as codex.
                     _flush_turn()
+                    # Live gauge update: tool result now joins gemini's
+                    # in-memory context. Bump prompt_tokens by the result
+                    # token count and publish a fresh `message_meta` so
+                    # the UI gauge moves forward at every tool, not only
+                    # at end-of-turn. Mirrors codex's per-result bump.
+                    try:
+                        from core.token_counter import (
+                            count_tokens as _ct,
+                            resolve_token_multiplier as _rtm,
+                        )
+                        _mult2 = _rtm(getattr(self, "_config_ref", None) or {})
+                        prompt_tokens += _ct(result_str or "", multiplier=_mult2)
+                        _ctx_max_now = (
+                            self._gemini_context_window(model)
+                            if hasattr(self, '_gemini_context_window')
+                            else 1_000_000)
+                        _pub("message_meta", {
+                            "agent_name": agent_name,
+                            "context_used": prompt_tokens,
+                            "context_max": _ctx_max_now,
+                            "context_pct": (prompt_tokens / _ctx_max_now)
+                                           if _ctx_max_now > 0 else 0.0,
+                            "live": True,
+                        })
+                    except Exception:
+                        logger.debug("live-gauge update failed", exc_info=True)
+                    # Mid-turn compact threshold check. Without this, the
+                    # only check happens at end-of-stream (`result`), so
+                    # a long tool-heavy turn can blow past the threshold
+                    # and keep growing. Re-evaluate after every tool
+                    # result; on cross, set _compact_pending, kill the
+                    # CLI, break the loop, post-loop raises
+                    # CCCompactDetected. Mirrors codex.
+                    if not _compact_pending[0]:
+                        try:
+                            _cthp_mid = int(
+                                (getattr(self, "_config_ref", None) or {})
+                                .get("compact_threshold_pct", 0) or 0)
+                        except (TypeError, ValueError):
+                            _cthp_mid = 0
+                        _ctx_max_mid = (
+                            self._gemini_context_window(model)
+                            if hasattr(self, '_gemini_context_window')
+                            else 1_000_000)
+                        if (_cthp_mid > 0 and _ctx_max_mid > 0
+                                and prompt_tokens >= int(
+                                    _ctx_max_mid * _cthp_mid / 100)):
+                            logger.warning(
+                                "[gemini] mid-turn usage %d/%d crossed "
+                                "PawFlow compact threshold (%d%%) — "
+                                "killing gemini to compact NOW",
+                                prompt_tokens, _ctx_max_mid, _cthp_mid)
+                            self._compacting = True
+                            _compact_pending[0] = True
+                            try:
+                                self._kill_gemini_hard(proc)
+                            except Exception as _ke:
+                                logger.warning(
+                                    "[gemini] mid-turn compact kill "
+                                    "failed: %s", _ke)
+                            break
                     continue
 
                 if etype == "result":

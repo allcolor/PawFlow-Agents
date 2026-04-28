@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 _CODEX = Path("core/llm_providers/codex.py").read_text(encoding="utf-8")
+_GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 _AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 
 
@@ -75,3 +76,40 @@ def test_ccd_handler_propagates_trigger_fraction():
     assert "compact_threshold_pct" in handler, (
         "CCCompactDetected handler must read compact_threshold_pct"
         " from the agent client config")
+
+
+# ---------------------------------------------------------------------------
+# Gemini parity — same mid-turn check, no "different (and worse) than codex".
+# ---------------------------------------------------------------------------
+
+
+def test_gemini_bumps_prompt_tokens_per_tool_result():
+    """Gemini must update prompt_tokens at every tool_result event so
+    the gauge moves forward mid-turn AND the mid-turn threshold check
+    has fresh values to compare against."""
+    block_start = _GEMINI.index('if etype == "tool_result":')
+    block_end = _GEMINI.index('if etype == "result":', block_start)
+    block = _GEMINI[block_start:block_end]
+    assert "prompt_tokens += _ct(result_str" in block, (
+        "gemini tool_result handler must bump prompt_tokens by the"
+        " tool result token count, mirroring codex")
+    assert '_pub("message_meta"' in block, (
+        "gemini tool_result handler must publish a fresh message_meta"
+        " so the UI gauge updates mid-turn")
+
+
+def test_gemini_mid_turn_compact_check_present():
+    block_start = _GEMINI.index('if etype == "tool_result":')
+    block_end = _GEMINI.index('if etype == "result":', block_start)
+    block = _GEMINI[block_start:block_end]
+    assert "_compact_pending[0]" in block, (
+        "gemini tool_result handler must consult _compact_pending")
+    assert "compact_threshold_pct" in block, (
+        "gemini tool_result handler must read compact_threshold_pct")
+    pattern = re.compile(
+        r"prompt_tokens >= int\(\s*_ctx_max_mid \* _cthp_mid / 100\)")
+    assert pattern.search(block), (
+        "gemini tool_result handler missing the mid-turn gate")
+    assert "_kill_gemini_hard(proc)" in block, (
+        "gemini mid-turn compact must kill the in-flight CLI to break"
+        " the dispatch loop")

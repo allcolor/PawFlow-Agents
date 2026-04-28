@@ -10,11 +10,18 @@ Verifies that:
 """
 import json
 import threading
+from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
 from core.handlers.resource_agent import SpawnAgentsHandler
-from core.agent_executor import AgentTask
+from core.agent_executor import (
+    AgentTask,
+    drain_live_delegate_messages,
+    queue_live_delegate_message,
+    register_live_delegate,
+    unregister_live_delegate,
+)
 
 
 def _make_handler(conversation_id="conv1", user_id="user1",
@@ -28,6 +35,43 @@ def _make_handler(conversation_id="conv1", user_id="user1",
     h._registry = MagicMock()
     h._on_event = MagicMock()
     return h
+
+
+class TestRunningDelegateInjection:
+    def test_failed_live_preempt_is_queued_for_sub_agent_loop(self):
+        task = AgentTask(id="tid1", agent_name="B", message="initial")
+        client = MagicMock()
+        register_live_delegate("conv1", "agentA", "B", "tid1", client, task)
+        try:
+            assert queue_live_delegate_message(
+                "conv1", "agentA", "B", "follow-up") is True
+            assert drain_live_delegate_messages(
+                "conv1", "agentA", "B", "tid1") == ["follow-up"]
+            assert drain_live_delegate_messages(
+                "conv1", "agentA", "B", "tid1") == []
+        finally:
+            unregister_live_delegate("conv1", "agentA", "B", "tid1")
+
+    def test_execute_queues_when_live_client_cannot_preempt_inline(self):
+        h = _make_handler(conversation_id="conv1")
+        live_client = MagicMock()
+        live_client.send_user_message.return_value = False
+        with patch("core.agent_executor.get_live_delegate", return_value={
+            "client": live_client,
+            "task_id": "tid1",
+        }), patch("core.agent_executor.queue_live_delegate_message") as mock_queue:
+            result = h.execute({"tasks": [{"agent": "B", "message": "follow-up"}]})
+        mock_queue.assert_called_once_with(
+            "conv1", "agentA", "B", "follow-up")
+        assert "injected_queued" in result
+
+    def test_agent_core_rehydrates_delegate_turn_mode_after_pending_drain(self):
+        src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+        assert "def _apply_queued_delegate_turn_mode" in src
+        assert 'ctx["_turn_mode"] = {' in src
+        final_drain = src[src.index("# Final drain:"):]
+        final_drain = final_drain[:final_drain.index("# Unregister claude-code client")]
+        assert "_apply_queued_delegate_turn_mode(_new_user_msgs)" in final_drain
 
 
 class TestTaskConvIdExtraction:

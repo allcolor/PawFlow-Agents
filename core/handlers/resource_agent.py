@@ -514,7 +514,10 @@ class SpawnAgentsHandler(ToolHandler):
         # the new message into the running sub-agent's loop (preempt)
         # rather than spawning a parallel one. Only unique (caller,
         # target) pairs with no live delegate go through the spawn path.
-        from core.agent_executor import get_live_delegate
+        from core.agent_executor import (
+            get_live_delegate,
+            queue_live_delegate_message,
+        )
         agent_tasks = []
         _injected_results = []
         for spec in tasks_spec:
@@ -540,6 +543,9 @@ class SpawnAgentsHandler(ToolHandler):
                             logger.warning(
                                 "[delegate] preempt to live delegate %s failed: %s",
                                 _live_tid, _pe)
+                    if not _delivered:
+                        queue_live_delegate_message(
+                            _parent_conv_id, _src_agent, agent_name, message)
                     _injected_results.append({
                         "task_id": _live_tid,
                         "agent": agent_name,

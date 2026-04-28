@@ -1031,6 +1031,53 @@ class AgentCoreMixin:
                                 # display_only NOT persisted — _classify_messages_for_display
                                 # reconstructs tool_call/tool_result from LLM context messages
 
+                    def _apply_queued_delegate_turn_mode(_new_user_msgs):
+                        """If a shared delegate arrived while this agent was
+                        running, the pending-queue drain happens without a new
+                        _prepare_agent_context() call. Recreate the delegate
+                        reply turn mode here so the next loop's assistant
+                        output is routed privately back to the delegator.
+                        """
+                        _delegate_src = None
+                        for _m in reversed(_new_user_msgs or []):
+                            _src = getattr(_m, "source", None) or {}
+                            if (isinstance(_src, dict)
+                                    and _src.get("type") == "agent_delegate"
+                                    and _src.get("kind") != "reply"
+                                    and _src.get("from")):
+                                _delegate_src = _src
+                                break
+                        if not _delegate_src:
+                            return False
+                        _caller = _delegate_src.get("from", "") or ""
+                        ctx["_turn_mode"] = {
+                            "type": "delegate_reply",
+                            "source_agent": _caller,
+                        }
+                        _hint = (
+                            "\n\nDELEGATE MODE: Agent '" + _caller + "' is "
+                            "waiting for your answer. Write your response as "
+                            "normal text; it will be routed back to '" + _caller + "' "
+                            "automatically as a private reply. Do NOT call "
+                            "delegate() yourself to answer."
+                        )
+                        for _idx, _m in enumerate(messages):
+                            if getattr(_m, "role", "") == "system":
+                                if "DELEGATE MODE:" not in (_m.content or ""):
+                                    messages[_idx] = LLMMessage(
+                                        role="system",
+                                        content=(_m.content or "") + _hint,
+                                        conversation_id=conversation_id)
+                                break
+                        else:
+                            messages.insert(0, LLMMessage(
+                                role="system", content=_hint.strip(),
+                                conversation_id=conversation_id))
+                        logger.info(
+                            "[agent:%s] queued delegate message sets next turn mode: reply to %s",
+                            conversation_id[:8], _caller)
+                        return True
+
                     def _cli_block_callback(event_type, payload):
                         """Persist one live CLI tool block through the writer.
 
@@ -1864,6 +1911,8 @@ class AgentCoreMixin:
             # Only count messages that are TRULY new (not already in this loop's context)
             _new_user_msgs = [m for m in messages[_pre_drain:]
                               if m.role == "user" and m.msg_id not in _existing_ids]
+            if _new_user_msgs:
+                _apply_queued_delegate_turn_mode(_new_user_msgs)
             if _new_user_msgs and not _had_preempts:
                 logger.info("[agent:%s] %d truly new message(s) arrived during last turn — re-triggering",
                             conversation_id[:8], len(_new_user_msgs))

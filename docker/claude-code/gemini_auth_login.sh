@@ -56,30 +56,18 @@ export BROWSER="/usr/local/bin/open-browser"
 # Clear stale credentials
 rm -f "$HOME/.gemini/oauth_creds.json" "$HOME/.gemini/google_accounts.json" 2>/dev/null
 
-# Trigger OAuth flow. Gemini prints the Google OAuth URL to stdout; capture it
-# and open that exact URL in Chromium on the noVNC display. Relying only on
-# BROWSER is not enough across Gemini CLI versions: some builds leave the user
-# at the terminal prompt instead of launching the browser.
+# Gemini's OAuth bootstrap is TTY-sensitive: unlike Claude Code and Codex,
+# running it through a plain pipe can leave the noVNC display blank. Run it in
+# xterm so the CLI has a real terminal on the same X display that Chromium uses.
 GEMINI_LOG="/tmp/gemini-auth.log"
 : > "$GEMINI_LOG"
-(
-  printf '/exit\n' | gemini 2>&1 | tee -a "$GEMINI_LOG"
-) &
+xterm -fa Monospace -fs 14 -bg black -fg white -e bash -lc '
+  echo "Starting Gemini OAuth login..."
+  gemini 2>&1 | tee -a /tmp/gemini-auth.log
+  echo "Gemini process exited. Waiting for PawFlow to read credentials..."
+  sleep infinity
+' &
 GEMINI_PID=$!
-
-AUTH_URL=""
-for _ in $(seq 1 120); do
-  AUTH_URL=$(grep -Eo 'https://accounts\.google\.com/o/oauth2/[^[:space:]]+' "$GEMINI_LOG" | head -n 1 || true)
-  if [ -n "$AUTH_URL" ]; then
-    echo "[gemini-auth-login] Opening OAuth URL in Chromium"
-    /usr/local/bin/open-browser "$AUTH_URL" >/tmp/gemini-browser.log 2>&1 &
-    break
-  fi
-  if [ -f "$HOME/.gemini/oauth_creds.json" ]; then
-    break
-  fi
-  sleep 1
-done
 
 # Keep waiting while the browser flow writes credentials. The status endpoint
 # polls /workspace/oauth_creds.json, so copy as soon as files appear.
@@ -99,6 +87,8 @@ done
 kill "$GEMINI_PID" 2>/dev/null || true
 wait "$GEMINI_PID" 2>/dev/null || true
 ls -la /workspace/oauth_creds.json 2>/dev/null || echo "[gemini-auth-login] WARNING: no oauth_creds.json found"
+
+
 
 # Signal completion
 touch /tmp/auth_done

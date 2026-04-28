@@ -850,16 +850,15 @@ class AgentCoreMixin:
                     # `_is_claude_code` historically meant "this provider
                     # uses turn_callback to persist content during streaming;
                     # do NOT re-append response.content at end of turn".
-                    # Codex and gemini share that pattern (see
+                    # Codex app-server and gemini share that pattern (see
                     # `turn_callback=_claude_code_turn_callback if
-                    # _client_provider in ("claude-code","codex","gemini")`
+                    # _client_provider in ("claude-code","codex-app-server","gemini")`
                     # below). Without including them here, agent_core
-                    # double-persists at end of turn — codex emits an
-                    # extra empty assistant message because turn_callback
+                    # double-persists at end of turn because turn_callback
                     # already pushed everything and response.content is
                     # the concatenation of pieces already on disk.
                     _is_claude_code = _client_provider in (
-                        "claude-code", "codex", "gemini")
+                        "claude-code", "codex-app-server", "gemini")
 
                     _cc_turn_count = [0]
 
@@ -1144,8 +1143,8 @@ class AgentCoreMixin:
                                 callback=emitter.get_token_callback(ps),
                                 thinking_budget=_tb,
                                 thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None,
-                                turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "codex", "gemini") else None,
-                                block_callback=_cli_block_callback if _client_provider == "codex" else None,
+                                turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "codex-app-server", "gemini") else None,
+                                block_callback=_cli_block_callback if _client_provider == "codex-app-server" else None,
                                 **_call_kwargs)
                         return client.complete(
                             messages=msgs, model=model or None,
@@ -1852,17 +1851,17 @@ class AgentCoreMixin:
                 else:
                     break
 
-            # Empty response synthesis (skip for claude-code / codex / gemini —
-            # all three CLI providers run turn_callback which already persisted
+            # Empty response synthesis (skip for claude-code / codex-app-server / gemini —
+            # these CLI providers run turn_callback which already persisted
             # the assistant text + tool_call + tool_result messages; the empty
             # `response.content` is the *intended* signal, not a missing reply.
             # Without this skip, an extra synthesis call fires after every
-            # codex/gemini turn and its response is silently dropped because
+            # app-server/gemini turn and its response is silently dropped because
             # turn_callback again returns empty.)
             _is_cli_provider = (
                 ctx.get("_is_claude_code")
-                or ctx.get("active_llm_provider") in ("codex", "gemini")
-                or getattr(client, "provider", "") in ("codex", "gemini")
+                or ctx.get("active_llm_provider") in ("codex-app-server", "gemini")
+                or getattr(client, "provider", "") in ("codex-app-server", "gemini")
             )
             if not response_content and not _fatal_error and not _is_cli_provider:
                 logger.warning(f"[agent:{conversation_id[:8]}] empty response — forcing synthesis")

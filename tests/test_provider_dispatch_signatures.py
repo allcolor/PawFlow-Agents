@@ -120,34 +120,7 @@ def test_gemini_provider_uses_gemini_runtime_contracts():
     assert "__PF_GEMINI_PID" in gemini_pool_src
 
 
-def test_codex_provider_uses_codex_runtime_contracts():
-    """Codex must keep its own pool/env/PID contract, not Claude's."""
-    from core.llm_providers.codex import LLMCodexMixin
-    import core.codex_pool
 
-    spawn_src = inspect.getsource(LLMCodexMixin._spawn_codex_stream)
-    pool_src = inspect.getsource(LLMCodexMixin._codex_pool_popen)
-    kill_src = inspect.getsource(LLMCodexMixin._kill_codex_hard)
-    drain_src = inspect.getsource(LLMCodexMixin._spawn_codex_stream)
-    codex_pool_src = Path(core.codex_pool.__file__).read_text(encoding="utf-8")
-
-    assert "_build_codex_cmd" in spawn_src
-    assert "CODEX_API_KEY" in pool_src
-    assert "OPENAI_API_KEY" in pool_src
-    assert "OPENAI_BASE_URL" in pool_src
-    assert "ANTHROPIC_API_KEY" not in pool_src
-    assert "__PF_CODEX_PID" in kill_src + drain_src
-    assert "__PF_CODEX_PID" in codex_pool_src
-
-
-def test_codex_flushes_pending_text_before_live_tool_callback():
-    """Codex live tool_use must not overtake already-emitted text."""
-    from core.llm_providers.codex import LLMCodexMixin
-
-    src = inspect.getsource(LLMCodexMixin._stream_codex)
-    flush_idx = src.index("if block_callback and _turn_text_parts:")
-    callback_idx = src.index('block_callback("tool_use", _bc_payload)')
-    assert flush_idx < callback_idx
 
 
 def test_gemini_flushes_pending_text_before_live_tool_callback():
@@ -163,20 +136,18 @@ def test_gemini_flushes_pending_text_before_live_tool_callback():
 def test_provider_mixins_have_no_method_collisions():
     """Each provider's per-CLI helper methods must NOT collide.
 
-    `LLMClient` inherits from `LLMClaudeCodeMixin`, `LLMCodexMixin`, and
-    `LLMGeminiMixin` (each with their own session mixin). Two mixins
-    defining a method with the same name silently let Python's MRO pick
-    one — and the wrong provider's implementation runs. The bug shipped
-    in `a443a68` (codex's `_setup_credentials` was shadowed by CC's,
-    sending codex calls through CC's auth pool + claude pool) is exactly
-    that.
+    `LLMClient` inherits from the active provider mixins, while the legacy
+    Codex CLI mixin still exists as helper/reference code for app-server.
+    Two active mixins defining a method with the same name silently let
+    Python's MRO pick one — and the wrong provider's implementation runs.
 
     Convention enforced here: every method on a provider mixin (or its
-    session mixin) MUST be prefixed with the CLI name (`_cc_`, `_codex_`,
-    `_gemini_`) UNLESS it is one of the OK_TO_COLLIDE exceptions below.
+    session mixin) MUST be prefixed with the CLI name (`_cc_`,
+    `_codex_app_`, `_gemini_`) UNLESS it is one of the OK_TO_COLLIDE
+    exceptions below.
     """
     from core.llm_providers.claude_code import LLMClaudeCodeMixin as CC
-    from core.llm_providers.codex import LLMCodexMixin as CX
+    from core.llm_providers.codex_app_server import LLMCodexAppServerMixin as CAPP
     from core.llm_providers.gemini import LLMGeminiMixin as GM
     from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin as CCS
     from core.llm_providers.codex_session import CodexSessionMixin as CXS
@@ -189,7 +160,7 @@ def test_provider_mixins_have_no_method_collisions():
         }
 
     cc_all = _own(CC) | _own(CCS)
-    cx_all = _own(CX) | _own(CXS)
+    capp_all = _own(CAPP) | _own(CXS)
     gm_all = _own(GM) | _own(GMS)
 
     # Names that may legitimately appear identically on multiple mixins:
@@ -210,16 +181,17 @@ def test_provider_mixins_have_no_method_collisions():
 
     failures = []
     for label, a, b in (
-        ("CC ∩ codex", cc_all, cx_all),
+        ("CC ∩ codex-app-server", cc_all, capp_all),
         ("CC ∩ gemini", cc_all, gm_all),
-        ("codex ∩ gemini", cx_all, gm_all),
+        ("codex-app-server ∩ gemini", capp_all, gm_all),
     ):
         bad = (a & b) - OK_TO_COLLIDE
         if bad:
             failures.append(
                 f"{label}: {sorted(bad)} — these names collide on "
                 f"LLMClient and Python's MRO will silently pick one. "
-                f"Rename with the CLI prefix (`_cc_*` / `_codex_*` / "
-                f"`_gemini_*`) or add to OK_TO_COLLIDE if intentional.")
+                f"Rename with the CLI prefix (`_cc_*` / `_codex_app_*` / "
+                f"`_gemini_*`) or add to "
+                f"OK_TO_COLLIDE if intentional.")
     if failures:
         raise AssertionError("\n\n".join(failures))

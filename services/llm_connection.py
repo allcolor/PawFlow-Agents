@@ -89,7 +89,7 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
-        if self.provider in ("claude-code", "codex", "gemini"):
+        if self.provider in ("claude-code", "codex-app-server", "gemini"):
             # CLI providers — binary auto-detected at runtime, OAuth pool is
             # the default credential source, api_key is an optional fallback.
             pass
@@ -483,7 +483,7 @@ class LLMConnectionService(BaseService):
                 }
             },
             {
-                "when": {"provider": ["codex"]},
+                "when": {"provider": ["codex-app-server"]},
                 "set": {
                     "api_key":       {"visible": True, "description": "OpenAI API key (empty = OAuth login via codex CLI)"},
                     "base_url":      {"visible": False},
@@ -494,7 +494,7 @@ class LLMConnectionService(BaseService):
                     "docker_image":  {"visible": True},
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
-                    "effort":        {"visible": False},
+                    "effort":        {"visible": True, "description": "Codex app-server reasoning effort (low/medium/high/xhigh/max)"},
                 }
             },
             {
@@ -542,12 +542,12 @@ class LLMConnectionService(BaseService):
                 "server_action": "claude_code_login_url",
                 "flow": "oauth_code",
             },
-            # Codex CLI — same 3 flows, dedicated actions in service_flow.py
+            # Codex app-server — same 3 flows, dedicated actions in service_flow.py
             {
                 "id": "codex_relay_login",
                 "label": "Login via relay",
                 "icon": "\U0001f50c",
-                "when": {"provider": ["codex"]},
+                "when": {"provider": ["codex-app-server"]},
                 "server_action": "claude_code_list_relays",
                 "flow": "codex_login_relay",
             },
@@ -555,7 +555,7 @@ class LLMConnectionService(BaseService):
                 "id": "codex_server_login",
                 "label": "Login via server",
                 "icon": "\U0001f310",
-                "when": {"provider": ["codex"]},
+                "when": {"provider": ["codex-app-server"]},
                 "server_action": "codex_server_login",
                 "flow": "codex_login_server",
             },
@@ -563,7 +563,7 @@ class LLMConnectionService(BaseService):
                 "id": "codex_login",
                 "label": "Set credentials",
                 "icon": "\U0001f511",
-                "when": {"provider": ["codex"]},
+                "when": {"provider": ["codex-app-server"]},
                 "server_action": "codex_login_url",
                 "flow": "oauth_code",
             },

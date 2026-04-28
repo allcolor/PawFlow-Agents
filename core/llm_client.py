@@ -22,7 +22,7 @@ from core.llm_providers import (
     LLMOpenaiMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
-    LLMCodexMixin,
+    LLMCodexAppServerMixin,
     LLMGeminiMixin,
 )
 
@@ -295,13 +295,12 @@ class LLMResponse:
     cache_read_tokens: int = 0
     thinking: str = ""
 
-
 class LLMClient(
     LLMCliSharedMixin,
     LLMOpenaiMixin,
     LLMAnthropicMixin,
     LLMClaudeCodeMixin,
-    LLMCodexMixin,
+    LLMCodexAppServerMixin,
     LLMGeminiMixin,
 ):
     """Standalone LLM HTTP client (no BaseService dependency).
@@ -317,7 +316,7 @@ class LLMClient(
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "anthropic", "claude-code", "codex", "gemini")
+    PROVIDERS = ("openai", "anthropic", "claude-code", "codex-app-server", "gemini")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -328,9 +327,10 @@ class LLMClient(
         "openai": "gpt-4o-mini",
         "anthropic": "claude-opus-4-6",
         "claude-code": "claude-opus-4-6",
-        "codex": "gpt-5.2-codex",
+        "codex-app-server": "gpt-5.4",
         "gemini": "gemini-2.5-pro",
     }
+
 
     # Regex for parsing <tool_call>...</tool_call> tags from claude-code responses
     TOOL_CALL_RE = re.compile(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', re.DOTALL)
@@ -586,17 +586,16 @@ class LLMClient(
     def send_user_message(self, text: str, attachments: list = None):
         """Provider-agnostic preempt entrypoint.
 
-        Each provider's mixin defines its own `_<cli>_send_user_message`
-        (CC writes the message on stdin, codex/gemini kill the proc so the
-        agent loop retries with the new prompt). Without this dispatch,
-        Python's MRO would resolve to whichever mixin happens to be listed
-        first in `LLMClient`'s bases — the wrong implementation would run
-        for two of the three providers.
+        Each provider's mixin defines its own `_<cli>_send_user_message`.
+        CC writes on stdin, Codex app-server steers an active turn, and Gemini
+        kills/retries. Without this dispatch, Python's MRO would resolve to
+        whichever mixin happens to be listed first in `LLMClient`'s bases —
+        the wrong implementation would run for another CLI provider.
         """
         if self.provider == "claude-code":
             fn = getattr(self, "_cc_send_user_message", None)
-        elif self.provider == "codex":
-            fn = getattr(self, "_codex_send_user_message", None)
+        elif self.provider == "codex-app-server":
+            fn = getattr(self, "_codex_app_send_user_message", None)
         elif self.provider == "gemini":
             fn = getattr(self, "_gemini_send_user_message", None)
         else:
@@ -650,7 +649,7 @@ class LLMClient(
         Returns:
             LLMResponse with content and/or tool_calls populated.
         """
-        if not self.api_key and self.provider not in ("claude-code", "codex", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "codex-app-server", "gemini"):
             raise LLMClientError("api_key is required")
         if self.provider not in self.PROVIDERS:
             raise LLMClientError(
@@ -678,10 +677,10 @@ class LLMClient(
                     call_event_cid=call_event_cid,
                     call_ephemeral_stream=call_ephemeral_stream,
                 )
-            elif self.provider == "codex":
-                # Codex CLI: same shape — always streams via `codex exec --json`.
-                result = self._stream_codex(
+            elif self.provider == "codex-app-server":
+                result = self._stream_codex_app_server(
                     messages, mdl, temperature, max_tokens, tools,
+                    thinking_budget=thinking_budget,
                     call_user_id=call_user_id,
                     call_conversation_id=call_conversation_id,
                     call_agent_name=call_agent_name,
@@ -846,7 +845,7 @@ class LLMClient(
 
         Supports both OpenAI and Anthropic streaming.
         """
-        if not self.api_key and self.provider not in ("claude-code", "codex", "gemini"):
+        if not self.api_key and self.provider not in ("claude-code", "codex-app-server", "gemini"):
             raise LLMClientError("api_key is required")
 
         model = model or self.default_model
@@ -867,20 +866,16 @@ class LLMClient(
                                                   call_agent_name=call_agent_name,
                                                   call_event_cid=call_event_cid,
                                                   call_ephemeral_stream=call_ephemeral_stream)
-            elif self.provider == "codex":
-                # No `thinking_callback` — codex/gemini follow CC's pattern:
-                # the parser accumulates reasoning into `_turn_thinking` and
-                # passes it as the 3rd positional to `turn_callback(text, tc,
-                # thinking)` at flush time. A separate live thinking_callback
-                # would duplicate the same text and double-publish.
-                result = self._stream_codex(messages, mdl, temperature, max_tokens, tools, callback,
-                                              turn_callback=turn_callback,
-                                              block_callback=block_callback,
-                                              call_user_id=call_user_id,
-                                              call_conversation_id=call_conversation_id,
-                                              call_agent_name=call_agent_name,
-                                              call_event_cid=call_event_cid,
-                                              call_ephemeral_stream=call_ephemeral_stream)
+            elif self.provider == "codex-app-server":
+                result = self._stream_codex_app_server(messages, mdl, temperature, max_tokens, tools, callback,
+                                                       thinking_budget=thinking_budget,
+                                                       turn_callback=turn_callback,
+                                                       block_callback=block_callback,
+                                                       call_user_id=call_user_id,
+                                                       call_conversation_id=call_conversation_id,
+                                                       call_agent_name=call_agent_name,
+                                                       call_event_cid=call_event_cid,
+                                                       call_ephemeral_stream=call_ephemeral_stream)
             elif self.provider == "gemini":
                 result = self._stream_gemini(messages, mdl, temperature, max_tokens, tools, callback,
                                                turn_callback=turn_callback,

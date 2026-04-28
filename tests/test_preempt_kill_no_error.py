@@ -1,10 +1,10 @@
-"""Lock the codex / gemini preempt-kill flow against regression:
+"""Lock the gemini preempt-kill flow against regression:
 
 When `send_user_message` is called mid-turn, the provider tears down
 the in-flight CLI on purpose. The CLI exits non-zero — EXPECTED.
 The stream loop must NOT raise `LLMClientError` in that case;
-otherwise the user sees a red "Codex CLI stream exited with code 1"
-bubble AND the queued preempt message never gets a turn (the agent
+otherwise the user sees a red CLI stream error bubble AND the queued
+preempt message never gets a turn (the agent
 loop bails on the error before draining PendingQueue).
 
 Guard pattern: the `_preempt_killed` flag is set by the
@@ -16,7 +16,6 @@ is True.
 import re
 from pathlib import Path
 
-_CODEX = Path("core/llm_providers/codex.py").read_text(encoding="utf-8")
 _GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 _AGENT_STREAMING = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
 
@@ -38,16 +37,13 @@ def _has_preempt_killed_branch(src: str, label: str) -> None:
         f"the LLMClientError raise on non-zero exit")
 
 
-def test_codex_preempt_kill_does_not_raise():
-    _has_preempt_killed_branch(_CODEX, "codex")
-
 
 def test_gemini_preempt_kill_does_not_raise():
     _has_preempt_killed_branch(_GEMINI, "gemini")
 
 
 def test_preempt_kill_fast_restarts_streaming_loop():
-    """When Codex/Gemini kill on preempt, streaming must not wait for
+    """When Gemini kills on preempt, streaming must not wait for
     the old loop's cleanup before starting the resume turn.
     """
     assert "_fast_restart_after_preempt = False" in _AGENT_STREAMING

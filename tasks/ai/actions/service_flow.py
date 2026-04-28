@@ -1067,7 +1067,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     }).encode())
                     flowfile.set_attribute("http.response.status", "403")
                     return [flowfile]
-                if (getattr(sdef, "config", {}) or {}).get("provider") != "codex":
+                if (getattr(sdef, "config", {}) or {}).get("provider") != "codex-app-server":
                     flowfile.set_content(json.dumps({
                         "error": f"Service '{service_id}' is not a codex provider"
                     }).encode())
@@ -1078,7 +1078,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 try:
                     usdef = greg.get_definition("user", user_id, service_id)
                     if usdef:
-                        if (getattr(usdef, "config", {}) or {}).get("provider") != "codex":
+                        if (getattr(usdef, "config", {}) or {}).get("provider") != "codex-app-server":
                             flowfile.set_content(json.dumps({
                                 "error": f"Service '{service_id}' is not a codex provider"
                             }).encode())
@@ -2445,7 +2445,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
                 return [flowfile]
-            if sdef.config.get("provider") != "codex":
+            if sdef.config.get("provider") != "codex-app-server":
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not a codex provider"}).encode())
                 return [flowfile]
         except Exception as e:
@@ -2701,9 +2701,24 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         def _bg_setup_gemini():
+            import os as _os
             import subprocess as _sp
-            from core.docker_utils import docker_cmd as _docker_cmd
+            from core.docker_utils import (
+                docker_cmd as _docker_cmd,
+                to_host_path as _to_host_path,
+                translate_path as _translate_path,
+            )
             try:
+                _project_root = _os.path.dirname(_os.path.dirname(
+                    _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
+                _script_src = _os.path.join(
+                    _project_root, "docker", "claude-code", "gemini_auth_login.sh")
+                _script_mount = []
+                if _os.path.exists(_script_src):
+                    _script_mount = [
+                        "-v",
+                        f"{_translate_path(_to_host_path(_script_src))}:/opt/pawflow/gemini_auth_login.sh:ro",
+                    ]
                 docker_cmd = _docker_cmd() + [
                     "run", "--rm", "--detach",
                     "--name", container_name,
@@ -2711,6 +2726,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "--tmpfs", "/workspace:rw,size=64m",
                     "--shm-size", "512m",
                     "-e", "HOME=/home/pawflow",
+                    *_script_mount,
                     "--entrypoint", "bash",
                     image,
                     "/opt/pawflow/gemini_auth_login.sh",

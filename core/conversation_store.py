@@ -184,12 +184,18 @@ class ConversationStore:
         Passes `-c safe.directory=*` so git doesn't reject repos that live on
         a filesystem owned by a different uid (happens when the server runs on
         Windows against a \\\\wsl$\\... path, or inside Docker against a host
-        bind-mount). This is internal infrastructure, not a shared repo — the
-        ownership check adds no value here and only breaks snapshots.
+        bind-mount). Conversation snapshots also disable automatic Git
+        maintenance/GC: on Windows/WSL, geometric repack can fail on pack or
+        multi-pack-index locks and should never block the chat turn snapshot.
         """
         conv_dir = self._conv_dir(cid)
+        git_cfg = [
+            "-c", "safe.directory=*",
+            "-c", "gc.auto=0",
+            "-c", "maintenance.auto=false",
+        ]
         return subprocess.run(
-            ["git", "-c", "safe.directory=*"] + list(args),
+            ["git", *git_cfg] + list(args),
             cwd=str(conv_dir), capture_output=True, text=True,
             check=check, timeout=10,
         )

@@ -41,7 +41,7 @@ def _find_codex_service_id(service_id: str = "") -> str:
         from core.service_registry import ServiceRegistry
         for sdef in ServiceRegistry.get_instance().resolve_by_type("llmConnection"):
             cfg = getattr(sdef, "config", {}) or {}
-            if cfg.get("provider") == "codex":
+            if cfg.get("provider") == "codex-app-server":
                 return sdef.service_id
     except Exception:
         pass
@@ -650,7 +650,7 @@ class CodexSessionMixin:
         (codex uses TOML for config.toml, CC uses JSON for .mcp.json).
         """
         mcp_bridge = "/opt/pawflow/mcp_bridge.py"
-        python_bin = "python3"
+        python_bin = "/usr/bin/python3"
 
         relay_url, relay_token = self._get_tool_relay_info()
         if not relay_url:

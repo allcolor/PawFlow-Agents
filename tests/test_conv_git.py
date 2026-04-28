@@ -49,6 +49,26 @@ pytestmark = pytest.mark.skipif(not _has_git(), reason="git not available")
 
 # ── Basic git state ──
 
+
+def test_git_wrapper_disables_auto_maintenance(store, monkeypatch):
+    cid = store.generate_id()
+    store.save(cid, [_msg()], user_id="testuser")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    store._git(cid, "status")
+
+    cmd = calls[0]
+    assert "safe.directory=*" in cmd
+    assert "gc.auto=0" in cmd
+    assert "maintenance.auto=false" in cmd
+
+
+
 def test_git_init_creates_repo(conv):
     store, cid = conv
     conv_dir = store._conv_dir(cid)

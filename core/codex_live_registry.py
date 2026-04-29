@@ -131,6 +131,7 @@ class CodexLiveRegistry:
                  mcp_internal_token: str = "",
                  hb_state=None,
                  active_turn: bool = False) -> CodexLiveContainer:
+        previous_container = ""
         # Pull svc_pool_idx out of the 5-tuple key so the container struct
         # can surface it via /codex_live status without re-deriving from
         # the dict key.
@@ -162,6 +163,11 @@ class CodexLiveRegistry:
                     existing.hb_state = hb_state
                 existing.active_turn = bool(active_turn)
                 return existing
+            if existing is not None:
+                previous_container = existing.container_name
+                logger.warning(
+                    "[codex-live] register %s replacing container=%s with %s",
+                    _fmt_key(key), previous_container, container_name)
             entry = CodexLiveContainer(
                 container_name=container_name, workdir=workdir,
                 service_id=service_id, svc_pool_idx=_svc_pool_idx,
@@ -177,8 +183,16 @@ class CodexLiveRegistry:
             self._containers[key] = entry
             logger.info("[codex-live] register %s container=%s session_id=%s",
                         _fmt_key(key), container_name,
-                        (session_id[:12] + "…") if session_id else "EMPTY")
-            return entry
+                        (session_id[:12] + "...") if session_id else "EMPTY")
+        if previous_container:
+            try:
+                from core.codex_pool import CodexPool
+                CodexPool.instance().release(previous_container)
+            except Exception as e:
+                logger.warning(
+                    "[codex-live] release replaced container failed: %s", e)
+        return entry
+
 
     def touch(self, key: CodexLiveKey, bump_reuse: bool = True):
         with self._lock:

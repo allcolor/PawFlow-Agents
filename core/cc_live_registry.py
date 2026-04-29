@@ -114,19 +114,22 @@ class LiveSessionRegistry:
     # ── Lookup / register ──────────────────────────────────────
 
     def register(self, key: LiveKey, session: CCLiveSession) -> None:
-        """Stash a live session. Replaces any prior entry for the same key
-        (which is a caller bug — log but don't crash)."""
+        """Stash a live session, tearing down any replaced session."""
+        prior = None
         with self._lock:
             prior = self._sessions.get(key)
             if prior is not None and prior is not session:
                 logger.warning(
-                    "[cc-live] register %s overwrote prior entry "
-                    "(prior spawn=%.1fs ago) — leaking?",
+                    "[cc-live] register %s replacing prior entry "
+                    "(prior spawn=%.1fs ago)",
                     _fmt_key(key), time.monotonic() - prior.spawn_at)
             self._sessions[key] = session
             logger.info("[cc-live] register %s (spawn=%.1fs)",
                         _fmt_key(key),
                         time.monotonic() - session.spawn_at)
+        if prior is not None and prior is not session:
+            _teardown_session(prior, "replaced", killer=None)
+
 
     def get(self, key: LiveKey) -> Optional[CCLiveSession]:
         """Return the live session if present AND alive, else None.

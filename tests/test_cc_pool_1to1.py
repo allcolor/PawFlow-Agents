@@ -107,14 +107,15 @@ def test_release_kills_container(pool, docker_stub):
     assert name not in pool._ready
 
 
-def test_release_unknown_container_is_noop(pool, docker_stub):
+def test_release_unknown_running_container_kills_defensively(pool, docker_stub):
     before = len(docker_stub)
-    pool.release("pf-cc-pool-nonexistent")
-    # Only the warn log, no docker call (we can't assert log; assert
-    # there's no docker rm call for this name).
+    pool.release("pf-cc-pool-untracked")
+    # If Docker says an untracked pool container is still running, release()
+    # owns cleanup and must remove it instead of leaving it to boot reaping.
     rm_calls = [c for c in docker_stub[before:]
-                if "rm" in c and "-f" in c and "pf-cc-pool-nonexistent" in c]
-    assert rm_calls == []
+                if "rm" in c and "-f" in c and "pf-cc-pool-untracked" in c]
+    assert len(rm_calls) == 1
+
 
 
 def test_release_forced_on_ready_container(pool, docker_stub):

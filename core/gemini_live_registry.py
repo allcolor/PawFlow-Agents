@@ -92,6 +92,7 @@ class GeminiLiveRegistry:
                  mcp_internal_token: str = "",
                  hb_state=None,
                  active_turn: bool = False) -> GeminiLiveContainer:
+        previous_container = ""
         with self._lock:
             existing = self._containers.get(key)
             if existing and existing.container_name == container_name:
@@ -112,6 +113,11 @@ class GeminiLiveRegistry:
                     existing.hb_state = hb_state
                 existing.active_turn = bool(active_turn)
                 return existing
+            if existing is not None:
+                previous_container = existing.container_name
+                logger.warning(
+                    "[gemini-live] register %s replacing container=%s with %s",
+                    _fmt_key(key), previous_container, container_name)
             entry = GeminiLiveContainer(
                 container_name=container_name, workdir=workdir,
                 service_id=service_id,
@@ -128,7 +134,15 @@ class GeminiLiveRegistry:
             logger.info("[gemini-live] register %s container=%s session_id=%s",
                         _fmt_key(key), container_name,
                         (session_id[:12] + "...") if session_id else "EMPTY")
-            return entry
+        if previous_container:
+            try:
+                from core.gemini_pool import GeminiPool
+                GeminiPool.instance().release(previous_container)
+            except Exception as e:
+                logger.warning(
+                    "[gemini-live] release replaced container failed: %s", e)
+        return entry
+
 
     def touch(self, key: GeminiLiveKey, bump_reuse: bool = True):
         with self._lock:

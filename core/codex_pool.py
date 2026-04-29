@@ -90,6 +90,9 @@ class CodexPool:
         """
         import atexit, signal, sys
         def _kill_all(*_args, **_kwargs):
+            if getattr(self, "_shutdown_once", False):
+                return
+            self._shutdown_once = True
             # Kill live codex containers FIRST so the registry can release
             # them via this same pool before the pool tears them down.
             try:
@@ -131,6 +134,7 @@ class CodexPool:
         self._ready: Dict[str, _ContainerInfo] = {}
         self._lock = threading.Lock()
         self._reaper_started = False
+        self._shutdown_once = False
 
         # Config (can be overridden via env vars). Defaults were retuned
         # for the 1:1 model: cap bumped from 10 → 50 so concurrency isn't
@@ -246,18 +250,24 @@ class CodexPool:
         with self._lock:
             info = self._active.pop(container_name, None)
             if info is None:
-                # Already released, or never active under this pool.
-                # Could also be a ready container being forced down by
-                # a buggy caller — accept silently but warn.
+                # Already released, not tracked because live registry replaced
+                # it, or pool bookkeeping was cleared during shutdown. Still
+                # issue docker rm -f: release() is the ownership boundary.
                 if container_name in self._ready:
                     del self._ready[container_name]
                     logger.warning(
                         "Pool release: %s was in ready pool, killing anyway",
                         container_name)
                 else:
+                    if not self._is_container_alive(container_name):
+                        logger.warning(
+                            "Pool release: unknown container %s; not running",
+                            container_name)
+                        return
                     logger.warning(
-                        "Pool release: unknown container %s", container_name)
-                    return
+                        "Pool release: unknown container %s; killing defensively",
+                        container_name)
+
         # Kill outside the lock — docker rm -f can take a second.
         self._kill_container(container_name)
         logger.info("Pool release [killed]: %s (active=%d, ready=%d)",

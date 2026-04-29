@@ -394,8 +394,14 @@ def test_cold_cli_session_rebuilds_from_pawflow_initial_context():
     assert "store.load_shared_for_agent" in src
     assert "cold CLI session has truncated agent context" in src
     assert "messages = self._auto_compact_messages" in src
+    assert "_materialize_pawflow_initial_context" in src
+    assert "_pawflow_initial_context_source" in src
     assert "gemini_acp_session_version" in src
     assert "codex_app_server_thread" in src
+
+    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    assert "materialized PawFlow initial" in core_src
+    assert "save_agent_context(" in core_src
 
 
 def test_force_stop_kills_cli_processes_and_blocks_late_appends():

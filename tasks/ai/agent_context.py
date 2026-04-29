@@ -461,6 +461,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         _max_budget = float(_svc_cfg_early.get("max_budget_usd", 0) or 0)
 
         _context_diverged = False
+        _uses_pawflow_initial = False
+        _cold_cli_initial_source = ""
         if preloaded_messages is not None:
             # Caller provided messages (e.g. poller task sub-conversation)
             try:
@@ -1516,6 +1518,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "sub_executor": sub_executor,
             "_target_agent": _target_agent,
             "_context_diverged": _context_diverged,
+            "_materialize_pawflow_initial_context": bool(_uses_pawflow_initial),
+            "_pawflow_initial_context_source": _cold_cli_initial_source,
             "_nicknames": _nicknames if conversation_id else {},
             "_is_claude_code": _is_claude_code,
             "_claude_has_session": _claude_has_session,

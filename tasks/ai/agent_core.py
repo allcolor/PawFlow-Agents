@@ -323,6 +323,29 @@ class AgentCoreMixin:
         if len(messages) > base_count:
             new_messages.extend(messages[base_count:])
 
+        # Cold CLI sessions (CC/Codex/Gemini) are initialized from PawFlow's
+        # canonical shared context when the private agent context is missing or
+        # truncated. Materialize that exact start context immediately so the
+        # context editor and later turns see the same state as the provider.
+        if (ctx.get("_materialize_pawflow_initial_context") and use_conv_store
+                and conversation_id and ctx.get("active_agent_name")):
+            try:
+                from core.conversation_store import ConversationStore
+                ConversationStore.instance().save_agent_context(
+                    conversation_id, ctx.get("active_agent_name", ""),
+                    self._serialize_messages(messages))
+                logger.info(
+                    "[context:%s] materialized PawFlow initial %s context for %s: %d messages",
+                    conversation_id[:8],
+                    ctx.get("_pawflow_initial_context_source") or "shared",
+                    ctx.get("active_agent_name", ""), len(messages))
+                ctx["_materialize_pawflow_initial_context"] = False
+            except Exception:
+                logger.warning(
+                    "[context:%s] failed to materialize PawFlow initial context for %s",
+                    conversation_id[:8], ctx.get("active_agent_name", ""),
+                    exc_info=True)
+
         _auto_compact_state = {"running": False}
 
         def _agent_compact_threshold_fraction() -> float:

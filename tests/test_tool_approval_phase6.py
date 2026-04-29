@@ -103,11 +103,37 @@ def _force_publish_failure(monkeypatch):
         def instance(cls):
             return cls()
 
+        def subscriber_count(self, *_a, **_kw):
+            return 1
+
         def publish_event(self, *a, **kw):
             raise RuntimeError("no SSE subscriber")
 
     monkeypatch.setattr(
         bus_mod, "ConversationEventBus", _BoomBus, raising=True)
+
+
+def test_approval_denies_immediately_without_live_subscriber(monkeypatch):
+    import core.conversation_event_bus as bus_mod
+
+    class _NoSubscriberBus:
+        @classmethod
+        def instance(cls):
+            return cls()
+
+        def subscriber_count(self, *_a, **_kw):
+            return 0
+
+        def publish_event(self, *a, **kw):
+            raise AssertionError("publish_event must not run without subscribers")
+
+    monkeypatch.setattr(
+        bus_mod, "ConversationEventBus", _NoSubscriberBus, raising=True)
+    result = ToolApprovalGate.check(
+        "execute_script", "execute_script(1)",
+        conversation_id="convNoSub", user_id="alice",
+        arguments={"code": "1"})
+    assert result == "denied"
 
 
 def test_approval_fail_closed_by_default(monkeypatch):

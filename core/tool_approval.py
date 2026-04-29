@@ -267,10 +267,21 @@ class ToolApprovalGate:
                 "agent_name": agent_name,
             }
 
-        # Publish SSE event for approval dialog
+        # Publish SSE event for approval dialog. If nobody is connected,
+        # fail closed immediately instead of blocking the agent for the full
+        # approval timeout; a replayed approval request cannot be answered by
+        # a tab that was absent when the tool wanted to run.
         try:
             from core.conversation_event_bus import ConversationEventBus
-            ConversationEventBus.instance().publish_event(
+            bus = ConversationEventBus.instance()
+            if bus.subscriber_count(conversation_id) <= 0:
+                logger.warning(
+                    "tool approval denied: no live subscriber for conv=%s tool=%s",
+                    conversation_id[:8], effective_name)
+                with cls._lock:
+                    cls._pending.pop(request_id, None)
+                return "denied"
+            bus.publish_event(
                 conversation_id, "tool_approval_request", {
                     "request_id": request_id,
                     "tool_name": effective_name,

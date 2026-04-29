@@ -240,6 +240,43 @@ def test_gemini_acp_capacity_error_is_non_retryable_text():
     assert "reset" not in text.lower()
 
 
+def test_gemini_acp_capacity_error_matches_no_capacity_available():
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    text = LLMGeminiMixin._gemini_acp_capacity_error({
+        "code": 500,
+        "message": "No capacity available for model gemini-2.5-flash on the server",
+    })
+
+    assert text == "Gemini model capacity exhausted"
+
+
+def test_gemini_acp_persists_session_only_after_successful_prompt():
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    stream_src = inspect.getsource(LLMGeminiMixin._stream_gemini)
+    open_block = stream_src[
+        stream_src.index("opening new session cwd"):
+        stream_src.index("elif not session_id:", stream_src.index("opening new session cwd"))
+    ]
+    success_block = stream_src[
+        stream_src.index("tokens_out = self._gemini_acp_output_tokens"):
+        stream_src.index("return LLMResponse(", stream_src.index("tokens_out = self._gemini_acp_output_tokens"))
+    ]
+
+    assert "opened_session_this_call = True" in open_block
+    assert "store.set_extra(conv_id, session_key, session_id)" not in open_block
+    assert "store.set_extra(conv_id, session_key, session_id)" in success_block
+    assert "failed fresh session" in stream_src
+
+
+def test_mcp_bridge_aliases_gemini_builtin_list_directory_to_list_dir():
+    src = Path("tools/mcp_bridge.py").read_text(encoding="utf-8")
+    alias_block = src[src.index("_TOOL_ALIASES = {"):
+                      src.index("# Case-insensitive alias lookup")]
+    assert '"list_directory": "list_dir"' in alias_block
+
+
 def test_gemini_acp_permission_result_accepts_pawflow_allow_option():
     from core.llm_providers.gemini import LLMGeminiMixin
 

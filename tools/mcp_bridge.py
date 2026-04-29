@@ -507,6 +507,7 @@ def main():
                     "run_command": "bash", "shell": "bash", "execute": "bash",
                     "run": "bash", "terminal": "bash", "exec": "bash",
                     "search": "grep", "find_files": "glob", "list_files": "glob",
+                    "list_directory": "list_dir", "ls": "list_dir",
                     "cat": "read", "view": "read", "open": "read",
                     "create_file": "write", "save": "write",
                     "replace": "edit", "patch": "edit", "modify": "edit",

@@ -155,7 +155,9 @@ class LLMGeminiMixin(GeminiSessionMixin):
         else:
             message = str(error or "")
         lowered = message.lower()
-        if "exhausted your capacity" in lowered or "quota will reset" in lowered:
+        if ("exhausted your capacity" in lowered
+                or "quota will reset" in lowered
+                or "no capacity available" in lowered):
             cooldown = ""
             match = re.search(r"after\s+([0-9.]+\s*[a-z]+)", message, re.IGNORECASE)
             if match:
@@ -786,6 +788,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     turn_callback(text, [])
 
         turn_failed = False
+        opened_session_this_call = False
         try:
             if not is_reuse:
                 proc, container = self._gemini_acp_start_process(workdir, model)
@@ -826,13 +829,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     logger.info("[gemini-acp] opening new session cwd=%s", container_dir)
                     result = self._gemini_acp_new_session(proc, container_dir, mcp_servers)
                     session_id = (result or {}).get("sessionId", "")
+                    opened_session_this_call = True
                     logger.info("[gemini-acp] new session id=%s", session_id[:12] or "?")
-                if session_id and conv_id and store is not None and not is_ephemeral:
-                    try:
-                        store.set_extra(conv_id, session_key, session_id)
-                        store.set_extra(conv_id, session_version_key, "2")
-                    except Exception:
-                        logger.debug("[gemini-acp] failed to persist session id", exc_info=True)
             elif not session_id:
                 raise LLMClientError("gemini ACP live session has no session id")
             if not session_id:
@@ -1103,6 +1101,12 @@ class LLMGeminiMixin(GeminiSessionMixin):
             _flush_text()
             content = "".join(text_parts).strip()
             tokens_out = self._gemini_acp_output_tokens(usage_meta, content)
+            if session_id and conv_id and store is not None and not is_ephemeral:
+                try:
+                    store.set_extra(conv_id, session_key, session_id)
+                    store.set_extra(conv_id, session_version_key, "2")
+                except Exception:
+                    logger.debug("[gemini-acp] failed to persist session id", exc_info=True)
             return LLMResponse(
                 content=content,
                 model=model,
@@ -1166,6 +1170,13 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     keep_alive = False
 
             if not keep_alive:
+                if turn_failed and opened_session_this_call and conv_id and store is not None and not is_ephemeral:
+                    try:
+                        if (store.get_extra(conv_id, session_key) or "") == session_id:
+                            store.set_extra(conv_id, session_key, "")
+                            store.set_extra(conv_id, session_version_key, "")
+                    except Exception:
+                        logger.debug("[gemini-acp] failed to clear failed fresh session", exc_info=True)
                 if live_reg is not None and live_key is not None:
                     try:
                         live_reg.evict(live_key, "acp_teardown")

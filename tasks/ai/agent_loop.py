@@ -993,7 +993,11 @@ class AgentLoopTask(
                 resp = client.complete_stream(
                     messages=compact_msgs,
                     max_tokens=500,
-                    tools=None, callback=None)
+                    tools=None, callback=None,
+                    call_user_id=user_id,
+                    call_conversation_id=conversation_id,
+                    call_agent_name=agent_name or _agent,
+                    call_event_cid=conversation_id)
 
                 # Save to both transcript and agent context.
                 # `done` SSE fires AFTER the last block hits disk.

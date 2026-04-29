@@ -23,6 +23,17 @@ function cmdShowContext(agentName) {
 
 let _ctxFullData = null;
 
+function _ctxScopedAgentName() {
+  return (_ctxAgentFilter && _ctxAgentFilter !== 'transcript') ? _ctxAgentFilter : '';
+}
+
+function _ctxScopedMutation(body) {
+  const scoped = Object.assign({}, body);
+  const agent = _ctxScopedAgentName();
+  if (agent) scoped.agent_name = agent;
+  return scoped;
+}
+
 function ctxLoadFull() {
   const body = {};
   if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
@@ -116,7 +127,7 @@ function ctxLoadMore() {
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
+      const editBtn = _ctxAgentFilter === 'transcript' ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
       const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
       const row = document.createElement('div');
       row.dataset.msgid = mid;
@@ -144,12 +155,16 @@ function ctxClose() {
 }
 
 async function ctxSaveEdit(msgId) {
+  if (_ctxAgentFilter === 'transcript') {
+    addMsg('error', 'Transcript is read-only here; switch to Shared or an agent context to edit context.');
+    return;
+  }
   const ta = document.getElementById('ctx-edit-ta-' + msgId);
   const roleEl = document.getElementById('ctx-edit-role-' + msgId);
   if (!ta) return;
   _ctxMutate(
-    {action: 'edit_context', msg_id: msgId, agent_name: _ctxAgentFilter,
-     content: ta.value, role: roleEl ? roleEl.value : undefined},
+    _ctxScopedMutation({action: 'edit_context', msg_id: msgId,
+      content: ta.value, role: roleEl ? roleEl.value : undefined}),
     (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
 }
 
@@ -184,15 +199,23 @@ async function ctxAddMessage() {
 }
 
 async function ctxSaveNewMessage() {
+  if (_ctxAgentFilter === 'transcript') {
+    addMsg('error', 'Switch to Shared or an agent context before adding context messages.');
+    return;
+  }
   const role = document.getElementById('ctx-add-role')?.value || 'user';
   const content = document.getElementById('ctx-add-content')?.value || '';
   if (!content.trim()) return;
   _ctxMutate(
-    {action: 'add_context_message', role, content},
+    _ctxScopedMutation({action: 'add_context_message', role, content}),
     (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
 }
 
 async function ctxReplaceAll() {
+  if (_ctxAgentFilter === 'transcript') {
+    addMsg('error', 'Transcript cannot be replaced from the context editor.');
+    return;
+  }
   const full = await ctxLoadFull();
   if (full.error) { addMsg('error', full.error); return; }
   const overlay = document.getElementById('contextOverlay');
@@ -217,7 +240,7 @@ async function ctxSaveReplaceAll() {
   if (!Array.isArray(parsed)) { addMsg('error', t('contextInvalidJson') + ': expected array'); return; }
   if (!confirm(t('contextReplaceConfirm'))) return;
   _ctxMutate(
-    {action: 'replace_context', context: parsed},
+    _ctxScopedMutation({action: 'replace_context', context: parsed}),
     (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
 }
 
@@ -268,7 +291,8 @@ function ctxToggleSelect(row, event) {
   // clearing the live Selection here undoes the highlight.
   try { window.getSelection().removeAllRanges(); } catch (e) {}
   if (event.shiftKey && _ctxSelected.size > 0) {
-    const rows = Array.from(document.querySelectorAll('[data-msgid]'));
+    const overlay = document.getElementById('contextOverlay');
+    const rows = Array.from((overlay || document).querySelectorAll('[data-msgid]'));
     const lastSel = rows.find(r => r.classList.contains('ctx-selected'));
     const lastIdx = lastSel ? rows.indexOf(lastSel) : -1;
     const curIdx = rows.indexOf(row);
@@ -291,7 +315,8 @@ function ctxToggleSelect(row, event) {
       row.style.outline = '2px solid #6c5ce7';
     }
   } else {
-    document.querySelectorAll('.ctx-selected').forEach(r => { r.classList.remove('ctx-selected'); r.style.outline = ''; });
+    const overlay = document.getElementById('contextOverlay');
+    (overlay || document).querySelectorAll('.ctx-selected').forEach(r => { r.classList.remove('ctx-selected'); r.style.outline = ''; });
     _ctxSelected.clear();
     _ctxSelected.add(mid);
     row.classList.add('ctx-selected');
@@ -305,7 +330,13 @@ async function ctxDeleteSelected() {
   if (!_ctxSelected.size) return;
   const mids = Array.from(_ctxSelected);
   _ctxSelected.clear();
-  await _ctxMutate({action: 'delete_message', msg_ids: mids});
+  if (_ctxAgentFilter === 'transcript') {
+    await _ctxMutate({action: 'delete_message', msg_ids: mids});
+  } else {
+    await _ctxMutate(
+      _ctxScopedMutation({action: 'delete_context_messages', msg_ids: mids}),
+      (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
+  }
 }
 
 function showContextOverlay(data) {
@@ -334,7 +365,7 @@ function showContextOverlay(data) {
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const src = m.source ? '<span style="color:#808090;font-size:10px;margin-left:4px">[' + (m.source.name||'') + ']</span>' : '';
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
+      const editBtn = _isTranscript ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
       const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
       msgsHtml += '<div data-msgid="' + mid + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
         + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
@@ -355,7 +386,7 @@ function showContextOverlay(data) {
     + statusBadge
     + _buildCtxAgentDropdown(data)
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
-    + '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>'
+    + (_isTranscript ? '' : '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>')
     + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="Delete this context entirely">\u{1F5D1} Delete</button>' : '')
     + '<button onclick="ctxClose()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'
@@ -365,9 +396,7 @@ function showContextOverlay(data) {
     + '<button onclick="ctxDeleteSelected()" style="background:#e94560;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px">Delete selected</button>'
     + '<button onclick="document.querySelectorAll(\'.ctx-selected\').forEach(r=>{r.classList.remove(\'ctx-selected\');r.style.outline=\'\'});_ctxSelected.clear();document.getElementById(\'ctxSelectBar\').style.display=\'none\'" style="background:transparent;color:#aaa;border:1px solid #555;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px">Cancel</button>'
     + '</div>'
-    + '<div style="padding:8px 0 0 0;text-align:center">'
-    + '<button onclick="ctxAddMessage()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:8px;padding:6px 18px;cursor:pointer;font-size:13px">+ ' + t('contextAdd') + '</button>'
-    + '</div>'
+    + (_isTranscript ? '' : '<div style="padding:8px 0 0 0;text-align:center"><button onclick="ctxAddMessage()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:8px;padding:6px 18px;cursor:pointer;font-size:13px">+ ' + t('contextAdd') + '</button></div>')
     + '</div>';
   document.body.appendChild(overlay);
   const _sel = document.getElementById('ctxAgentFilter');

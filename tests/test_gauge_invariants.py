@@ -29,6 +29,10 @@ _ACTIVE_AGENTS_JS = Path(
     "tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
 _SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
 _RESOURCES_JS = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+_AGENT_CONTEXT_PY = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+_CONTEXT_OPS_PY = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
+_CONTEXT_EDITOR_JS = Path(
+    "tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
 
 
 def test_set_context_usage_blocks_demote_to_zero():
@@ -222,6 +226,35 @@ def test_list_active_reports_live_pawflow_context_usage():
     assert row["context_usage"]["pct"] > 0
 
 
+def test_runtime_context_agent_follows_resolved_active_agent():
+    """Context loading must use the resolved active agent, not an early
+    stale active_resources value. Otherwise Gemini/Codex cold starts can
+    read the shared context while the private agent context is intact."""
+    sync_block = _AGENT_CONTEXT_PY[
+        _AGENT_CONTEXT_PY.index("if _active_agent_name and _context_agent"):
+        _AGENT_CONTEXT_PY.index("# Ensure we have a client")]
+    assert "_context_agent = _active_agent_name" in sync_block
+
+
+def test_context_ops_distinguishes_missing_and_empty_agent_context():
+    """An existing empty private context is a deliberate diverged state.
+    `_ctx_load` must only fall back to transcript when the context file is
+    missing (`None`), not when it is an empty list."""
+    assert "if ctx is not None:" in _CONTEXT_OPS_PY
+    assert "agent_name == \"transcript\"" in _CONTEXT_OPS_PY
+    assert "Transcript is read-only here" in _CONTEXT_OPS_PY
+
+
+def test_context_editor_scopes_mutations_to_visible_context():
+    """The context editor must not send `agent_name: transcript` to
+    context-writing actions, and multi-delete must target the visible
+    private/shared context instead of always deleting transcript rows."""
+    assert "function _ctxScopedAgentName" in _CONTEXT_EDITOR_JS
+    assert "_ctxAgentFilter !== 'transcript'" in _CONTEXT_EDITOR_JS
+    assert "action: 'delete_context_messages', msg_ids: mids" in _CONTEXT_EDITOR_JS
+    assert "action: 'delete_message', msg_ids: mids" in _CONTEXT_EDITOR_JS
+
+
 def test_list_active_keeps_idle_live_sessions_out_of_active_payload():
     from core import FlowFile
     from tasks.ai.actions.usage import _handle_usage
@@ -255,6 +288,40 @@ def test_list_active_keeps_idle_live_sessions_out_of_active_payload():
     data = json.loads(out[0].get_content().decode("utf-8"))
     assert data["active"] == []
     assert data["codex_live"] == [live_entry]
+
+
+def test_interrupt_synthesis_forwards_identity_for_image_refs():
+    """Interrupt synthesis can compact messages containing image_ref blocks;
+    it must pass owner identity through complete_stream so providers can
+    resolve FileStore attachments safely."""
+    src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    block = src[src.index("resp = client.complete_stream("):
+                src.index("# Save to both transcript and agent context.")]
+    assert "call_user_id=user_id" in block
+    assert "call_conversation_id=conversation_id" in block
+    assert "call_agent_name=agent_name or _agent" in block
+
+
+def test_bg_bucket_yields_to_pending_queue_before_memory_llm_work():
+    """Background pyramid jobs must not start extra memory-extract LLM calls
+    while the user already has a queued message waiting for the foreground
+    agent."""
+    src = Path("core/bg_bucket_builder.py").read_text(encoding="utf-8")
+    assert "def _has_pending_messages" in src
+    assert "pending user message queued" in src
+    assert "skip auto memory extract" in src
+    assert "pausing bucket catch-up" in src
+
+
+def test_context_editor_never_treats_transcript_as_agent_context():
+    """The transcript view is read-only except transcript deletion; context
+    mutations must target Shared or a real agent context, not an accidental
+    agent named 'transcript'."""
+    src = Path("tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
+    assert "function _ctxScopedAgentName()" in src
+    assert "_ctxAgentFilter !== 'transcript'" in src
+    assert "Transcript is read-only here" in src
+    assert "delete_context_messages" in src
 
 
 # ---------------------------------------------------------------------------

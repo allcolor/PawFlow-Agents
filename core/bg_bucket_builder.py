@@ -193,6 +193,16 @@ class BgBucketBuilder:
         except Exception:
             return False
 
+    @staticmethod
+    def _has_pending_messages(cid: str) -> bool:
+        """Return True when foreground user input is queued for this conv."""
+        try:
+            from core.pending_queue import PendingQueue
+            q = PendingQueue.instance()
+            return bool(q.count(cid))
+        except Exception:
+            return False
+
     def _defer_trigger(self, cid: str, user_id: str, delay: float = 5.0) -> None:
         def _run_deferred():
             with self._pending_lock:
@@ -436,6 +446,10 @@ class BgBucketBuilder:
             self._defer_trigger(cid, user_id)
             _log_once(
                 "foreground agent active/starting — deferring bg bucket job")
+            return
+        if self._has_pending_messages(cid):
+            self._defer_trigger(cid, user_id)
+            _log_once("pending user message queued — deferring bg bucket job")
             return
 
         with self._pending_lock:
@@ -809,6 +823,11 @@ class BgBucketBuilder:
                     cid, user_id, store, chunk, client, ctx_max):
                 break
             built += 1
+            if self._has_pending_messages(cid):
+                logger.info(
+                    "[bg-bucket] pausing bucket catch-up cid=%s: pending user message queued",
+                    cid[:8])
+                break
             self._maybe_rollup(store, client, user_id, ctx_max, cid)
 
         if built:
@@ -1026,6 +1045,11 @@ class BgBucketBuilder:
         # long-term facts/preferences/decisions. Runs here (bg worker)
         # so the hot path compact stays fast. Best-effort, failures
         # never propagate.
+        if self._has_pending_messages(cid):
+            logger.info(
+                "[bg-bucket] skip auto memory extract cid=%s: pending user message queued",
+                cid[:8])
+            return True
         try:
             from core.memory_auto_extract import auto_extract_memories
             auto_extract_memories(
@@ -1156,6 +1180,11 @@ class BgBucketBuilder:
                     len(bucket_docs))
 
         if result and user_id:
+            if self._has_pending_messages(cid):
+                logger.info(
+                    "[bg-bucket] skip consolidate memory extract cid=%s: pending user message queued",
+                    cid[:8])
+                return result
             try:
                 from core.memory_auto_extract import auto_extract_memories
                 auto_extract_memories(

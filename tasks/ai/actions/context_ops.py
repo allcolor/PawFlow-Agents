@@ -207,6 +207,10 @@ def _load_cc_session_context(conv_id: str, agent_name: str, store,
 def _handle_context_ops(self, action, body, store, user_id, flowfile):
     """Handle context ops actions. Returns [flowfile] or None."""
 
+    def _ctx_agent_name(agent_name=""):
+        """Normalize UI context selectors to store agent names."""
+        return "" if agent_name in ("", "ALL", "shared") else agent_name
+
     def _ctx_load(conv_id, agent_name=""):
         """Load the context the agent actually sees right now.
 
@@ -219,17 +223,25 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         transcript as source and calls load_transcript_for_agent
         directly.
         """
-        if agent_name and agent_name not in ("", "ALL"):
-            ctx = store.load_agent_context(conv_id, agent_name)
-            if ctx:
+        if agent_name == "transcript":
+            return store.load(conv_id, user_id=user_id) or []
+        _name = _ctx_agent_name(agent_name)
+        if _name:
+            ctx = store.load_agent_context(conv_id, _name)
+            if ctx is not None:
                 return ctx
-            return store.load_transcript_for_agent(conv_id, agent_name)
-        return store.load_context(conv_id, user_id=user_id)
+            return store.load_transcript_for_agent(conv_id, _name) or []
+        shared = store.load_context(conv_id, user_id=user_id)
+        return shared if shared is not None else (store.load(conv_id, user_id=user_id) or [])
 
     def _ctx_save(conv_id, data, agent_name=""):
         """Save context for an agent (or shared if no agent)."""
+        if agent_name == "transcript":
+            raise ValueError(
+                "Transcript is read-only here; delete transcript messages "
+                "with delete_message or switch to Shared/an agent context.")
         # "shared" or "" both mean the shared context (agent="")
-        _name = "" if (not agent_name or agent_name == "shared") else agent_name
+        _name = _ctx_agent_name(agent_name)
         store.save_agent_context(conv_id, _name, data)
         if _name:
             store.invalidate_claude_session_for_agent(conv_id, _name)
@@ -702,20 +714,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 has_more = page["has_more"]
             diverged = True
         else:
-            context_data = _ctx_load(conv_id, _ctx_agent)
-            diverged = context_data is not None
-            if context_data is None:
-                page = store.load_page(conv_id, limit=_limit, offset=_offset, user_id=user_id)
-                context_data = page["messages"] if page else []
-                total_count = page["total_count"] if page else 0
-                has_more = page["has_more"] if page else False
-            else:
-                total_count = len(context_data)
-                # Paginate in-memory
-                end = len(context_data) - _offset
-                start = max(0, end - _limit)
-                context_data = context_data[start:end]
-                has_more = start > 0
+            private_ctx = store.load_agent_context(conv_id, _ctx_agent)
+            diverged = private_ctx is not None
+            context_data = private_ctx if private_ctx is not None else _ctx_load(conv_id, _ctx_agent)
+            total_count = len(context_data)
+            # Paginate in-memory
+            end = len(context_data) - _offset
+            start = max(0, end - _limit)
+            context_data = context_data[start:end]
+            has_more = start > 0
 
         # CC session context is read from CC's own jsonl files — we don't
         # own those entries, they don't have PawFlow's (ts, seq) invariant.
@@ -795,10 +802,16 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        context_data = _ctx_load(conv_id, _ctx_agent)
-        diverged = context_data is not None
-        if context_data is None:
+        if _ctx_agent == "transcript":
             context_data = store.load(conv_id, user_id=user_id) or []
+            diverged = False
+        elif not _ctx_agent or _ctx_agent == "shared":
+            context_data = _ctx_load(conv_id, "")
+            diverged = True
+        else:
+            private_ctx = store.load_agent_context(conv_id, _ctx_agent)
+            diverged = private_ctx is not None
+            context_data = private_ctx if private_ctx is not None else _ctx_load(conv_id, _ctx_agent)
         flowfile.set_content(json.dumps({
             "context": context_data,
             "message_count": len(context_data),
@@ -900,6 +913,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         conv_id = body.get("conversation_id", "")
         _ctx_agent = body.get("agent_name", "")
         indices = body.get("indices", [])
+        msg_ids = body.get("msg_ids", [])
         # CC session: rewrite JSONL without selected entries
         if _ctx_agent.startswith("cc_session:"):
             _cc_agent = _ctx_agent[len("cc_session:"):]
@@ -909,24 +923,42 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
-        if not conv_id or not indices:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id or indices"}).encode())
+        if not conv_id or (not indices and not msg_ids):
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or indices/msg_ids"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if _ctx_agent == "transcript":
+            flowfile.set_content(json.dumps({
+                "error": "Use delete_message for transcript rows.",
+            }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
             context_data = _ctx_load(conv_id, _ctx_agent)
             if context_data is None:
                 context_data = store.load(conv_id, user_id=user_id) or []
-            # Remove indices in reverse order to preserve positions
-            for idx in sorted(indices, reverse=True):
-                if 0 <= idx < len(context_data):
-                    context_data.pop(idx)
+            if msg_ids:
+                msg_id_set = set(msg_ids)
+                before = len(context_data)
+                context_data = [
+                    m for m in context_data
+                    if (m.get("msg_id") not in msg_id_set
+                        and m.get("trace_id") not in msg_id_set)
+                ]
+                deleted = before - len(context_data)
+            else:
+                # Remove indices in reverse order to preserve positions
+                deleted = 0
+                for idx in sorted(indices, reverse=True):
+                    if 0 <= idx < len(context_data):
+                        context_data.pop(idx)
+                        deleted += 1
             _ctx_save(conv_id, context_data, _ctx_agent)
             deserialized = self._deserialize_messages(context_data, conversation_id=conv_id)
             estimated = self._estimate_tokens(deserialized)
             flowfile.set_content(json.dumps({
                 "ok": True,
-                "deleted": len(indices),
+                "deleted": deleted,
                 "message_count": len(context_data),
                 "token_estimate": estimated,
             }).encode())

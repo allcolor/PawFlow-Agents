@@ -2149,6 +2149,11 @@ class ConversationStore:
         bound to `cid` so the next turn spawns fresh.
         """
         extras = self.get_extras(cid) or {}
+        # Session invalidation means the next CLI turn must rebuild from the
+        # current PawFlow context on disk. Drop the context cache too, otherwise
+        # a stale short private context can survive after the provider session
+        # pointer was correctly cleared.
+        self._invalidate_ctx_cache(cid)
         _had_any = False
         # Clear ALL CLI session pointers. With the pointer wiped, the next
         # turn starts a fresh session instead of resuming the now-stale one.
@@ -2233,6 +2238,7 @@ class ConversationStore:
         """
         if not agent_name:
             return
+        self._invalidate_ctx_cache(cid, agent_name)
         # Clear the resume pointer for ALL three CLIs (claude / codex / gemini)
         # so the next turn for this (conv, agent) starts a fresh session
         # regardless of which CLI is configured. Symmetric with the all-agent

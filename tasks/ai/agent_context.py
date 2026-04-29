@@ -395,6 +395,18 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 "No agent configured for this conversation. "
                 "Select an agent before sending a message.")
 
+        # `_context_agent` is captured before `_ensure_active_agent()` has a
+        # chance to normalize the conversation state. If that early value is
+        # stale/empty, loading context with it falls back to shared context and
+        # a cold CLI session loses the agent's private PawFlow history.
+        if _active_agent_name and _context_agent != _active_agent_name:
+            if _context_agent:
+                logger.info(
+                    "[context:%s] context agent corrected %s -> %s",
+                    (conversation_id or "?")[:8], _context_agent,
+                    _active_agent_name)
+            _context_agent = _active_agent_name
+
         # Ensure we have a client (either from per-agent or task default)
         if client is None:
             raise ValueError(

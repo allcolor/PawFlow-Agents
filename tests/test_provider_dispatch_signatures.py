@@ -384,21 +384,19 @@ def test_agent_core_hides_schema_tool_events_on_purpose():
 
 
 
-def test_gemini_flushes_live_text_before_final_completion():
-    """Long Gemini ACP text chunks must reach the chat before final stop."""
+def test_gemini_does_not_persist_partial_text_chunks():
+    """Gemini must match Codex/CC: token deltas stream live, but persisted
+    assistant messages flush only at tool/final turn boundaries.
+    """
     from core.llm_providers.gemini import LLMGeminiMixin
 
-    assert not LLMGeminiMixin._gemini_acp_should_flush_live_text("", 10.0, 20.0)
-    assert LLMGeminiMixin._gemini_acp_should_flush_live_text("x" * 240, 10.0, 10.1)
-    assert LLMGeminiMixin._gemini_acp_should_flush_live_text("short", 10.0, 11.1)
-    assert not LLMGeminiMixin._gemini_acp_should_flush_live_text("short", 10.0, 10.5)
-
+    assert not hasattr(LLMGeminiMixin, "_gemini_acp_should_flush_live_text")
     src = inspect.getsource(LLMGeminiMixin._stream_gemini)
     message_idx = src.index('if kind == "agent_message_chunk":')
-    helper_idx = src.index("_gemini_acp_should_flush_live_text", message_idx)
-    flush_idx = src.index("_flush_text()", helper_idx)
     continue_idx = src.index("continue", message_idx)
-    assert helper_idx < flush_idx < continue_idx
+    message_block = src[message_idx:continue_idx]
+    assert "callback(delta)" in message_block
+    assert "_flush_text()" not in message_block
 
 
 def test_gemini_flushes_pending_text_before_live_tool_callback():

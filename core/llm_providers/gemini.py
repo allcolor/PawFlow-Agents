@@ -166,22 +166,6 @@ class LLMGeminiMixin(GeminiSessionMixin):
         return ""
 
     @staticmethod
-    def _gemini_acp_should_flush_live_text(
-        pending_text: str,
-        last_flush_at: float,
-        now: float,
-        *,
-        min_chars: int = 240,
-        min_seconds: float = 1.0,
-    ) -> bool:
-        """Return True when ACP text should be surfaced before final stop."""
-        if not pending_text:
-            return False
-        if len(pending_text) >= max(1, int(min_chars or 0)):
-            return True
-        return (now - last_flush_at) >= max(0.0, float(min_seconds or 0.0))
-
-    @staticmethod
     def _gemini_acp_tool_name(update: dict) -> str:
         """Normalize Gemini ACP tool titles to PawFlow wrapper names."""
         name = str(update.get("title") or update.get("kind") or "tool")
@@ -768,15 +752,13 @@ class LLMGeminiMixin(GeminiSessionMixin):
         deferred_tool_ids = set()
         usage_meta: Dict[str, Any] = {}
         loaded_session_replay_barrier = False
-        last_text_flush_at = time.monotonic()
 
         def _flush_text():
-            nonlocal turn_text_parts, last_text_flush_at
+            nonlocal turn_text_parts
             if not turn_text_parts:
                 return
             text = "".join(turn_text_parts).strip()
             turn_text_parts = []
-            last_text_flush_at = time.monotonic()
             if text and turn_callback:
                 try:
                     if thinking_parts:
@@ -998,9 +980,6 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         turn_text_parts.append(delta)
                         if callback:
                             callback(delta)
-                        if self._gemini_acp_should_flush_live_text(
-                            "".join(turn_text_parts), last_text_flush_at, time.monotonic()):
-                            _flush_text()
                     continue
 
                 if kind == "agent_thought_chunk":

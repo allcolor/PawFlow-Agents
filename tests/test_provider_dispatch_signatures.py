@@ -347,6 +347,23 @@ def test_agent_core_hides_schema_tool_events_on_purpose():
 
 
 
+def test_gemini_flushes_live_text_before_final_completion():
+    """Long Gemini ACP text chunks must reach the chat before final stop."""
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    assert not LLMGeminiMixin._gemini_acp_should_flush_live_text("", 10.0, 20.0)
+    assert LLMGeminiMixin._gemini_acp_should_flush_live_text("x" * 240, 10.0, 10.1)
+    assert LLMGeminiMixin._gemini_acp_should_flush_live_text("short", 10.0, 11.1)
+    assert not LLMGeminiMixin._gemini_acp_should_flush_live_text("short", 10.0, 10.5)
+
+    src = inspect.getsource(LLMGeminiMixin._stream_gemini)
+    message_idx = src.index('if kind == "agent_message_chunk":')
+    helper_idx = src.index("_gemini_acp_should_flush_live_text", message_idx)
+    flush_idx = src.index("_flush_text()", helper_idx)
+    continue_idx = src.index("continue", message_idx)
+    assert helper_idx < flush_idx < continue_idx
+
+
 def test_gemini_flushes_pending_text_before_live_tool_callback():
     """Gemini ACP tool calls must not overtake already-emitted text."""
     from core.llm_providers.gemini import LLMGeminiMixin

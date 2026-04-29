@@ -164,6 +164,22 @@ class LLMGeminiMixin(GeminiSessionMixin):
         return ""
 
     @staticmethod
+    def _gemini_acp_should_flush_live_text(
+        pending_text: str,
+        last_flush_at: float,
+        now: float,
+        *,
+        min_chars: int = 240,
+        min_seconds: float = 1.0,
+    ) -> bool:
+        """Return True when ACP text should be surfaced before final stop."""
+        if not pending_text:
+            return False
+        if len(pending_text) >= max(1, int(min_chars or 0)):
+            return True
+        return (now - last_flush_at) >= max(0.0, float(min_seconds or 0.0))
+
+    @staticmethod
     def _gemini_acp_tool_name(update: dict) -> str:
         """Normalize Gemini ACP tool titles to PawFlow wrapper names."""
         name = str(update.get("title") or update.get("kind") or "tool")
@@ -750,13 +766,15 @@ class LLMGeminiMixin(GeminiSessionMixin):
         deferred_tool_ids = set()
         usage_meta: Dict[str, Any] = {}
         loaded_session_replay_barrier = False
+        last_text_flush_at = time.monotonic()
 
         def _flush_text():
-            nonlocal turn_text_parts
+            nonlocal turn_text_parts, last_text_flush_at
             if not turn_text_parts:
                 return
             text = "".join(turn_text_parts).strip()
             turn_text_parts = []
+            last_text_flush_at = time.monotonic()
             if text and turn_callback:
                 try:
                     if thinking_parts:
@@ -896,7 +914,6 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 if msg is None:
                     raise _GeminiAcpProtocolError(
                         "gemini ACP exited before session/prompt completed")
-                logger.info("[gemini-acp][recv] %s", self._gemini_acp_message_preview(msg))
 
                 incoming_id = msg.get("id")
                 if (incoming_id is not None
@@ -908,6 +925,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     logger.info("[gemini-acp-live] switched reader to preempt prompt id=%s", req_id)
 
                 if incoming_id == req_id:
+                    logger.info("[gemini-acp][recv] %s", self._gemini_acp_message_preview(msg))
                     _prompt_activity_seen = True
                     if msg.get("error"):
                         capacity_message = self._gemini_acp_capacity_error(msg.get("error"))
@@ -934,6 +952,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     break
 
                 if "id" in msg and msg.get("method"):
+                    logger.info("[gemini-acp][recv] %s", self._gemini_acp_message_preview(msg))
                     req_method = msg.get("method", "")
                     req_params = msg.get("params", {}) or {}
                     logger.info("[gemini-acp] client request during prompt: %s", req_method)
@@ -956,6 +975,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 method = msg.get("method", "")
                 params = msg.get("params", {}) or {}
                 if method != "session/update":
+                    logger.info("[gemini-acp][recv] %s", self._gemini_acp_message_preview(msg))
                     logger.info("[gemini-acp] ignored ACP message during prompt: %s", method or "?")
                     continue
                 update = params.get("update", {}) or {}
@@ -970,6 +990,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         continue
                     _resume_replay_skipped += 1
                     continue
+                logger.info("[gemini-acp][recv] %s", self._gemini_acp_message_preview(msg))
 
                 if kind == "agent_message_chunk":
                     _prompt_activity_seen = True
@@ -979,6 +1000,9 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         turn_text_parts.append(delta)
                         if callback:
                             callback(delta)
+                        if self._gemini_acp_should_flush_live_text(
+                            "".join(turn_text_parts), last_text_flush_at, time.monotonic()):
+                            _flush_text()
                     continue
 
                 if kind == "agent_thought_chunk":

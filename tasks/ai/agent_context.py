@@ -490,13 +490,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 store = ConversationStore.instance()
 
                 def _load_pawflow_initial_context():
-                    """Build the canonical PawFlow context for a cold CLI session.
+                    """Build the canonical PawFlow start context for a cold CLI session.
 
-                    A provider session that was invalidated has no private CLI
-                    memory. In that case the prompt must come from PawFlow's
-                    own context: shared pyramid summary when available, plus
-                    unbucketed shared tail; otherwise the personalized shared
-                    context.
+                    The source is the personalized shared context. If it is too
+                    large, the normal compactor below is responsible for using
+                    the shared pyramid/buckets and preserving the recent tail.
+                    Do not pre-collapse to a pyramid header here: small shared
+                    contexts must be injected in full.
                     """
                     existing = store.load_shared_for_agent(
                         conversation_id, _context_agent)
@@ -509,60 +509,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         logger.error(
                             f"[context:{conversation_id[:8]}] shared load failed: {deser_err}")
                         return None, ""
-
-                    try:
-                        from core.bucket_store import BucketStore
-                        _bs = BucketStore.get(store._conv_dir(conversation_id))
-                        _pyramid_header = _bs.assemble_summary_header()
-                        _last_seq = int(getattr(_bs, "last_seq", 0) or 0)
-                    except Exception:
-                        _pyramid_header = ""
-                        _last_seq = 0
-
-                    if _pyramid_header:
-                        tail = [
-                            m for m in shared_msgs
-                            if int(getattr(m, "seq", 0) or 0) > _last_seq
-                        ]
-                        if not tail:
-                            tail = shared_msgs[-20:]
-                        if tail:
-                            _frt = min(getattr(m, "timestamp", 0) or 0 for m in tail)
-                            _frs = min(getattr(m, "seq", 0) or 0 for m in tail)
-                        else:
-                            import time as _time
-                            _frt = _time.time()
-                            _frs = _last_seq + 2
-                        out = []
-                        if shared_msgs and shared_msgs[0].role == "system":
-                            out.append(shared_msgs[0])
-                        out.append(LLMMessage(
-                            role="user",
-                            content=(
-                                _pyramid_header +
-                                "\nThe recent messages below are the current state. "
-                                "Do NOT restart or re-propose completed work. "
-                                "If you need more detail than the summary above "
-                                "(commits, file contents, tool arguments), call read_history."
-                            ),
-                            timestamp=_frt - 0.002,
-                            seq=_frs - 2,
-                            source={"type": "context"},
-                            conversation_id=conversation_id,
-                        ))
-                        out.append(LLMMessage(
-                            role="assistant",
-                            content=(
-                                "Understood. I have the summary and will "
-                                "continue from the recent messages."
-                            ),
-                            timestamp=_frt - 0.001,
-                            seq=_frs - 1,
-                            source={"type": "context"},
-                            conversation_id=conversation_id,
-                        ))
-                        out.extend(tail)
-                        return out, "pyramid"
                     return shared_msgs, "shared"
 
                 _cold_cli_initial = None
@@ -595,14 +541,14 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         _uses_pawflow_initial = True
                     # Diverged context = manually edited → send as-is, no compact.
                     # PawFlow initial shared context may still compact normally.
-                    if not _context_diverged and not (_uses_pawflow_initial and _cold_cli_initial_source == "pyramid"):
+                    if not _context_diverged:
                         _uid = flowfile.get_attribute("http.auth.principal") or ""
                         messages = self._auto_compact_messages(
                             messages, conversation_id, _context_agent, _uid,
                             max_context=_max_ctx)
                 else:
-                    # No divergence — start from PawFlow initial context:
-                    # pyramid+tail when available, otherwise shared context.
+                    # No divergence — start from PawFlow initial shared context.
+                    # _auto_compact_messages will use buckets only if needed.
                     if _cold_cli_initial:
                         messages = _cold_cli_initial
                         _uses_pawflow_initial = True
@@ -614,12 +560,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         if messages:
                             logger.info(f"[context:{conversation_id[:8]}] loaded messages as context: "
                                         f"{len(messages)} messages")
-                    if messages and not (_uses_pawflow_initial and _cold_cli_initial_source == "pyramid"):
+                    if messages:
                         _uid2 = flowfile.get_attribute("http.auth.principal") or ""
                         messages = self._auto_compact_messages(
                             messages, conversation_id, _context_agent, _uid2,
                             max_context=_max_ctx)
-                    elif not messages:
+                    else:
                         logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
                                        f"starting fresh conversation")
         elif conv_attr:

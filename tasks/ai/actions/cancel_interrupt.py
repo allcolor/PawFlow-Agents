@@ -13,6 +13,27 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _kill_live_cli_sessions(conv_id: str, agent_name: str, reason: str) -> int:
+    """Force-kill live CLI provider containers for a conversation/agent."""
+    total = 0
+    for module_name, class_name in (
+        ("core.cc_live_registry", "LiveSessionRegistry"),
+        ("core.codex_live_registry", "CodexLiveRegistry"),
+        ("core.gemini_live_registry", "GeminiLiveRegistry"),
+    ):
+        try:
+            mod = __import__(module_name, fromlist=[class_name])
+            reg = getattr(mod, class_name).instance()
+            if agent_name:
+                total += reg.kill_and_evict_by_conv_agent(conv_id, agent_name, reason)
+            else:
+                total += reg.kill_and_evict_by_conv(conv_id, reason)
+        except Exception:
+            logger.debug("force-stop live CLI kill failed for %s", module_name,
+                         exc_info=True)
+    return total
+
+
 def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
     """Handle cancel interrupt actions. Returns [flowfile] or None."""
     # Resolve to the execution instance — self may be the actions-only
@@ -59,6 +80,11 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                 ToolRelayService.cancel_agent(_task_cid, agent_name)
             except Exception:
                 pass
+            _live_killed = _kill_live_cli_sessions(
+                _task_cid, agent_name, "force_stop")
+            if _live_killed:
+                logger.info("[agent:%s] force-stopped %d live CLI container(s)",
+                            conv_id[:8], _live_killed)
 
             # 3. Kill task's Claude Code subprocess
             with _exec._active_contexts_lock:
@@ -114,6 +140,11 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             ToolRelayService.cancel_agent(conv_id, agent_name)
         except Exception:
             pass
+        _live_killed = _kill_live_cli_sessions(conv_id, agent_name, "force_stop")
+        if _live_killed:
+            logger.info("[agent:%s] force-stopped %d live CLI container(s)",
+                        conv_id[:8], _live_killed)
+
         # Kill Claude Code subprocess (check keyed entries)
         with _exec._active_contexts_lock:
             _cc_keys = [f"{conv_id}:{agent_name}"] if agent_name else \

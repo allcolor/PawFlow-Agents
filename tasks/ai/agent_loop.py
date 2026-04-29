@@ -42,6 +42,7 @@ from core.llm_client import (
     LLMToolCall, LLMToolResult, LLMClientError,
 )
 from core.tool_registry import ToolRegistry, create_default_registry
+from core.interrupt_policy import SOFT_INTERRUPT_USER_COMMAND
 
 logger = logging.getLogger(__name__)
 
@@ -924,12 +925,11 @@ class AgentLoopTask(
                     })
                     return
 
-                # Add interrupt instruction
+                # Add the soft interrupt as a user command. Providers should
+                # treat it like the user explicitly told them to stop now.
                 messages.append(LLMMessage(
                     role="user",
-                    content=(
-                        "[System: INTERRUPTED. Reply in 2-3 sentences max: "
-                        "what you did, what's left to do. No details, no code.]"),
+                    content=SOFT_INTERRUPT_USER_COMMAND,
                     conversation_id=conversation_id,
                 ))
 

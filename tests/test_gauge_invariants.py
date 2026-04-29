@@ -328,16 +328,45 @@ def test_context_editor_never_treats_transcript_as_agent_context():
 
 def test_cold_cli_session_rebuilds_from_pawflow_initial_context():
     """When a CLI provider has no persisted session, a stale private agent
-    context must not starve the new CLI session; PawFlow's canonical context
-    comes from the shared pyramid when available, otherwise shared context.
+    context must not starve the new CLI session; PawFlow's canonical start
+    context comes from shared first, then normal compaction decides whether
+    buckets are needed.
     """
     src = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
     assert "def _load_pawflow_initial_context" in src
-    assert "assemble_summary_header" in src
     assert "store.load_shared_for_agent" in src
     assert "cold CLI session has truncated agent context" in src
+    assert "messages = self._auto_compact_messages" in src
     assert "gemini_acp_session_version" in src
     assert "codex_app_server_thread" in src
+
+
+def test_force_stop_kills_cli_processes_and_blocks_late_appends():
+    """Force stop is a hard stop: kill live CLI containers and reject late
+    provider/tool callbacks before they can persist or publish messages.
+    """
+    cancel_src = Path("tasks/ai/actions/cancel_interrupt.py").read_text(encoding="utf-8")
+    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    assert "def _kill_live_cli_sessions" in cancel_src
+    assert "CodexLiveRegistry" in cancel_src
+    assert "GeminiLiveRegistry" in cancel_src
+    assert "LiveSessionRegistry" in cancel_src
+    assert "_kill_live_cli_sessions(conv_id, agent_name, \"force_stop\")" in cancel_src
+    assert "emitter.check_cancelled()\n            # Sync msg_id" in core_src
+    assert "emitter.check_cancelled()\n                        _cc_turn_count" in core_src
+
+
+def test_soft_interrupt_is_user_stop_command():
+    policy_src = Path("core/interrupt_policy.py").read_text(encoding="utf-8")
+    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    cc_src = Path("core/llm_providers/claude_code.py").read_text(encoding="utf-8")
+    assert "STOP IMMEDIATELY!" in policy_src
+    assert "role=\"user\"" in loop_src
+    assert "content=SOFT_INTERRUPT_USER_COMMAND" in loop_src
+    assert "SOFT_INTERRUPT_USER_COMMAND" in cc_src
+    assert "STOP IMMEDIATELY!" not in loop_src
+    assert "STOP IMMEDIATELY!" not in cc_src
+    assert "[System: INTERRUPTED" not in loop_src
 
 
 # ---------------------------------------------------------------------------

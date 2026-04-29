@@ -420,6 +420,10 @@ class AgentCoreMixin:
                 _auto_compact_state["running"] = False
 
         def _append(msg: LLMMessage):
+            # FORCE STOP is a hard barrier. Provider/tool callbacks can still
+            # arrive briefly after the live process has been asked to die; none
+            # of those late messages may be persisted or published.
+            emitter.check_cancelled()
             # Sync msg_id: assistant messages use emitter's pre-generated ID
             # so SSE streaming tokens, done event, and persisted message all
             # share the SAME msg_id — enabling client-side dedup.
@@ -1081,6 +1085,7 @@ class AgentCoreMixin:
                         nonlocal tools_called
                         from core.llm_client import LLMToolCall
 
+                        emitter.check_cancelled()
                         _cc_turn_count[0] += 1
                         ctx["_iteration"] = _cc_turn_count[0]
 

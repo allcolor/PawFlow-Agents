@@ -18,6 +18,7 @@ import time
 from typing import Dict, List, Optional
 
 from core.cc_live_registry import CCLiveSession, LiveSessionRegistry
+from core.interrupt_policy import SOFT_INTERRUPT_USER_COMMAND
 
 # Sentinel pushed onto the per-session event queue when the reader daemon
 # exits (proc stdout EOF). Module-level so the SAME object identity holds
@@ -203,7 +204,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 msg = json.dumps({
                     "type": "user",
                     "message": {"role": "user",
-                                "content": "Stop what you're doing right now. I need your attention on something else. Finish your current response briefly and wait for the next message."},
+                                "content": SOFT_INTERRUPT_USER_COMMAND},
                 })
                 proc.stdin.write(msg + "\n")
                 proc.stdin.flush()

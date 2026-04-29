@@ -364,11 +364,43 @@ def _grep_is_binary(fpath: Path) -> bool:
         return True
 
 
+def _grep_has_glob_magic(path: str) -> bool:
+    return any(ch in path for ch in ("*", "?", "["))
+
+
+def _grep_split_glob_path(path: str) -> tuple[str, str]:
+    if not path or not _grep_has_glob_magic(path):
+        return path, ""
+    p = Path(path)
+    if p.exists():
+        return path, ""
+
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    split_at = None
+    for idx, part in enumerate(parts):
+        if _grep_has_glob_magic(part):
+            split_at = idx
+            break
+    if split_at is None:
+        return path, ""
+
+    base_parts = parts[:split_at]
+    glob_parts = parts[split_at:]
+    base = "/".join(base_parts)
+    if not base:
+        base = "/" if normalized.startswith("/") else "."
+    return base, "/".join(glob_parts)
+
+
 def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     regex = req.get("regex", "")
     recursive = req.get("recursive", True)
+    glob_pattern = req.get("glob", "")
     if not regex:
         raise ValueError("Missing 'regex' parameter")
+    if not glob_pattern:
+        path, glob_pattern = _grep_split_glob_path(path)
     # Suppress Python 3.12+ FutureWarning for user-supplied regex quirks
     # (e.g. `[[..]]` patterns flagged as possible nested sets). The regex
     # still compiles correctly — we just don't want the warning to pollute
@@ -403,8 +435,8 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         _scan_file(p, p.name)
         return results
 
-    glob_pattern = "**/*" if recursive else "*"
-    for fpath in p.glob(glob_pattern):
+    scan_pattern = glob_pattern or ("**/*" if recursive else "*")
+    for fpath in p.glob(scan_pattern):
         if not fpath.is_file():
             continue
         # Skip any path whose parents include an ignored dir.

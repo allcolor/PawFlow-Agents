@@ -1,6 +1,7 @@
 """grep — Regex content search in files (CC-compatible parameters)."""
 
-from typing import Any, Dict
+import os
+from typing import Any, Dict, Tuple
 from core.handlers._fs_base import BaseFsHandler
 
 
@@ -100,6 +101,9 @@ class GrepHandler(BaseFsHandler):
 
         svc, workdir = self._resolve(source)
 
+        if not glob_pattern:
+            path, glob_pattern = self._split_glob_from_path(path, workdir or "")
+
         if svc == "filestore":
             return "Error: grep is not supported on FileStore"
 
@@ -149,6 +153,41 @@ class GrepHandler(BaseFsHandler):
         except Exception as e:
             return f"Error: {e}"
 
+    @staticmethod
+    def _has_glob_magic(path: str) -> bool:
+        return any(ch in path for ch in ("*", "?", "["))
+
+    def _split_glob_from_path(self, path: str, workdir: str = "") -> Tuple[str, str]:
+        """Treat accidental grep path globs as a directory plus glob filter."""
+        if not path or not self._has_glob_magic(path):
+            return path, ""
+
+        if workdir:
+            try:
+                if os.path.exists(self._sandbox_path(path, workdir)):
+                    return path, ""
+            except Exception:
+                pass
+        elif os.path.isabs(path) and os.path.exists(path):
+            return path, ""
+
+        normalized = path.replace("\\", "/")
+        parts = normalized.split("/")
+        split_at = None
+        for idx, part in enumerate(parts):
+            if self._has_glob_magic(part):
+                split_at = idx
+                break
+        if split_at is None:
+            return path, ""
+
+        base_parts = parts[:split_at]
+        glob_parts = parts[split_at:]
+        base = "/".join(base_parts)
+        if not base:
+            base = "/" if normalized.startswith("/") else "."
+        return base, "/".join(glob_parts)
+
     def _workdir_rg(self, pattern: str, path: str = ".",
                     limit: int = 250, offset: int = 0,
                     output_mode: str = "files_with_matches",
@@ -164,7 +203,8 @@ class GrepHandler(BaseFsHandler):
 
         if not rg_path:
             # Fallback to Python regex
-            return self._workdir_grep_fallback(pattern, path, recursive, limit)
+            return self._workdir_grep_fallback(
+                pattern, path, recursive, limit, glob_pattern)
 
         args = [rg_path]
         if multiline:
@@ -202,7 +242,8 @@ class GrepHandler(BaseFsHandler):
                 cwd=str(self._workdir) if self._workdir else None)
             output = result.stdout
         except FileNotFoundError:
-            return self._workdir_grep_fallback(pattern, path, recursive, limit)
+            return self._workdir_grep_fallback(
+                pattern, path, recursive, limit, glob_pattern)
         except subprocess.TimeoutExpired:
             return "Error: grep timed out (30s)"
 
@@ -228,12 +269,26 @@ class GrepHandler(BaseFsHandler):
 
         return "\n".join(rel_lines)
 
-    def _workdir_grep_fallback(self, pattern, path, recursive, limit):
+    def _workdir_grep_fallback(self, pattern, path, recursive, limit,
+                               glob_pattern=""):
         """Python regex fallback when rg is not available."""
-        import os, re
+        import fnmatch
+        import os
+        import re
         full = self._sandbox_path(path, self._workdir)
         regex = re.compile(pattern)
         results = []
+        globs = [g.strip() for g in glob_pattern.replace(",", " ").split()
+                 if g.strip()]
+
+        def _matches_glob(fp: str) -> bool:
+            if not globs:
+                return True
+            rel = os.path.relpath(fp, self._workdir).replace("\\", "/")
+            name = os.path.basename(fp)
+            return any(fnmatch.fnmatch(rel, g) or fnmatch.fnmatch(name, g)
+                       for g in globs)
+
         if os.path.isfile(full):
             walk = [(os.path.dirname(full), [], [os.path.basename(full)])]
         else:
@@ -241,6 +296,8 @@ class GrepHandler(BaseFsHandler):
         for root, dirs, files in walk:
             for f in files:
                 fp = os.path.join(root, f)
+                if not _matches_glob(fp):
+                    continue
                 try:
                     with open(fp, "r", encoding="utf-8", errors="ignore") as fh:
                         for i, line in enumerate(fh, 1):

@@ -242,7 +242,7 @@ def test_context_ops_distinguishes_missing_and_empty_agent_context():
     missing (`None`), not when it is an empty list."""
     assert "if ctx is not None:" in _CONTEXT_OPS_PY
     assert "agent_name == \"transcript\"" in _CONTEXT_OPS_PY
-    assert "Transcript is read-only here" in _CONTEXT_OPS_PY
+    assert "if action == \"edit_message\"" in _CONTEXT_OPS_PY
 
 
 def test_context_editor_scopes_mutations_to_visible_context():
@@ -251,6 +251,7 @@ def test_context_editor_scopes_mutations_to_visible_context():
     private/shared context instead of always deleting transcript rows."""
     assert "function _ctxScopedAgentName" in _CONTEXT_EDITOR_JS
     assert "_ctxAgentFilter !== 'transcript'" in _CONTEXT_EDITOR_JS
+    assert "action: _ctxAgentFilter === 'transcript' ? 'edit_message' : 'edit_context'" in _CONTEXT_EDITOR_JS
     assert "action: 'delete_context_messages', msg_ids: mids" in _CONTEXT_EDITOR_JS
     assert "action: 'delete_message', msg_ids: mids" in _CONTEXT_EDITOR_JS
 
@@ -309,18 +310,19 @@ def test_bg_bucket_yields_to_pending_queue_before_memory_llm_work():
     src = Path("core/bg_bucket_builder.py").read_text(encoding="utf-8")
     assert "def _has_pending_messages" in src
     assert "pending user message queued" in src
+    assert "seq cache cold — seeding asynchronously" in src
     assert "skip auto memory extract" in src
     assert "pausing bucket catch-up" in src
 
 
 def test_context_editor_never_treats_transcript_as_agent_context():
-    """The transcript view is read-only except transcript deletion; context
+    """Transcript edits/deletes must use transcript actions; context
     mutations must target Shared or a real agent context, not an accidental
     agent named 'transcript'."""
     src = Path("tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
     assert "function _ctxScopedAgentName()" in src
     assert "_ctxAgentFilter !== 'transcript'" in src
-    assert "Transcript is read-only here" in src
+    assert "edit_message" in src
     assert "delete_context_messages" in src
 
 

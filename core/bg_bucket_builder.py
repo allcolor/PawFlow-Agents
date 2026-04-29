@@ -126,6 +126,7 @@ class BgBucketBuilder:
             max_workers=max_workers,
             thread_name_prefix="bg-bucket")
         self._pending: Set[str] = set()
+        self._seed_pending: Set[str] = set()
         self._pending_lock = threading.Lock()
         # Resolver: user_id -> (client, ctx_max, svc_id) or (None, 0, "")
         self._summarizer_resolver: Optional[Callable[[str], Tuple]] = None
@@ -217,6 +218,37 @@ class BgBucketBuilder:
             timer.daemon = True
             self._deferred_timers[cid] = timer
         timer.start()
+
+    def _seed_seq_caches_async(self, cid: str, user_id: str) -> bool:
+        """Seed cold seq caches without blocking the foreground writer.
+
+        maybe_trigger is called from ConversationStore while the conv lock
+        is held, so cold-cache disk reads must happen in the bg executor.
+        Returns True when a seed job was queued or already exists.
+        """
+        with self._pending_lock:
+            if cid in self._seed_pending:
+                return True
+            self._seed_pending.add(cid)
+
+        def _run_seed():
+            try:
+                self._seed_seq_caches(cid)
+            except Exception:
+                logger.warning("[bg-bucket] seq cache seed failed cid=%s",
+                               cid[:8], exc_info=True)
+            finally:
+                with self._pending_lock:
+                    self._seed_pending.discard(cid)
+            self.maybe_trigger(cid, user_id)
+
+        try:
+            self._executor.submit(_run_seed)
+        except RuntimeError:
+            with self._pending_lock:
+                self._seed_pending.discard(cid)
+            return False
+        return True
 
     def set_summarizer_resolver(
             self, resolver: Callable[[str], Tuple]) -> None:
@@ -390,20 +422,23 @@ class BgBucketBuilder:
             unbucketed_rows = self._shared_unbucketed_rows_cache.get(cid)
             transcript_chars = self._transcript_chars_post_pyramid_cache.get(cid)
 
-        # Cold path: seed all caches from disk on first access.
+        # Cold path: seed all caches from disk on first access. This method
+        # runs from ConversationStore while the conv lock is held, so the
+        # seed must be asynchronous; otherwise background maintenance can
+        # stall a foreground append after restart or cache invalidation.
         if (shared_seq is None or pyramid_seq is None
                 or unbucketed_rows is None or transcript_chars is None):
-            try:
-                self._seed_seq_caches(cid)
-            except Exception:
-                logger.warning("[bg-bucket] seq cache seed failed cid=%s",
-                                cid[:8], exc_info=True)
+            if self._foreground_active(cid):
+                self._defer_trigger(cid, user_id)
+                _log_once("foreground agent active/starting — deferring bg seq seed")
                 return
-            with self._seq_cache_lock:
-                shared_seq = self._shared_seq_cache.get(cid, 0)
-                pyramid_seq = self._pyramid_seq_cache.get(cid, 0)
-                unbucketed_rows = self._shared_unbucketed_rows_cache.get(cid, 0)
-                transcript_chars = self._transcript_chars_post_pyramid_cache.get(cid, 0)
+            if self._has_pending_messages(cid):
+                self._defer_trigger(cid, user_id)
+                _log_once("pending user message queued — deferring bg seq seed")
+                return
+            self._seed_seq_caches_async(cid, user_id)
+            _log_once("seq cache cold — seeding asynchronously")
+            return
 
         seq_gap = shared_seq - pyramid_seq
         # 3.5 chars/token matches agent_compaction default (chars_per_token).

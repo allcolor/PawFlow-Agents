@@ -1137,6 +1137,31 @@ class TestContextActionsAsync(unittest.TestCase):
         _edited = next(m for m in ctx if m.get("msg_id") == _user_msg_id)
         assert _edited["content"] == "modified hello"
 
+    def test_edit_message_async_cascades_transcript_and_contexts(self):
+        """edit_message updates transcript and every context carrying the msg_id."""
+        import uuid
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        msg_id = uuid.uuid4().hex[:12]
+        msg = {"role": "user", "content": "hello", "msg_id": msg_id}
+        store.save("ctx_edit_transcript", [msg], user_id="testuser")
+        store.save_context("ctx_edit_transcript", [dict(msg)])
+        store.save_agent_context("ctx_edit_transcript", "assistant", [dict(msg)])
+
+        ack, data = self._exec_async(self._make_task(), {
+            "action": "edit_message",
+            "conversation_id": "ctx_edit_transcript",
+            "msg_id": msg_id,
+            "content": "modified from transcript",
+        })
+
+        assert ack["status"] == "accepted"
+        assert data is not None
+        assert data["ok"] is True
+        assert store.load("ctx_edit_transcript", user_id="testuser")[0]["content"] == "modified from transcript"
+        assert store.load_context("ctx_edit_transcript")[0]["content"] == "modified from transcript"
+        assert store.load_agent_context("ctx_edit_transcript", "assistant")[0]["content"] == "modified from transcript"
+
     def test_replace_context_async(self):
         """replace_context replaces the entire context via async path."""
         from core.conversation_store import ConversationStore

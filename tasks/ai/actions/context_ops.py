@@ -1109,6 +1109,32 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             conv_id, "restart_from", _do_restart, flowfile,
             agent_name=_rf_lock_agent)
 
+    if action == "edit_message":
+        conv_id = body.get("conversation_id", "")
+        msg_id = body.get("msg_id", "")
+        new_content = body.get("content", "")
+        new_role = body.get("role") or ""
+        if not conv_id or not msg_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or msg_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            updated = store.edit_message(
+                conv_id, msg_id=msg_id, content=new_content,
+                role=new_role, user_id=user_id)
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+        if not updated:
+            flowfile.set_content(json.dumps({"error": f"Message {msg_id} not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        flowfile.set_content(json.dumps({
+            "ok": True, "updated": updated, "conversation_id": conv_id,
+            "message_count": store.message_count(conv_id),
+        }).encode())
+        return [flowfile]
+
     if action == "delete_message":
         conv_id = body.get("conversation_id", "")
         msg_id = body.get("msg_id", "")

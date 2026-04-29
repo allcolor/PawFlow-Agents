@@ -127,7 +127,7 @@ function ctxLoadMore() {
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const editBtn = _ctxAgentFilter === 'transcript' ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
+      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
       const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
       const row = document.createElement('div');
       row.dataset.msgid = mid;
@@ -155,16 +155,17 @@ function ctxClose() {
 }
 
 async function ctxSaveEdit(msgId) {
-  if (_ctxAgentFilter === 'transcript') {
-    addMsg('error', 'Transcript is read-only here; switch to Shared or an agent context to edit context.');
-    return;
-  }
   const ta = document.getElementById('ctx-edit-ta-' + msgId);
   const roleEl = document.getElementById('ctx-edit-role-' + msgId);
   if (!ta) return;
+  const body = {
+    action: _ctxAgentFilter === 'transcript' ? 'edit_message' : 'edit_context',
+    msg_id: msgId,
+    content: ta.value,
+    role: roleEl ? roleEl.value : undefined
+  };
   _ctxMutate(
-    _ctxScopedMutation({action: 'edit_context', msg_id: msgId,
-      content: ta.value, role: roleEl ? roleEl.value : undefined}),
+    _ctxAgentFilter === 'transcript' ? body : _ctxScopedMutation(body),
     (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
 }
 
@@ -365,7 +366,7 @@ function showContextOverlay(data) {
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const src = m.source ? '<span style="color:#808090;font-size:10px;margin-left:4px">[' + (m.source.name||'') + ']</span>' : '';
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const editBtn = _isTranscript ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
+      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
       const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
       msgsHtml += '<div data-msgid="' + mid + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
         + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'

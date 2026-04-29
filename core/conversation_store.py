@@ -2449,6 +2449,63 @@ class ConversationStore:
         self._invalidate_ctx_cache(cid)
         return True
 
+    def edit_message(self, cid: str, msg_id: str, content: Any,
+                     role: str = "", user_id: str = "") -> int:
+        """Edit a message by msg_id in transcript + shared + all agent contexts."""
+        if not msg_id or not self.exists(cid):
+            return 0
+
+        lock = self._get_conv_lock(cid)
+        updated = 0
+
+        def _rewrite_jsonl(path: Path) -> int:
+            if not path.exists():
+                return 0
+            changed = 0
+            rows = []
+            with open(path, "r", encoding="utf-8") as src:
+                for raw in src:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        line = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if (line.get("msg_id") == msg_id
+                            or (line.get("role") == "sub_agent_trace"
+                                and line.get("trace_id") == msg_id)):
+                        line["content"] = content
+                        if role:
+                            line["role"] = role
+                        changed += 1
+                    rows.append(line)
+            if not changed:
+                return 0
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as dst:
+                for line in rows:
+                    dst.write(json.dumps(line, ensure_ascii=False) + "\n")
+            tmp.replace(path)
+            return changed
+
+        with lock:
+            updated += _rewrite_jsonl(self._transcript_path(cid))
+            _rewrite_jsonl(self._shared_ctx_path(cid))
+            conv_dir = self._conv_dir(cid)
+            if conv_dir.is_dir():
+                for entry in conv_dir.iterdir():
+                    if entry.is_dir() and (entry / "context.jsonl").exists():
+                        _rewrite_jsonl(entry / "context.jsonl")
+
+        if updated:
+            with self._cache_lock:
+                self._cache.pop(cid, None)
+            self._invalidate_ctx_cache(cid)
+            self._load_cache(cid)
+            self.invalidate_claude_sessions(cid)
+        return updated
+
     def delete_message(self, cid: str, msg_id: str = "", index: int = -1,
                        user_id: str = "") -> bool:
         """Delete a message by msg_id from transcript + all contexts. Atomic."""

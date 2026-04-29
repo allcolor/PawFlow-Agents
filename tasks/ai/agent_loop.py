@@ -816,238 +816,67 @@ class AgentLoopTask(
 
         logger.info(f"[agent:{conversation_id[:8]}] interrupt for '{agent_name or 'agent'}'")
 
-        # For claude-code: graceful interrupt via stdin + cancel in-flight tools
-        _is_cc = False
+        # Interrupt = inject a STOP user message into the live agent when the
+        # provider supports bidirectional steering (CC stdin, Codex turn/steer,
+        # Gemini ACP session/prompt). Do not spawn a separate synthesizer.
         _int_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
         with self._active_contexts_lock:
-            _cc_client = self._active_claude_client.get(_int_key)
-        if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
-            _proc = getattr(_cc_client, '_claude_proc', None)
-            if _proc and _proc.poll() is None:
-                _is_cc = True
-                # Cancel in-flight MCP tool calls so Claude Code gets
-                # tool errors back quickly and can wrap up
-                try:
-                    from services.tool_relay_service import ToolRelayService
-                    ToolRelayService.cancel_agent(conversation_id, agent_name)
-                except Exception:
-                    logger.debug("exception suppressed", exc_info=True)
-                # Send graceful interrupt on stdin
-                _cc_client.cancel_claude_code(force=False)
-                # Bump generation so the agent loop won't retry after CC concludes
-                self.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
-                logger.info(f"[agent:{conversation_id[:8]}] claude-code interrupt: "
-                            f"tools cancelled + stdin interrupt + generation bumped")
-                return
-            else:
-                # Stale client — process dead, clean up and finish
-                with self._active_contexts_lock:
-                    self._active_claude_client.pop(_int_key, None)
-                logger.warning(f"[agent:{conversation_id[:8]}] CC process already dead — cleaning up")
-                self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
-                # No synthesis for dead CC — just emit done
-                from core.conversation_event_bus import ConversationEventBus
-                ConversationEventBus.instance().publish_event(
-                    conversation_id, "done", {
-                        "response": "[Interrupted — agent process ended]",
-                        "agent_name": agent_name or "",
-                        "interrupted": True,
-                    })
-                from core.conversation_store import ConversationStore
-                return
-
-        # Double-check: if the agent's provider is claude-code, skip synthesis
-        # (client may already be cleaned up but the agent is still CC)
+            _active_client = self._active_claude_client.get(_int_key)
         try:
-            _meta = None
-            from core.conversation_store import ConversationStore as _CS_chk
-            _meta = _CS_chk.instance().get_metadata(conversation_id)
-            _uid = _meta.get("user_id", "") if _meta else ""
-            _, _svc_id, _ = self._resolve_agent_client(
-                agent_name or "", _uid, conversation_id)
-            if _svc_id:
-                _c, _s = self._resolve_llm_service(_svc_id, _uid)
-                if _c and getattr(_c, 'provider', '') == 'claude-code':
-                    logger.info(f"[agent:{conversation_id[:8]}] agent is CC but client gone — skip synthesis")
-                    self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
-                    from core.conversation_event_bus import ConversationEventBus
-                    ConversationEventBus.instance().publish_event(
-                        conversation_id, "done", {
-                            "response": "[Interrupted — agent process ended]",
-                            "agent_name": agent_name or "",
-                            "interrupted": True,
-                        })
-                    return
+            from services.tool_relay_service import ToolRelayService
+            ToolRelayService.cancel_agent(conversation_id, agent_name)
         except Exception:
             logger.debug("exception suppressed", exc_info=True)
 
-        # Non-claude-code: cancel the current run
+        if (_active_client and hasattr(_active_client, 'send_user_message')
+                and _active_client.send_user_message(SOFT_INTERRUPT_USER_COMMAND)):
+            logger.info(
+                f"[agent:{conversation_id[:8]}] interrupt delivered as live user STOP "
+                f"to '{agent_name or 'agent'}'")
+            return
+
+        # LLM API streams are not transport-bidirectional once the HTTP request
+        # is in flight. Preserve the same semantic model by queuing the STOP as
+        # the next user message, then stopping the current loop and waking an
+        # immediate follow-up turn. The next turn sees a normal user message,
+        # not a synthetic system prompt.
+        try:
+            from core.conversation_store import ConversationStore
+            from core.conversation_writer import ConversationWriter
+            from core.pending_queue import PendingQueue
+            import time as _time
+            import uuid as _uuid
+
+            _meta = ConversationStore.instance().get_metadata(conversation_id)
+            _uid = _meta.get("user_id", "") if _meta else ""
+            _stop_msg = {
+                "role": "user",
+                "content": SOFT_INTERRUPT_USER_COMMAND,
+                "source": {"type": "user", "interrupt": True,
+                           "name": _uid},
+                "msg_id": _uuid.uuid4().hex[:12],
+                "ts": _time.time(),
+            }
+            ConversationWriter.for_conversation(conversation_id).enqueue_message(
+                _stop_msg, agent_name=agent_name or "", user_id=_uid)
+            PendingQueue.for_agent(conversation_id, agent_name or "").enqueue(
+                _stop_msg, source="interrupt")
+            logger.info(
+                f"[agent:{conversation_id[:8]}] interrupt queued as user STOP "
+                f"for '{agent_name or 'agent'}'")
+        except Exception:
+            logger.error("[interrupt] failed to queue STOP user message", exc_info=True)
+
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
+        try:
+            from core.poll_scheduler import PollScheduler
+            PollScheduler.instance().schedule(
+                conversation_id, delay_seconds=0,
+                reason="[interrupt] STOP user message queued")
+        except Exception:
+            logger.debug("interrupt wake scheduling failed", exc_info=True)
+        return
 
-        # Note: _active_contexts cleanup happens in _run_agent_loop finally
-        # block handles that. The agent is still running (doing synthesis).
-
-        # Spawn parallel synthesis thread
-        from core.conversation_event_bus import ConversationEventBus
-        bus = ConversationEventBus.instance()
-        bus.publish_event(conversation_id, "thinking", {
-            "detail": "interrupted — synthesizing response...",
-            "agent_name": agent_name or "",
-        })
-
-        def _synthesis():
-            _synth_gen_key = f"{conversation_id}:__synth__"
-            # Mark synthesis as active in _active_contexts
-            _synth_ctx = {"active_agent_name": agent_name or "",
-                          "conversation_id": conversation_id}
-            _synth_ctx_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
-            with self._active_contexts_lock:
-                self._active_contexts[_synth_ctx_key] = _synth_ctx
-            try:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                # Resolve user_id from conversation metadata
-                _meta = store.get_metadata(conversation_id)
-                user_id = _meta.get("user_id", "") if _meta else ""
-                _agent = agent_name or ""
-                ctx_data = store.load_agent_context(conversation_id, _agent)
-                if not ctx_data:
-                    ctx_data = store.load(conversation_id) or []
-                messages = self._deserialize_messages(ctx_data, conversation_id=conversation_id) if ctx_data else []
-                import uuid as _uuid_synth
-                _synth_msg_id = _uuid_synth.uuid4().hex[:12]
-                if not messages:
-                    bus.publish_event(conversation_id, "done", {
-                        "response": "[Interrupted — no context available]",
-                        "msg_id": _synth_msg_id,
-                        "all_msg_ids": [_synth_msg_id],
-                        "agent_name": agent_name or "",
-                    })
-                    return
-
-                # Add the soft interrupt as a user command. Providers should
-                # treat it like the user explicitly told them to stop now.
-                messages.append(LLMMessage(
-                    role="user",
-                    content=SOFT_INTERRUPT_USER_COMMAND,
-                    conversation_id=conversation_id,
-                ))
-
-                # Resolve LLM for synthesis — NEVER use claude-code
-                # (would spawn a new subprocess + MCP). Use summarizer.
-                _summ_client, _summ_max_ctx, _summ_svc_id = self._get_summarizer_client(user_id)
-                client = _summ_client
-                _agent_svc = _summ_svc_id
-                if not client:
-                    # No summarizer — try agent's own client if not claude-code
-                    client, _agent_svc, _ = self._resolve_agent_client(
-                        _agent, user_id, conversation_id)
-                    if client and getattr(client, 'provider', '') == 'claude-code':
-                        client = None  # Can't use claude-code for synthesis
-                logger.info(f"[interrupt synthesis] LLM service: '{_agent_svc}', "
-                            f"client: {getattr(client, 'provider', '?')}/{getattr(client, 'default_model', '?')}")
-                if not client:
-                    bus.publish_event(conversation_id, "done", {
-                        "response": "[Interrupted — no LLM client available]",
-                        "msg_id": _synth_msg_id,
-                        "all_msg_ids": [_synth_msg_id],
-                        "agent_name": agent_name or "",
-                    })
-                    return
-
-                # Repair orphan tool_calls and remove orphan tool results
-                _valid_tc_ids = set()
-                for m in messages:
-                    if m.role == "assistant" and m.tool_calls:
-                        for tc in m.tool_calls:
-                            _valid_tc_ids.add(tc.id)
-                # Remove tool results with no matching tool_call
-                messages = [m for m in messages
-                            if m.role != "tool" or m.tool_call_id in _valid_tc_ids]
-                # Add missing tool results for tool_calls
-                for i, m in enumerate(messages):
-                    if m.role == "assistant" and m.tool_calls:
-                        tc_ids = {tc.id for tc in m.tool_calls}
-                        found = set()
-                        for j in range(i + 1, min(i + len(tc_ids) + 2, len(messages))):
-                            if messages[j].role == "tool" and messages[j].tool_call_id in tc_ids:
-                                found.add(messages[j].tool_call_id)
-                        for tc_id in tc_ids - found:
-                            messages.insert(i + 1, LLMMessage(
-                                role="tool", content="[Unavailable]", tool_call_id=tc_id,
-                                conversation_id=conversation_id))
-
-                # Compact + call LLM (stream tokens to user)
-                _max_ctx = _summ_max_ctx or 64000
-                compact_msgs = self._compact(
-                    messages, client, _max_ctx,
-                    target_fraction=0.25, conversation_id=conversation_id)
-
-
-                # IMMUTABLE RULE: no stream → SSE for message content.
-                # We still request streaming (to get progressive wire
-                # activity / cancel hooks) but DO NOT publish `token`
-                # SSE per chunk. The final assistant message is
-                # persisted below via ConversationWriter, which emits
-                # `new_message` + `done` post-write.
-                resp = client.complete_stream(
-                    messages=compact_msgs,
-                    max_tokens=500,
-                    tools=None, callback=None,
-                    call_user_id=user_id,
-                    call_conversation_id=conversation_id,
-                    call_agent_name=agent_name or _agent,
-                    call_event_cid=conversation_id)
-
-                # Save to both transcript and agent context.
-                # `done` SSE fires AFTER the last block hits disk.
-                _interrupt_msg = LLMMessage(
-                    role="assistant", content=resp.content,
-                    msg_id=_synth_msg_id,
-                    source={"type": "agent", "name": agent_name or "",
-                            "tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out,
-                            "model": resp.model},
-                    conversation_id=conversation_id)
-                messages.append(_interrupt_msg)
-                _serialized = self._serialize_messages(messages[-2:])
-                from core.conversation_writer import ConversationWriter
-                _writer = ConversationWriter.for_conversation(conversation_id)
-                _done_sse = {
-                    "type": "done",
-                    "data": {
-                        "response": resp.content,
-                        "msg_id": _synth_msg_id,
-                        "all_msg_ids": [_synth_msg_id],
-                        "model": resp.model,
-                        "tokens_in": resp.tokens_in,
-                        "tokens_out": resp.tokens_out,
-                        "agent_name": agent_name or "",
-                        "source": {"type": "agent", "name": agent_name or ""},
-                        "interrupted": True,
-                    },
-                }
-                for _idx, _sm in enumerate(_serialized):
-                    _sse = [_done_sse] if _idx == len(_serialized) - 1 else None
-                    _writer.enqueue_message(_sm, agent_name=_agent,
-                                            user_id=user_id, sse_events=_sse)
-                self._track_tokens(
-                    user_id, resp.tokens_in, resp.tokens_out,
-                    model=resp.model, agent_name=agent_name or "")
-            except Exception as e:
-                logger.error(f"[interrupt synthesis] failed: {e}", exc_info=True)
-                bus.publish_event(conversation_id, "done", {
-                    "response": f"[Interrupted — synthesis failed: {e}]",
-                    "msg_id": _synth_msg_id,
-                    "all_msg_ids": [_synth_msg_id],
-                    "agent_name": agent_name or "",
-                })
-            finally:
-                with self._active_contexts_lock:
-                    self._active_contexts.pop(_synth_ctx_key, None)
-
-        t = threading.Thread(target=_synthesis, daemon=True,
-                             name=f"interrupt-synth-{conversation_id[:8]}:{agent_name or 'agent'}")
-        t.start()
 
 
     def _check_interrupt(self, gen_key: str) -> bool:

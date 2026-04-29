@@ -8,6 +8,7 @@ from typing import Dict, List
 from core.llm_client import (
     LLMClient, LLMMessage, LLMToolDefinition, CCCompactDetected,
 )
+from core.interrupt_policy import SOFT_INTERRUPT_USER_COMMAND
 from tasks.ai.agent_emitter import AgentEmitter, AgentResult
 from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
@@ -922,15 +923,11 @@ class AgentCoreMixin:
 
                     # Interrupt check
                     if emitter.check_interrupt():
-                        logger.info(f"[agent:{conversation_id[:8]}] interrupted — forcing synthesis")
+                        logger.info(f"[agent:{conversation_id[:8]}] interrupted — injecting user STOP command")
                         _append(LLMMessage(
                             role="user",
-                            content=(
-                                "[System: The user has requested an immediate response. "
-                                "Stop all tool usage. Summarize your progress so far and "
-                                "provide your best answer with the information you have "
-                                "gathered. Mention what you were still working on so the "
-                                "user can ask you to continue if needed.]"),
+                            content=SOFT_INTERRUPT_USER_COMMAND,
+                            source={"type": "user", "interrupt": True},
                             conversation_id=conversation_id,
                         ))
                         _irpt_resp = client.complete_stream(

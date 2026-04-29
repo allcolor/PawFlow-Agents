@@ -184,9 +184,10 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         gemini_live_list = []
 
         def _apply_live(row, ent, prefix):
-            row[f"{prefix}_live"] = bool(ent.get("live"))
+            reuse_count = int(ent.get("reuse_count", 0) or 0)
+            row[f"{prefix}_live"] = bool(ent.get("live")) and reuse_count > 0
             row[f"{prefix}_idle_seconds"] = ent.get("idle_seconds", 0)
-            row[f"{prefix}_reuse_count"] = ent.get("reuse_count", 0)
+            row[f"{prefix}_reuse_count"] = reuse_count
             row[f"{prefix}_lived_seconds"] = ent.get("lived_seconds", 0)
 
         try:

@@ -291,16 +291,73 @@ def test_list_active_keeps_idle_live_sessions_out_of_active_payload():
     assert data["codex_live"] == [live_entry]
 
 
-def test_interrupt_synthesis_forwards_identity_for_image_refs():
-    """Interrupt synthesis can compact messages containing image_ref blocks;
-    it must pass owner identity through complete_stream so providers can
-    resolve FileStore attachments safely."""
+def test_live_badge_requires_reused_live_process():
+    """The LIVE badge means this active turn reused an already-live process.
+    First execution has a live process entry, but reuse_count is still zero.
+    """
+    from core import FlowFile
+    from tasks.ai.actions.usage import _handle_usage
+
+    fake_exec = SimpleNamespace(
+        _active_contexts={
+            "conv-live": {
+                "active_agent_name": "assistant",
+                "messages": [],
+                "max_context_size": 10000,
+                "_started_at": 0,
+            },
+        },
+        _active_contexts_lock=threading.Lock())
+
+    class _Store:
+        def get_extra(self, *_args, **_kwargs):
+            return {}
+
+    def _call_with(live_entry):
+        ff = FlowFile()
+        with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec), \
+                patch("core.conversation_store.ConversationStore.instance", return_value=_Store()), \
+                patch("core.cc_live_registry.LiveSessionRegistry.instance") as cc_reg, \
+                patch("core.codex_live_registry.CodexLiveRegistry.instance") as codex_reg, \
+                patch("core.gemini_live_registry.GeminiLiveRegistry.instance") as gemini_reg:
+            cc_reg.return_value.status.return_value = []
+            codex_reg.return_value.status.return_value = [live_entry]
+            gemini_reg.return_value.status.return_value = []
+            out = _handle_usage(
+                SimpleNamespace(), "list_active", {"conversation_id": "conv-live"},
+                None, "user", ff)
+        return json.loads(out[0].get_content().decode("utf-8"))
+
+    first_exec = {
+        "conv_id": "conv-live", "agent_name": "assistant",
+        "live": True, "idle_seconds": 0, "reuse_count": 0,
+        "lived_seconds": 3,
+    }
+    reused_exec = {**first_exec, "reuse_count": 1}
+
+    first_data = _call_with(first_exec)
+    reused_data = _call_with(reused_exec)
+
+    assert first_data["active"][0]["codex_live"] is False
+    assert first_data["active"][0]["codex_reuse_count"] == 0
+    assert first_data["codex_live"] == [first_exec]
+    assert reused_data["active"][0]["codex_live"] is True
+    assert reused_data["active"][0]["codex_reuse_count"] == 1
+
+
+def test_interrupt_uses_live_user_stop_or_pending_user_stop():
+    """Interrupt must be a user STOP command delivered to the living agent.
+
+    CLI providers get it via send_user_message; providers that cannot accept a
+    mid-request message get the same user message queued for the next loop.
+    """
     src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
-    block = src[src.index("resp = client.complete_stream("):
-                src.index("# Save to both transcript and agent context.")]
-    assert "call_user_id=user_id" in block
-    assert "call_conversation_id=conversation_id" in block
-    assert "call_agent_name=agent_name or _agent" in block
+    assert "send_user_message(SOFT_INTERRUPT_USER_COMMAND)" in src
+    assert "PendingQueue.for_agent" in src
+    assert "source=\"interrupt\"" in src
+    assert "STOP user message queued" in src
+    assert "interrupt-synth" not in src
+    assert "resp = client.complete_stream(" not in src
 
 
 def test_bg_bucket_yields_to_pending_queue_before_memory_llm_work():
@@ -359,12 +416,15 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
 def test_soft_interrupt_is_user_stop_command():
     policy_src = Path("core/interrupt_policy.py").read_text(encoding="utf-8")
     loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     cc_src = Path("core/llm_providers/claude_code.py").read_text(encoding="utf-8")
     assert "STOP IMMEDIATELY!" in policy_src
-    assert "role=\"user\"" in loop_src
-    assert "content=SOFT_INTERRUPT_USER_COMMAND" in loop_src
+    assert "\"role\": \"user\"" in loop_src
+    assert "\"content\": SOFT_INTERRUPT_USER_COMMAND" in loop_src
+    assert "SOFT_INTERRUPT_USER_COMMAND" in core_src
     assert "SOFT_INTERRUPT_USER_COMMAND" in cc_src
     assert "STOP IMMEDIATELY!" not in loop_src
+    assert "STOP IMMEDIATELY!" not in core_src
     assert "STOP IMMEDIATELY!" not in cc_src
     assert "[System: INTERRUPTED" not in loop_src
 

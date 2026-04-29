@@ -218,6 +218,48 @@ class TestMetaToolAliases(unittest.TestCase):
         })
         assert result == "read-ok"
 
+    def test_nested_use_tool_read_is_unwrapped(self):
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "read-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="read",
+            schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "start_line": {"type": "integer"},
+                },
+                "required": ["path"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "use_tool",
+            "arguments": {
+                "tool_name": "read",
+                "arguments": {"path": "/workspace/cli.py", "start_line": 1},
+            },
+        })
+
+        assert result == "read-ok"
+        assert received == {"path": "/workspace/cli.py", "start_line": 1}
+
+    def test_read_handler_schema_accepts_claude_line_aliases(self):
+        from core.handlers.read import ReadHandler
+
+        props = ReadHandler().parameters_schema["properties"]
+        assert "start_line" in props
+        assert "end_line" in props
+        assert "ranges" in props
+
 
 class TestJsonStringUnwrapping(unittest.TestCase):
 

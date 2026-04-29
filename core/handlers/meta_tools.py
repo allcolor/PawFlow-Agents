@@ -170,11 +170,49 @@ class UseToolHandler(ToolHandler):
                 break
         if not isinstance(tool_args, dict):
             return f"Error: arguments for '{tool_name}' must be a JSON object, got {type(tool_args).__name__}"
-        # Strip the mcp__pawflow__ prefix if the LLM included it —
-        # inside use_tool, `tool_name` is the BARE PawFlow name.
-        if tool_name.startswith("mcp__pawflow__"):
-            tool_name = tool_name[len("mcp__pawflow__"):]
-        tool_name = _canonical_tool_name(tool_name)
+        def _normalize_tool_name(name: Any) -> str:
+            if isinstance(name, str) and name.startswith("mcp__pawflow__"):
+                name = name[len("mcp__pawflow__"):]
+            return _canonical_tool_name(name)
+
+        tool_name = _normalize_tool_name(tool_name)
+
+        # Recover the common nested meta-tool mistake:
+        # use_tool(tool_name="use_tool", arguments={"tool_name": "read", ...})
+        # This is mechanically unambiguous, so unwrap it instead of making
+        # the model spend another turn correcting the envelope.
+        unwrap_budget = 3
+        while tool_name == "use_tool" and isinstance(tool_args, dict) and unwrap_budget > 0:
+            nested_name = (tool_args.get("tool_name")
+                           or tool_args.get("name")
+                           or tool_args.get("tool")
+                           or "")
+            nested_args = tool_args.get("arguments")
+            if nested_args is None:
+                nested_args = tool_args.get("params")
+            if nested_args is None:
+                nested_args = tool_args.get("input")
+            if nested_args is None:
+                nested_args = {}
+
+            for _ in range(3):
+                if isinstance(nested_args, str):
+                    try:
+                        nested_args = json.loads(nested_args)
+                    except (json.JSONDecodeError, TypeError):
+                        return (f"Error: invalid arguments format for '{nested_name}' -- "
+                                f"expected JSON object, got string: {nested_args[:200]}")
+                else:
+                    break
+            if not isinstance(nested_args, dict):
+                return (f"Error: arguments for '{nested_name}' must be a JSON object, "
+                        f"got {type(nested_args).__name__}")
+            if not nested_name:
+                break
+            tool_name = _normalize_tool_name(nested_name)
+            tool_args = nested_args
+            unwrap_budget -= 1
+
         if not tool_name:
             return (
                 "Error: missing 'tool_name' in use_tool arguments. "

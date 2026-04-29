@@ -60,6 +60,18 @@ class ReadHandler(BaseFsHandler):
                     "type": "integer",
                     "description": "Max lines to read (default: all, paginated if too large).",
                 },
+                "start_line": {
+                    "type": "integer",
+                    "description": "Alias for offset; accepted for Claude/Gemini-style Read calls.",
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Inclusive end line; converted to limit when start_line/offset is set.",
+                },
+                "ranges": {
+                    "type": "string",
+                    "description": "Claude-style line range such as '350-420'; first range is used.",
+                },
                 "pages": {
                     "type": "string",
                     "description": "Page range for PDF files (e.g. '1-5').",

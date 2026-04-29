@@ -35,18 +35,12 @@ _GEMINI_CLIENT_SECRET = "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"
 
 
 def _find_gemini_service_id(service_id: str = "") -> str:
-    """Find a gemini LLM service ID in the registry."""
-    if service_id:
-        return service_id
+    """Find the credential-pool owner for Gemini OAuth."""
     try:
-        from core.service_registry import ServiceRegistry
-        for sdef in ServiceRegistry.get_instance().resolve_by_type("llmConnection"):
-            cfg = getattr(sdef, "config", {}) or {}
-            if cfg.get("provider") == "gemini":
-                return sdef.service_id
+        from services.llm_credential_oauth import resolve_credential_service_id
+        return resolve_credential_service_id("gemini", service_id)
     except Exception:
-        pass
-    return ""
+        return service_id or ""
 
 
 def _load_credentials_pool(service_id: str = "") -> list:

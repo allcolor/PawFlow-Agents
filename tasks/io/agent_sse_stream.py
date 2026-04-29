@@ -13,6 +13,7 @@ handleHTTPResponse can submit a streaming response.
 
 import json
 import logging
+import time
 from typing import Dict, Any, List
 
 from core import FlowFile, TaskFactory
@@ -43,7 +44,8 @@ class AgentSSEStreamTask(BaseTask):
         # Extract conversation_id + replay flag from query params
         conversation_id = flowfile.get_attribute("http.query.conversation_id") or ""
         replay_param = flowfile.get_attribute("http.query.replay")
-        if not conversation_id or replay_param is None:
+        client_id = flowfile.get_attribute("http.query.client_id") or ""
+        if not conversation_id or replay_param is None or not client_id:
             query = flowfile.get_attribute("http.query") or ""
             import urllib.parse
             params = dict(urllib.parse.parse_qsl(query))
@@ -51,6 +53,8 @@ class AgentSSEStreamTask(BaseTask):
                 conversation_id = params.get("conversation_id", "")
             if replay_param is None:
                 replay_param = params.get("replay")
+            if not client_id:
+                client_id = params.get("client_id", "")
 
         if not conversation_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
@@ -67,15 +71,21 @@ class AgentSSEStreamTask(BaseTask):
 
         # Subscribe to events
         bus = ConversationEventBus.instance()
-        writer = bus.subscribe(conversation_id, replay=replay)
+        writer = bus.subscribe(conversation_id, replay=replay, client_id=client_id)
 
-        # Set up SSE streaming response
-        timeout = int(self.config.get("timeout", 600))
+        # Set up SSE streaming response. The browser reconnects automatically;
+        # a finite lifetime prevents half-open sockets from lingering forever.
+        timeout = int(self.config.get("timeout", 600) or 600)
 
         def sse_iterator():
             """Yield SSE bytes from the writer."""
+            started = time.monotonic()
             try:
                 for chunk in writer.iterate(timeout=2.0):
+                    if timeout > 0 and time.monotonic() - started >= timeout:
+                        logger.info("SSE stream lifetime reached for conv=%s client=%s",
+                                    conversation_id[:8], client_id[:12])
+                        break
                     yield chunk
             finally:
                 bus.unsubscribe(conversation_id, writer)

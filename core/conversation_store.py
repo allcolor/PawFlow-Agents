@@ -33,6 +33,7 @@ Per-conversation locks ensure atomicity of logical operations.
 
 import json
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -41,6 +42,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+_CTX_CACHE_MAX_MESSAGES = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_MESSAGES", "500") or "500")
+_CTX_CACHE_MAX_CHARS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CHARS", "250000") or "250000")
+_CTX_CACHE_MAX_CONVS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CONVS", "20") or "20")
 
 import core.paths as _paths
 
@@ -60,6 +65,7 @@ class ConversationStore:
         self._cache_lock = threading.Lock()
         self._ctx_cache: Dict[str, Dict[str, List[Dict]]] = {}  # cid -> {agent -> messages}
         self._ctx_cache_lock = threading.Lock()
+        self._context_usage_repair_mtime: Dict[str, float] = {}
         self._cid_user: Dict[str, str] = {}  # cid -> user_id (fast lookup, no scan)
         self._loaded = False
 
@@ -135,7 +141,10 @@ class ConversationStore:
         Keys like 'claude_session:<agent>' encode an agent name in the
         suffix. Normalize the suffix only — leave other keys untouched.
         """
-        for _prefix in ("claude_session:", "cc_session:"):
+        for _prefix in (
+                "claude_session:", "cc_session:", "codex_session:",
+                "gemini_acp_session:", "gemini_acp_pool_idx:",
+                "gemini_acp_session_version:"):
             if key.startswith(_prefix):
                 return _prefix + cls._canon_agent(key[len(_prefix):])
         return key
@@ -1317,6 +1326,36 @@ class ConversationStore:
 
     # ── Context ops ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _context_cache_chars(messages: Optional[List[Dict]]) -> int:
+        if not messages:
+            return 0
+        total = 0
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, str):
+                total += len(content)
+            elif content is not None:
+                total += len(str(content))
+            tool_calls = msg.get("tool_calls")
+            if tool_calls:
+                total += len(str(tool_calls))
+        return total
+
+    @staticmethod
+    def _should_cache_context(messages: Optional[List[Dict]]) -> bool:
+        if messages is None:
+            return True
+        return (len(messages) <= _CTX_CACHE_MAX_MESSAGES and
+                ConversationStore._context_cache_chars(messages) <= _CTX_CACHE_MAX_CHARS)
+
+    def _trim_ctx_cache_locked(self) -> None:
+        while len(self._ctx_cache) > _CTX_CACHE_MAX_CONVS:
+            oldest = next(iter(self._ctx_cache), None)
+            if oldest is None:
+                return
+            self._ctx_cache.pop(oldest, None)
+
     def load_agent_context(self, cid: str, agent_name: str) -> Optional[List[Dict]]:
         """Load agent context from {agent}/context.jsonl file.
 
@@ -1341,7 +1380,14 @@ class ConversationStore:
         with lock:
             result = self._read_ctx_file(path) or None
         with self._ctx_cache_lock:
-            self._ctx_cache.setdefault(cid, {})[agent_name] = result
+            if self._should_cache_context(result):
+                self._ctx_cache.setdefault(cid, {})[agent_name] = result
+                self._trim_ctx_cache_locked()
+            else:
+                self._ctx_cache.get(cid, {}).pop(agent_name, None)
+                logger.info("ConversationStore: skipped ctx cache for %s/%s (%s messages, %s chars)",
+                            cid[:8], agent_name or "shared", len(result or []),
+                            self._context_cache_chars(result))
         return result
 
     def load_transcript_for_agent(self, cid: str, agent_name: str
@@ -1929,33 +1975,47 @@ class ConversationStore:
 
     def _maybe_persist_context_usage_from_patch(self, cid: str, line: Dict[str, Any]) -> None:
         source = line.get("source")
-        if not isinstance(source, dict):
+        entry = self._context_usage_entry_from_source(source, line.get("ts"))
+        if not entry:
             return
+        name, usage_entry = entry
+        data = self._read_extras(cid)
+        self._merge_context_usage_locked(cid, data, name, usage_entry)
+
+    @staticmethod
+    def _context_usage_entry_from_source(source: Any, ts: Any = None):
+        if not isinstance(source, dict):
+            return None
         name = source.get("name") or source.get("agent")
         used = source.get("context_used")
         max_tokens = source.get("context_max")
         if not name or used is None or max_tokens is None:
-            return
+            return None
         try:
             used_i = int(used)
             max_i = int(max_tokens)
         except (TypeError, ValueError):
-            return
+            return None
         if max_i <= 0:
-            return
+            return None
         pct = source.get("context_pct")
         try:
             pct_f = float(pct) if pct is not None else used_i / max_i
         except (TypeError, ValueError):
             pct_f = used_i / max_i
-        ts = float(line.get("ts") or time.time())
+        try:
+            ts_f = float(ts) if ts is not None else time.time()
+        except (TypeError, ValueError):
+            ts_f = time.time()
+        return name, {"used": used_i, "max": max_i, "pct": pct_f, "updated_at": ts_f}
 
-        data = self._read_extras(cid)
+    def _merge_context_usage_locked(self, cid: str, data: Dict[str, Any],
+                                    name: str, usage_entry: Dict[str, Any]) -> bool:
         usage = dict(data.get("context_usage") or {})
         prev = usage.get(name)
-        if isinstance(prev, dict) and float(prev.get("updated_at") or 0) > ts:
-            return
-        usage[name] = {"used": used_i, "max": max_i, "pct": pct_f, "updated_at": ts}
+        if isinstance(prev, dict) and float(prev.get("updated_at") or 0) > float(usage_entry.get("updated_at") or 0):
+            return False
+        usage[name] = usage_entry
         data["context_usage"] = usage
         self._write_extras(cid, data)
 
@@ -1964,6 +2024,47 @@ class ConversationStore:
                 self._cache[cid]["extra_keys"].add("context_usage")
                 self._cache[cid].setdefault("extras", {})["context_usage"] = usage
                 self._cache[cid]["updated_at"] = time.time()
+        return True
+
+    def _repair_context_usage_from_transcript_locked(self, cid: str,
+                                                     data: Dict[str, Any]) -> Dict[str, Any]:
+        usage = dict(data.get("context_usage") or {})
+        path = self._transcript_path(cid)
+        try:
+            transcript_mtime = os.path.getmtime(path)
+        except FileNotFoundError:
+            return usage
+        if self._context_usage_repair_mtime.get(cid, 0) >= transcript_mtime:
+            return usage
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for raw in f:
+                    try:
+                        line = json.loads(raw)
+                    except Exception:
+                        continue
+                    entry = self._context_usage_entry_from_source(
+                        line.get("source"), line.get("ts"))
+                    if not entry:
+                        continue
+                    name, usage_entry = entry
+                    prev = usage.get(name)
+                    if (not isinstance(prev, dict)
+                            or float(prev.get("updated_at") or 0) <= float(usage_entry.get("updated_at") or 0)):
+                        usage[name] = usage_entry
+        except FileNotFoundError:
+            return usage
+        self._context_usage_repair_mtime[cid] = transcript_mtime
+        if usage != data.get("context_usage"):
+            data["context_usage"] = usage
+            self._write_extras(cid, data)
+            with self._cache_lock:
+                if cid in self._cache:
+                    self._cache[cid]["extra_keys"].add("context_usage")
+                    self._cache[cid].setdefault("extras", {})["context_usage"] = usage
+                    self._cache[cid]["updated_at"] = time.time()
+        return usage
+
     def message_count(self, cid: str) -> int:
         return self._load_cache(cid).get("msg_count", 0)
 
@@ -1981,24 +2082,35 @@ class ConversationStore:
 
     def get_extra_cached(self, cid: str, key: str, default: Any = None) -> Any:
         """Get extra from extras.json file."""
+        key = self._canon_extra_key(key)
         lock = self._get_conv_lock(cid)
         with lock:
-            return self._read_extras(cid).get(self._canon_extra_key(key), default)
+            data = self._read_extras(cid)
+            if key == "context_usage":
+                return self._repair_context_usage_from_transcript_locked(cid, data) or default
+            return data.get(key, default)
 
     def get_extra(self, cid: str, key: str, default: Any = None,
                   user_id: str = "") -> Any:
         if not self.exists(cid):
             return default
+        key = self._canon_extra_key(key)
         lock = self._get_conv_lock(cid)
         with lock:
-            return self._read_extras(cid).get(self._canon_extra_key(key), default)
+            data = self._read_extras(cid)
+            if key == "context_usage":
+                return self._repair_context_usage_from_transcript_locked(cid, data) or default
+            return data.get(key, default)
 
     def get_extras(self, cid: str, user_id: str = "") -> Optional[dict]:
         if not self.exists(cid):
             return None
         lock = self._get_conv_lock(cid)
         with lock:
-            return dict(self._read_extras(cid))
+            data = self._read_extras(cid)
+            if "context_usage" in data:
+                self._repair_context_usage_from_transcript_locked(cid, data)
+            return dict(data)
 
     def set_extra(self, cid: str, key: str, value: Any,
                   user_id: str = "") -> bool:
@@ -2038,16 +2150,14 @@ class ConversationStore:
         """
         extras = self.get_extras(cid) or {}
         _had_any = False
-        # Clear ALL CLI session pointers (claude / codex / gemini). Each
-        # provider stores its resume id under `<cli>_session:<agent>`; with
-        # the pointer wiped, the next turn starts a fresh session instead
-        # of resuming the now-stale one. Without this codex/gemini would
-        # `--resume <sid>` and reload the exact pre-edit state from disk,
-        # making the context edit a no-op for those CLIs.
+        # Clear ALL CLI session pointers. With the pointer wiped, the next
+        # turn starts a fresh session instead of resuming the now-stale one.
         for key in list(extras.keys()):
             if (key.startswith("claude_session:")
                     or key.startswith("codex_session:")
-                    or key.startswith("gemini_session:")):
+                    or key.startswith("gemini_acp_session:")
+                    or key.startswith("gemini_acp_pool_idx:")
+                    or key.startswith("gemini_acp_session_version:")):
                 self.set_extra(cid, key, "")
                 logger.info("Invalidated %s for conv %s", key, cid[:8])
                 _had_any = True
@@ -2129,8 +2239,12 @@ class ConversationStore:
         # variant `invalidate_claude_sessions`.
         extras = self.get_extras(cid) or {}
         cleared_any = False
-        for _cli in ("claude", "codex", "gemini"):
-            _k = f"{_cli}_session:{agent_name}"
+        for _k in (
+                f"claude_session:{agent_name}",
+                f"codex_session:{agent_name}",
+                f"gemini_acp_session:{agent_name}",
+                f"gemini_acp_pool_idx:{agent_name}",
+                f"gemini_acp_session_version:{agent_name}"):
             if extras.get(_k):
                 self.set_extra(cid, _k, "")
                 logger.info("Invalidated %s for conv %s", _k, cid[:8])
@@ -2140,33 +2254,29 @@ class ConversationStore:
         # next turn, so the wiped extras alone are sufficient for them.
         key = f"claude_session:{agent_name}"
         sid = str(extras.get(key) or "")
-        if not sid:
-            return
-        # Delete the specific jsonl + companion dir for this sid only.
-        try:
-            owner = self._cid_user.get(cid, "")
-            if not owner:
-                return
-            from core import paths as _paths
-            import shutil as _shutil
-            sanitized_cid = cid.replace(":", "_")
-            sess_dir = _paths.CLAUDE_SESSIONS_DIR / owner / sanitized_cid
-            if not sess_dir.is_dir():
-                return
-            for jf in sess_dir.rglob(f"projects/*/{sid}.jsonl"):
-                try:
-                    jf.unlink()
-                    logger.info("Pruned CC session jsonl %s for %s/%s",
-                                jf.name, cid[:8], agent_name)
-                    companion = jf.with_suffix("")
-                    if companion.is_dir():
-                        _shutil.rmtree(companion, ignore_errors=True)
-                except OSError:
-                    pass
-        except Exception as _e:
-            logger.debug(
-                "invalidate_claude_session_for_agent disk prune failed "
-                "for %s/%s: %s", cid[:8], agent_name, _e)
+        if sid:
+            try:
+                owner = self._cid_user.get(cid, "")
+                if owner:
+                    from core import paths as _paths
+                    import shutil as _shutil
+                    sanitized_cid = cid.replace(":", "_")
+                    sess_dir = _paths.CLAUDE_SESSIONS_DIR / owner / sanitized_cid
+                    if sess_dir.is_dir():
+                        for jf in sess_dir.rglob(f"projects/*/{sid}.jsonl"):
+                            try:
+                                jf.unlink()
+                                logger.info("Pruned CC session jsonl %s for %s/%s",
+                                            jf.name, cid[:8], agent_name)
+                                companion = jf.with_suffix("")
+                                if companion.is_dir():
+                                    _shutil.rmtree(companion, ignore_errors=True)
+                            except OSError:
+                                pass
+            except Exception as _e:
+                logger.debug(
+                    "invalidate_claude_session_for_agent disk prune failed "
+                    "for %s/%s: %s", cid[:8], agent_name, _e)
         # Kill any warm CC / codex / gemini session for this (conv, agent)
         # pair so the next turn spawns fresh.
         try:

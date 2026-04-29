@@ -940,6 +940,19 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "\n\nRules: 1) ALWAYS narrate before tool calls (1 short sentence). "
             "2) Old messages are auto-compacted — use read_history to search/recall them."
         )
+        if (_client_provider_name or "").strip().lower() == "gemini":
+            system_prompt += (
+                "\n\nGEMINI ACP TOOL ROUTING: When you need to inspect or modify the PawFlow "
+                "project, filesystem, shell, screen, web, or environment, you MUST use the "
+                "PawFlow MCP Server tools exposed to Gemini as `mcp_pawflow_get_tool_schema` "
+                "and `mcp_pawflow_use_tool`. First call `mcp_pawflow_get_tool_schema`; then "
+                "call `mcp_pawflow_use_tool` with `tool_name` and `arguments`. Do not use "
+                "Gemini built-in filesystem/search/shell tools such as list_directory, "
+                "read_file, grep/search, or shell commands for PawFlow project work; they "
+                "are not routed through PawFlow permissions, live tool UI, backgrounding, "
+                "or the user's linked relays. Treat `/workspace` as a PawFlow MCP virtual "
+                "path only; it is not a local path inside Gemini's container."
+            )
 
         # Resilience style
         resilience = self.config.get("resilience_style", "balanced")

@@ -9,11 +9,13 @@ servers, tool updates, and thought chunks.
 
 from __future__ import annotations
 
+import ast
 import base64
 import json
 import logging
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -29,6 +31,10 @@ class _GeminiAcpProtocolError(Exception):
     """Raised when Gemini ACP returns an invalid JSON-RPC response."""
 
 
+class _GeminiAcpCapacityError(_GeminiAcpProtocolError):
+    """Raised when Gemini reports model capacity/quota exhaustion."""
+
+
 class LLMGeminiMixin(GeminiSessionMixin):
     """Gemini ACP provider.
 
@@ -38,6 +44,24 @@ class LLMGeminiMixin(GeminiSessionMixin):
     """
 
     _GEMINI_PROVIDER = "gemini"
+    _GEMINI_PAWFLOW_PREAMBLE = (
+        "## PawFlow runtime - MCP-only (mandatory)\n"
+        "You are running inside a PawFlow sandboxed Gemini CLI container. "
+        "The user's project lives at `/workspace`, but that path is VIRTUAL "
+        "and reachable ONLY through the PawFlow MCP server. Your local cwd, "
+        "`/`, `/tmp`, and `/cc_sessions/...` are Gemini runtime state, not the "
+        "user's project.\n\n"
+        "For every action against the project or user environment - file "
+        "read/write/edit, shell command, grep/search/glob, directory listing, "
+        "screen/browser/web operations - use the PawFlow MCP server only: "
+        "first `mcp_pawflow_get_tool_schema` if needed, then "
+        "`mcp_pawflow_use_tool` with `tool_name` and `arguments`.\n\n"
+        "Do not use Gemini built-in tools such as list_directory, read_file, "
+        "read_many_files, glob/search_file_content, run_shell_command, "
+        "web_fetch, or google_web_search for PawFlow work. Those tools inspect "
+        "the Gemini container instead of PawFlow's relay-backed workspace and "
+        "cause slow or wrong results."
+    )
 
     def _gemini_context_window(self, model: str) -> int:
         """Return Gemini's effective context window for ``model``."""
@@ -122,6 +146,203 @@ class LLMGeminiMixin(GeminiSessionMixin):
         text = str(exc).lower()
         return "session/load failed" in text and (
             "not found" in text or "unknown" in text or "no session" in text)
+
+    @staticmethod
+    def _gemini_acp_capacity_error(error: Any) -> str:
+        """Return a sanitized Gemini capacity error message, or empty string."""
+        if isinstance(error, dict):
+            message = str(error.get("message") or error.get("error") or "")
+        else:
+            message = str(error or "")
+        lowered = message.lower()
+        if "exhausted your capacity" in lowered or "quota will reset" in lowered:
+            cooldown = ""
+            match = re.search(r"after\s+([0-9.]+\s*[a-z]+)", message, re.IGNORECASE)
+            if match:
+                cooldown = f"; cooldown {match.group(1).strip()}"
+            return "Gemini model capacity exhausted" + cooldown
+        return ""
+
+    @staticmethod
+    def _gemini_acp_tool_name(update: dict) -> str:
+        """Normalize Gemini ACP tool titles to PawFlow wrapper names."""
+        name = str(update.get("title") or update.get("kind") or "tool")
+        suffix = " (pawflow MCP Server)"
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+        if str(update.get("toolCallId") or "").startswith("mcp_pawflow_get_tool_schema"):
+            return "get_tool_schema"
+        if str(update.get("toolCallId") or "").startswith("mcp_pawflow_use_tool"):
+            return "use_tool"
+        return name or "tool"
+
+    @staticmethod
+    def _gemini_acp_is_pawflow_mcp_tool(update: dict, raw_name: str = "") -> bool:
+        tc_id = str(update.get("toolCallId") or "")
+        return tc_id.startswith("mcp_pawflow_") or raw_name in ("get_tool_schema", "use_tool")
+
+    @staticmethod
+    def _gemini_acp_display_tool_name(raw_name: str, result_text: str = "") -> str:
+        """Prefer the inner PawFlow tool over Gemini's MCP wrapper name."""
+        if raw_name not in ("use_tool", "mcp__pawflow__use_tool"):
+            return raw_name
+        patterns = (
+            r'<tool_output\s+tool="([^"]+)"',
+            r"tool_name['\"]?\s*[:=]\s*['\"]([^'\"}\s,]+)",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, result_text or "")
+            if match:
+                return match.group(1)
+        return raw_name
+
+    @staticmethod
+    def _gemini_acp_display_tool_call(raw_name: str, raw_args: Any,
+                                      result_text: str = "") -> tuple[str, Any]:
+        """Return the UI-facing PawFlow tool name and arguments."""
+        try:
+            from core.llm_client import unwrap_mcp_tool
+            name, args = unwrap_mcp_tool(raw_name, raw_args or {})
+        except Exception:
+            name, args = raw_name, raw_args or {}
+        if name in ("use_tool", "mcp__pawflow__use_tool"):
+            display = LLMGeminiMixin._gemini_acp_display_tool_name(name, result_text)
+            if display != name:
+                return display, args
+        return name, args
+
+    @staticmethod
+    def _gemini_acp_clean_thinking(text: str) -> str:
+        """Drop ACP/MCP call serialization snippets from visible thinking."""
+        if not text:
+            return ""
+        kept = []
+        for line in str(text).splitlines():
+            lowered = line.lower()
+            if (("tool_name" in lowered and "arguments" in lowered)
+                    or ("mcp_pawflow" in lowered and "arguments" in lowered)
+                    or ('"name": "use_tool"' in lowered and '"args"' in lowered)
+                    or ("'name': 'use_tool'" in lowered and "'args'" in lowered)
+                    or (lowered.strip().startswith(("{", "["))
+                        and "use_tool" in lowered)):
+                continue
+            kept.append(line)
+        return "\n".join(kept).strip()
+
+    @staticmethod
+    def _gemini_acp_extract_tool_arguments_from_text(text: str) -> dict:
+        if not text or "use_tool" not in text:
+            return {}
+        for match in re.finditer(r"\{", text):
+            depth = 0
+            end = -1
+            for pos in range(match.start(), len(text)):
+                char = text[pos]
+                if char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = pos + 1
+                        break
+            if end <= match.start():
+                continue
+            candidate = text[match.start():end]
+            if "tool_name" not in candidate and "use_tool" not in candidate:
+                continue
+            parsed = None
+            for parser in (json.loads, ast.literal_eval):
+                try:
+                    parsed = parser(candidate)
+                    break
+                except Exception:
+                    parsed = None
+            found = LLMGeminiMixin._gemini_acp_extract_tool_arguments(parsed)
+            if found:
+                return found
+        return {}
+
+    @staticmethod
+    def _gemini_acp_extract_tool_arguments(value: Any) -> dict:
+        if isinstance(value, dict):
+            if "tool_name" in value and "arguments" in value:
+                return value
+            name = str(value.get("name") or value.get("tool") or "")
+            if name in ("use_tool", "mcp_pawflow_use_tool") and isinstance(value.get("args"), dict):
+                return value.get("args") or {}
+            for key in ("rawInput", "input", "arguments", "args"):
+                found = LLMGeminiMixin._gemini_acp_extract_tool_arguments(value.get(key))
+                if found:
+                    return found
+            for key in ("content", "items", "parts"):
+                found = LLMGeminiMixin._gemini_acp_extract_tool_arguments(value.get(key))
+                if found:
+                    return found
+            return {}
+        if isinstance(value, list):
+            for item in value:
+                found = LLMGeminiMixin._gemini_acp_extract_tool_arguments(item)
+                if found:
+                    return found
+            return {}
+        if isinstance(value, str):
+            return LLMGeminiMixin._gemini_acp_extract_tool_arguments_from_text(value)
+        return {}
+
+    @staticmethod
+    def _gemini_acp_tool_arguments(update: dict) -> dict:
+        for key in ("rawInput", "input", "arguments", "args"):
+            value = update.get(key)
+            if isinstance(value, dict):
+                return value
+        return LLMGeminiMixin._gemini_acp_extract_tool_arguments(update.get("content"))
+
+    @staticmethod
+    def _gemini_acp_history_tool_arguments(workdir: str, tool_call_id: str) -> dict:
+        """Recover ACP tool args from Gemini's session JSONL on replayed events."""
+        if not workdir or not tool_call_id:
+            return {}
+        chats_dir = os.path.join(workdir, ".gemini", "tmp", "gemini", "chats")
+        try:
+            names = [n for n in os.listdir(chats_dir) if n.endswith(".jsonl")]
+        except Exception:
+            return {}
+        paths = [os.path.join(chats_dir, n) for n in names]
+        try:
+            paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        except Exception:
+            paths.sort(reverse=True)
+        for path in paths[:8]:
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        if tool_call_id not in line:
+                            continue
+                        rec = json.loads(line)
+                        for tc in rec.get("toolCalls") or []:
+                            if str(tc.get("id") or "") == tool_call_id:
+                                args = tc.get("args")
+                                return args if isinstance(args, dict) else {}
+            except Exception:
+                logger.debug("[gemini-acp] history tool args lookup failed", exc_info=True)
+        return {}
+
+    def _gemini_acp_enqueue_live_tool_tc(self, conv_id: str, agent_name: str,
+                                         tc_id: str, raw_name: str,
+                                         raw_args: dict, update: dict) -> None:
+        """Map Gemini ACP tool ids to the next PawFlow MCP relay request."""
+        try:
+            from core.llm_client import unwrap_mcp_tool
+            from core.background_tool import (
+                ANY_ARGS_HASH, ANY_TOOL, _args_hash, enqueue_cc_tc,
+            )
+            if raw_args:
+                tc_name, tc_args = unwrap_mcp_tool(raw_name, raw_args)
+                enqueue_cc_tc(conv_id, agent_name, tc_id, tc_name, _args_hash(tc_args))
+            elif self._gemini_acp_is_pawflow_mcp_tool(update, raw_name):
+                enqueue_cc_tc(conv_id, agent_name, tc_id, ANY_TOOL, ANY_ARGS_HASH)
+        except Exception:
+            logger.debug("[gemini-acp] enqueue background tc skipped", exc_info=True)
 
     @staticmethod
     def _gemini_acp_image_item(block: dict) -> Optional[dict]:
@@ -242,7 +463,15 @@ class LLMGeminiMixin(GeminiSessionMixin):
 
     def _gemini_acp_full_initial_text(self, messages) -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
+        system_prompt = (
+            self._GEMINI_PAWFLOW_PREAMBLE
+            + ("\n\n" + system_prompt if system_prompt else "")
+        )
         return self._gemini_acp_build_stdin_with_system(system_prompt, user_text)
+
+    def _gemini_acp_live_text(self, user_text: str) -> str:
+        return self._gemini_acp_build_stdin_with_system(
+            self._GEMINI_PAWFLOW_PREAMBLE, user_text or "")
 
     @staticmethod
     def _gemini_acp_last_user_text(messages) -> str:
@@ -289,16 +518,53 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 logger.debug("exception suppressed", exc_info=True)
 
     def _gemini_send_user_message(self, text: str, attachments: list = None):
-        """Cancel the active ACP prompt so PawFlow can reloop with new input."""
+        """Live-preempt the active ACP prompt inside the warm Gemini session."""
+        if not (text or attachments):
+            return False
         active = getattr(self, "_gemini_acp_active", None)
         if not isinstance(active, dict):
             return False
         lock = self._gemini_acp_ensure_lock()
         with lock:
             entries = list(active.values())
-        if not entries:
-            return False
-        cancelled = False
+            if not entries:
+                return False
+            entries = sorted(entries, key=lambda s: s.get("started_at", 0), reverse=True)
+            for state in entries:
+                proc = state.get("proc")
+                session_id = state.get("session_id") or ""
+                if not proc or proc.poll() is not None or not session_id:
+                    continue
+                prompt = self._gemini_acp_prompt_items(
+                    self._gemini_acp_live_text(text or ""), [])
+                req_id = self._gemini_acp_next_id()
+                try:
+                    self._gemini_acp_notify(proc, "session/cancel", {"sessionId": session_id})
+                    self._gemini_acp_send(proc, {
+                        "jsonrpc": "2.0",
+                        "method": "session/prompt",
+                        "id": req_id,
+                        "params": {"sessionId": session_id, "prompt": prompt},
+                    })
+                    state["preempt_req_id"] = req_id
+                    state["preempt_started_at"] = time.time()
+                    state["preempt_text"] = text or ""
+                    logger.info(
+                        "[gemini-acp-live] preempted active session %s with prompt id=%s",
+                        session_id[:12], req_id)
+                    return True
+                except Exception as exc:
+                    logger.warning("[gemini-acp-live] live preempt failed: %s", exc)
+        return False
+
+    def cancel_gemini(self, force: bool = False):
+        """Best-effort cancellation for the active Gemini ACP prompt."""
+        active = getattr(self, "_gemini_acp_active", None)
+        if not isinstance(active, dict):
+            return
+        lock = self._gemini_acp_ensure_lock()
+        with lock:
+            entries = list(active.values())
         for state in sorted(entries, key=lambda s: s.get("started_at", 0), reverse=True):
             proc = state.get("proc")
             session_id = state.get("session_id") or ""
@@ -306,16 +572,10 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 continue
             try:
                 self._gemini_acp_notify(proc, "session/cancel", {"sessionId": session_id})
-                cancelled = True
-                logger.info("[gemini-acp] cancelled active session %s for preempt", session_id[:12])
-                break
-            except Exception as exc:
-                logger.warning("[gemini-acp] session/cancel failed: %s", exc)
-        return False if cancelled else False
-
-    def cancel_gemini(self, force: bool = False):
-        """Best-effort cancellation for the active Gemini ACP prompt."""
-        self._gemini_send_user_message("", [])
+                logger.info("[gemini-acp] cancelled active session %s", session_id[:12])
+                return
+            except Exception:
+                logger.debug("[gemini-acp] session/cancel failed", exc_info=True)
 
     def _stream_gemini(
         self,
@@ -343,45 +603,59 @@ class LLMGeminiMixin(GeminiSessionMixin):
         agent_name = call_agent_name or getattr(self, "_agent_name", "") or "default"
         is_ephemeral = bool(call_ephemeral_stream if call_ephemeral_stream is not None
                             else getattr(self, "_ephemeral_stream", False))
-        model = model or "gemini-3-pro-preview"
+        model = (model or "").strip()
         effort = self._gemini_acp_effort(thinking_budget, self._cfg("effort", ""))
 
         image_blocks = self._gemini_acp_extract_images(
             messages, user_id=user_id, conversation_id=conv_id)
-        full_context_text = self._gemini_acp_full_initial_text(messages)
-        try:
-            from core.token_counter import (
-                count_messages_tokens as _count_msgs,
-                resolve_token_multiplier as _resolve_mult,
-            )
-            mult = _resolve_mult(getattr(self, "_config_ref", None) or {})
-            prompt_tokens = _count_msgs(
-                [{"content": (m.content if hasattr(m, "content") else str(m))}
-                 for m in messages],
-                multiplier=mult)
-        except Exception:
-            prompt_tokens = int(len(full_context_text) / 3.5)
-            logger.warning(
-                "[gemini-acp] count_messages_tokens failed, fell back to chars/3.5 -> %d",
-                prompt_tokens, exc_info=True)
-        logger.info(
-            "[gemini-acp] gauge: prompt_tokens=%d (msgs=%d, full_context=%d chars)",
-            prompt_tokens, len(messages), len(full_context_text))
+
+        def _estimate_prompt_tokens(text: str) -> int:
+            try:
+                from core.token_counter import (
+                    count_messages_tokens as _count_msgs,
+                    resolve_token_multiplier as _resolve_mult,
+                )
+                mult = _resolve_mult(getattr(self, "_config_ref", None) or {})
+                return _count_msgs([{"content": text or ""}], multiplier=mult)
+            except Exception:
+                fallback = int(len(text or "") / 3.5)
+                logger.warning(
+                    "[gemini-acp] count_messages_tokens failed, fell back to chars/3.5 -> %d",
+                    fallback, exc_info=True)
+                return fallback
+
+        def _prompt_text_for_mode(mode: str) -> str:
+            if str(mode or "").startswith("resume"):
+                return self._gemini_acp_live_text(
+                    self._gemini_acp_last_user_text(messages))
+            return self._gemini_acp_full_initial_text(messages)
 
         store = None
         session_id = ""
+        legacy_session_cleared = False
         session_key = f"gemini_acp_session:{agent_name or 'default'}"
         pool_key = f"gemini_acp_pool_idx:{agent_name or 'default'}"
+        session_version_key = f"gemini_acp_session_version:{agent_name or 'default'}"
         if conv_id and not is_ephemeral:
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
                 session_id = store.get_extra(conv_id, session_key) or ""
+                session_version = store.get_extra(conv_id, session_version_key) or ""
+                if session_id and session_version != "2":
+                    logger.info(
+                        "[gemini-acp-live] clearing legacy stored session %s",
+                        session_id[:12])
+                    store.set_extra(conv_id, session_key, "")
+                    store.set_extra(conv_id, pool_key, "")
+                    store.set_extra(conv_id, session_version_key, "")
+                    session_id = ""
+                    legacy_session_cleared = True
             except Exception:
                 logger.debug("[gemini-acp] failed to restore session id", exc_info=True)
 
-        initial_text = (self._gemini_acp_build_stdin_with_system(
-            "", self._gemini_acp_last_user_text(messages)) if session_id else full_context_text)
+        prompt_mode = "resume" if session_id else "cold"
+        initial_text = _prompt_text_for_mode(prompt_mode)
         workdir = self._gemini_get_session_workdir(conv_id, agent_name, user_id)
         os.makedirs(workdir, exist_ok=True)
         container_dir = self._gemini_acp_container_dir(workdir)
@@ -393,19 +667,78 @@ class LLMGeminiMixin(GeminiSessionMixin):
             except Exception:
                 logger.debug("[gemini-acp] failed to restore pool index", exc_info=True)
 
-        self._gemini_setup_credentials(workdir, pool_index=resume_pool_idx)
-        if conv_id and store is not None and hasattr(self, "_current_pool_index"):
-            try:
-                store.set_extra(conv_id, pool_key, self._current_pool_index)
-            except Exception:
-                logger.debug("[gemini-acp] failed to persist pool index", exc_info=True)
-        self._gemini_acp_write_settings(workdir, model, effort, thinking_budget, temperature, max_tokens)
-        mcp_servers, internal_token = self._gemini_acp_mcp_servers(
-            user_id=user_id, conversation_id=conv_id, agent_name=agent_name)
-
+        svc_id = getattr(self, "_agent_service", "") or ""
+        live_reg = None
+        live_key = None
+        live_session = None
+        owns_live_lock = False
+        is_reuse = False
+        mcp_servers: list = []
+        internal_token = ""
         proc = None
         container = None
-        stderr_lines: queue.Queue[str] = queue.Queue()
+        stderr_lines: queue.Queue[str] = queue.Queue(maxsize=200)
+
+        if conv_id and not is_ephemeral:
+            try:
+                from core.gemini_live_registry import GeminiLiveRegistry
+                live_reg = GeminiLiveRegistry.instance()
+                live_reg.ensure_sweeper(
+                    idle_ttl_seconds=int(getattr(self, "timeout", 1800) or 1800))
+                live_key = (user_id, conv_id, agent_name or "default", svc_id)
+                live_session = live_reg.get(live_key)
+                if live_session is not None and legacy_session_cleared:
+                    live_reg.evict(live_key, "legacy_session")
+                    live_session = None
+                if live_session is not None and not live_session.is_alive():
+                    live_reg.evict(live_key, "dead_acp")
+                    live_session = None
+                if live_session is not None:
+                    live_session.turn_lock.acquire()
+                    owns_live_lock = True
+                    if live_session.is_alive():
+                        live_reg.touch(live_key)
+                        is_reuse = True
+                        proc = live_session.proc
+                        container = live_session.container_name
+                        internal_token = live_session.mcp_internal_token or ""
+                        session_id = live_session.session_id or session_id
+                        if getattr(live_session, "event_q", None) is not None:
+                            stderr_lines = live_session.event_q
+                        if resume_pool_idx >= 0:
+                            self._current_pool_index = resume_pool_idx
+                        prompt_mode = "resume-live"
+                        initial_text = _prompt_text_for_mode(prompt_mode)
+                        logger.info(
+                            "[gemini-acp-live] REUSE conv=%s agent=%s session=%s reuse=%d",
+                            conv_id[:8] or "?", agent_name, session_id[:12],
+                            live_session.reuse_count)
+                    else:
+                        live_reg.evict(live_key, "dead_after_lock")
+                        live_session.turn_lock.release()
+                        owns_live_lock = False
+                        live_session = None
+            except Exception:
+                logger.debug("[gemini-acp-live] lookup failed", exc_info=True)
+                live_reg = None
+                live_key = None
+
+        if not is_reuse:
+            if session_id:
+                logger.info(
+                    "[gemini-acp-live] stored session %s has no live process; loading in fresh ACP process",
+                    session_id[:12])
+            self._gemini_setup_credentials(workdir, pool_index=resume_pool_idx)
+            if conv_id and store is not None and hasattr(self, "_current_pool_index"):
+                try:
+                    store.set_extra(conv_id, pool_key, self._current_pool_index)
+                except Exception:
+                    logger.debug("[gemini-acp] failed to persist pool index", exc_info=True)
+            mcp_servers, internal_token = self._gemini_acp_mcp_servers(
+                user_id=user_id, conversation_id=conv_id, agent_name=agent_name)
+            self._gemini_acp_write_settings(
+                workdir, model, effort, thinking_budget, temperature, max_tokens,
+                mcp_servers=mcp_servers, mcp_cwd=container_dir)
         active_key = (user_id, conv_id, agent_name, time.time())
         text_parts: List[str] = []
         turn_text_parts: List[str] = []
@@ -413,7 +746,10 @@ class LLMGeminiMixin(GeminiSessionMixin):
         stream_uniq = f"geminiacp-{uuid.uuid4().hex[:8]}"
         stream_tc_names: Dict[str, str] = {}
         completed_tool_ids = set()
+        started_tool_ids = set()
+        deferred_tool_ids = set()
         usage_meta: Dict[str, Any] = {}
+        loaded_session_replay_barrier = False
 
         def _flush_text():
             nonlocal turn_text_parts
@@ -431,60 +767,99 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 except TypeError:
                     turn_callback(text, [])
 
+        turn_failed = False
         try:
-            proc, container = self._gemini_acp_start_process(workdir)
-            self._gemini_acp_start_stderr_drain(proc, stderr_lines)
-            logger.info("[gemini-acp] started ACP conv=%s agent=%s session=%s",
-                        conv_id[:8] or "?", agent_name, session_id[:12] or "new")
+            if not is_reuse:
+                proc, container = self._gemini_acp_start_process(workdir, model)
+                self._gemini_acp_start_stderr_drain(proc, stderr_lines)
+                logger.info("[gemini-acp] started ACP conv=%s agent=%s session=%s",
+                            conv_id[:8] or "?", agent_name, session_id[:12] or "new")
 
-            init_result = self._gemini_acp_initialize(proc)
-            supports_load = bool(
-                ((init_result.get("agentCapabilities") or {}).get("loadSession")))
-            if session_id and supports_load:
-                try:
-                    self._gemini_acp_load_session(proc, session_id, container_dir, mcp_servers)
-                except Exception as exc:
-                    if not self._gemini_acp_stale_session_error(exc):
-                        raise
-                    logger.warning(
-                        "[gemini-acp] stale session id %s; starting new session",
-                        session_id[:12])
-                    if conv_id and store is not None and not is_ephemeral:
-                        try:
-                            store.set_extra(conv_id, session_key, "")
-                        except Exception:
-                            logger.debug("[gemini-acp] failed to clear stale session id", exc_info=True)
+                self._gemini_acp_start_stdout_drain(proc)
+                init_result = self._gemini_acp_initialize(proc)
+                self._gemini_acp_authenticate(proc)
+                supports_load = bool(
+                    ((init_result.get("agentCapabilities") or {}).get("loadSession")))
+                if session_id and supports_load:
+                    try:
+                        self._gemini_acp_load_session(proc, session_id, container_dir, mcp_servers)
+                        loaded_session_replay_barrier = True
+                    except Exception as exc:
+                        if not self._gemini_acp_stale_session_error(exc):
+                            raise
+                        logger.warning(
+                            "[gemini-acp] stale session id %s; starting new session",
+                            session_id[:12])
+                        if conv_id and store is not None and not is_ephemeral:
+                            try:
+                                store.set_extra(conv_id, session_key, "")
+                                store.set_extra(conv_id, session_version_key, "")
+                            except Exception:
+                                logger.debug("[gemini-acp] failed to clear stale session id", exc_info=True)
+                        session_id = ""
+                        prompt_mode = "cold-after-stale-session"
+                        initial_text = _prompt_text_for_mode(prompt_mode)
+                elif session_id and not supports_load:
                     session_id = ""
-                    initial_text = self._gemini_acp_full_initial_text(messages)
-            elif session_id and not supports_load:
-                session_id = ""
-                initial_text = self._gemini_acp_full_initial_text(messages)
+                    prompt_mode = "cold-no-load-session"
+                    initial_text = _prompt_text_for_mode(prompt_mode)
 
-            if not session_id:
-                result = self._gemini_acp_new_session(proc, container_dir, mcp_servers)
-                session_id = (result or {}).get("sessionId", "")
-            if session_id and conv_id and store is not None and not is_ephemeral:
-                try:
-                    store.set_extra(conv_id, session_key, session_id)
-                except Exception:
-                    logger.debug("[gemini-acp] failed to persist session id", exc_info=True)
+                if not session_id:
+                    logger.info("[gemini-acp] opening new session cwd=%s", container_dir)
+                    result = self._gemini_acp_new_session(proc, container_dir, mcp_servers)
+                    session_id = (result or {}).get("sessionId", "")
+                    logger.info("[gemini-acp] new session id=%s", session_id[:12] or "?")
+                if session_id and conv_id and store is not None and not is_ephemeral:
+                    try:
+                        store.set_extra(conv_id, session_key, session_id)
+                        store.set_extra(conv_id, session_version_key, "2")
+                    except Exception:
+                        logger.debug("[gemini-acp] failed to persist session id", exc_info=True)
+            elif not session_id:
+                raise LLMClientError("gemini ACP live session has no session id")
             if not session_id:
                 raise LLMClientError("gemini ACP did not return a session id")
 
+            prompt_tokens = _estimate_prompt_tokens(initial_text)
+            logger.info(
+                "[gemini-acp] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",
+                prompt_tokens, prompt_mode, len(messages), len(initial_text))
             prompt = self._gemini_acp_prompt_items(initial_text, image_blocks)
+            active_state = {
+                "proc": proc,
+                "session_id": session_id,
+                "workdir": workdir,
+                "container_dir": container_dir,
+                "started_at": time.time(),
+            }
             lock = self._gemini_acp_ensure_lock()
             with lock:
                 active = getattr(self, "_gemini_acp_active", None)
                 if not isinstance(active, dict):
                     active = {}
                     self._gemini_acp_active = active
-                active[active_key] = {
-                    "proc": proc,
-                    "session_id": session_id,
-                    "workdir": workdir,
-                    "started_at": time.time(),
-                }
+                active[active_key] = active_state
 
+            if live_reg is not None and live_key is not None and not is_ephemeral:
+                try:
+                    live_reg.register(
+                        live_key, container, workdir,
+                        service_id=svc_id,
+                        session_id=session_id,
+                        proc=proc,
+                        event_q=stderr_lines,
+                        mcp_internal_token=internal_token,
+                        active_turn=True,
+                    )
+                    logger.info(
+                        "[gemini-acp-live] active conv=%s agent=%s session=%s",
+                        conv_id[:8] or "?", agent_name, session_id[:12])
+                except Exception:
+                    logger.debug("[gemini-acp-live] active register failed", exc_info=True)
+
+            logger.info(
+                "[gemini-acp] sending prompt session=%s items=%d images=%d chars=%d",
+                session_id[:12], len(prompt), len(image_blocks), len(initial_text))
             req_id = self._gemini_acp_next_id()
             self._gemini_acp_send(proc, {
                 "jsonrpc": "2.0",
@@ -493,41 +868,111 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 "params": {"sessionId": session_id, "prompt": prompt},
             })
 
+            logger.info("[gemini-acp] prompt sent; waiting for ACP events")
+            self._gemini_acp_log_stderr(stderr_lines)
+
+            _prompt_activity_seen = False
+            _skip_resume_replay = bool(loaded_session_replay_barrier and not is_reuse)
+            _resume_replay_skipped = 0
+            _last_acp_event_at = time.monotonic()
+            _last_acp_event = "prompt_sent"
             while True:
-                msg = self._gemini_acp_read_message(proc)
+                msg = self._gemini_acp_read_message(
+                    proc, timeout_s=None, wait_log_s=15.0,
+                    wait_context=lambda: (
+                        f"session={session_id[:12]} req={req_id} "
+                        f"last={_last_acp_event} "
+                        f"idle={time.monotonic() - _last_acp_event_at:.1f}s"
+                    ))
+                _now_acp_event = time.monotonic()
+                _gap_s = _now_acp_event - _last_acp_event_at
+                if _gap_s >= 5.0:
+                    logger.info(
+                        "[gemini-acp][gap] %.1fs since %s before %s",
+                        _gap_s, _last_acp_event,
+                        self._gemini_acp_message_preview(msg))
+                _last_acp_event_at = _now_acp_event
+                _last_acp_event = self._gemini_acp_message_preview(msg)
                 if msg is None:
                     raise _GeminiAcpProtocolError(
                         "gemini ACP exited before session/prompt completed")
+                logger.info("[gemini-acp][recv] %s", self._gemini_acp_message_preview(msg))
 
-                if msg.get("id") == req_id:
+                incoming_id = msg.get("id")
+                if (incoming_id is not None
+                        and incoming_id == active_state.get("preempt_req_id")
+                        and incoming_id != req_id):
+                    req_id = int(incoming_id)
+                    active_state.pop("preempt_req_id", None)
+                    _prompt_activity_seen = True
+                    logger.info("[gemini-acp-live] switched reader to preempt prompt id=%s", req_id)
+
+                if incoming_id == req_id:
+                    _prompt_activity_seen = True
                     if msg.get("error"):
+                        capacity_message = self._gemini_acp_capacity_error(msg.get("error"))
+                        if capacity_message:
+                            raise _GeminiAcpCapacityError(
+                                f"Gemini capacity exhausted: {capacity_message}")
                         raise _GeminiAcpProtocolError(
                             f"session/prompt failed: {msg.get('error')}")
                     result = msg.get("result") or {}
                     usage_meta = result.get("_meta") or result.get("meta") or {}
                     stop_reason = result.get("stopReason") or "end_turn"
                     if stop_reason in ("cancelled", "canceled"):
+                        next_req_id = active_state.pop("preempt_req_id", None)
+                        if next_req_id and next_req_id != req_id:
+                            req_id = int(next_req_id)
+                            _prompt_activity_seen = False
+                            logger.info(
+                                "[gemini-acp-live] cancelled old prompt; waiting for preempt id=%s",
+                                req_id)
+                            continue
                         break
                     if stop_reason not in ("end_turn", "stop", "max_tokens"):
                         logger.info("[gemini-acp] prompt stopped: %s", stop_reason)
                     break
 
                 if "id" in msg and msg.get("method"):
-                    self._gemini_acp_send(proc, {
-                        "jsonrpc": "2.0",
-                        "id": msg.get("id"),
-                        "error": {"code": -32601, "message": "client method not implemented"},
-                    })
+                    req_method = msg.get("method", "")
+                    req_params = msg.get("params", {}) or {}
+                    logger.info("[gemini-acp] client request during prompt: %s", req_method)
+                    if req_method == "session/request_permission":
+                        _prompt_activity_seen = True
+                        outcome = self._gemini_acp_permission_result(req_params)
+                        self._gemini_acp_send(proc, {
+                            "jsonrpc": "2.0",
+                            "id": msg.get("id"),
+                            "result": outcome,
+                        })
+                    else:
+                        self._gemini_acp_send(proc, {
+                            "jsonrpc": "2.0",
+                            "id": msg.get("id"),
+                            "error": {"code": -32601, "message": "client method not implemented"},
+                        })
                     continue
 
                 method = msg.get("method", "")
                 params = msg.get("params", {}) or {}
                 if method != "session/update":
+                    logger.info("[gemini-acp] ignored ACP message during prompt: %s", method or "?")
                     continue
                 update = params.get("update", {}) or {}
                 kind = update.get("sessionUpdate") or ""
+                if _skip_resume_replay:
+                    if kind == "available_commands_update":
+                        _skip_resume_replay = False
+                        if _resume_replay_skipped:
+                            logger.info(
+                                "[gemini-acp] skipped %d replayed session/load update(s)",
+                                _resume_replay_skipped)
+                        continue
+                    _resume_replay_skipped += 1
+                    continue
 
                 if kind == "agent_message_chunk":
+                    _prompt_activity_seen = True
                     delta = self._gemini_acp_content_text(update.get("content"))
                     if delta:
                         text_parts.append(delta)
@@ -537,43 +982,99 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     continue
 
                 if kind == "agent_thought_chunk":
-                    thought = self._gemini_acp_content_text(update.get("content"))
+                    _prompt_activity_seen = True
+                    thought = self._gemini_acp_clean_thinking(
+                        self._gemini_acp_content_text(update.get("content")))
                     if thought:
                         thinking_parts.append(thought)
                     continue
 
-                if kind == "tool_call":
-                    if block_callback and turn_text_parts:
-                        _flush_text()
-                    raw_id = update.get("toolCallId") or uuid.uuid4().hex[:8]
-                    tc_id = f"{stream_uniq}:{raw_id}"
-                    raw_name = update.get("title") or update.get("kind") or "tool"
+                _terminal_tool_statuses = ("completed", "failed", "cancelled", "canceled")
+
+                def _emit_started_tool(
+                    tc_id: str,
+                    raw_name: str,
+                    raw_input: dict,
+                    update: dict,
+                    result_text: str = "",
+                    enqueue_live_mapping: bool = True,
+                ) -> None:
                     stream_tc_names[tc_id] = raw_name
-                    raw_input = update.get("rawInput") or {}
-                    if block_callback:
+                    if enqueue_live_mapping:
+                        self._gemini_acp_enqueue_live_tool_tc(
+                            conv_id, agent_name, tc_id, raw_name, raw_input, update)
+                    display_name, display_args = self._gemini_acp_display_tool_call(
+                        raw_name, raw_input, result_text)
+                    defer_wrapper = raw_name == "use_tool" and not raw_input and not result_text
+                    if block_callback and not defer_wrapper:
                         block_callback("tool_use", {
                             "id": tc_id,
-                            "name": raw_name,
-                            "arguments": raw_input,
+                            "name": display_name,
+                            "arguments": display_args,
                             "thinking": "".join(thinking_parts).strip(),
                         })
                         thinking_parts.clear()
+                        started_tool_ids.add(tc_id)
+                    elif defer_wrapper:
+                        deferred_tool_ids.add(tc_id)
+
+                def _emit_finished_tool(
+                    update: dict,
+                    tc_id: str,
+                    raw_name: str,
+                    raw_input: dict,
+                ) -> None:
+                    result_text = self._gemini_acp_tool_result_text(update)
+                    display_name, display_args = self._gemini_acp_display_tool_call(
+                        stream_tc_names.get(tc_id) or raw_name, raw_input, result_text)
+                    if tc_id not in started_tool_ids:
+                        _emit_started_tool(
+                            tc_id, raw_name, raw_input, update, result_text,
+                            enqueue_live_mapping=False)
+                        started_tool_ids.add(tc_id)
+                        deferred_tool_ids.discard(tc_id)
+                    completed_tool_ids.add(tc_id)
+                    if block_callback:
+                        block_callback("tool_result", {
+                            "tc_id": tc_id,
+                            "tool": display_name,
+                            "result": result_text,
+                        })
+
+                if kind == "tool_call":
+                    _prompt_activity_seen = True
+                    if turn_text_parts:
+                        _flush_text()
+                    raw_id = update.get("toolCallId") or uuid.uuid4().hex[:8]
+                    tc_id = f"{stream_uniq}:{raw_id}"
+                    status = update.get("status") or ""
+                    raw_name = self._gemini_acp_tool_name(update)
+                    raw_input = self._gemini_acp_tool_arguments(update)
+                    if not raw_input and raw_name == "use_tool":
+                        raw_input = self._gemini_acp_history_tool_arguments(workdir, raw_id)
+                    if status in _terminal_tool_statuses:
+                        _emit_finished_tool(update, tc_id, raw_name, raw_input)
+                    elif tc_id not in started_tool_ids:
+                        _emit_started_tool(tc_id, raw_name, raw_input, update)
                     continue
 
                 if kind == "tool_call_update":
+                    _prompt_activity_seen = True
+                    if turn_text_parts:
+                        _flush_text()
                     raw_id = update.get("toolCallId") or ""
                     tc_id = f"{stream_uniq}:{raw_id}" if raw_id else ""
                     status = update.get("status") or ""
-                    if tc_id and status in ("completed", "failed", "cancelled", "canceled"):
-                        result_text = self._gemini_acp_tool_result_text(update)
-                        completed_tool_ids.add(tc_id)
-                        if block_callback:
-                            block_callback("tool_result", {
-                                "tc_id": tc_id,
-                                "tool": stream_tc_names.get(tc_id) or update.get("title") or "tool",
-                                "result": result_text,
-                            })
+                    raw_name = self._gemini_acp_tool_name(update)
+                    raw_input = self._gemini_acp_tool_arguments(update)
+                    if not raw_input and raw_name == "use_tool" and raw_id:
+                        raw_input = self._gemini_acp_history_tool_arguments(workdir, raw_id)
+                    if tc_id and status in _terminal_tool_statuses:
+                        _emit_finished_tool(update, tc_id, raw_name, raw_input)
+                    elif tc_id and tc_id not in started_tool_ids:
+                        _emit_started_tool(tc_id, raw_name, raw_input, update)
                     continue
+
 
             _flush_text()
             content = "".join(text_parts).strip()
@@ -587,38 +1088,93 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 raw={"session_id": session_id, "tool_results": len(completed_tool_ids)},
                 thinking="".join(thinking_parts).strip(),
             )
-        except _GeminiAcpProtocolError as exc:
+        except _GeminiAcpCapacityError as exc:
+            turn_failed = True
             raise LLMClientError(str(exc)) from exc
+        except _GeminiAcpProtocolError as exc:
+            turn_failed = True
+            raise LLMClientError(str(exc)) from exc
+        except Exception:
+            turn_failed = True
+            raise
         finally:
             lock = self._gemini_acp_ensure_lock()
             with lock:
                 active = getattr(self, "_gemini_acp_active", None)
                 if isinstance(active, dict):
                     active.pop(active_key, None)
-            if proc is not None:
-                try:
-                    if proc.poll() is None:
-                        proc.terminate()
-                except Exception:
-                    logger.debug("[gemini-acp] terminate failed", exc_info=True)
-            if internal_token:
-                try:
-                    from core.internal_auth import revoke_token
-                    revoke_token(internal_token)
-                except Exception:
-                    logger.debug("[gemini-acp] internal token revoke failed", exc_info=True)
             try:
                 self._gemini_recover_tokens(workdir)
             except Exception:
                 logger.debug("[gemini-acp] token recovery failed", exc_info=True)
-            self._gemini_pool_release(container)
-            self._gemini_acp_log_stderr(stderr_lines)
 
-    def _gemini_acp_start_process(self, workdir: str):
+            proc_alive = False
+            if proc is not None:
+                try:
+                    proc_alive = proc.poll() is None
+                except Exception:
+                    proc_alive = False
+            keep_alive = (
+                not turn_failed
+                and proc_alive
+                and live_reg is not None
+                and live_key is not None
+                and bool(session_id)
+                and bool(container)
+                and not is_ephemeral
+            )
+            if keep_alive:
+                try:
+                    live_reg.register(
+                        live_key, container, workdir,
+                        service_id=svc_id,
+                        session_id=session_id,
+                        proc=proc,
+                        event_q=stderr_lines,
+                        mcp_internal_token=internal_token,
+                        active_turn=False,
+                    )
+                    logger.info(
+                        "[gemini-acp-live] keep-alive conv=%s agent=%s session=%s",
+                        conv_id[:8] or "?", agent_name, session_id[:12])
+                except Exception:
+                    logger.debug("[gemini-acp-live] register failed", exc_info=True)
+                    keep_alive = False
+
+            if not keep_alive:
+                if live_reg is not None and live_key is not None:
+                    try:
+                        live_reg.evict(live_key, "acp_teardown")
+                    except Exception:
+                        logger.debug("[gemini-acp-live] evict failed", exc_info=True)
+                if proc is not None:
+                    try:
+                        if proc.poll() is None:
+                            proc.terminate()
+                    except Exception:
+                        logger.debug("[gemini-acp] terminate failed", exc_info=True)
+                if internal_token:
+                    try:
+                        from core.internal_auth import revoke_token
+                        revoke_token(internal_token)
+                    except Exception:
+                        logger.debug("[gemini-acp] internal token revoke failed", exc_info=True)
+                self._gemini_pool_release(container)
+            self._gemini_acp_log_stderr(stderr_lines)
+            if owns_live_lock and live_session is not None:
+                try:
+                    live_session.turn_lock.release()
+                except Exception:
+                    logger.debug("[gemini-acp-live] turn lock release failed", exc_info=True)
+
+    def _gemini_acp_start_process(self, workdir: str, model: str):
+        args = ["--debug", "--acp"]
+        if model:
+            args = ["--model", model, *args]
         try:
             return self._gemini_pool_popen(
                 workdir,
-                ["--yolo", "--acp"],
+                args,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -658,7 +1214,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
             "params": params or {},
         })
 
-    def _gemini_acp_request(self, proc, method: str, params: Optional[dict] = None) -> dict:
+    def _gemini_acp_request(self, proc, method: str, params: Optional[dict] = None,
+                            timeout_s: float = 60.0) -> dict:
         req_id = self._gemini_acp_next_id()
         self._gemini_acp_send(proc, {
             "jsonrpc": "2.0",
@@ -667,7 +1224,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
             "params": params or {},
         })
         while True:
-            msg = self._gemini_acp_read_message(proc)
+            msg = self._gemini_acp_read_message(proc, timeout_s=timeout_s)
             if msg is None:
                 raise _GeminiAcpProtocolError(
                     f"gemini ACP exited before response to {method}")
@@ -693,7 +1250,18 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 "title": "PawFlow Gemini ACP",
                 "version": "1.0.0a1",
             },
-        })
+        }, timeout_s=30.0)
+
+    def _gemini_acp_authenticate(self, proc) -> dict:
+        api_key = getattr(self, "api_key", "") or ""
+        method_id = "gemini-api-key" if api_key else "oauth-personal"
+        params = {"methodId": method_id}
+        if api_key:
+            params["apiKey"] = api_key
+        result = self._gemini_acp_request(
+            proc, "authenticate", params, timeout_s=60.0)
+        logger.info("[gemini-acp] authenticated via %s", method_id)
+        return result
 
     def _gemini_acp_new_session(self, proc, container_dir: str, mcp_servers: list) -> dict:
         return self._gemini_acp_request(proc, "session/new", {
@@ -710,20 +1278,127 @@ class LLMGeminiMixin(GeminiSessionMixin):
         })
 
     @staticmethod
-    def _gemini_acp_read_message(proc) -> Optional[dict]:
-        if proc.stdout is None:
-            return None
+    def _gemini_acp_permission_result(params: dict) -> dict:
+        """Approve only PawFlow MCP actions; deny Gemini built-in tools."""
+        options = params.get("options") or []
+        request_text = json.dumps(params, ensure_ascii=False).lower()
+        allow_pawflow = "pawflow" in request_text or "mcp_pawflow" in request_text
+        selected = None
+        if allow_pawflow:
+            for opt in options:
+                if not isinstance(opt, dict):
+                    continue
+                kind = str(opt.get("kind") or opt.get("optionId") or "").lower()
+                if "allow" in kind or "proceed" in kind:
+                    selected = opt.get("optionId")
+                    break
+        if selected:
+            return {"outcome": {"outcome": "selected", "optionId": selected}}
+        logger.info("[gemini-acp] denied non-PawFlow permission request")
+        return {"outcome": {"outcome": "cancelled"}}
+
+    @staticmethod
+    def _gemini_acp_message_preview(msg: dict) -> str:
+        try:
+            method = msg.get("method") or ""
+            msg_id = msg.get("id", "")
+            if msg.get("error"):
+                return f"id={msg_id} error={str(msg.get('error'))[:300]}"
+            params = msg.get("params") or {}
+            update = params.get("update") if isinstance(params, dict) else None
+            if isinstance(update, dict):
+                kind = update.get("sessionUpdate") or ""
+                content = update.get("content")
+                text_len = len(LLMGeminiMixin._gemini_acp_content_text(content)) if content is not None else 0
+                keys = ",".join(sorted(str(k) for k in update.keys())[:8])
+                tool_bits = []
+                for key in ("toolCallId", "status", "kind", "title"):
+                    if update.get(key):
+                        tool_bits.append(f"{key}={str(update.get(key))[:120]}")
+                suffix = f" {' '.join(tool_bits)}" if tool_bits else ""
+                return f"method={method} id={msg_id} update={kind} text_len={text_len} keys={keys}{suffix}"
+            result = msg.get("result")
+            if isinstance(result, dict):
+                return f"method={method} id={msg_id} result_keys={','.join(sorted(str(k) for k in result.keys())[:8])}"
+            keys = ",".join(sorted(str(k) for k in msg.keys())[:8])
+            return f"method={method} id={msg_id} keys={keys}"
+        except Exception as exc:
+            return f"unpreviewable: {exc}"
+
+
+    @staticmethod
+    def _gemini_acp_read_message(proc, timeout_s: Optional[float] = None,
+                                 wait_log_s: float = 0.0,
+                                 wait_context=None) -> Optional[dict]:
+        stdout_q = getattr(proc, "_pawflow_gemini_acp_stdout", None)
+        if stdout_q is None:
+            raise _GeminiAcpProtocolError(
+                "gemini ACP stdout drain was not initialized; refusing blocking readline")
+
+        deadline = time.monotonic() + float(timeout_s) if timeout_s is not None else None
+        wait_interval = float(wait_log_s or 0.0)
+        next_wait_log = time.monotonic() + wait_interval if wait_interval > 0 else None
         while True:
-            line = proc.stdout.readline()
-            if line == "":
+            if proc.poll() is not None and stdout_q.empty():
                 return None
-            line = line.strip()
+            try:
+                if deadline is None:
+                    line = stdout_q.get(timeout=0.5)
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise queue.Empty
+                    line = stdout_q.get(timeout=min(0.5, remaining))
+            except queue.Empty:
+                now = time.monotonic()
+                if deadline is not None and now >= deadline:
+                    raise _GeminiAcpProtocolError(
+                        f"gemini ACP timed out after {timeout_s:.0f}s waiting for stdout")
+                if next_wait_log is not None and now >= next_wait_log:
+                    try:
+                        context = wait_context() if callable(wait_context) else (wait_context or "")
+                    except Exception:
+                        context = ""
+                    suffix = f" ({context})" if context else ""
+                    logger.info("[gemini-acp][wait] still waiting for stdout%s", suffix)
+                    next_wait_log = now + wait_interval
+                continue
+            if line is None:
+                return None
+            line = str(line).strip()
             if not line:
                 continue
             try:
                 return json.loads(line)
             except json.JSONDecodeError:
                 logger.debug("[gemini-acp] ignored non-json stdout line: %s", line[:300])
+
+    @staticmethod
+    def _gemini_acp_start_stdout_drain(proc) -> None:
+        sink: queue.Queue[Optional[str]] = queue.Queue(maxsize=10000)
+        setattr(proc, "_pawflow_gemini_acp_stdout", sink)
+
+        def _drain():
+            try:
+                if proc.stdout is None:
+                    return
+                for line in proc.stdout:
+                    sink.put(line)
+            except Exception:
+                pass
+            finally:
+                try:
+                    sink.put_nowait(None)
+                except queue.Full:
+                    try:
+                        sink.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        sink.put_nowait(None)
+                    except queue.Full:
+                        pass
+        threading.Thread(target=_drain, daemon=True, name="gemini-acp-stdout").start()
 
     @staticmethod
     def _gemini_acp_start_stderr_drain(proc, sink: queue.Queue[str]) -> None:
@@ -733,7 +1408,20 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     return
                 for line in proc.stderr:
                     if line:
-                        sink.put(line.rstrip("\n"))
+                        text = line.rstrip("\n")
+                        try:
+                            sink.put_nowait(text)
+                        except queue.Full:
+                            try:
+                                sink.get_nowait()
+                            except queue.Empty:
+                                pass
+                            try:
+                                sink.put_nowait(text)
+                            except queue.Full:
+                                pass
+                        if text and not text.startswith("__PF_GEMINI_PID="):
+                            logger.info("[gemini-acp][stderr] %s", text[:1000])
             except Exception:
                 pass
         threading.Thread(target=_drain, daemon=True, name="gemini-acp-stderr").start()
@@ -789,12 +1477,14 @@ class LLMGeminiMixin(GeminiSessionMixin):
 
     def _gemini_acp_write_settings(self, workdir: str, model: str, effort: str,
                                    thinking_budget: int, temperature: float,
-                                   max_tokens: int) -> None:
+                                   max_tokens: int,
+                                   mcp_servers: Optional[list] = None,
+                                   mcp_cwd: str = "") -> None:
         """Write Gemini settings for auth, model selection and thoughts."""
         gemini_home = os.path.join(workdir, ".gemini")
         os.makedirs(gemini_home, exist_ok=True)
         settings_path = os.path.join(gemini_home, "settings.json")
-        model = model or "gemini-3-pro-preview"
+        model = (model or "").strip()
         generation_config: Dict[str, Any] = {
             "temperature": temperature,
             "thinkingConfig": {"includeThoughts": True},
@@ -809,21 +1499,59 @@ class LLMGeminiMixin(GeminiSessionMixin):
         if max_tokens and max_tokens > 0:
             generation_config["maxOutputTokens"] = int(max_tokens)
 
+        # Gemini CLI exposes local core tools by default. In PawFlow those tools
+        # point at the isolated CLI session directory, not the user's relay-backed
+        # workspace, and they are slow/failing fallbacks. Keep only PawFlow MCP.
+        excluded_core_tools = [
+            "list_directory",
+            "read_file",
+            "read_many_files",
+            "glob",
+            "search_file_content",
+            "write_file",
+            "replace",
+            "run_shell_command",
+            "web_fetch",
+            "google_web_search",
+            "save_memory",
+            "ReadFolder",
+            "ReadFile",
+            "GlobTool",
+            "ShellTool",
+            "WriteFileTool",
+            "EditTool",
+            "WebFetchTool",
+            "WebSearchTool",
+        ]
         settings: Dict[str, Any] = {
-            "security": {"auth": {}},
-            "ui": {"inlineThinkingMode": "full"},
-            "model": {"name": "pawflow-current"},
+            "general": {"defaultApprovalMode": "auto_edit", "maxAttempts": 1},
+            "security": {"auth": {}, "folderTrust": {"enabled": False}},
+            "ui": {"inlineThinkingMode": "full", "loadingPhrases": "off"},
+            "tools": {"exclude": excluded_core_tools},
+            "mcp": {"allowed": ["pawflow"]},
+            "useWriteTodos": False,
             "modelConfigs": {
-                "aliases": {
-                    "pawflow-current": {
-                        "modelConfig": {
-                            "model": model,
-                            "generateContentConfig": generation_config,
-                        }
+                "overrides": [
+                    {
+                        "match": {},
+                        "modelConfig": {"generateContentConfig": generation_config},
                     }
-                }
+                ],
+                # Legacy v1 compatibility for older Gemini CLI builds.
+                "customOverrides": [
+                    {
+                        "match": {"model": model} if model else {},
+                        "modelConfig": {"generateContentConfig": generation_config},
+                    }
+                ],
             },
+            # Legacy v1 compatibility for older Gemini CLI builds.
+            "autoAccept": True,
+            "allowMCPServers": ["pawflow"],
+            "excludeTools": excluded_core_tools,
         }
+        if model:
+            settings["model"] = {"name": model}
         api_key = getattr(self, "api_key", "")
         if callable(api_key):
             api_key = api_key()
@@ -836,6 +1564,33 @@ class LLMGeminiMixin(GeminiSessionMixin):
         os.chmod(settings_path, 0o600)
         logger.info("[gemini-acp] settings.json written: %s model=%s effort=%s",
                     settings_path, model, effort)
+
+    @staticmethod
+    def _gemini_acp_settings_mcp_servers(mcp_servers: list, mcp_cwd: str) -> dict:
+        """Convert ACP MCP server definitions to Gemini settings.json format.
+
+        Kept for regression coverage and possible future native CLI use. ACP
+        runtime passes MCP servers through session/new so Gemini does not start
+        the same PawFlow bridge twice during initialize and session creation.
+        """
+        result: Dict[str, Any] = {}
+        for server in mcp_servers or []:
+            name = server.get("name") or "pawflow"
+            env = {}
+            for item in server.get("env") or []:
+                if isinstance(item, dict) and item.get("name"):
+                    env[item.get("name")] = item.get("value", "")
+            entry = {
+                "type": "stdio",
+                "command": server.get("command"),
+                "args": server.get("args") or [],
+                "cwd": mcp_cwd,
+                "env": env,
+                "timeout": 15000,
+                "trust": True,
+            }
+            result[name] = {k: v for k, v in entry.items() if v is not None}
+        return result
 
     @staticmethod
     def _gemini_acp_content_text(content: Any) -> str:

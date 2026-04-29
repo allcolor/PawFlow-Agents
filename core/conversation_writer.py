@@ -10,6 +10,7 @@ Usage:
 """
 
 import logging
+import os
 import queue
 import threading
 import time
@@ -18,6 +19,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _IDLE_TIMEOUT = 300  # 5 minutes idle → writer thread exits
+_WRITER_QUEUE_MAXSIZE = max(1, int(os.getenv("PAWFLOW_CONV_WRITER_QUEUE_MAXSIZE", "10000") or "10000"))
 
 
 def _require_ts_seq(m: Dict) -> None:
@@ -107,7 +109,7 @@ class ConversationWriter:
 
     def __init__(self, cid: str):
         self._cid = cid
-        self._queue: queue.Queue = queue.Queue()
+        self._queue: queue.Queue = queue.Queue(maxsize=_WRITER_QUEUE_MAXSIZE)
         self._stop = False
         self._alive = True
         self._thread = threading.Thread(

@@ -1,5 +1,20 @@
 // Connect SSE for a conversation
 var _sseOnReadyCallback = null;
+var _sseClientId = null;
+
+function getSSEClientId() {
+  if (_sseClientId) return _sseClientId;
+  try {
+    _sseClientId = sessionStorage.getItem('pawflow_sse_client_id');
+    if (!_sseClientId) {
+      _sseClientId = 'tab-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+      sessionStorage.setItem('pawflow_sse_client_id', _sseClientId);
+    }
+  } catch (_err) {
+    _sseClientId = 'tab-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+  }
+  return _sseClientId;
+}
 
 function connectSSE(cid, onReady, opts) {
   if (eventSource) eventSource.close();
@@ -17,6 +32,7 @@ function connectSSE(cid, onReady, opts) {
   // A reload means reload, not replay.
   const _noReplay = !!(opts && opts.noReplay);
   const url = SSE_URL + '?conversation_id=' + encodeURIComponent(cid)
+    + '&client_id=' + encodeURIComponent(getSSEClientId())
     + (token ? '&token=' + encodeURIComponent(token) : '')
     + (_noReplay ? '&replay=false' : '');
   eventSource = new EventSource(url);
@@ -895,6 +911,20 @@ function connectSSE(cid, onReady, opts) {
       // setContextUsage would reject the drop.
       if (typeof markCompactJustHappened === 'function') {
         markCompactJustHappened(agent);
+      }
+      if (typeof setContextUsage === 'function'
+          && data.context_used !== undefined
+          && data.context_max !== undefined
+          && Number(data.context_max) > 0) {
+        setContextUsage(agent, {
+          used: Number(data.context_used) || 0,
+          max: Number(data.context_max) || 0,
+          pct: data.context_pct !== undefined
+            ? Number(data.context_pct) || 0
+            : ((Number(data.context_max) || 0) > 0
+              ? (Number(data.context_used) || 0) / Number(data.context_max)
+              : 0),
+        });
       }
       // Show TOTAL conversation msg count as the reference (what the
       // user thinks of as "the conversation size"). `before` is the

@@ -44,6 +44,8 @@ _pending_bg: set = set()  # tc_ids flagged for backgrounding (before registered)
 # args_hash) with FIFO fallback on hash collisions.
 _cc_pending_tcs_lock = threading.Lock()
 _cc_pending_tcs: Dict[tuple, list] = {}  # (conv_id, agent_name) → [entry...]
+ANY_TOOL = "__pawflow_any_tool__"
+ANY_ARGS_HASH = "__pawflow_any_args__"
 
 
 def _args_hash(args) -> str:
@@ -59,7 +61,7 @@ def _args_hash(args) -> str:
 
 def enqueue_cc_tc(conv_id: str, agent_name: str, tc_id: str,
                    tool_name: str, args_hash: str) -> None:
-    """Register a Claude-code tool_use id awaiting matching in tool_relay."""
+    """Register a live provider tool_use id awaiting matching in tool_relay."""
     import time as _time
     key = (conv_id, agent_name)
     with _cc_pending_tcs_lock:
@@ -92,6 +94,16 @@ def pop_cc_tc(conv_id: str, agent_name: str, tool_name: str,
             return ""
         for i, entry in enumerate(queue):
             if entry["tool_name"] == tool_name and entry["args_hash"] == args_hash:
+                queue.pop(i)
+                if not queue:
+                    _cc_pending_tcs.pop(key, None)
+                return entry["tc_id"]
+        # Some ACP providers announce a MCP tool call before exposing the
+        # nested PawFlow tool name/arguments. In that case enqueue a scoped
+        # FIFO wildcard so the next relay request from the same agent still
+        # maps to the UI-visible tool id for BG/kill.
+        for i, entry in enumerate(queue):
+            if entry["tool_name"] == ANY_TOOL and entry["args_hash"] == ANY_ARGS_HASH:
                 queue.pop(i)
                 if not queue:
                     _cc_pending_tcs.pop(key, None)

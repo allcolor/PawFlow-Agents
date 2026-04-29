@@ -203,7 +203,9 @@ function updateActivePanel() {
     } else if (info.lastTool) {
       statusParts.push('[' + info.lastTool + ']');
     }
-    const statusText = statusParts.length > 0 ? statusParts.join(' \u00b7 ') : 'thinking...';
+    const statusText = statusParts.length > 0
+      ? statusParts.join(' \u00b7 ')
+      : (info.status || 'thinking...');
     const preview = (!info.iteration && info.msgPreview) ? escapeHtml(info.msgPreview.substring(0, 40)) : '';
     const hue = Math.abs([...displayName].reduce((h,c) => (h * 31 + c.charCodeAt(0)) | 0, 0)) % 360;
     const color = 'hsl(' + hue + ',70%,65%)';
@@ -218,9 +220,9 @@ function updateActivePanel() {
     let ctxUsed = info.contextUsed || 0;
     let ctxMax = info.contextMax || 0;
     let ctxPct = info.contextPct || 0;
-    if (!ctxMax && window._contextUsage) {
+    if (window._contextUsage) {
       const cached = window._contextUsage[agentKey(apiName)];
-      if (cached && cached.max) {
+      if (cached && cached.max && (!ctxMax || (cached.used || 0) > ctxUsed)) {
         ctxUsed = cached.used || 0;
         ctxMax = cached.max;
         ctxPct = cached.pct || 0;

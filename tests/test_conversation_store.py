@@ -233,6 +233,24 @@ class TestAgentContext:
         store, cid, uid = conv
         assert store.load_agent_context(cid, "ghost") is None
 
+    def test_small_context_is_cached(self, conv):
+        store, cid, uid = conv
+        store.save_agent_context(cid, "agent1", [_msg(content="small")])
+        assert store.load_agent_context(cid, "agent1") is not None
+        assert "agent1" in store._ctx_cache.get(cid, {})
+
+    def test_large_context_is_not_cached(self, conv):
+        store, cid, uid = conv
+        store.save_agent_context(cid, "agent1", [_msg(content="x" * 250001)])
+        assert store.load_agent_context(cid, "agent1") is not None
+        assert "agent1" not in store._ctx_cache.get(cid, {})
+
+    def test_many_message_context_is_not_cached(self, conv):
+        store, cid, uid = conv
+        store.save_agent_context(cid, "agent1", [_msg(content=str(i)) for i in range(501)])
+        assert store.load_agent_context(cid, "agent1") is not None
+        assert "agent1" not in store._ctx_cache.get(cid, {})
+
     def test_save_replaces_context(self, conv):
         store, cid, uid = conv
         store.save_agent_context(cid, "agent1", [_msg(content="old")])
@@ -580,6 +598,10 @@ class TestCleanupOrphanClaudeSessions:
         current_sid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
         stale_sid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
         store.set_extra(cid, "claude_session:claude", current_sid)
+        store.set_extra(cid, "codex_session:assistant", "codex-old")
+        store.set_extra(cid, "gemini_acp_session:gemini", "gemini-old")
+        store.set_extra(cid, "gemini_acp_pool_idx:gemini", "0")
+        store.set_extra(cid, "gemini_acp_session_version:gemini", "2")
         # current (fresh mtime) + stale companion dir
         current_jf = self._mk_jsonl(sess_dir, current_sid)
         stale_jf = self._mk_jsonl(sess_dir, stale_sid,
@@ -589,6 +611,10 @@ class TestCleanupOrphanClaudeSessions:
         store.invalidate_claude_sessions(cid)
         # extras cleared
         assert store.get_extra(cid, "claude_session:claude") == ""
+        assert store.get_extra(cid, "codex_session:assistant") == ""
+        assert store.get_extra(cid, "gemini_acp_session:gemini") == ""
+        assert store.get_extra(cid, "gemini_acp_pool_idx:gemini") == ""
+        assert store.get_extra(cid, "gemini_acp_session_version:gemini") == ""
         # disk wiped (wipe_all bypasses mtime guard and live_sids)
         assert not current_jf.exists()
         assert not stale_jf.exists()
@@ -620,6 +646,11 @@ class TestCleanupOrphanClaudeSessions:
         # Two live agents, each with its own jsonl.
         store.set_extra(cid, "claude_session:claude", claude_sid)
         store.set_extra(cid, "claude_session:other", other_sid)
+        store.set_extra(cid, "gemini_acp_session:claude", "gemini-claude")
+        store.set_extra(cid, "gemini_acp_session:other", "gemini-other")
+        store.set_extra(cid, "gemini_acp_pool_idx:claude", "1")
+        store.set_extra(cid, "gemini_acp_session_version:claude", "2")
+        store.set_extra(cid, "gemini_acp_session_version:other", "2")
         claude_jf = self._mk_jsonl(sess_dir, claude_sid)
         other_jf = self._mk_jsonl(sess_dir, other_sid)
         # Invalidate ONLY 'claude'.
@@ -627,10 +658,31 @@ class TestCleanupOrphanClaudeSessions:
         # 'claude' extra cleared, 'other' untouched.
         assert store.get_extra(cid, "claude_session:claude") == ""
         assert store.get_extra(cid, "claude_session:other") == other_sid
+        assert store.get_extra(cid, "gemini_acp_session:claude") == ""
+        assert store.get_extra(cid, "gemini_acp_session:other") == "gemini-other"
+        assert store.get_extra(cid, "gemini_acp_pool_idx:claude") == ""
+        assert store.get_extra(cid, "gemini_acp_session_version:claude") == ""
+        assert store.get_extra(cid, "gemini_acp_session_version:other") == "2"
         # 'claude' jsonl gone (no longer in live_sids), 'other' still
         # present because extras still names it as live.
         assert not claude_jf.exists()
         assert other_jf.exists()
+
+    def test_invalidate_per_agent_clears_gemini_without_claude_sid(
+            self, store, tmp_path, monkeypatch):
+        """Context edits invalidate Gemini ACP even without a CC session."""
+        self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        store.set_extra(cid, "gemini_acp_session:gemini", "gemini-old")
+        store.set_extra(cid, "gemini_acp_pool_idx:gemini", "0")
+        store.set_extra(cid, "gemini_acp_session_version:gemini", "2")
+
+        store.invalidate_claude_session_for_agent(cid, "gemini")
+
+        assert store.get_extra(cid, "gemini_acp_session:gemini") == ""
+        assert store.get_extra(cid, "gemini_acp_pool_idx:gemini") == ""
+        assert store.get_extra(cid, "gemini_acp_session_version:gemini") == ""
 
     def test_invalidate_per_agent_prunes_companion_dir(
             self, store, tmp_path, monkeypatch):

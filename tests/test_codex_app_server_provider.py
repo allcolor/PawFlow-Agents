@@ -2,6 +2,7 @@
 
 import inspect
 import os
+import time
 
 from core.llm_client import LLMClient
 from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
@@ -61,6 +62,9 @@ def test_codex_app_server_reasoning_is_wired():
     assert "_codex_app_effort" in provider_src
     assert "count_messages_tokens" in provider_src
     assert "prompt_tokens" in provider_src
+    assert "prompt_mode = \"resume\"" in provider_src
+    assert "mode=%s" in provider_src
+    assert "full_context_text" not in provider_src
     assert "tokens_in=max(0, int(prompt_tokens or 0))" in provider_src
     assert "item/reasoning/summaryTextDelta" in provider_src
     assert "item/reasoning/textDelta" in provider_src
@@ -109,21 +113,20 @@ def test_codex_app_server_registers_live_app_server_session():
     assert "CodexLiveRegistry" in src
     assert "live_reg.register" in src
     assert "[codex-app-live] keep-alive" in src
+    assert "[codex-app-live] active" in src
+    assert "Surface LIVE while the app-server turn is running" in src
     assert "live_reg.touch(live_key)" in src
     assert "is_reuse" in src
     assert "not turn_failed" in src
     assert "proc_alive" in src
     assert "live_session.turn_lock.acquire()" in src
     assert "live_session.turn_lock.release()" in src
+    assert "live_reg.ensure_sweeper" in src
+    assert "idle_ttl_seconds=int(getattr(self, \"timeout\", 1800) or 1800)" in src
+    assert "active_turn=True" in src
+    assert "active_turn=False" in src
 
-
-
-    actions = LLMConnectionService({}).get_service_actions()
-    codex_actions = [a for a in actions if a["id"].startswith("codex_")]
-    assert codex_actions
-    for action in codex_actions:
-        providers = action["when"]["provider"]
-        assert providers == ["codex-app-server"]
+    assert LLMConnectionService({}).get_service_actions() == []
 
     rules = LLMConnectionService({}).get_parameter_rules()
     assert any(
@@ -132,3 +135,23 @@ def test_codex_app_server_registers_live_app_server_session():
         and rule.get("set", {}).get("effort", {}).get("visible") is True
         for rule in rules
     )
+
+
+def test_codex_live_sweeper_does_not_evict_active_turn():
+    from core.codex_live_registry import CodexLiveRegistry
+
+    reg = CodexLiveRegistry()
+    key = ("user", "conv", "assistant", "svc", 0)
+    session = reg.register(
+        key, "container", "/tmp/work", service_id="svc",
+        session_id="thread", active_turn=True)
+    session.last_used = time.monotonic() - 9999
+
+    assert reg.sweep_idle(ttl=1) == 0
+    assert reg.get(key) is session
+
+    reg.ensure_sweeper(idle_ttl_seconds=1800)
+    assert reg._idle_ttl == 1800
+    reg._sweeper_stop.set()
+    with reg._lock:
+        reg._containers.clear()

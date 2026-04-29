@@ -260,29 +260,52 @@ class AgentCoreMixin:
             if tok_in or tok_out:
                 src["tokens_in"] = tok_in
                 src["tokens_out"] = tok_out
-            # Context-fill policy: tok_in (OpenAI: prompt_tokens = full context;
-            # Anthropic: non-cached input) + cache tokens (Anthropic breakdown).
-            # context_max comes from PawFlow config (service/agent/task cascade).
-            _ctx_used = int(tok_in) + int(tok_cache_creation) + int(tok_cache_read)
-            if _ctx_used > 0:
-                # Real context window: first the provider's self-reported
-                # value (claude-code caches CC's
-                # result.modelUsage[model].contextWindow per-stream in
-                # client._cc_context_window_by_stream keyed by
-                # (conv_id, agent_name) — the old singleton attr was
-                # clobbered across concurrent streams), then the user's
-                # max_context_size service config. NO hardcoded fallback
-                # — unknown means 0, UI skips the gauge rather than
-                # display a fictional budget.
-                _cw_map = getattr(client, '_cc_context_window_by_stream', None) or {}
-                _cw_key = (conversation_id or "",
-                           ctx.get("active_agent_name", "") or "")
-                _ctx_max = int(_cw_map.get(_cw_key, 0) or
-                               getattr(client, '_max_context_size', 0) or
-                               ctx.get("max_context_size", 0) or 0)
-                src["context_used"] = _ctx_used
-                src["context_max"] = _ctx_max
-                src["context_pct"] = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
+            # Context-fill policy: count PawFlow's active LLM context.
+            # Provider usage can be a resume/live delta (Codex/Gemini) and is
+            # therefore not a reliable gauge source. Keep provider tokens in
+            # tokens_in/tokens_out, but derive context_used from the same
+            # PawFlow message list that compaction uses.
+            #
+            # context_max comes from the provider-reported window when known,
+            # then PawFlow config (service/agent/task cascade). Unknown means
+            # 0, so the UI skips the gauge rather than displaying a fictional
+            # budget.
+            _cw_map = getattr(client, '_cc_context_window_by_stream', None) or {}
+            _cw_key = (conversation_id or "",
+                       ctx.get("active_agent_name", "") or "")
+            _ctx_max = int(_cw_map.get(_cw_key, 0) or
+                           getattr(client, '_max_context_size', 0) or
+                           ctx.get("max_context_size", 0) or 0)
+            _ctx_usage = None
+            try:
+                from core.token_counter import resolve_token_multiplier
+                from tasks.ai.context_usage_cache import context_usage_from_cache
+                _tmul = resolve_token_multiplier(
+                    getattr(ctx.get("resolved_svc"), "config", None))
+                _ctx_usage = context_usage_from_cache(
+                    messages, _ctx_max,
+                    ctx.get("_context_usage_cache"),
+                    source="active_context",
+                    token_multiplier=_tmul)
+                ctx["_context_usage_cache"] = _ctx_usage
+            except Exception:
+                logger.debug("context gauge estimate failed; falling back to provider usage", exc_info=True)
+                _ctx_used = int(tok_in) + int(tok_cache_creation) + int(tok_cache_read)
+                if _ctx_used > 0:
+                    _ctx_usage = {
+                        "used": _ctx_used,
+                        "max": _ctx_max,
+                        "pct": (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0,
+                        "source": "provider_fallback",
+                    }
+            if _ctx_usage and int(_ctx_usage.get("used", 0) or 0) > 0:
+                src["context_used"] = int(_ctx_usage.get("used", 0) or 0)
+                src["context_max"] = int(_ctx_usage.get("max", 0) or 0)
+                src["context_pct"] = float(_ctx_usage.get("pct", 0.0) or 0.0)
+                src["context_source"] = _ctx_usage.get("source", "")
+                src["context_message_count"] = _ctx_usage.get("message_count", 0)
+                src["context_cache_mode"] = _ctx_usage.get("cache_mode", "")
+                src["context_cache"] = _ctx_usage
             return src
         # SpawnAgentsHandler source tracking
         from core.tool_registry import SpawnAgentsHandler as _SAH
@@ -298,6 +321,104 @@ class AgentCoreMixin:
         base_count = ctx.get("_base_message_count", 0)
         if len(messages) > base_count:
             new_messages.extend(messages[base_count:])
+
+        _auto_compact_state = {"running": False}
+
+        def _agent_compact_threshold_fraction() -> float:
+            try:
+                cfg = (
+                    getattr(client, "config", None)
+                    or getattr(client, "_config_ref", None)
+                    or getattr(getattr(client, "_client", None),
+                               "_config_ref", None)
+                    or {})
+                pct = int(cfg.get("compact_threshold_pct", 0) or 0)
+            except (TypeError, ValueError):
+                pct = 0
+            return (pct / 100.0) if pct > 0 else 0.0
+
+        def _maybe_auto_compact_after_append(msg: LLMMessage, reason: str) -> None:
+            """Enforce compact_threshold_pct as a live invariant.
+
+            The pre-send compact only protects the next LLM call. Streaming
+            CLI providers can append many large tool results during one active
+            turn, so enforce the threshold after visible result/message appends
+            too. Skip bare tool_call messages: compacting between a call and
+            its result can orphan the result that is about to arrive.
+            """
+            if not conversation_id or _auto_compact_state.get("running"):
+                return
+            if msg.role == "assistant" and msg.tool_calls and not msg.content:
+                return
+            if msg.role not in ("assistant", "tool"):
+                return
+            trigger_fraction = _agent_compact_threshold_fraction()
+            if trigger_fraction <= 0:
+                return
+            max_ctx = int(ctx.get("max_context_size", 0) or 0)
+            if max_ctx <= 0:
+                return
+            trigger_tokens = int(max_ctx * trigger_fraction)
+            try:
+                from core.token_counter import resolve_token_multiplier
+                from tasks.ai.context_usage_cache import context_usage_from_cache
+                tmul = resolve_token_multiplier(
+                    getattr(ctx.get("resolved_svc"), "config", None))
+                usage = context_usage_from_cache(
+                    messages, max_ctx,
+                    ctx.get("_auto_compact_usage_cache") or ctx.get("_context_usage_cache"),
+                    source="auto_compact_threshold",
+                    token_multiplier=tmul)
+                ctx["_auto_compact_usage_cache"] = usage
+                used = int(usage.get("used", 0) or 0)
+            except Exception:
+                logger.debug("[compact] auto threshold estimate failed", exc_info=True)
+                return
+            if used < trigger_tokens:
+                return
+            _auto_compact_state["running"] = True
+            try:
+                logger.warning(
+                    "[compact] auto threshold crossed after %s: %d >= %d (%.0f%%)",
+                    reason, used, trigger_tokens, trigger_fraction * 100)
+                if use_conv_store and conversation_id:
+                    try:
+                        from core.conversation_writer import ConversationWriter
+                        ConversationWriter.for_conversation(
+                            conversation_id).flush(timeout=15.0)
+                    except Exception as flush_err:
+                        logger.warning(
+                            "[compact] writer flush before auto compact failed: %s",
+                            flush_err)
+                compact_owner = ctx.get("resolved_svc") or client or compact_client
+                compacted = self._compact(
+                    copy.deepcopy(messages), compact_owner, max_ctx,
+                    trigger_fraction=trigger_fraction,
+                    conversation_id=conversation_id,
+                    agent_name=ctx.get("active_agent_name") or "",
+                    tool_defs=ctx.get("tool_defs"),
+                    chars_per_token=ctx.get("chars_per_token", 0),
+                    user_id=user_id,
+                )
+                if compacted and len(compacted) <= len(messages):
+                    messages[:] = compacted
+            except Exception as compact_err:
+                logger.error(
+                    "[compact] auto compact after %s failed: %s",
+                    reason, compact_err, exc_info=True)
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        conversation_id, "compact_progress", {
+                            "stage": "error",
+                            "agent": ctx.get("active_agent_name") or "",
+                            "error": str(compact_err),
+                        })
+                except Exception:
+                    logger.debug("auto compact error SSE failed", exc_info=True)
+            finally:
+                _auto_compact_state["running"] = False
+
         def _append(msg: LLMMessage):
             # Sync msg_id: assistant messages use emitter's pre-generated ID
             # so SSE streaming tokens, done event, and persisted message all
@@ -412,10 +533,14 @@ class AgentCoreMixin:
                     # Assistant tool_calls → one tool_call SSE per tc.
                     if msg.role == "assistant" and msg.tool_calls:
                         from core.llm_client import unwrap_mcp_tool
+                        _hidden_schema_tools = {
+                            "get_tool_schema",
+                            "mcp_pawflow_get_tool_schema",
+                            "mcp__pawflow__get_tool_schema",
+                        }
                         for tc in msg.tool_calls:
                             _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
-                            if _tc_name in ("get_tool_schema",
-                                            "mcp__pawflow__get_tool_schema"):
+                            if _tc_name in _hidden_schema_tools:
                                 continue
                             _sse.append({"type": "tool_call", "data": {
                                 "tool": _tc_name, "arguments": _tc_args,
@@ -429,9 +554,13 @@ class AgentCoreMixin:
                     # or HTTP tools_exec) so the UI can label the result.
                     if msg.role == "tool":
                         _raw_tool_name = getattr(msg, '_tool_name', '')
-                        if _raw_tool_name not in (
-                                "get_tool_schema",
-                                "mcp__pawflow__get_tool_schema"):
+                        if _raw_tool_name in {
+                            "get_tool_schema",
+                            "mcp_pawflow_get_tool_schema",
+                            "mcp__pawflow__get_tool_schema",
+                        }:
+                            _raw_tool_name = ""
+                        if _raw_tool_name:
                             _preview = (msg.content if isinstance(msg.content, str)
                                         else str(msg.content))
                             # Strip outer <tool_output tool="..."> wrapper
@@ -541,12 +670,20 @@ class AgentCoreMixin:
                                 _agent_for_persist = _src.get("name", "")
                                 if _agent_for_persist and int(_src.get("context_max", 0)) > 0:
                                     _cu_map = _store.get_extra(_pcid, "context_usage") or {}
-                                    _cu_map[_agent_for_persist] = {
+                                    _cu_entry = dict(_src.get("context_cache") or {})
+                                    if not _cu_entry:
+                                        _cu_entry = {
+                                            "used": _src["context_used"],
+                                            "max": _src["context_max"],
+                                            "pct": _src["context_pct"],
+                                        }
+                                    _cu_entry.update({
                                         "used": _src["context_used"],
                                         "max": _src["context_max"],
                                         "pct": _src["context_pct"],
                                         "updated_at": int(time.time()),
-                                    }
+                                    })
+                                    _cu_map[_agent_for_persist] = _cu_entry
                                     _store.set_extra(_pcid, "context_usage", _cu_map)
                             except Exception as _cu_err:
                                 # Never-swallow: log loudly, still publish
@@ -570,6 +707,7 @@ class AgentCoreMixin:
                             "msg_id=%s: %s",
                             getattr(msg, "msg_id", "?"), _meta_err,
                             exc_info=True)
+            _maybe_auto_compact_after_append(msg, msg.role)
 
         # Repair orphan tool_calls — assistant messages with tool_calls
         # whose tool results are missing (broken by compact/clear)
@@ -836,7 +974,35 @@ class AgentCoreMixin:
                         logger.debug(
                             f"[compact] pre-send: {_pre_send_est} est. tokens, "
                             f"{len(llm_context)} msgs, max={_max_ctx}")
+                        if _trigger_frac > 0:
+                            _trigger_tokens = int(_max_ctx * _trigger_frac)
+                            if _pre_send_est > _trigger_tokens:
+                                logger.info(
+                                    "[compact] pre-send threshold crossed after injections: "
+                                    "%d > %d (%.0f%%)",
+                                    _pre_send_est, _trigger_tokens,
+                                    _trigger_frac * 100)
+                                # The final post-injection estimate has already
+                                # crossed the configured threshold. Force the
+                                # compact so _compact() cannot recompute a lower
+                                # pre-assembly estimate and silently skip.
+                                llm_context = self._compact(
+                                    copy.deepcopy(llm_context), compact_client,
+                                    _max_ctx,
+                                    force=True,
+                                    trigger_fraction=_trigger_frac,
+                                    conversation_id=conversation_id,
+                                    agent_name=ctx.get("active_agent_name") or "",
+                                    tool_defs=ctx.get("tool_defs"),
+                                    chars_per_token=ctx.get("chars_per_token", 0),
+                                    user_id=user_id,
+                                )
+                                _pre_send_est = self._estimate_tokens(
+                                    llm_context, tool_defs=ctx.get("tool_defs"),
+                                    chars_per_token=ctx.get("chars_per_token", 0),
+                                    token_multiplier=_ff_tmul)
                         if _pre_send_est > _max_ctx:
+                            _before_force_fit = _pre_send_est
                             logger.warning(
                                 f"[compact] STILL OVER ({_pre_send_est} > {_max_ctx}), force-fitting...")
                             llm_context = self._force_fit_context(
@@ -844,6 +1010,25 @@ class AgentCoreMixin:
                                 chars_per_token=ctx.get("chars_per_token", 0),
                                 tool_defs=ctx.get("tool_defs"),
                                 token_multiplier=_ff_tmul)
+                            _after_force_fit = self._estimate_tokens(
+                                llm_context, tool_defs=ctx.get("tool_defs"),
+                                chars_per_token=ctx.get("chars_per_token", 0),
+                                token_multiplier=_ff_tmul)
+                            if _after_force_fit < _before_force_fit and conversation_id:
+                                try:
+                                    from core.conversation_event_bus import ConversationEventBus
+                                    ConversationEventBus.instance().publish_event(
+                                        conversation_id, "compact_progress", {
+                                            "stage": "done",
+                                            "agent": ctx.get("active_agent_name") or "",
+                                            "before": len(messages),
+                                            "after": len(llm_context),
+                                            "tokens_before": _before_force_fit,
+                                            "tokens_after": _after_force_fit,
+                                            "reason": "force_fit",
+                                        })
+                                except Exception:
+                                    logger.debug("force-fit compact SSE publish failed", exc_info=True)
 
                     # LLM call
                     _tb = ctx.get("thinking_budget", 0)
@@ -1144,7 +1329,7 @@ class AgentCoreMixin:
                                 thinking_budget=_tb,
                                 thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None,
                                 turn_callback=_claude_code_turn_callback if _client_provider in ("claude-code", "codex-app-server", "gemini") else None,
-                                block_callback=_cli_block_callback if _client_provider == "codex-app-server" else None,
+                                block_callback=_cli_block_callback if _client_provider in ("codex-app-server", "gemini") else None,
                                 **_call_kwargs)
                         return client.complete(
                             messages=msgs, model=model or None,

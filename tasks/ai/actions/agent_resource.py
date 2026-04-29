@@ -298,10 +298,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         _scope = agent_def.get("_scope", "user")
         _uid = uid if _scope == "user" else "__global__"
         rs.update("agent", agent_name, _uid, {"assigned_skills": assigned})
-        # Invalidate this agent's Claude Code session so the new skill is injected
+        # Invalidate this agent's CLI session so the new skill is injected.
         conv_id = body.get("conversation_id", "")
         if conv_id:
-            store.set_extra(conv_id, f"claude_session:{agent_name}", "")
+            store.invalidate_claude_session_for_agent(conv_id, agent_name)
         flowfile.set_content(json.dumps({
             "assigned": True, "agent": agent_name, "skill": skill_name,
             "message": f"Skill '{skill_name}' assigned to agent '{agent_name}'",
@@ -327,10 +327,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         _scope = agent_def.get("_scope", "user")
         _uid = uid if _scope == "user" else "__global__"
         rs.update("agent", agent_name, _uid, {"assigned_skills": assigned})
-        # Invalidate this agent's Claude Code session so the removed skill takes effect
+        # Invalidate this agent's CLI session so the removed skill takes effect.
         conv_id = body.get("conversation_id", "")
         if conv_id:
-            store.set_extra(conv_id, f"claude_session:{agent_name}", "")
+            store.invalidate_claude_session_for_agent(conv_id, agent_name)
         flowfile.set_content(json.dumps({
             "unassigned": True, "agent": agent_name, "skill": skill_name,
             "message": f"Skill '{skill_name}' removed from agent '{agent_name}'",
@@ -423,9 +423,64 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         conv_agent_cfgs = get_all_agent_configs(conv_id) if conv_id else {}
         conv_agent_names = list(conv_agent_cfgs.keys())
 
-        # Per-agent context-window usage (persisted by agent_core on each
-        # final message_meta) — keyed by agent instance name.
+        # Per-agent context-window usage. This is a cached PawFlow-context
+        # gauge, not provider prompt usage: first hydration may count the stored
+        # context once; later turns update it from message_meta deltas, and
+        # compaction resets the cache entry.
         context_usage_map = store.get_extra(conv_id, "context_usage") or {} if conv_id else {}
+        if not isinstance(context_usage_map, dict):
+            context_usage_map = {}
+        _ctx_usage_dirty = {"value": False}
+
+        def _llm_config_for_agent(acfg):
+            svc_id = acfg.get("llm_service", "") or ""
+            if not svc_id:
+                return {}
+            try:
+                from core.expression import resolve_value
+                svc_id = resolve_value(svc_id, owner=uid, conversation_id=conv_id) or svc_id
+            except Exception:
+                pass
+            try:
+                from core.service_registry import ServiceRegistry
+                sdef = ServiceRegistry.get_instance().resolve_definition(
+                    svc_id, user_id=uid, conv_id=conv_id)
+                return dict(getattr(sdef, "config", None) or {}) if sdef else {}
+            except Exception:
+                logger.debug("list_resources: llm config resolve failed", exc_info=True)
+                return {}
+
+        def _stored_context_usage(aname, acfg):
+            existing = context_usage_map.get(aname)
+            if isinstance(existing, dict) and existing.get("message_count") is not None:
+                return existing
+            if not conv_id:
+                return existing
+            try:
+                messages = store.load_agent_context(conv_id, aname)
+                if messages is None:
+                    messages = store.load_shared_for_agent(conv_id, aname)
+                messages = messages or []
+                if not messages:
+                    return existing
+                from core.token_counter import resolve_token_multiplier
+                from tasks.ai.context_usage_cache import context_usage_from_cache
+                cfg = _llm_config_for_agent(acfg)
+                existing_dict = existing if isinstance(existing, dict) else {}
+                max_ctx = int(cfg.get("max_context_size", 0) or
+                              existing_dict.get("max", 0) or 0)
+                if max_ctx <= 0:
+                    return existing
+                usage = context_usage_from_cache(
+                    messages, max_ctx, existing if isinstance(existing, dict) else None,
+                    source="stored_context",
+                    token_multiplier=resolve_token_multiplier(cfg))
+                context_usage_map[aname] = usage
+                _ctx_usage_dirty["value"] = True
+                return usage
+            except Exception:
+                logger.debug("list_resources: stored context gauge failed", exc_info=True)
+                return existing
 
         agents_out = []
         for aname in conv_agent_names:
@@ -441,7 +496,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "llm_service": acfg.get("llm_service", ""),
                 "assigned_skills": acfg.get("skills") or [],
             }
-            _cu = context_usage_map.get(aname)
+            _cu = _stored_context_usage(aname, acfg)
             if _cu:
                 entry["context_usage"] = _cu
             if conv_id:
@@ -449,6 +504,12 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 if ac_cfg.get("enabled"):
                     entry["autoconv"] = ac_cfg.get("frequency", "on")
             agents_out.append(entry)
+
+        if conv_id and _ctx_usage_dirty["value"]:
+            try:
+                store.set_extra(conv_id, "context_usage", context_usage_map)
+            except Exception:
+                logger.debug("list_resources: context_usage cache persist failed", exc_info=True)
 
         # Repo agents list (all global+user agents, with in_conversation flag)
         all_repo_agents = rs.list_all("agent", uid)

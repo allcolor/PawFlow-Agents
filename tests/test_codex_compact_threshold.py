@@ -33,9 +33,10 @@ def test_gemini_context_window_fails_without_service_config():
         provider._gemini_context_window("gemini-3-pro")
 
 
-def test_gemini_acp_result_uses_full_context_token_estimate_without_hard_fallback():
+def test_gemini_acp_result_uses_actual_prompt_token_estimate_without_hard_fallback():
     assert "count_messages_tokens" in _GEMINI_SRC
-    assert "prompt_tokens = _count_msgs(" in _GEMINI_SRC
+    assert "return _count_msgs([{" in _GEMINI_SRC
+    assert "prompt_mode = \"resume\" if session_id else \"cold\"" in _GEMINI_SRC
     response_start = _GEMINI_SRC.index("return LLMResponse(")
     response_block = _GEMINI_SRC[response_start:response_start + 500]
     assert "tokens_in=max(0, int(prompt_tokens or 0))" in response_block

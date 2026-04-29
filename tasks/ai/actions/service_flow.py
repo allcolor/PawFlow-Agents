@@ -27,11 +27,38 @@ def _publish_command_result(conversation_id: str, result: dict):
 _oauth_pending: Dict[str, Dict[str, str]] = {}
 
 
-def _store_claude_tokens(service_id, access_token, refresh_token, expires_at):
-    """Add Claude Code tokens to the credentials pool (encrypted).
+def _credential_provider_for_service(service_id: str, user_id: str = "") -> str:
+    from services.llm_credential_oauth import normalize_provider
+    from core.service_registry import ServiceRegistry
+    reg = ServiceRegistry.get_instance()
+    for scope, sid in (("global", ""), ("user", user_id)):
+        sdef = reg.get_definition(scope, sid, service_id)
+        if not sdef:
+            continue
+        cfg = getattr(sdef, "config", {}) or {}
+        if sdef.service_type == "llmCredentialOAuthProvider":
+            return normalize_provider(cfg.get("provider", ""))
+        if sdef.service_type == "llmConnection":
+            return normalize_provider(cfg.get("provider", ""))
+    return ""
 
-    Each /cls login adds a new credential to the pool.
-    """
+
+def _credential_module(provider: str):
+    from services.llm_credential_oauth import normalize_provider
+    provider = normalize_provider(provider)
+    if provider == "claude-code":
+        from core.llm_providers import claude_code_session as mod
+        return mod
+    if provider == "codex-app-server":
+        from core.llm_providers import codex_session as mod
+        return mod
+    if provider == "gemini":
+        from core.llm_providers import gemini_session as mod
+        return mod
+    raise ValueError(f"Unsupported credential provider: {provider}")
+
+
+def _store_claude_tokens(service_id, access_token, refresh_token, expires_at):
     from core.llm_providers.claude_code_session import add_credential_to_pool
     add_credential_to_pool(
         access_token, refresh_token, expires_at,
@@ -41,11 +68,6 @@ def _store_claude_tokens(service_id, access_token, refresh_token, expires_at):
 
 def _store_codex_tokens(service_id, access_token, refresh_token, expires_at,
                         account="", id_token=""):
-    """Add Codex tokens to the credentials pool (encrypted).
-
-    id_token (OAuth ID JWT) MUST be persisted — codex CLI rejects an
-    auth.json without a valid id_token ("invalid ID token format").
-    """
     from core.llm_providers.codex_session import add_credential_to_pool
     add_credential_to_pool(
         access_token, refresh_token, expires_at,
@@ -55,12 +77,12 @@ def _store_codex_tokens(service_id, access_token, refresh_token, expires_at,
 
 def _store_gemini_tokens(service_id, access_token, refresh_token, expires_at,
                           account=""):
-    """Add Gemini tokens to the credentials pool (encrypted)."""
     from core.llm_providers.gemini_session import add_credential_to_pool
     add_credential_to_pool(
         access_token, refresh_token, expires_at,
         account=account, service_id=service_id)
     logger.info("Gemini credential added to pool for '%s'", service_id)
+
 
 
 def _handle_service_flow(self, action, body, store, user_id, flowfile):
@@ -233,44 +255,50 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
-    if action == "claude_pool_list":
+    if action in ("llm_credential_pool_list", "claude_pool_list"):
         svc_id = body.get("service_id", "")
-        from core.llm_providers.claude_code_session import _load_credentials_pool
-        pool = _load_credentials_pool(svc_id)
+        provider = _credential_provider_for_service(svc_id, user_id) or "claude-code"
+        mod = _credential_module(provider)
+        pool = mod._load_credentials_pool(svc_id)
         import time as _time
         entries = []
+        now = _time.time()
         for i, cred in enumerate(pool):
-            exp = cred.get("expires_at", 0)
+            exp = int(cred.get("expires_at", 0) or 0)
             exp_s = exp / 1000 if exp > 1e12 else exp
-            remaining = exp_s - _time.time() if exp_s else 0
+            remaining = exp_s - now if exp_s else 0
             entries.append({
                 "index": i,
                 "account": cred.get("account", ""),
+                "valid": remaining > 0 and bool(cred.get("refresh_token")),
                 "expires_in": f"{remaining/3600:.1f}h" if remaining > 0 else "expired",
                 "added_at": cred.get("added_at", 0),
             })
         flowfile.set_content(json.dumps({
+            "provider": provider,
             "pool": entries,
             "count": len(entries),
-            "message": f"{len(entries)} credential(s) in pool for {svc_id or 'default CC service'}",
+            "message": f"{len(entries)} credential(s) in pool for {svc_id or provider}",
         }).encode())
         return [flowfile]
 
-    if action == "claude_pool_reset":
+    if action in ("llm_credential_pool_reset", "claude_pool_reset"):
         svc_id = body.get("service_id", "")
-        from core.llm_providers.claude_code_session import reset_credentials_pool
-        reset_credentials_pool(svc_id)
+        provider = _credential_provider_for_service(svc_id, user_id) or "claude-code"
+        mod = _credential_module(provider)
+        mod.reset_credentials_pool(svc_id)
         flowfile.set_content(json.dumps({
             "ok": True,
-            "message": f"Credentials pool cleared for {svc_id or 'default CC service'}.",
+            "message": f"Credentials pool cleared for {svc_id or provider}.",
         }).encode())
         return [flowfile]
 
-    if action == "claude_pool_remove":
+    if action in ("llm_credential_pool_remove", "claude_pool_remove"):
         svc_id = body.get("service_id", "")
         idx = int(body.get("index", -1))
-        from core.llm_providers.claude_code_session import remove_credential_from_pool
-        if remove_credential_from_pool(idx, svc_id):
+        provider = _credential_provider_for_service(svc_id, user_id) or "claude-code"
+        mod = _credential_module(provider)
+        if mod.remove_credential_from_pool(idx, svc_id):
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "message": f"Credential {idx} removed from pool.",
@@ -279,6 +307,58 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({
                 "error": f"Invalid index {idx}.",
             }).encode())
+        return [flowfile]
+
+    if action == "llm_credential_pool_refresh":
+        svc_id = body.get("service_id", "")
+        idx = int(body.get("index", -1))
+        provider = _credential_provider_for_service(svc_id, user_id)
+        if not svc_id or idx < 0 or not provider:
+            flowfile.set_content(json.dumps({"error": "Missing service_id/provider or invalid index"}).encode())
+            return [flowfile]
+        mod = _credential_module(provider)
+        pool = mod._load_credentials_pool(svc_id)
+        if idx >= len(pool):
+            flowfile.set_content(json.dumps({"error": f"Invalid index {idx}"}).encode())
+            return [flowfile]
+        refresh_token = pool[idx].get("refresh_token", "")
+        if not refresh_token:
+            flowfile.set_content(json.dumps({"error": f"Credential {idx} has no refresh token"}).encode())
+            return [flowfile]
+        try:
+            if provider == "claude-code":
+                tokens = mod.ClaudeCodeSessionMixin._refresh_oauth_token(refresh_token)
+                mod._persist_tokens_to_service(
+                    tokens.get("access_token", ""),
+                    tokens.get("refresh_token", refresh_token),
+                    tokens.get("expires_at", 0),
+                    service_id=svc_id,
+                    pool_index=idx)
+            elif provider == "codex-app-server":
+                tokens = mod.refresh_oauth_token(refresh_token)
+                mod._persist_tokens_to_service(
+                    tokens.get("access_token", ""),
+                    tokens.get("refresh_token", refresh_token),
+                    tokens.get("expires_at", 0),
+                    service_id=svc_id,
+                    pool_index=idx,
+                    account=pool[idx].get("account", ""),
+                    id_token=pool[idx].get("id_token", ""))
+            else:
+                tokens = mod.refresh_oauth_token(refresh_token)
+                mod._persist_tokens_to_service(
+                    tokens.get("access_token", ""),
+                    tokens.get("refresh_token", refresh_token),
+                    tokens.get("expires_at", 0),
+                    service_id=svc_id,
+                    pool_index=idx,
+                    account=pool[idx].get("account", ""))
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Credential {idx} refreshed.",
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
     if action == "llm_rotate":
@@ -740,15 +820,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         if not service_id:
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
-        # Validate service exists and is a claude-code provider
         try:
-            from core.service_registry import ServiceRegistry
-            sdef = ServiceRegistry.get_instance().resolve_definition(service_id)
-            if not sdef:
-                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
-                return [flowfile]
-            if sdef.config.get("provider") != "claude-code":
-                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not a claude-code provider"}).encode())
+            if _credential_provider_for_service(service_id, user_id) != "claude-code":
+                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not a claude-code credential provider"}).encode())
                 return [flowfile]
         except Exception as e:
             flowfile.set_content(json.dumps({"error": f"Cannot verify service: {e}"}).encode())
@@ -1067,9 +1141,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     }).encode())
                     flowfile.set_attribute("http.response.status", "403")
                     return [flowfile]
-                if (getattr(sdef, "config", {}) or {}).get("provider") != "codex-app-server":
+                if _credential_provider_for_service(service_id, user_id) != "codex-app-server":
                     flowfile.set_content(json.dumps({
-                        "error": f"Service '{service_id}' is not a codex provider"
+                        "error": f"Service '{service_id}' is not a codex credential provider"
                     }).encode())
                     return [flowfile]
                 _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
@@ -1078,9 +1152,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 try:
                     usdef = greg.get_definition("user", user_id, service_id)
                     if usdef:
-                        if (getattr(usdef, "config", {}) or {}).get("provider") != "codex-app-server":
+                        if _credential_provider_for_service(service_id, user_id) != "codex-app-server":
                             flowfile.set_content(json.dumps({
-                                "error": f"Service '{service_id}' is not a codex provider"
+                                "error": f"Service '{service_id}' is not a codex credential provider"
                             }).encode())
                             return [flowfile]
                         _store_codex_tokens(service_id, access_token, refresh_token, expires_at, account=account, id_token=id_token)
@@ -1147,9 +1221,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     }).encode())
                     flowfile.set_attribute("http.response.status", "403")
                     return [flowfile]
-                if (getattr(sdef, "config", {}) or {}).get("provider") != "gemini":
+                if _credential_provider_for_service(service_id, user_id) != "gemini":
                     flowfile.set_content(json.dumps({
-                        "error": f"Service '{service_id}' is not a gemini provider"
+                        "error": f"Service '{service_id}' is not a gemini credential provider"
                     }).encode())
                     return [flowfile]
                 _store_gemini_tokens(service_id, access_token, refresh_token, expires_at)
@@ -1158,9 +1232,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 try:
                     usdef = greg.get_definition("user", user_id, service_id)
                     if usdef:
-                        if (getattr(usdef, "config", {}) or {}).get("provider") != "gemini":
+                        if _credential_provider_for_service(service_id, user_id) != "gemini":
                             flowfile.set_content(json.dumps({
-                                "error": f"Service '{service_id}' is not a gemini provider"
+                                "error": f"Service '{service_id}' is not a gemini credential provider"
                             }).encode())
                             return [flowfile]
                         _store_gemini_tokens(service_id, access_token, refresh_token, expires_at)
@@ -1222,10 +1296,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     }).encode())
                     flowfile.set_attribute("http.response.status", "403")
                     return [flowfile]
-                _cfg = getattr(sdef, "config", {}) or {}
-                if _cfg.get("provider") != "claude-code":
+                if _credential_provider_for_service(service_id, user_id) != "claude-code":
                     flowfile.set_content(json.dumps({
-                        "error": f"Service '{service_id}' is not a claude-code provider"
+                        "error": f"Service '{service_id}' is not a claude-code credential provider"
                     }).encode())
                     return [flowfile]
                 _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
@@ -1238,10 +1311,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     ureg = ServiceRegistry.get_instance()
                     usdef = ureg.get_definition("user", user_id, service_id)
                     if usdef:
-                        _ucfg = getattr(usdef, "config", {}) or {}
-                        if _ucfg.get("provider") != "claude-code":
+                        if _credential_provider_for_service(service_id, user_id) != "claude-code":
                             flowfile.set_content(json.dumps({
-                                "error": f"Service '{service_id}' is not a claude-code provider"
+                                "error": f"Service '{service_id}' is not a claude-code credential provider"
                             }).encode())
                             return [flowfile]
                         _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
@@ -2445,8 +2517,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
                 return [flowfile]
-            if sdef.config.get("provider") != "codex-app-server":
-                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not a codex provider"}).encode())
+            if _credential_provider_for_service(service_id, user_id) != "codex-app-server":
+                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not a codex credential provider"}).encode())
                 return [flowfile]
         except Exception as e:
             flowfile.set_content(json.dumps({"error": f"Cannot verify service: {e}"}).encode())
@@ -2671,8 +2743,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
                 return [flowfile]
-            if sdef.config.get("provider") != "gemini":
-                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not a gemini provider"}).encode())
+            if _credential_provider_for_service(service_id, user_id) != "gemini":
+                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not a gemini credential provider"}).encode())
                 return [flowfile]
         except Exception as e:
             flowfile.set_content(json.dumps({"error": f"Cannot verify service: {e}"}).encode())

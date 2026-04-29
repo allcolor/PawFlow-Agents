@@ -105,18 +105,12 @@ def _maybe_transform_relay_proxy_url(url: str, user_id: str = "") -> Optional[st
 
 
 def _find_cc_service_id(service_id: str = "") -> str:
-    """Find the claude-code LLM service ID."""
-    if service_id:
-        return service_id
+    """Find the credential-pool owner for Claude Code OAuth."""
     try:
-        from core.service_registry import ServiceRegistry
-        for sdef in ServiceRegistry.get_instance().resolve_by_type("llmConnection"):
-            cfg = getattr(sdef, "config", {}) or {}
-            if cfg.get("provider") == "claude-code":
-                return sdef.service_id
+        from services.llm_credential_oauth import resolve_credential_service_id
+        return resolve_credential_service_id("claude-code", service_id)
     except Exception:
-        pass
-    return ""
+        return service_id or ""
 
 
 def _load_credentials_pool(service_id: str = "") -> list:
@@ -879,7 +873,11 @@ class ClaudeCodeSessionMixin:
         claude_args.extend([
             "--input-format", "stream-json",
             "--output-format", "stream-json",
-            "--model", model or "sonnet",
+        ])
+        model = (model or "").strip()
+        if model:
+            claude_args.extend(["--model", model])
+        claude_args.extend([
             "--dangerously-skip-permissions",
             "--max-turns", "1000",
             "--verbose",

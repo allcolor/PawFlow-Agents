@@ -316,7 +316,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         agent_name = call_agent_name or getattr(self, "_agent_name", "") or "default"
         is_ephemeral = bool(call_ephemeral_stream if call_ephemeral_stream is not None
                             else getattr(self, "_ephemeral_stream", False))
-        model = model or "gpt-5.4"
+        model = (model or "").strip()
         effort = self._codex_app_effort(
             thinking_budget, self._cfg("effort", ""))
         reasoning_summary = self._codex_app_reasoning_summary(effort)
@@ -336,30 +336,32 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             except Exception:
                 logger.debug("[codex-app] failed to restore thread id", exc_info=True)
 
-        full_context_text = self._codex_app_full_initial_text(messages)
-        try:
-            from core.token_counter import (
-                count_messages_tokens as _count_msgs,
-                resolve_token_multiplier as _resolve_mult,
-            )
-            _mult = _resolve_mult(getattr(self, "_config_ref", None) or {})
-            prompt_tokens = _count_msgs(
-                [{"content": (m.content if hasattr(m, "content") else str(m))}
-                 for m in messages],
-                multiplier=_mult)
-        except Exception:
-            prompt_tokens = int(len(full_context_text) / 3.5)
-            logger.warning(
-                "[codex-app] count_messages_tokens failed, fell back to chars/3.5 -> %d",
-                prompt_tokens, exc_info=True)
-        logger.info(
-            "[codex-app] gauge: prompt_tokens=%d (msgs=%d, full_context=%d chars)",
-            prompt_tokens, len(messages), len(full_context_text))
+        def _estimate_prompt_tokens(text: str) -> int:
+            try:
+                from core.token_counter import (
+                    count_messages_tokens as _count_msgs,
+                    resolve_token_multiplier as _resolve_mult,
+                )
+                _mult = _resolve_mult(getattr(self, "_config_ref", None) or {})
+                return _count_msgs([{"content": text or ""}], multiplier=_mult)
+            except Exception:
+                fallback = int(len(text or "") / 3.5)
+                logger.warning(
+                    "[codex-app] count_messages_tokens failed, fell back to chars/3.5 -> %d",
+                    fallback, exc_info=True)
+                return fallback
+
         if thread_id:
+            prompt_mode = "resume"
             initial_text = self._codex_app_build_stdin_with_system(
                 "", self._codex_app_last_user_text(messages))
         else:
-            initial_text = full_context_text
+            prompt_mode = "cold"
+            initial_text = self._codex_app_full_initial_text(messages)
+        prompt_tokens = _estimate_prompt_tokens(initial_text)
+        logger.info(
+            "[codex-app] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",
+            prompt_tokens, prompt_mode, len(messages), len(initial_text))
 
         workdir = self._codex_get_session_workdir(conv_id, agent_name, user_id)
         os.makedirs(workdir, exist_ok=True)
@@ -382,15 +384,22 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         internal_token = ""
         proc = None
         container = None
-        stderr_lines: queue.Queue[str] = queue.Queue()
+        stderr_lines: queue.Queue[str] = queue.Queue(maxsize=200)
 
         if conv_id and not is_ephemeral:
             try:
                 from core.codex_live_registry import CodexLiveRegistry
                 live_reg = CodexLiveRegistry.instance()
+                live_reg.ensure_sweeper(
+                    idle_ttl_seconds=int(getattr(self, "timeout", 1800) or 1800))
                 live_key = (user_id, conv_id, agent_name or "default", svc_id,
                             int(resume_pool_idx))
                 live_session = live_reg.get(live_key)
+                if live_session is None:
+                    logger.info(
+                        "[codex-app-live] MISS conv=%s agent=%s service=%s pool_idx=%s thread=%s",
+                        conv_id[:8] or "?", agent_name or "default", svc_id or "default",
+                        int(resume_pool_idx), thread_id[:12] or "new")
                 if live_session is not None and not live_session.is_alive():
                     live_reg.evict(live_key, "dead_app_server")
                     live_session = None
@@ -506,7 +515,12 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             except Exception:
                                 logger.debug("[codex-app] failed to clear stale thread id", exc_info=True)
                         thread_id = ""
+                        prompt_mode = "cold-after-stale-resume"
                         initial_text = self._codex_app_full_initial_text(messages)
+                        prompt_tokens = _estimate_prompt_tokens(initial_text)
+                        logger.info(
+                            "[codex-app] gauge: prompt_tokens=%d mode=%s (msgs=%d, input=%d chars)",
+                            prompt_tokens, prompt_mode, len(messages), len(initial_text))
                         thread = self._codex_app_start_thread(proc, model, container_dir)
                 else:
                     thread = self._codex_app_start_thread(proc, model, container_dir)
@@ -542,6 +556,27 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     "container_dir": container_dir,
                     "started_at": time.time(),
                 }
+
+            # Surface LIVE while the app-server turn is running, not only
+            # after the turn completes. Preempt already uses _codex_app_active;
+            # the UI badge comes from CodexLiveRegistry.status().
+            if live_reg is not None and live_key is not None and not is_ephemeral:
+                try:
+                    live_reg.register(
+                        live_key, container, workdir,
+                        service_id=svc_id,
+                        session_id=thread_id,
+                        proc=proc,
+                        event_q=stderr_lines,
+                        mcp_internal_token=internal_token,
+                        active_turn=True,
+                    )
+                    logger.info(
+                        "[codex-app-live] active conv=%s agent=%s session=%s turn=%s",
+                        conv_id[:8] or "?", agent_name, thread_id[:12],
+                        turn_id[:12])
+                except Exception:
+                    logger.debug("[codex-app-live] active register failed", exc_info=True)
 
             while True:
                 msg = self._codex_app_read_message(proc)
@@ -696,6 +731,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         proc=proc,
                         event_q=stderr_lines,
                         mcp_internal_token=internal_token,
+                        active_turn=False,
                     )
                     logger.info(
                         "[codex-app-live] keep-alive conv=%s agent=%s session=%s",
@@ -779,20 +815,24 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         self._codex_app_send(proc, {"method": "initialized", "params": {}})
 
     def _codex_app_start_thread(self, proc, model: str, container_dir: str) -> dict:
-        result = self._codex_app_request(proc, "thread/start", {
-            "model": model or "gpt-5.4",
+        params = {
             "cwd": container_dir,
             "approvalPolicy": "never",
             "sandboxPolicy": {"type": "dangerFullAccess"},
             "serviceName": "pawflow_codex_app_server",
-        })
+        }
+        model = (model or "").strip()
+        if model:
+            params["model"] = model
+        result = self._codex_app_request(proc, "thread/start", params)
         return result.get("thread") or {}
 
     def _codex_app_resume_thread(self, proc, thread_id: str, model: str) -> dict:
-        result = self._codex_app_request(proc, "thread/resume", {
-            "threadId": thread_id,
-            "model": model or "gpt-5.4",
-        })
+        params = {"threadId": thread_id}
+        model = (model or "").strip()
+        if model:
+            params["model"] = model
+        result = self._codex_app_request(proc, "thread/resume", params)
         return result.get("thread") or {"id": thread_id}
 
     def _codex_app_start_turn(self, proc, thread_id: str, input_items: list,
@@ -802,11 +842,13 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             "threadId": thread_id,
             "input": input_items,
             "cwd": container_dir,
-            "model": model or "gpt-5.4",
             "approvalPolicy": "never",
             "sandboxPolicy": {"type": "dangerFullAccess"},
             "effort": effort,
         }
+        model = (model or "").strip()
+        if model:
+            params["model"] = model
         if reasoning_summary != "none":
             params["summary"] = reasoning_summary
         result = self._codex_app_request(proc, "turn/start", params)
@@ -836,7 +878,18 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     return
                 for line in proc.stderr:
                     if line:
-                        sink.put(line.rstrip("\n"))
+                        text = line.rstrip("\n")
+                        try:
+                            sink.put_nowait(text)
+                        except queue.Full:
+                            try:
+                                sink.get_nowait()
+                            except queue.Empty:
+                                pass
+                            try:
+                                sink.put_nowait(text)
+                            except queue.Full:
+                                pass
             except Exception:
                 pass
         threading.Thread(target=_drain, daemon=True, name="codex-app-stderr").start()

@@ -49,6 +49,16 @@ def test_pop_cc_tc_fifo_on_hash_collision():
     assert bg.pop_cc_tc("conv1", "claude", "bash", h) == "toolu_B"
 
 
+def test_pop_cc_tc_falls_back_to_scoped_fifo_wildcard():
+    _reset_state()
+    bg.enqueue_cc_tc(
+        "conv1", "gemini", "gemini_tc", bg.ANY_TOOL, bg.ANY_ARGS_HASH)
+    assert bg.pop_cc_tc(
+        "conv1", "gemini", "read", bg._args_hash({"path": "/workspace/README.md"})) == "gemini_tc"
+    assert bg.pop_cc_tc(
+        "conv1", "gemini", "read", bg._args_hash({"path": "/workspace/README.md"})) == ""
+
+
 def test_pop_cc_tc_isolated_by_conv_and_agent():
     _reset_state()
     h = bg._args_hash({"x": 1})

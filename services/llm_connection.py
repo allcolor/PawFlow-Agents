@@ -333,6 +333,13 @@ class LLMConnectionService(BaseService):
                 "type": "string", "sensitive": True,
                 "description": "API key for the provider",
             },
+            "credential_service_id": {
+                "type": "service_ref",
+                "service_type": "llmCredentialOAuthProvider",
+                "provider_field": "provider",
+                "default": "",
+                "description": "OAuth credential provider service used when api_key is empty",
+            },
             "base_url": {
                 "type": "string", "default": "",
                 "description": "Base URL (override for self-hosted/compatible APIs)",
@@ -462,6 +469,7 @@ class LLMConnectionService(BaseService):
                 "when": {"provider": ["openai", "anthropic"]},
                 "set": {
                     "api_key":       {"visible": True, "required": True},
+                    "credential_service_id": {"visible": False},
                     "base_url":      {"visible": True},
                     "max_retries":   {"visible": True},
                     "fallback_model": {"visible": True},
@@ -470,12 +478,13 @@ class LLMConnectionService(BaseService):
             {
                 "when": {"provider": ["claude-code"]},
                 "set": {
-                    "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth login via claude CLI)"},
+                    "api_key":       {"visible": True, "description": "Anthropic API key (empty = OAuth credential service)"},
+                    "credential_service_id": {"visible": True},
                     "base_url":      {"visible": True, "description": "Anthropic-compatible endpoint (empty = api.anthropic.com)"},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "max_concurrent": {"visible": False},
-                    "timeout":       {"default": 600},
+                    "timeout":       {"default": 1800},
                     "docker_image":  {"visible": True},
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
@@ -485,12 +494,13 @@ class LLMConnectionService(BaseService):
             {
                 "when": {"provider": ["codex-app-server"]},
                 "set": {
-                    "api_key":       {"visible": True, "description": "OpenAI API key (empty = OAuth login via codex CLI)"},
+                    "api_key":       {"visible": True, "description": "OpenAI API key (empty = OAuth credential service)"},
+                    "credential_service_id": {"visible": True},
                     "base_url":      {"visible": False},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "max_concurrent": {"visible": False},
-                    "timeout":       {"default": 600},
+                    "timeout":       {"default": 1800},
                     "docker_image":  {"visible": True},
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
@@ -500,12 +510,13 @@ class LLMConnectionService(BaseService):
             {
                 "when": {"provider": ["gemini"]},
                 "set": {
-                    "api_key":       {"visible": True, "description": "Google AI Studio key (empty = OAuth login via gemini CLI)"},
+                    "api_key":       {"visible": True, "description": "Google AI Studio key (empty = OAuth credential service)"},
+                    "credential_service_id": {"visible": True},
                     "base_url":      {"visible": False},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "max_concurrent": {"visible": False},
-                    "timeout":       {"default": 600},
+                    "timeout":       {"default": 1800},
                     "docker_image":  {"visible": True},
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
@@ -515,84 +526,12 @@ class LLMConnectionService(BaseService):
         ]
 
     def get_service_actions(self) -> list:
-        """Custom actions for the admin UI."""
-        return [
-            # Claude Code
-            {
-                "id": "claude_code_relay_login",
-                "label": "Login via relay",
-                "icon": "\U0001f50c",
-                "when": {"provider": ["claude-code"]},
-                "server_action": "claude_code_list_relays",
-                "flow": "claude_login_relay",
-            },
-            {
-                "id": "claude_code_server_login",
-                "label": "Login via server",
-                "icon": "\U0001f310",
-                "when": {"provider": ["claude-code"]},
-                "server_action": "claude_code_server_login",
-                "flow": "claude_login_server",
-            },
-            {
-                "id": "claude_code_login",
-                "label": "Set credentials",
-                "icon": "\U0001f511",
-                "when": {"provider": ["claude-code"]},
-                "server_action": "claude_code_login_url",
-                "flow": "oauth_code",
-            },
-            # Codex app-server — same 3 flows, dedicated actions in service_flow.py
-            {
-                "id": "codex_relay_login",
-                "label": "Login via relay",
-                "icon": "\U0001f50c",
-                "when": {"provider": ["codex-app-server"]},
-                "server_action": "claude_code_list_relays",
-                "flow": "codex_login_relay",
-            },
-            {
-                "id": "codex_server_login",
-                "label": "Login via server",
-                "icon": "\U0001f310",
-                "when": {"provider": ["codex-app-server"]},
-                "server_action": "codex_server_login",
-                "flow": "codex_login_server",
-            },
-            {
-                "id": "codex_login",
-                "label": "Set credentials",
-                "icon": "\U0001f511",
-                "when": {"provider": ["codex-app-server"]},
-                "server_action": "codex_login_url",
-                "flow": "oauth_code",
-            },
-            # Gemini CLI — same 3 flows, dedicated actions in service_flow.py
-            {
-                "id": "gemini_relay_login",
-                "label": "Login via relay",
-                "icon": "\U0001f50c",
-                "when": {"provider": ["gemini"]},
-                "server_action": "claude_code_list_relays",
-                "flow": "gemini_login_relay",
-            },
-            {
-                "id": "gemini_server_login",
-                "label": "Login via server",
-                "icon": "\U0001f310",
-                "when": {"provider": ["gemini"]},
-                "server_action": "gemini_server_login",
-                "flow": "gemini_login_server",
-            },
-            {
-                "id": "gemini_login",
-                "label": "Set credentials",
-                "icon": "\U0001f511",
-                "when": {"provider": ["gemini"]},
-                "server_action": "gemini_login_url",
-                "flow": "oauth_code",
-            },
-        ]
+        """LLM services no longer own OAuth login actions.
+
+        Configure an llmCredentialOAuthProvider service and reference it via
+        credential_service_id when api_key is empty.
+        """
+        return []
 
 
 ServiceFactory.register(LLMConnectionService)

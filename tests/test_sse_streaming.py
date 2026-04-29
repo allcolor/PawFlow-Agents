@@ -144,6 +144,15 @@ class TestSSEWriter(unittest.TestCase):
         t.join()
         assert len(chunks) == 10
 
+    def test_queue_overflow_closes_stale_writer(self):
+        writer = SSEWriter(max_queue=2)
+        assert writer.send(SSEEvent(event="token", data="1")) is True
+        assert writer.send(SSEEvent(event="token", data="2")) is True
+        assert writer.send(SSEEvent(event="token", data="3")) is False
+        assert writer.is_closed
+        assert writer.overflowed
+        assert writer.queued_count <= 2
+
 
 # ── ConversationEventBus ────────────────────────────────────────────
 
@@ -207,6 +216,39 @@ class TestConversationEventBus(unittest.TestCase):
         w2 = bus.subscribe("conv1")
         bus.publish_event("conv1", "test")
         assert bus.subscriber_count("conv1") == 1
+
+    def test_same_client_id_replaces_stale_subscriber(self):
+        bus = ConversationEventBus.instance()
+        w1 = bus.subscribe("conv1", client_id="tab-a")
+        w2 = bus.subscribe("conv1", client_id="tab-a")
+        assert w1.is_closed
+        assert not w2.is_closed
+        assert bus.subscriber_count("conv1") == 1
+        bus.publish_event("conv1", "token", {"text": "x"})
+        w2.close()
+        chunks = list(w2.iterate(timeout=0.1))
+        assert len(chunks) == 1
+
+    def test_different_client_ids_remain_independent(self):
+        bus = ConversationEventBus.instance()
+        w1 = bus.subscribe("conv1", client_id="tab-a")
+        w2 = bus.subscribe("conv1", client_id="tab-b")
+        assert bus.subscriber_count("conv1") == 2
+        w1.close()
+        assert bus.subscriber_count("conv1") == 1
+        w2.close()
+
+    def test_overflowed_writer_removed_from_bus(self):
+        bus = ConversationEventBus.instance()
+        writer = bus.subscribe("conv1")
+        writer._max_queue = 1
+        writer._queue = queue.Queue(maxsize=1)
+        bus.publish_event("conv1", "token", {"n": 1})
+        assert bus.subscriber_count("conv1") == 1
+        bus.publish_event("conv1", "token", {"n": 2})
+        assert writer.is_closed
+        assert writer.overflowed
+        assert bus.subscriber_count("conv1") == 0
 
     def test_active_conversations(self):
         bus = ConversationEventBus.instance()
@@ -421,8 +463,38 @@ class TestAgentSSEStreamTask(unittest.TestCase):
         assert len(token_chunks) >= 1
         assert len(done_chunks) >= 1
 
+    def test_sse_client_id_replaces_previous_stream(self):
+        from tasks.io.agent_sse_stream import AgentSSEStreamTask
+        bus = ConversationEventBus.instance()
+        task = AgentSSEStreamTask({"timeout": 10})
+
+        first = FlowFile(content=b"")
+        first.set_attribute("http.query", "conversation_id=conv-client&client_id=tab-a")
+        first_result = task.execute(first)[0]
+        with bus._lock:
+            first_writer = next(iter(bus._subscribers.get("conv-client", set())))
+
+        second = FlowFile(content=b"")
+        second.set_attribute("http.query", "conversation_id=conv-client&client_id=tab-a")
+        second_result = task.execute(second)[0]
+
+        assert first_writer.is_closed
+        assert bus.subscriber_count("conv-client") == 1
+        assert hasattr(first_result, "_sse_stream")
+        assert hasattr(second_result, "_sse_stream")
+        with bus._lock:
+            for writer in bus._subscribers.get("conv-client", set()).copy():
+                writer.close()
+
     def test_registration(self):
         assert "agentSSEStream" in TaskFactory.list_types()
+
+    def test_chat_ui_sends_stable_sse_client_id(self):
+        src = (Path(__file__).resolve().parents[1] / "tasks/io/chat_ui/sse.js").read_text()
+        assert "function getSSEClientId()" in src
+        assert "sessionStorage.getItem('pawflow_sse_client_id')" in src
+        assert "&client_id=" in src
+        assert "encodeURIComponent(getSSEClientId())" in src
 
     def test_query_string_fallback(self):
         from tasks.io.agent_sse_stream import AgentSSEStreamTask

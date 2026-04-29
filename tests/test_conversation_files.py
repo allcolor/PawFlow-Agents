@@ -85,6 +85,52 @@ class TestConversationStore(unittest.TestCase):
         assert usage["assistant"]["max"] == 1000000
         assert usage["assistant"]["pct"] == 0.573886
 
+    def test_get_context_usage_repairs_stale_extra_from_transcript(self):
+        store = ConversationStore.instance()
+        store.save("conv1", [{
+            "role": "assistant",
+            "content": "old",
+            "msg_id": "m1",
+            "source": {"type": "agent", "name": "assistant"},
+        }], user_id="test")
+        store.set_extra("conv1", "context_usage", {
+            "assistant": {
+                "used": 573886,
+                "max": 1000000,
+                "pct": 0.573886,
+                "updated_at": 1,
+            }
+        })
+        store.patch_message("conv1", "m1", source={
+            "type": "agent",
+            "name": "assistant",
+            "provider": "codex-app-server",
+            "context_used": 800184,
+            "context_max": 1000000,
+            "context_pct": 0.800184,
+        })
+        # Simulate a stale extras file left by an older runtime: get_extra should
+        # repair from transcript rows on read, so restart hydration cannot fall
+        # back to an older gauge value.
+        store.set_extra("conv1", "context_usage", {
+            "assistant": {
+                "used": 573886,
+                "max": 1000000,
+                "pct": 0.573886,
+                "updated_at": 1,
+            }
+        })
+
+        usage = store.get_extra("conv1", "context_usage")
+        assert usage["assistant"]["used"] == 800184
+        assert usage["assistant"]["pct"] == 0.800184
+
+        cached = store.get_extra_cached("conv1", "context_usage")
+        assert cached["assistant"]["used"] == 800184
+
+        extras = store.get_extras("conv1")
+        assert extras["context_usage"]["assistant"]["used"] == 800184
+
 
     def test_delete(self):
         store = ConversationStore.instance()

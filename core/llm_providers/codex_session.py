@@ -34,18 +34,12 @@ _CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 
 def _find_codex_service_id(service_id: str = "") -> str:
-    """Find a codex LLM service ID in the registry (or echo back the arg)."""
-    if service_id:
-        return service_id
+    """Find the credential-pool owner for Codex OAuth."""
     try:
-        from core.service_registry import ServiceRegistry
-        for sdef in ServiceRegistry.get_instance().resolve_by_type("llmConnection"):
-            cfg = getattr(sdef, "config", {}) or {}
-            if cfg.get("provider") == "codex-app-server":
-                return sdef.service_id
+        from services.llm_credential_oauth import resolve_credential_service_id
+        return resolve_credential_service_id("codex-app-server", service_id)
     except Exception:
-        pass
-    return ""
+        return service_id or ""
 
 
 def _load_credentials_pool(service_id: str = "") -> list:
@@ -787,8 +781,10 @@ class CodexSessionMixin:
             "view_image",   # hosted vision/image-view tool
         ):
             codex_args.extend(["-c", f"tools.{_hosted}=false"])
+        model = (model or "").strip()
+        if model:
+            codex_args.extend(["--model", model])
         codex_args.extend([
-            "--model", model or "gpt-5.2-codex",
             "-",  # read prompt from stdin
         ])
         # Codex picks up MCP config from CODEX_HOME/config.toml automatically;

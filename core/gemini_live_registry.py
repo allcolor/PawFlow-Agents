@@ -1,10 +1,9 @@
 """Gemini live container registry.
 
-Mirror of CodexLiveRegistry but for the gemini CLI — keeps a Docker
-container alive across turns of the same (user, conv, agent) so we don't
-pay the spawn cost on every turn. Each turn still re-execs `gemini -p`,
-but inside the same warm container. Independent file from codex's by
-design — see memory "Separate pools per CLI".
+Mirror of CodexLiveRegistry but for Gemini ACP — keeps the Docker
+container, ACP process, stdout drain, and session id alive across turns of
+the same (user, conv, agent). Independent file from codex's by design — see
+memory "Separate pools per CLI".
 """
 
 from __future__ import annotations
@@ -38,6 +37,7 @@ class GeminiLiveContainer:
     last_used: float = field(default_factory=time.monotonic)
     reuse_count: int = 0
     turn_lock: object = field(default_factory=threading.RLock)
+    active_turn: bool = False
 
     def is_alive(self) -> bool:
         try:
@@ -58,7 +58,7 @@ class GeminiLiveRegistry:
     _instance: Optional['GeminiLiveRegistry'] = None
     _instance_lock = threading.Lock()
 
-    DEFAULT_IDLE_TTL = 600.0
+    DEFAULT_IDLE_TTL = 1800.0
 
     @classmethod
     def instance(cls) -> 'GeminiLiveRegistry':
@@ -74,6 +74,8 @@ class GeminiLiveRegistry:
         self._lock = threading.Lock()
         self._sweeper_started = False
         self._sweeper_stop = threading.Event()
+        self._idle_ttl = float(self.DEFAULT_IDLE_TTL)
+        self._tick_seconds = 60
 
     def get(self, key: GeminiLiveKey) -> Optional[GeminiLiveContainer]:
         with self._lock:
@@ -88,7 +90,8 @@ class GeminiLiveRegistry:
                  reader_thread=None,
                  stop_event=None,
                  mcp_internal_token: str = "",
-                 hb_state=None) -> GeminiLiveContainer:
+                 hb_state=None,
+                 active_turn: bool = False) -> GeminiLiveContainer:
         with self._lock:
             existing = self._containers.get(key)
             if existing and existing.container_name == container_name:
@@ -107,6 +110,7 @@ class GeminiLiveRegistry:
                     existing.mcp_internal_token = mcp_internal_token
                 if hb_state is not None:
                     existing.hb_state = hb_state
+                existing.active_turn = bool(active_turn)
                 return existing
             entry = GeminiLiveContainer(
                 container_name=container_name, workdir=workdir,
@@ -118,6 +122,7 @@ class GeminiLiveRegistry:
                 stop_event=stop_event,
                 mcp_internal_token=mcp_internal_token,
                 hb_state=hb_state,
+                active_turn=bool(active_turn),
             )
             self._containers[key] = entry
             logger.info("[gemini-live] register %s container=%s session_id=%s",
@@ -186,6 +191,7 @@ class GeminiLiveRegistry:
                     "service_id": svc,
                     "container": entry.container_name,
                     "live": True,
+                    "active_turn": bool(entry.active_turn),
                     "idle_seconds": int(now - entry.last_used),
                     "reuse_count": entry.reuse_count,
                     "spawn_at": entry.spawn_at,
@@ -203,21 +209,26 @@ class GeminiLiveRegistry:
         for k in keys:
             self.kill_and_evict(k, "shutdown")
 
-    def sweep_idle(self, ttl: float = DEFAULT_IDLE_TTL) -> int:
+    def sweep_idle(self, ttl: Optional[float] = None) -> int:
+        ttl = float(ttl if ttl is not None else self._idle_ttl)
         cutoff = time.monotonic() - ttl
         with self._lock:
-            victims = [k for k, e in self._containers.items() if e.last_used < cutoff]
+            victims = [
+                k for k, e in self._containers.items()
+                if (not e.active_turn or not e.is_alive()) and e.last_used < cutoff
+            ]
         for k in victims:
             self.kill_and_evict(k, f"idle>{int(ttl)}s")
         return len(victims)
 
-    def ensure_sweeper(self, killer=None) -> None:
-        """API-parity stub for the cloned _stream_gemini call site.
-
-        The sweeper is auto-started by `instance()`; the `killer` cb is
-        unused since the pool's release already kills the container.
-        """
-        return
+    def ensure_sweeper(self, tick_seconds: int = 60,
+                       idle_ttl_seconds: Optional[int] = None,
+                       killer=None) -> None:
+        if idle_ttl_seconds and idle_ttl_seconds > 0:
+            self._idle_ttl = float(idle_ttl_seconds)
+        if tick_seconds and tick_seconds > 0:
+            self._tick_seconds = int(tick_seconds)
+        self._start_sweeper()
 
     def _start_sweeper(self):
         if self._sweeper_started:
@@ -225,7 +236,7 @@ class GeminiLiveRegistry:
         self._sweeper_started = True
 
         def _loop():
-            while not self._sweeper_stop.wait(60):
+            while not self._sweeper_stop.wait(self._tick_seconds):
                 try:
                     self.sweep_idle()
                 except Exception:

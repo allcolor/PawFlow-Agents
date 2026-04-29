@@ -208,11 +208,16 @@ class ServiceRegistry:
 
     def _ensure_loaded(self, scope: str, scope_id: str):
         sid = self._resolve_scope_id(scope, scope_id)
-        if sid not in self._loaded:
-            with self._data_lock:
-                if sid not in self._loaded:
-                    self._load(scope, sid)
-                    self._loaded.add(sid)
+        if sid in self._loaded:
+            return
+        just_loaded = False
+        with self._data_lock:
+            if sid not in self._loaded:
+                self._load(scope, sid)
+                self._loaded.add(sid)
+                just_loaded = True
+        if just_loaded and scope in (SCOPE_GLOBAL, SCOPE_USER):
+            self._migrate_llm_oauth_credentials(scope, sid)
 
     def reload_scope(self, scope: str, scope_id: str = "") -> None:
         """Force reload definitions from disk for a scope.
@@ -227,6 +232,8 @@ class ServiceRegistry:
             old_defs = set(self._definitions.get(sid, {}).keys())
         self._load(scope, sid)
         self._loaded.add(sid)
+        if scope in (SCOPE_GLOBAL, SCOPE_USER):
+            self._migrate_llm_oauth_credentials(scope, sid)
         with self._data_lock:
             new_defs = set(self._definitions.get(sid, {}).keys())
         added = new_defs - old_defs
@@ -773,6 +780,86 @@ class ServiceRegistry:
         self._definitions[scope_id] = defs
         logger.info("Loaded %d %s service(s) (id=%s)", len(defs), scope,
                      scope_id[:8] if len(scope_id) > 8 else scope_id)
+
+    def _migrate_llm_oauth_credentials(self, scope: str, scope_id: str) -> None:
+        """Move CLI OAuth pools from LLM services to credential services."""
+        try:
+            from services.llm_credential_oauth import (
+                SERVICE_TYPE,
+                default_credential_service_id,
+                normalize_provider,
+                credential_pool_secret_key,
+            )
+        except Exception:
+            return
+        provider_names = {
+            "claude-code": "Claude Code OAuth credentials",
+            "codex-app-server": "Codex OAuth credentials",
+            "gemini": "Gemini OAuth credentials",
+        }
+        changed = False
+        with self._data_lock:
+            defs = self._definitions.get(scope_id, {})
+            llm_defs = [sdef for sdef in defs.values()
+                        if sdef.service_type == "llmConnection"]
+            for llm in llm_defs:
+                cfg = llm.config or {}
+                provider = normalize_provider(cfg.get("provider", ""))
+                if provider not in provider_names:
+                    continue
+                cred_id = (cfg.get("credential_service_id") or "").strip()
+                if not cred_id:
+                    cred_id = default_credential_service_id(provider)
+                    cfg["credential_service_id"] = cred_id
+                    changed = True
+                if cred_id not in defs:
+                    defs[cred_id] = ServiceDef(
+                        service_id=cred_id,
+                        service_type=SERVICE_TYPE,
+                        scope=scope,
+                        scope_id=scope_id,
+                        config={"provider": provider, "label": provider_names[provider]},
+                        enabled=True,
+                        description=provider_names[provider],
+                    )
+                    changed = True
+        if changed:
+            self._copy_legacy_llm_pool_secrets(scope_id)
+            self._save(scope, scope_id)
+            logger.info("Migrated LLM OAuth credential services for scope=%s id=%s",
+                        scope, scope_id[:8] if len(scope_id) > 8 else scope_id)
+
+    def _copy_legacy_llm_pool_secrets(self, scope_id: str) -> None:
+        try:
+            from services.llm_credential_oauth import credential_pool_secret_key
+            from core.paths import GLOBAL_SECRETS_FILE
+        except Exception:
+            return
+        secrets_path = GLOBAL_SECRETS_FILE
+        if not secrets_path.exists():
+            return
+        try:
+            existing = json.loads(secrets_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        changed = False
+        with self._data_lock:
+            defs = self._definitions.get(scope_id, {})
+            for sdef in defs.values():
+                if sdef.service_type != "llmConnection":
+                    continue
+                cred_id = (sdef.config or {}).get("credential_service_id", "")
+                if not cred_id:
+                    continue
+                old_key = credential_pool_secret_key(sdef.service_id)
+                new_key = credential_pool_secret_key(cred_id)
+                if old_key in existing and new_key not in existing:
+                    existing[new_key] = existing[old_key]
+                    changed = True
+        if changed:
+            secrets_path.write_text(
+                json.dumps(existing, indent=2, ensure_ascii=False),
+                encoding="utf-8")
 
     def _load_conv(self, scope_id: str) -> None:
         """Load definitions from ConversationStore extras."""

@@ -11,8 +11,12 @@ def test_gemini_server_login_runs_cli_inside_visible_tty():
 
     assert "xterm" in script
     assert "gemini 2>&1 | tee" not in script
-    assert "script -q -f -c \"gemini\" /tmp/gemini-auth.log" in script
+    assert "script -q -f -c \"gemini\"" not in script
+    assert "\ngemini\n" in script
     assert "export GOOGLE_GENAI_USE_GCA=\"true\"" in script
+    assert "unset NO_BROWSER CI GITHUB_ACTIONS" in script
+    assert "unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_GENAI_USE_VERTEXAI" in script
+    assert "unset GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_PROJECT_ID GOOGLE_CLOUD_LOCATION" in script
     assert "printf '/exit" not in script
     assert "oauth_creds.json" in script
 

@@ -232,7 +232,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _name = "" if (not agent_name or agent_name == "shared") else agent_name
         store.save_agent_context(conv_id, _name, data)
         if _name:
-            store.set_extra(conv_id, f"claude_session:{_name}", "")
+            store.invalidate_claude_session_for_agent(conv_id, _name)
         else:
             store.invalidate_claude_sessions(conv_id)
 
@@ -638,7 +638,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 if shared_ctx is not None and shared_ctx == _rb_msgs:
                     store.save_agent_context(conv_id, _rb_agent, shared_ctx)
                     logger.info(f"[rebuild] Agent '{_rb_agent}' context == shared, merged back")
-                store.set_extra(conv_id, f"claude_session:{_rb_agent}", "")
+                store.invalidate_claude_session_for_agent(conv_id, _rb_agent)
             else:
                 store.invalidate_claude_sessions(conv_id)
             return {"before": len(_rb_msgs), "after": len(_rb_msgs),
@@ -871,7 +871,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             store.delete_agent_context(conv_id, agent_name)
-            store.set_extra(conv_id, f"claude_session:{agent_name}", "")
+            store.invalidate_claude_session_for_agent(conv_id, agent_name)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

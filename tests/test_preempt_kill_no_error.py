@@ -6,12 +6,14 @@ _GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 _AGENT_STREAMING = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
 
 
-def test_gemini_acp_preempt_uses_cancel_notification():
-    """ACP preempt should cancel the active prompt without surfacing a CLI error."""
+def test_gemini_acp_preempt_uses_live_prompt():
+    """ACP preempt should steer the warm session, not enqueue a reloop."""
     body = _GEMINI[_GEMINI.index("def _gemini_send_user_message"):]
     body = body[:body.index("def cancel_gemini")]
     assert '"session/cancel"' in body
-    assert "return False" in body
+    assert '"session/prompt"' in body
+    assert "preempt_req_id" in body
+    assert "return True" in body
     assert "_kill_gemini_hard" not in body
 
 

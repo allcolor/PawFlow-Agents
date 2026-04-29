@@ -449,7 +449,12 @@ class LLMClient(
 
     @property
     def default_model(self):
-        return self._cfg("default_model", "") or self.DEFAULT_MODELS.get(self.provider, "")
+        configured = self._cfg("default_model", "")
+        if configured:
+            return configured
+        if self.provider in ("claude-code", "codex-app-server", "gemini"):
+            return ""
+        return self.DEFAULT_MODELS.get(self.provider, "")
 
     @property
     def timeout(self):

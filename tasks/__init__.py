@@ -34,6 +34,7 @@ def _register_all_services():
     import services.file_tracking_service    # noqa: F401
     import services.distributed_cache        # noqa: F401
     import services.llm_connection           # noqa: F401
+    import services.llm_credential_oauth     # noqa: F401
     import services.oauth_provider_service   # noqa: F401
     import services.auth_gateway_service    # noqa: F401
     import services.telegram_bot_service    # noqa: F401

@@ -1985,6 +1985,12 @@ function _renderSchemaFields(schema, values, readonly) {
         html += '<option value="' + opt + '"' + (String(val) === String(opt) ? ' selected' : '') + '>' + opt + '</option>';
       }
       html += '</select>';
+    } else if (ptype === 'service_ref') {
+      const st = (pdef.service_type || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      const pf = (pdef.provider_field || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-provider-field="' + pf + '" data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
+      html += '<option value="' + escaped + '">' + (escaped || '(auto)') + '</option>';
+      html += '</select>';
     } else if (ptype === 'textarea' || ptype === 'map' || ptype === 'object') {
       const tval = (ptype === 'map' || ptype === 'object') && typeof val === 'object' ? JSON.stringify(val, null, 2) : escaped;
       html += '<textarea id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + 'min-height:80px;font-family:monospace;resize:vertical;">' + tval + '</textarea>';
@@ -2001,6 +2007,39 @@ function _renderSchemaFields(schema, values, readonly) {
     html += '</div>';
   }
   return html;
+}
+
+async function _populateServiceRefs(container) {
+  const refs = Array.from(container.querySelectorAll('select[data-service-ref="1"]'));
+  for (const sel of refs) {
+    const serviceType = sel.dataset.serviceType || '';
+    const providerField = sel.dataset.providerField || '';
+    const providerEl = providerField ? container.querySelector('#svc-p-' + providerField) : null;
+    const wantedProvider = providerEl ? providerEl.value : '';
+    const current = sel.value || sel.dataset.current || '';
+    try {
+      const data = await rxjs.firstValueFrom(listServices$(serviceType));
+      const services = (data.services || []).filter(s => !wantedProvider || !s.provider || s.provider === wantedProvider);
+      let html = '<option value="">(auto)</option>';
+      for (const s of services) {
+        const id = String(s.service_id || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const label = id + (s.scope ? ' [' + s.scope + ']' : '');
+        html += '<option value="' + id + '">' + label + '</option>';
+      }
+      sel.innerHTML = html;
+      sel.value = current;
+      if (current && sel.value !== current) {
+        sel.insertAdjacentHTML('afterbegin', '<option value="' + current + '">' + current + ' (missing)</option>');
+        sel.value = current;
+      }
+      if (providerEl && !providerEl.dataset.serviceRefListener) {
+        providerEl.dataset.serviceRefListener = '1';
+        providerEl.addEventListener('change', () => _populateServiceRefs(container));
+      }
+    } catch (e) {
+      // Keep the raw current option if service listing fails.
+    }
+  }
 }
 
 function _collectSchemaValues(schema) {
@@ -2025,7 +2064,8 @@ function _collectSchemaValues(schema) {
 }
 
 function _applyRules(container, rules, actions, serviceId) {
-  if (!rules || !rules.length) return;
+  rules = rules || [];
+  actions = actions || [];
   const getVal = (name) => {
     const el = container.querySelector('#svc-p-' + name);
     if (!el) return null;
@@ -2296,10 +2336,76 @@ function _flowToCli(flow) {
   return 'claude';
 }
 
+async function _renderCredentialPoolTable(serviceId, anchorBtn) {
+  const container = anchorBtn ? anchorBtn.parentElement : null;
+  if (!container) return;
+  let panel = container.querySelector('[data-credential-pool-panel="1"]');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.dataset.credentialPoolPanel = '1';
+    panel.style.cssText = 'margin-top:8px;border:1px solid #333;border-radius:6px;padding:8px;background:#10182f;';
+    container.appendChild(panel);
+  }
+  panel.innerHTML = '<div style="color:#aaa;font-size:11px;">Loading credentials...</div>';
+
+  const load = async () => {
+    const resp = await rxjs.firstValueFrom(action$('llm_credential_pool_list', { service_id: serviceId }));
+    if (resp.error) {
+      panel.innerHTML = '<div style="color:#e94560;font-size:11px;">' + escapeHtml(resp.error) + '</div>';
+      return;
+    }
+    const rows = resp.pool || [];
+    let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+      + '<strong style="color:#e0e0e0;font-size:12px;">' + escapeHtml(resp.provider || 'OAuth') + ' credentials</strong>'
+      + '<span style="color:#888;font-size:11px;">' + rows.length + ' login(s)</span></div>';
+    if (!rows.length) {
+      html += '<div style="color:#888;font-size:11px;">No credentials saved.</div>';
+    } else {
+      html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ddd;">'
+        + '<thead><tr style="color:#888;text-align:left;"><th>#</th><th>Account</th><th>Status</th><th>Expires</th><th></th></tr></thead><tbody>';
+      for (const r of rows) {
+        const idx = Number(r.index || 0);
+        const status = r.valid ? 'valid' : 'expired';
+        const statusColor = r.valid ? '#2ecc71' : '#e94560';
+        html += '<tr data-cred-index="' + idx + '" style="border-top:1px solid #27314f;">'
+          + '<td style="padding:5px 4px;">' + idx + '</td>'
+          + '<td style="padding:5px 4px;">' + escapeHtml(r.account || '(unknown)') + '</td>'
+          + '<td style="padding:5px 4px;color:' + statusColor + ';">' + status + '</td>'
+          + '<td style="padding:5px 4px;">' + escapeHtml(r.expires_in || '') + '</td>'
+          + '<td style="padding:5px 4px;text-align:right;white-space:nowrap;">'
+          + '<button type="button" data-cred-refresh="' + idx + '" style="background:#26365f;color:#dce6ff;border:1px solid #3b4c78;border-radius:4px;padding:3px 7px;margin-right:4px;cursor:pointer;font-size:11px;">Refresh</button>'
+          + '<button type="button" data-cred-delete="' + idx + '" style="background:#3a1622;color:#ffdce5;border:1px solid #7a2e43;border-radius:4px;padding:3px 7px;cursor:pointer;font-size:11px;">Delete</button>'
+          + '</td></tr>';
+      }
+      html += '</tbody></table>';
+    }
+    panel.innerHTML = html;
+    panel.querySelectorAll('[data-cred-refresh]').forEach(b => b.addEventListener('click', async () => {
+      b.disabled = true;
+      b.textContent = 'Refreshing...';
+      const res = await rxjs.firstValueFrom(action$('llm_credential_pool_refresh', { service_id: serviceId, index: Number(b.dataset.credRefresh) }));
+      if (res.error) addMsg('error', res.error);
+      await load();
+    }));
+    panel.querySelectorAll('[data-cred-delete]').forEach(b => b.addEventListener('click', async () => {
+      const idx = Number(b.dataset.credDelete);
+      if (!confirm('Delete credential #' + idx + '?')) return;
+      b.disabled = true;
+      const res = await rxjs.firstValueFrom(action$('llm_credential_pool_remove', { service_id: serviceId, index: idx }));
+      if (res.error) addMsg('error', res.error);
+      await load();
+    }));
+  };
+  await load();
+}
+
 async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   const btn = event && event.target ? event.target : null;
   const _cli = _flowToCli(flow);
-  if (flow === 'claude_login_server' || flow === 'codex_login_server' || flow === 'gemini_login_server') {
+  if (flow === 'credential_table') {
+    try { await _renderCredentialPoolTable(serviceId, btn); }
+    catch (e) { addMsg('error', 'Action failed: ' + e.message); }
+  } else if (flow === 'claude_login_server' || flow === 'codex_login_server' || flow === 'gemini_login_server') {
     try {
       if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
       fireAction(serverAction, { service_id: serviceId });
@@ -2482,6 +2588,7 @@ async function showServiceInstallForm() {
         + _renderSchemaFields(params, {})
         + _renderServiceActions(schemaData.actions || [], '');
       _applyRules(paramsDiv, schemaData.rules || [], schemaData.actions || [], '');
+      _populateServiceRefs(paramsDiv);
     }
   };
   typeSelect.addEventListener('change', loadParams);
@@ -2584,6 +2691,7 @@ async function showServiceEditForm(serviceId, scope, readonly) {
     panel.dataset.rules = JSON.stringify(rules);
     panel.dataset.actions = JSON.stringify(actions);
     _applyRules(panel, rules, actions, serviceId);
+    _populateServiceRefs(panel);
   } catch (e) { addMsg('error', e.message); }
 }
 

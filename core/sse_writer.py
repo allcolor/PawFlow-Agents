@@ -10,10 +10,14 @@ SSE format (per spec):
 """
 
 import json
+import logging
+import os
 import queue
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -52,27 +56,69 @@ class SSEWriter:
     Call close() to signal end of stream.
     """
 
-    def __init__(self):
-        self._queue: queue.Queue = queue.Queue()
+    _DEFAULT_MAX_QUEUE = 1000
+
+    def __init__(self, max_queue: Optional[int] = None):
+        if max_queue is None:
+            try:
+                max_queue = int(os.getenv("PAWFLOW_SSE_WRITER_MAX_QUEUE", "1000") or "1000")
+            except ValueError:
+                max_queue = self._DEFAULT_MAX_QUEUE
+        self._max_queue = max(1, int(max_queue or self._DEFAULT_MAX_QUEUE))
+        self._queue: queue.Queue = queue.Queue(maxsize=self._max_queue)
         self._closed = threading.Event()
+        self._overflowed = False
 
-    def send(self, event: SSEEvent):
-        """Enqueue an SSE event (thread-safe)."""
-        if not self._closed.is_set():
-            self._queue.put(event)
+    def send(self, event: SSEEvent) -> bool:
+        """Enqueue an SSE event.
 
-    def send_event(self, event_type: str, data: Any = "", event_id: str = None):
+        Stale browser/EventSource connections can stop draining while the
+        backend still publishes events. A bounded queue turns that into a
+        closed subscriber instead of unbounded RAM growth.
+        """
+        if self._closed.is_set():
+            return False
+        try:
+            self._queue.put_nowait(event)
+            return True
+        except queue.Full:
+            self._overflowed = True
+            logger.warning("SSE writer queue overflowed at %s event(s); closing stale subscriber", self._max_queue)
+            self.close()
+            return False
+
+    def send_event(self, event_type: str, data: Any = "", event_id: str = None) -> bool:
         """Convenience: create and enqueue an SSEEvent."""
-        self.send(SSEEvent(event=event_type, data=data, id=event_id))
+        return self.send(SSEEvent(event=event_type, data=data, id=event_id))
 
     def close(self):
         """Signal end of stream."""
+        if self._closed.is_set():
+            return
         self._closed.set()
-        self._queue.put(_SENTINEL)
+        try:
+            self._queue.put_nowait(_SENTINEL)
+        except queue.Full:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._queue.put_nowait(_SENTINEL)
+            except queue.Full:
+                pass
 
     @property
     def is_closed(self) -> bool:
         return self._closed.is_set()
+
+    @property
+    def overflowed(self) -> bool:
+        return self._overflowed
+
+    @property
+    def queued_count(self) -> int:
+        return self._queue.qsize()
 
     def iterate(self, timeout: float = 1.0):
         """Yield encoded SSE bytes. Blocks until events or close.

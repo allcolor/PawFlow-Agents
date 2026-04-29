@@ -49,11 +49,17 @@ class ConversationEventBus:
 
     def __init__(self):
         self._subscribers: Dict[str, Set[SSEWriter]] = {}
+        # Browser EventSource reconnects can leave a server-side stream alive
+        # until the next write. Track explicit client ids so a reconnect from
+        # the same tab replaces the old writer immediately instead of leaking
+        # subscribers and queued events.
+        self._clients: Dict[Tuple[str, str], SSEWriter] = {}
         # Replay buffer: {conversation_id: [(timestamp, SSEEvent), ...]}
         self._buffer: Dict[str, List[Tuple[float, SSEEvent]]] = {}
         self._lock = threading.Lock()
 
-    def subscribe(self, conversation_id: str, replay: bool = True) -> SSEWriter:
+    def subscribe(self, conversation_id: str, replay: bool = True,
+                  client_id: str = "") -> SSEWriter:
         """Subscribe to events for a conversation. Returns an SSEWriter.
 
         When ``replay=True`` (default), buffered events published before this
@@ -68,9 +74,21 @@ class ConversationEventBus:
         in the UI. A reload means reload -- not replay.
         """
         writer = SSEWriter()
+        client_id = str(client_id or "").strip()[:128]
+        client_key = (conversation_id, client_id) if client_id else None
+        replaced = False
         with self._lock:
             if conversation_id not in self._subscribers:
                 self._subscribers[conversation_id] = set()
+            if client_key is not None:
+                previous = self._clients.get(client_key)
+                if previous is not None:
+                    subs = self._subscribers.get(conversation_id)
+                    if subs:
+                        subs.discard(previous)
+                    previous.close()
+                    replaced = True
+                self._clients[client_key] = writer
             self._subscribers[conversation_id].add(writer)
             # Pop the buffer either way so it doesn't grow forever.
             buffered = self._buffer.pop(conversation_id, [])
@@ -84,6 +102,9 @@ class ConversationEventBus:
         else:
             logger.debug(f"EventBus: new subscriber for conv={conversation_id} "
                          f"(discarded {len(buffered)} buffered events, replay=False)")
+        if replaced:
+            logger.info("EventBus: replaced stale SSE subscriber for conv=%s client=%s",
+                        conversation_id[:8], client_id[:12])
         return writer
 
     def unsubscribe(self, conversation_id: str, writer: SSEWriter):
@@ -94,6 +115,9 @@ class ConversationEventBus:
                 subs.discard(writer)
                 if not subs:
                     del self._subscribers[conversation_id]
+            for key, tracked in list(self._clients.items()):
+                if tracked is writer:
+                    del self._clients[key]
         writer.close()
 
     def publish(self, conversation_id: str, event: SSEEvent):
@@ -109,6 +133,9 @@ class ConversationEventBus:
                 dead = {w for w in subs if w.is_closed}
                 if dead:
                     subs -= dead
+                    for key, tracked in list(self._clients.items()):
+                        if tracked in dead:
+                            del self._clients[key]
                     if not subs:
                         del self._subscribers[conversation_id]
 
@@ -135,8 +162,23 @@ class ConversationEventBus:
         if event.event in ("done", "error_event"):
             logger.info(f"EventBus: publishing '{event.event}' to "
                         f"{len(writers)} subscriber(s) for conv={conversation_id[:8]}")
+        dead: List[SSEWriter] = []
         for writer in writers:
-            writer.send(event)
+            if not writer.send(event):
+                dead.append(writer)
+        if dead:
+            with self._lock:
+                subs = self._subscribers.get(conversation_id)
+                if subs:
+                    for writer in dead:
+                        subs.discard(writer)
+                    for key, tracked in list(self._clients.items()):
+                        if tracked in dead:
+                            del self._clients[key]
+                    if not subs:
+                        del self._subscribers[conversation_id]
+            logger.warning("EventBus: removed %d stale SSE subscriber(s) for conv=%s",
+                           len(dead), conversation_id[:8])
 
     def publish_event(self, conversation_id: str, event_type: str, data=None):
         """Convenience: create SSEEvent and publish.
@@ -151,12 +193,35 @@ class ConversationEventBus:
         """Number of active subscribers for a conversation."""
         with self._lock:
             subs = self._subscribers.get(conversation_id)
-            return len(subs) if subs else 0
+            if not subs:
+                return 0
+            dead = {w for w in subs if w.is_closed}
+            if dead:
+                subs -= dead
+                for key, tracked in list(self._clients.items()):
+                    if tracked in dead:
+                        del self._clients[key]
+                if not subs:
+                    del self._subscribers[conversation_id]
+                    return 0
+            return len(subs)
 
     def active_conversations(self) -> List[str]:
         """List conversation IDs with active subscribers."""
         with self._lock:
-            return list(self._subscribers.keys())
+            active = []
+            for conversation_id, subs in list(self._subscribers.items()):
+                dead = {w for w in subs if w.is_closed}
+                if dead:
+                    subs -= dead
+                    for key, tracked in list(self._clients.items()):
+                        if tracked in dead:
+                            del self._clients[key]
+                if subs:
+                    active.append(conversation_id)
+                else:
+                    del self._subscribers[conversation_id]
+            return active
 
     def _cleanup_expired_buffers(self):
         """Remove buffered events older than _BUFFER_TTL (called under lock)."""
@@ -173,4 +238,5 @@ class ConversationEventBus:
                 for writer in subs:
                     writer.close()
             self._subscribers.clear()
+            self._clients.clear()
             self._buffer.clear()

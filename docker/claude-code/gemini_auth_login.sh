@@ -12,6 +12,12 @@
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="/home/pawflow"
 export USER="pawflow"
+export LANG="C.UTF-8"
+export LC_ALL="C.UTF-8"
+export TERM="xterm-256color"
+unset NO_BROWSER CI GITHUB_ACTIONS
+unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_GENAI_USE_VERTEXAI
+unset GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_PROJECT_ID GOOGLE_CLOUD_LOCATION
 # Work from HOME, not /workspace — gemini reloads its OAuth creds only when
 # launched from a directory where the session can resolve ~/.gemini
 # (see google-gemini/gemini-cli#5474).
@@ -64,11 +70,10 @@ export BROWSER="/usr/local/bin/open-browser"
 # Clear stale credentials
 rm -f "$HOME/.gemini/oauth_creds.json" "$HOME/.gemini/google_accounts.json" 2>/dev/null
 
-# Gemini's OAuth bootstrap is TTY-sensitive: unlike Claude Code and Codex,
-# running it through a plain pipe can make the CLI take its non-interactive
-# auth path. Build a small inner script and run it directly inside xterm so
-# stdin/stdout/stderr stay attached to a real terminal. If `script(1)` exists,
-# use it to capture logs while preserving a pseudo-terminal for Gemini.
+# Gemini's OAuth bootstrap is TTY-sensitive and also treats NO_BROWSER/CI as
+# headless. Build a small inner script and run it directly inside xterm so
+# stdin/stdout/stderr stay attached to a real terminal and the browser flow is
+# not suppressed.
 GEMINI_LOG="/tmp/gemini-auth.log"
 : > "$GEMINI_LOG"
 cat > /tmp/gemini-login-inner.sh <<'INNER'
@@ -77,8 +82,14 @@ set +e
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="/home/pawflow"
 export USER="pawflow"
+export LANG="C.UTF-8"
+export LC_ALL="C.UTF-8"
+export TERM="xterm-256color"
 export DISPLAY=":99"
 export BROWSER="/usr/local/bin/open-browser"
+unset NO_BROWSER CI GITHUB_ACTIONS
+unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_GENAI_USE_VERTEXAI
+unset GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_PROJECT_ID GOOGLE_CLOUD_LOCATION
 export GOOGLE_GENAI_USE_GCA="true"
 mkdir -p "$HOME/.gemini"
 cat > "$HOME/.gemini/settings.json" <<'SETTINGS'
@@ -94,11 +105,8 @@ cat > "$HOME/.gemini/settings.json" <<'SETTINGS'
 SETTINGS
 
 echo "Starting Gemini OAuth login..."
-if command -v script >/dev/null 2>&1; then
-  script -q -f -c "gemini" /tmp/gemini-auth.log
-else
-  gemini
-fi
+echo "TTY check: stdin=$(test -t 0 && echo yes || echo no) stdout=$(test -t 1 && echo yes || echo no) NO_BROWSER=${NO_BROWSER} GEMINI_API_KEY=$(test -n "${GEMINI_API_KEY}" && echo set || echo unset) GOOGLE_GENAI_USE_GCA=${GOOGLE_GENAI_USE_GCA}"
+gemini
 echo "Gemini process exited. Waiting for PawFlow to read credentials..."
 sleep infinity
 INNER

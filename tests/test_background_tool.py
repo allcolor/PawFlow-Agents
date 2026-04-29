@@ -83,6 +83,49 @@ def test_stale_entries_pruned_on_enqueue():
     assert tc == "new"
 
 
+def test_stale_entries_pruned_on_pop_and_snapshot():
+    _reset_state()
+    h = bg._args_hash({"x": 1})
+    bg.enqueue_cc_tc("c", "a", "old", "tool", h)
+    bg._cc_pending_tcs[("c", "a")][0]["ts"] = time.time() - 120
+
+    assert bg.snapshot_cc_pending("c", "a") == []
+    assert bg.pop_cc_tc("c", "a", "tool", h) == ""
+    assert ("c", "a") not in bg._cc_pending_tcs
+
+
+def test_enqueue_late_binds_existing_tool_relay_inflight():
+    _reset_state()
+    from services.tool_relay_service import ToolRelayService
+
+    with ToolRelayService._inflight_lock:
+        ToolRelayService._inflight.clear()
+
+    h = bg._args_hash({"command": "pwd"})
+    evt = threading.Event()
+    with ToolRelayService._inflight_lock:
+        ToolRelayService._inflight["rid1"] = {
+            "conv": "conv1",
+            "agent": "assistant",
+            "tool_name": "bash",
+            "args_hash": h,
+            "cc_tc_id": "",
+            "bg_tc_id": "rid1",
+            "background": evt,
+        }
+
+    try:
+        bg.enqueue_cc_tc("conv1", "assistant", "tc1", "bash", h)
+        with ToolRelayService._inflight_lock:
+            info = ToolRelayService._inflight["rid1"]
+            assert info["cc_tc_id"] == "tc1"
+            assert info["bg_tc_id"] == "tc1"
+        assert bg.snapshot_cc_pending("conv1", "assistant") == []
+    finally:
+        with ToolRelayService._inflight_lock:
+            ToolRelayService._inflight.clear()
+
+
 def test_background_flags_pending_and_tries_tool_relay():
     _reset_state()
     with patch("services.tool_relay_service.ToolRelayService.background_by_tc_id") as m:

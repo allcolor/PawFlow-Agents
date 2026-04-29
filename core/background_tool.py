@@ -46,6 +46,17 @@ _cc_pending_tcs_lock = threading.Lock()
 _cc_pending_tcs: Dict[tuple, list] = {}  # (conv_id, agent_name) → [entry...]
 ANY_TOOL = "__pawflow_any_tool__"
 ANY_ARGS_HASH = "__pawflow_any_args__"
+_PENDING_CC_TTL_SECONDS = 60
+
+
+def _prune_cc_pending_locked(key: tuple, now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    queue = _cc_pending_tcs.get(key) or []
+    queue = [e for e in queue if now - e.get("ts", 0) <= _PENDING_CC_TTL_SECONDS]
+    if queue:
+        _cc_pending_tcs[key] = queue
+    else:
+        _cc_pending_tcs.pop(key, None)
 
 
 def _args_hash(args) -> str:
@@ -64,18 +75,30 @@ def enqueue_cc_tc(conv_id: str, agent_name: str, tc_id: str,
     """Register a live provider tool_use id awaiting matching in tool_relay."""
     import time as _time
     key = (conv_id, agent_name)
+
+    # Codex/Gemini app-server can issue the MCP execute request before the
+    # provider stream surfaces the tool_call item. If the relay already has
+    # the request in flight, bind it now instead of queueing a stale entry.
+    if tool_name != ANY_TOOL and args_hash != ANY_ARGS_HASH:
+        try:
+            from services.tool_relay_service import ToolRelayService
+            if ToolRelayService.bind_pending_cc_tc(
+                    conv_id, agent_name, tc_id, tool_name, args_hash):
+                return
+        except Exception:
+            logger.debug("[bg-tool] late cc_tc bind failed", exc_info=True)
+
     with _cc_pending_tcs_lock:
+        now = _time.time()
+        _prune_cc_pending_locked(key, now)
         queue = _cc_pending_tcs.setdefault(key, [])
         queue.append({
             "tc_id": tc_id,
             "tool_name": tool_name,
             "args_hash": args_hash,
-            "ts": _time.time(),
+            "ts": now,
         })
-        # Drop stale entries (older than 60s) — protects against leaks if
-        # a tool_call SSE event never gets a matching MCP request.
-        cutoff = _time.time() - 60
-        _cc_pending_tcs[key] = [e for e in queue if e["ts"] >= cutoff]
+        _prune_cc_pending_locked(key, now)
 
 
 def pop_cc_tc(conv_id: str, agent_name: str, tool_name: str,
@@ -89,6 +112,7 @@ def pop_cc_tc(conv_id: str, agent_name: str, tool_name: str,
     """
     key = (conv_id, agent_name)
     with _cc_pending_tcs_lock:
+        _prune_cc_pending_locked(key)
         queue = _cc_pending_tcs.get(key)
         if not queue:
             return ""
@@ -114,12 +138,13 @@ def pop_cc_tc(conv_id: str, agent_name: str, tool_name: str,
 def snapshot_cc_pending(conv_id: str, agent_name: str) -> list:
     """Return a copy of the current pending cc_tc queue for (conv, agent).
 
-    Diagnostic only — used by the tool-relay MISS log to dump what was
+    Diagnostic only — used by the tool-relay mismatch log to dump what was
     queued at the moment a pop missed, so we can see which (tool_name,
     args_hash) was waiting vs. what the bridge requested.
     """
     key = (conv_id, agent_name)
     with _cc_pending_tcs_lock:
+        _prune_cc_pending_locked(key)
         queue = _cc_pending_tcs.get(key) or []
         return [
             {"tool_name": e["tool_name"],

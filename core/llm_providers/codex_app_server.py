@@ -397,7 +397,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 live_session = live_reg.get(live_key)
                 if live_session is None:
                     logger.info(
-                        "[codex-app-live] MISS conv=%s agent=%s service=%s pool_idx=%s thread=%s",
+                        "[codex-app-live] cold-start conv=%s agent=%s service=%s pool_idx=%s thread=%s",
                         conv_id[:8] or "?", agent_name or "default", svc_id or "default",
                         int(resume_pool_idx), thread_id[:12] or "new")
                 if live_session is not None and not live_session.is_alive():

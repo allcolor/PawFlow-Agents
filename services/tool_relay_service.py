@@ -369,6 +369,44 @@ class ToolRelayService(BaseService):
         return False
 
     @classmethod
+    def bind_pending_cc_tc(cls, conversation_id: str, agent_name: str,
+                           tc_id: str, tool_name: str,
+                           args_hash: str) -> bool:
+        """Attach a provider tool_call id to an already in-flight relay request.
+
+        Codex/Gemini app-server can dispatch the MCP execute request before
+        the provider stream publishes the UI-visible tool_call event. This
+        late bind repairs that ordering so background/kill still targets the
+        running request.
+        """
+        with cls._inflight_lock:
+            for rid, info in cls._inflight.items():
+                if not isinstance(info, dict):
+                    continue
+                if info.get("conv") != conversation_id:
+                    continue
+                if info.get("agent") != agent_name:
+                    continue
+                if info.get("tool_name") != tool_name:
+                    continue
+                if info.get("args_hash") != args_hash:
+                    continue
+                info["cc_tc_id"] = tc_id
+                info["bg_tc_id"] = tc_id
+                bg_evt = info.get("background")
+                try:
+                    from core.background_tool import is_backgrounded
+                    if bg_evt and is_backgrounded(tc_id):
+                        bg_evt.set()
+                except Exception:
+                    pass
+                logger.debug(
+                    "[tool-relay] late-bound cc_tc=%s to request_id=%s tool=%s",
+                    tc_id, rid, tool_name)
+                return True
+        return False
+
+    @classmethod
     def cancel_agent(cls, conversation_id: str, agent_name: str):
         """Cancel all in-flight tool calls for a (conv, agent).
 
@@ -952,15 +990,13 @@ class ToolRelayService(BaseService):
                     if cc_tc_id:
                         break
             if not cc_tc_id and not _is_sentinel:
-                # Forensic dump: what was queued vs. what we asked for.
-                # Lets us see at a glance whether it's a tool_name alias
-                # divergence, an args_hash divergence, or genuine absence.
+                # This can be a healthy relay-first race. The provider stream
+                # may late-bind the tc_id once its tool_call item arrives.
                 from core.background_tool import snapshot_cc_pending
                 _pending_now = snapshot_cc_pending(conversation_id, agent_name)
-                logger.info(
-                    "[tool-relay] cc_tc MISS conv=%s agent=%s tool=%s "
-                    "args_hash=%s pending=%s — background/kill won't "
-                    "find this request",
+                logger.debug(
+                    "[tool-relay] cc_tc pending provider id conv=%s agent=%s "
+                    "tool=%s args_hash=%s pending=%s",
                     conversation_id[:8], agent_name, tool_name, _ah,
                     _pending_now or "[]")
             elif cc_tc_id:
@@ -994,6 +1030,7 @@ class ToolRelayService(BaseService):
                 "cc_tc_id": cc_tc_id,
                 "bg_tc_id": bg_tc_id,
                 "tool_name": tool_name,
+                "args_hash": _ah,
                 "started_at": started_at,
                 "kill_hooks": kill_hooks,
             }

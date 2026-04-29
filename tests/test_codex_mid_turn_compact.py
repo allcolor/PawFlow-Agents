@@ -85,6 +85,23 @@ def test_auto_compact_threshold_is_enforced_after_visible_appends():
     assert "force=True" not in helper
 
 
+def test_proactive_compact_replaces_active_messages_for_cli_providers():
+    """Codex/Gemini pre-send compaction must update the live message list.
+
+    Otherwise the LLM receives the compacted context, but the next visible
+    assistant append sees the old over-threshold list and immediately runs a
+    duplicate compact in the same turn.
+    """
+    cli_block = _AGENT_CORE[
+        _AGENT_CORE.index("# codex / gemini / etc."):
+        _AGENT_CORE.index("# Pre-injection char count")
+    ]
+    assert "compacted_messages = self._compact(" in cli_block
+    assert "messages[:] = compacted_messages" in cli_block
+    assert "ctx.pop(\"_auto_compact_usage_cache\", None)" in cli_block
+    assert "llm_context = list(messages)" in cli_block
+
+
 def test_manual_compact_done_publishes_context_usage():
     """Manual compact completion has no provider message_meta; it must
     publish and persist the new gauge itself."""

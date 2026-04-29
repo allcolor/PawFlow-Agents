@@ -845,7 +845,7 @@ class AgentCoreMixin:
                         # compact at that fraction. Guarantees output ≤
                         # compact_target_tokens (or 0.25 × max_context).
                         if _trigger_frac > 0:
-                            llm_context = self._compact(
+                            compacted_messages = self._compact(
                                 copy.deepcopy(messages), compact_client, _max_ctx,
                                 trigger_fraction=_trigger_frac,
                                 conversation_id=conversation_id,
@@ -854,6 +854,11 @@ class AgentCoreMixin:
                                 chars_per_token=_cpt,
                                 user_id=user_id,
                             )
+                            if compacted_messages and len(compacted_messages) <= len(messages):
+                                messages[:] = compacted_messages
+                                ctx.pop("_context_usage_cache", None)
+                                ctx.pop("_auto_compact_usage_cache", None)
+                            llm_context = list(messages)
                         else:
                             # threshold = 0: no proactive compact, send the
                             # raw messages (PawFlow's reactive compact at the

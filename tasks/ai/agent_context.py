@@ -414,26 +414,44 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 f"Set llm_service in the conversation agent config.")
 
         # Provider detection (now with the correct resolved service)
-        _is_claude_code = (
-            (getattr(resolved_svc, 'provider', "") or
-             (getattr(resolved_svc, 'config', {}) or {}).get("provider", "") or
-             getattr(client, 'provider', "")) == "claude-code"
+        _provider_name = (
+            getattr(resolved_svc, 'provider', "") or
+            (getattr(resolved_svc, 'config', {}) or {}).get("provider", "") or
+            getattr(client, 'provider', "") or ""
         )
+        _is_claude_code = (_provider_name == "claude-code")
+        _is_gemini_acp = (_provider_name == "gemini")
+        _is_codex_app_server = (_provider_name == "codex-app-server")
+        _is_cli_provider = _is_claude_code or _is_gemini_acp or _is_codex_app_server
 
-        # Claude-code session detection (2 states):
-        #   _claude_has_session = True → active session, --resume, skip compact
-        #   _claude_has_session = False → no session or invalidated, full context
-        # Compact decision is made per-path below (diverged context = skip compact)
+        # CLI session detection (2 states):
+        #   True  -> provider has prior CLI state; resume can send only delta
+        #   False -> provider needs the full PawFlow initial context
         _claude_has_session = False
-        if _is_claude_code and conversation_id:
+        _cli_has_session = False
+        if _is_cli_provider and conversation_id:
             try:
                 from core.conversation_store import ConversationStore as _CSSession
-                _session_key = f"claude_session:{_active_agent_name or _context_agent or 'default'}"
-                _session_val = _CSSession.instance().get_extra(conversation_id, _session_key)
-                _claude_has_session = bool(_session_val)
-                if _claude_has_session:
-                    logger.info("[claude-code] active session (%s) — will resume",
-                                _session_key)
+                _agent_key = _active_agent_name or _context_agent or 'default'
+                _store_session = _CSSession.instance()
+                if _is_claude_code:
+                    _session_key = f"claude_session:{_agent_key}"
+                    _session_val = _store_session.get_extra(conversation_id, _session_key)
+                    _claude_has_session = bool(_session_val)
+                    _cli_has_session = _claude_has_session
+                    if _claude_has_session:
+                        logger.info("[claude-code] active session (%s) — will resume",
+                                    _session_key)
+                elif _is_gemini_acp:
+                    _session_key = f"gemini_acp_session:{_agent_key}"
+                    _session_ver_key = f"gemini_acp_session_version:{_agent_key}"
+                    _session_val = _store_session.get_extra(conversation_id, _session_key)
+                    _session_ver = _store_session.get_extra(conversation_id, _session_ver_key)
+                    _cli_has_session = bool(_session_val) and _session_ver == "2"
+                elif _is_codex_app_server:
+                    _session_key = f"codex_app_server_thread:{_agent_key}"
+                    _session_val = _store_session.get_extra(conversation_id, _session_key)
+                    _cli_has_session = bool(_session_val)
             except Exception:
                 pass
 
@@ -468,48 +486,142 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 _context_diverged = True  # skip compact
                 logger.info(f"[context:{conversation_id[:8]}] CC session active — skipping context load")
             else:
-              from core.conversation_store import ConversationStore
-              store = ConversationStore.instance()
-              context_data = store.load_agent_context(conversation_id, _context_agent)
-              if context_data is not None:
-                # Context has diverged — use it directly
-                try:
-                    messages = self._deserialize_messages(context_data, conversation_id=conversation_id)
-                    # Filter out display-only messages (sub-agent traces)
-                    # display_only messages already filtered by _deserialize_messages
-                    _context_diverged = True
-                    logger.info(f"[context:{conversation_id[:8]}] loaded diverged context: "
-                                f"{len(messages)} messages")
-                except (KeyError, TypeError) as deser_err:
-                    logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
-                # Diverged context = manually edited → send as-is, no compact
-                # (the user/operation wanted this exact context)
-                if not _context_diverged:
-                    _uid = flowfile.get_attribute("http.auth.principal") or ""
-                    messages = self._auto_compact_messages(
-                        messages, conversation_id, _context_agent, _uid,
-                        max_context=_max_ctx)
-              else:
-                # No divergence — start from SHARED context, personalized for this agent
-                existing = store.load_shared_for_agent(conversation_id, _context_agent)
-                if existing:
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+
+                def _load_pawflow_initial_context():
+                    """Build the canonical PawFlow context for a cold CLI session.
+
+                    A provider session that was invalidated has no private CLI
+                    memory. In that case the prompt must come from PawFlow's
+                    own context: shared pyramid summary when available, plus
+                    unbucketed shared tail; otherwise the personalized shared
+                    context.
+                    """
+                    existing = store.load_shared_for_agent(
+                        conversation_id, _context_agent)
+                    if not existing:
+                        return None, ""
                     try:
-                        messages = self._deserialize_messages(existing, conversation_id=conversation_id)
-                        # Filter out display-only messages (sub-agent traces)
-                        # display_only messages already filtered by _deserialize_messages
-                        logger.info(f"[context:{conversation_id[:8]}] loaded messages as context: "
+                        shared_msgs = self._deserialize_messages(
+                            existing, conversation_id=conversation_id)
+                    except (KeyError, TypeError) as deser_err:
+                        logger.error(
+                            f"[context:{conversation_id[:8]}] shared load failed: {deser_err}")
+                        return None, ""
+
+                    try:
+                        from core.bucket_store import BucketStore
+                        _bs = BucketStore.get(store._conv_dir(conversation_id))
+                        _pyramid_header = _bs.assemble_summary_header()
+                        _last_seq = int(getattr(_bs, "last_seq", 0) or 0)
+                    except Exception:
+                        _pyramid_header = ""
+                        _last_seq = 0
+
+                    if _pyramid_header:
+                        tail = [
+                            m for m in shared_msgs
+                            if int(getattr(m, "seq", 0) or 0) > _last_seq
+                        ]
+                        if not tail:
+                            tail = shared_msgs[-20:]
+                        if tail:
+                            _frt = min(getattr(m, "timestamp", 0) or 0 for m in tail)
+                            _frs = min(getattr(m, "seq", 0) or 0 for m in tail)
+                        else:
+                            import time as _time
+                            _frt = _time.time()
+                            _frs = _last_seq + 2
+                        out = []
+                        if shared_msgs and shared_msgs[0].role == "system":
+                            out.append(shared_msgs[0])
+                        out.append(LLMMessage(
+                            role="user",
+                            content=(
+                                _pyramid_header +
+                                "\nThe recent messages below are the current state. "
+                                "Do NOT restart or re-propose completed work. "
+                                "If you need more detail than the summary above "
+                                "(commits, file contents, tool arguments), call read_history."
+                            ),
+                            timestamp=_frt - 0.002,
+                            seq=_frs - 2,
+                            source={"type": "context"},
+                            conversation_id=conversation_id,
+                        ))
+                        out.append(LLMMessage(
+                            role="assistant",
+                            content=(
+                                "Understood. I have the summary and will "
+                                "continue from the recent messages."
+                            ),
+                            timestamp=_frt - 0.001,
+                            seq=_frs - 1,
+                            source={"type": "context"},
+                            conversation_id=conversation_id,
+                        ))
+                        out.extend(tail)
+                        return out, "pyramid"
+                    return shared_msgs, "shared"
+
+                _cold_cli_initial = None
+                _cold_cli_initial_source = ""
+                if _is_cli_provider and not _cli_has_session:
+                    _cold_cli_initial, _cold_cli_initial_source = _load_pawflow_initial_context()
+
+                context_data = store.load_agent_context(conversation_id, _context_agent)
+                _uses_pawflow_initial = False
+                if context_data is not None:
+                    # Context has diverged — use it directly unless a cold CLI
+                    # session would be starved by a stale/truncated agent file.
+                    try:
+                        messages = self._deserialize_messages(
+                            context_data, conversation_id=conversation_id)
+                        _context_diverged = True
+                        logger.info(f"[context:{conversation_id[:8]}] loaded diverged context: "
                                     f"{len(messages)} messages")
                     except (KeyError, TypeError) as deser_err:
-                        logger.error(f"[context:{conversation_id[:8]}] message load failed: {deser_err}")
-                    # Normal load — compact if needed (skip only for active resume)
-                    if not _claude_has_session:
+                        logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
+                    if (_cold_cli_initial and messages
+                            and len(_cold_cli_initial) > len(messages)):
+                        logger.warning(
+                            "[context:%s] cold CLI session has truncated agent context "
+                            "(%d msg); using PawFlow initial %s context (%d msg)",
+                            conversation_id[:8], len(messages),
+                            _cold_cli_initial_source, len(_cold_cli_initial))
+                        messages = _cold_cli_initial
+                        _context_diverged = False
+                        _uses_pawflow_initial = True
+                    # Diverged context = manually edited → send as-is, no compact.
+                    # PawFlow initial shared context may still compact normally.
+                    if not _context_diverged and not (_uses_pawflow_initial and _cold_cli_initial_source == "pyramid"):
+                        _uid = flowfile.get_attribute("http.auth.principal") or ""
+                        messages = self._auto_compact_messages(
+                            messages, conversation_id, _context_agent, _uid,
+                            max_context=_max_ctx)
+                else:
+                    # No divergence — start from PawFlow initial context:
+                    # pyramid+tail when available, otherwise shared context.
+                    if _cold_cli_initial:
+                        messages = _cold_cli_initial
+                        _uses_pawflow_initial = True
+                        logger.info(
+                            f"[context:{conversation_id[:8]}] loaded PawFlow initial "
+                            f"{_cold_cli_initial_source} context: {len(messages)} messages")
+                    else:
+                        messages, _cold_cli_initial_source = _load_pawflow_initial_context()
+                        if messages:
+                            logger.info(f"[context:{conversation_id[:8]}] loaded messages as context: "
+                                        f"{len(messages)} messages")
+                    if messages and not (_uses_pawflow_initial and _cold_cli_initial_source == "pyramid"):
                         _uid2 = flowfile.get_attribute("http.auth.principal") or ""
                         messages = self._auto_compact_messages(
                             messages, conversation_id, _context_agent, _uid2,
                             max_context=_max_ctx)
-                else:
-                    logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
-                                   f"starting fresh conversation")
+                    elif not messages:
+                        logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
+                                       f"starting fresh conversation")
         elif conv_attr:
             existing = flowfile.get_attribute(conv_attr)
             if existing:

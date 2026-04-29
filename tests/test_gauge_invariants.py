@@ -326,6 +326,20 @@ def test_context_editor_never_treats_transcript_as_agent_context():
     assert "delete_context_messages" in src
 
 
+def test_cold_cli_session_rebuilds_from_pawflow_initial_context():
+    """When a CLI provider has no persisted session, a stale private agent
+    context must not starve the new CLI session; PawFlow's canonical context
+    comes from the shared pyramid when available, otherwise shared context.
+    """
+    src = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+    assert "def _load_pawflow_initial_context" in src
+    assert "assemble_summary_header" in src
+    assert "store.load_shared_for_agent" in src
+    assert "cold CLI session has truncated agent context" in src
+    assert "gemini_acp_session_version" in src
+    assert "codex_app_server_thread" in src
+
+
 # ---------------------------------------------------------------------------
 # Tiny brace-counting JS function-body extractor — plenty for our checks.
 # ---------------------------------------------------------------------------

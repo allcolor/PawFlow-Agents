@@ -192,6 +192,33 @@ class TestCCAliases(unittest.TestCase):
         assert received.get("file_path") == "cc"
 
 
+class TestMetaToolAliases(unittest.TestCase):
+
+    def test_read_file_alias_resolves_schema_and_execution(self):
+        from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
+
+        reg = ToolRegistry()
+        reg.register(MockHandler(
+            name="read",
+            schema={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            result="read-ok",
+        ))
+
+        schema = json.loads(GetToolSchemaHandler(reg).execute({"tool_name": "read_file"}))
+        assert schema["name"] == "read"
+        assert schema["parameters"]["required"] == ["path"]
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "read_file",
+            "arguments": {"path": "/tmp/a.py"},
+        })
+        assert result == "read-ok"
+
+
 class TestJsonStringUnwrapping(unittest.TestCase):
 
     def setUp(self):

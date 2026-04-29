@@ -275,6 +275,7 @@ def test_mcp_bridge_aliases_gemini_builtin_list_directory_to_list_dir():
     alias_block = src[src.index("_TOOL_ALIASES = {"):
                       src.index("# Case-insensitive alias lookup")]
     assert '"list_directory": "list_dir"' in alias_block
+    assert '"read_file": "read"' in alias_block
 
 
 def test_gemini_acp_permission_result_accepts_pawflow_allow_option():

@@ -14,6 +14,17 @@ from core.tool_handler import ToolHandler
 logger = logging.getLogger(__name__)
 
 
+_TOOL_ALIASES = {
+    "read_file": "read",
+}
+
+
+def _canonical_tool_name(name: str) -> str:
+    if not isinstance(name, str):
+        return ""
+    return _TOOL_ALIASES.get(name) or _TOOL_ALIASES.get(name.lower()) or name
+
+
 class GetToolSchemaHandler(ToolHandler):
     """Return the full JSON schema of a tool so the LLM can call it via use_tool."""
 
@@ -61,6 +72,7 @@ class GetToolSchemaHandler(ToolHandler):
         _raw = name
         if name.startswith("mcp__pawflow__"):
             name = name[len("mcp__pawflow__"):]
+        name = _canonical_tool_name(name)
         if name in ("get_tool_schema", "use_tool"):
             return json.dumps({
                 "error": (f"'{_raw}' is an MCP dispatcher — call "
@@ -162,6 +174,7 @@ class UseToolHandler(ToolHandler):
         # inside use_tool, `tool_name` is the BARE PawFlow name.
         if tool_name.startswith("mcp__pawflow__"):
             tool_name = tool_name[len("mcp__pawflow__"):]
+        tool_name = _canonical_tool_name(tool_name)
         if not tool_name:
             return (
                 "Error: missing 'tool_name' in use_tool arguments. "

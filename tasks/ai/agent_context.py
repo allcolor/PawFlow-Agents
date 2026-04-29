@@ -513,16 +513,14 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         return None, ""
                     return shared_msgs, "shared"
 
-                _cold_cli_initial = None
-                _cold_cli_initial_source = ""
-                if _is_cli_provider and not _cli_has_session:
-                    _cold_cli_initial, _cold_cli_initial_source = _load_pawflow_initial_context()
-
                 context_data = store.load_agent_context(conversation_id, _context_agent)
                 _uses_pawflow_initial = False
                 if context_data is not None:
-                    # Context has diverged — use it directly unless a cold CLI
-                    # session would be starved by a stale/truncated agent file.
+                    # Agent context exists: use it as the PawFlow agent
+                    # context. For CLI providers, a valid session means the
+                    # provider resume path sends only the delta; no valid
+                    # session means the new CLI process receives this full
+                    # PawFlow agent context.
                     try:
                         messages = self._deserialize_messages(
                             context_data, conversation_id=conversation_id)
@@ -531,38 +529,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                     f"{len(messages)} messages")
                     except (KeyError, TypeError) as deser_err:
                         logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
-                    if (_cold_cli_initial and messages
-                            and len(_cold_cli_initial) > len(messages)):
-                        logger.warning(
-                            "[context:%s] cold CLI session has truncated agent context "
-                            "(%d msg); using PawFlow initial %s context (%d msg)",
-                            conversation_id[:8], len(messages),
-                            _cold_cli_initial_source, len(_cold_cli_initial))
-                        messages = _cold_cli_initial
-                        _context_diverged = False
-                        _uses_pawflow_initial = True
-                    # Diverged context = manually edited → send as-is, no compact.
-                    # PawFlow initial shared context may still compact normally.
-                    if not _context_diverged:
-                        _uid = flowfile.get_attribute("http.auth.principal") or ""
-                        messages = self._auto_compact_messages(
-                            messages, conversation_id, _context_agent, _uid,
-                            max_context=_max_ctx)
                 else:
-                    # No divergence — start from PawFlow initial shared context.
-                    # _auto_compact_messages will use buckets only if needed.
-                    if _cold_cli_initial:
-                        messages = _cold_cli_initial
+                    # No established agent context: build it from PawFlow
+                    # shared context. _auto_compact_messages decides whether
+                    # buckets are needed to fit the provider context window.
+                    messages, _cold_cli_initial_source = _load_pawflow_initial_context()
+                    if messages:
                         _uses_pawflow_initial = True
                         logger.info(
                             f"[context:{conversation_id[:8]}] loaded PawFlow initial "
-                            f"{_cold_cli_initial_source} context: {len(messages)} messages")
-                    else:
-                        messages, _cold_cli_initial_source = _load_pawflow_initial_context()
-                        if messages:
-                            logger.info(f"[context:{conversation_id[:8]}] loaded messages as context: "
-                                        f"{len(messages)} messages")
-                    if messages:
+                            f"{_cold_cli_initial_source or 'shared'} context: {len(messages)} messages")
                         _uid2 = flowfile.get_attribute("http.auth.principal") or ""
                         messages = self._auto_compact_messages(
                             messages, conversation_id, _context_agent, _uid2,
@@ -570,6 +546,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     else:
                         logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
                                        f"starting fresh conversation")
+
         elif conv_attr:
             existing = flowfile.get_attribute(conv_attr)
             if existing:

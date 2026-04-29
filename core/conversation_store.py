@@ -667,6 +667,29 @@ class ConversationStore:
                 line = self._stamp_line(cid, dict(m))
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
+    def _seed_agent_context_from_shared_if_missing(self, cid: str, agent: str) -> int:
+        """Initialize a new agent context from shared before its first row.
+
+        The first user message routed to an agent must not create a private
+        context containing only that message. If no private context exists yet,
+        copy the current shared context personalized for this agent, then let
+        the caller append the new row.
+        """
+        agent = self._canon_agent(agent) if agent else ""
+        if not agent:
+            return 0
+        path = self._agent_ctx_path(cid, agent)
+        if path.exists():
+            return 0
+        seed = self.load_shared_for_agent(cid, agent) or []
+        if not seed:
+            return 0
+        self._write_ctx_file(path, seed)
+        logger.info(
+            "[context:%s] seeded %s context from shared before first append: %d messages",
+            cid[:8], agent, len(seed))
+        return len(seed)
+
     @staticmethod
     def _prefix_content(content, prefix: str):
         """Prefix content with a tag. Handles both string and multipart (list) content."""
@@ -1239,6 +1262,9 @@ class ConversationStore:
                 # 2. Author's own context (brut, keeps tool_calls /
                 #    tool results; also target of context injections).
                 if agent_name:
+                    if src_type != "context":
+                        self._seed_agent_context_from_shared_if_missing(
+                            cid, agent_name)
                     self._append_ctx_file(cid, agent_name, [msg])
 
                 # 3. Shared + broadcast to other agents — only for

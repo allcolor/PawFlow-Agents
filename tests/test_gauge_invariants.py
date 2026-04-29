@@ -383,17 +383,24 @@ def test_context_editor_never_treats_transcript_as_agent_context():
     assert "delete_context_messages" in src
 
 
-def test_cold_cli_session_rebuilds_from_pawflow_initial_context():
-    """When a CLI provider has no persisted session, a stale private agent
-    context must not starve the new CLI session; PawFlow's canonical start
-    context comes from shared first, then normal compaction decides whether
-    buckets are needed.
+def test_missing_agent_context_is_seeded_from_shared_before_first_append():
+    """The first message routed to a new agent context must not create a
+    one-message private context. The store seeds the agent file from shared
+    before appending the current row; context preparation then treats an
+    existing agent context as authoritative.
     """
+    store_src = Path("core/conversation_store.py").read_text(encoding="utf-8")
+    assert "def _seed_agent_context_from_shared_if_missing" in store_src
+    assert "copy the current shared context personalized for this agent" in store_src
+    assert "_seed_agent_context_from_shared_if_missing(\n                            cid, agent_name)" in store_src
+
     src = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
     assert "def _load_pawflow_initial_context" in src
     assert "store.load_shared_for_agent" in src
-    assert "cold CLI session has truncated agent context" in src
-    assert "messages = self._auto_compact_messages" in src
+    assert "Agent context exists: use it as the PawFlow agent" in src
+    assert "No established agent context: build it from PawFlow" in src
+    assert "cold CLI session has truncated agent context" not in src
+    assert "len(_cold_cli_initial) > len(messages)" not in src
     assert "_materialize_pawflow_initial_context" in src
     assert "_pawflow_initial_context_source" in src
     assert "gemini_acp_session_version" in src

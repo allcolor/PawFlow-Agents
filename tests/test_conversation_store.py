@@ -290,6 +290,25 @@ class TestAppendMessage:
         assert bot_ctx and any("hi bot" in str(m.get("content", ""))
                                for m in bot_ctx)
 
+    def test_first_target_message_seeds_missing_agent_context_from_shared(
+            self, conv):
+        store, cid, uid = conv
+        seed = _msg(role="assistant", content="previous analysis",
+                    source={"type": "agent", "name": "other"})
+        store.append_message(cid, seed, agent_name="other", user_id=uid)
+
+        current = _msg(role="user", content="new request",
+                       source={"type": "user", "name": uid,
+                               "target_agent": "bot"})
+        store.append_message(cid, current, agent_name="bot", user_id=uid)
+
+        bot_ctx = store.load_agent_context(cid, "bot")
+        assert bot_ctx
+        contents = [str(m.get("content", "")) for m in bot_ctx]
+        assert any("previous analysis" in c for c in contents)
+        assert any("new request" in c for c in contents)
+        assert len(bot_ctx) >= 2
+
     def test_assistant_plain_text_goes_to_shared(self, conv):
         store, cid, uid = conv
         m = _msg(role="assistant", content="done",

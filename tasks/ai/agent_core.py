@@ -323,10 +323,10 @@ class AgentCoreMixin:
         if len(messages) > base_count:
             new_messages.extend(messages[base_count:])
 
-        # Cold CLI sessions (CC/Codex/Gemini) are initialized from PawFlow's
-        # canonical shared context when the private agent context is missing or
-        # truncated. Materialize that exact start context immediately so the
-        # context editor and later turns see the same state as the provider.
+        # When an agent context does not exist, preparation builds it from
+        # PawFlow shared context. Materialize that exact start context
+        # immediately so the context editor and later turns see the same state
+        # as the provider.
         if (ctx.get("_materialize_pawflow_initial_context") and use_conv_store
                 and conversation_id and ctx.get("active_agent_name")):
             try:

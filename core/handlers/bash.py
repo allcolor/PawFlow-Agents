@@ -217,12 +217,42 @@ class BashHandler(BaseFsHandler):
                  or arguments.get("filesystem", "") or arguments.get("service", ""))
         svc, workdir = self._resolve(relay)
 
-        # Output file in workdir or temp
-        if workdir:
+        out_path = ""
+        out_disk_path = None
+        filename = f"bash_bg_{bg_id}.out"
+        if self._user_id and self._conversation_id:
+            try:
+                from core.file_store import FileStore
+                store = FileStore.instance()
+                file_id = store.store(
+                    filename,
+                    b"(background command still running)\n",
+                    "text/plain",
+                    conversation_id=self._conversation_id,
+                    user_id=self._user_id,
+                    agent_name=self._agent_name,
+                    category="tool_result",
+                )
+                out_path = f"fs://filestore/{file_id}/{filename}"
+                out_disk_path = store.get_disk_path(file_id, user_id=self._user_id)
+            except Exception:
+                logger.debug("[bash-bg] failed to allocate FileStore output", exc_info=True)
+
+        # Fallback only for non-agent contexts without FileStore scope.
+        if not out_path and workdir:
             out_dir = workdir
-        else:
+            out_path = os.path.join(out_dir, f".bash_bg_{bg_id}.out")
+        elif not out_path:
             out_dir = tempfile.gettempdir()
-        out_path = os.path.join(out_dir, f".bash_bg_{bg_id}.out")
+            out_path = os.path.join(out_dir, f".bash_bg_{bg_id}.out")
+
+        def _write_output(text: str):
+            content = text or "(no output)"
+            if out_disk_path is not None:
+                out_disk_path.write_text(content, encoding="utf-8")
+                return
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(content)
 
         def _bg_run():
             try:
@@ -240,11 +270,12 @@ class BashHandler(BaseFsHandler):
                     output += "\nSTDERR:\n" + result["stderr"]
                 if result.get("returncode", 0) != 0:
                     output += f"\n(exit code: {result['returncode']})"
-                with open(out_path, "w", encoding="utf-8") as f:
-                    f.write(output or "(no output)")
+                _write_output(output or "(no output)")
             except Exception as e:
-                with open(out_path, "w", encoding="utf-8") as f:
-                    f.write(f"Error: {e}")
+                try:
+                    _write_output(f"Error: {e}")
+                except Exception:
+                    logger.exception("[bash-bg] failed to write background output")
 
         thread = threading.Thread(target=_bg_run, daemon=True, name=f"bash-bg-{bg_id}")
         thread.start()
@@ -252,7 +283,10 @@ class BashHandler(BaseFsHandler):
             "thread": thread, "output_file": out_path,
             "command": command[:100], "started_at": time.time(),
         }
-        return f"Background command started (id: {bg_id}). Output file: {out_path}\nUse read(path=\"{out_path}\") to check output."
+        read_hint = f'read(path="{out_path}"'
+        read_hint += ")"
+        return (f"Background command started (id: {bg_id}). Output file: {out_path}\n"
+                f"Use {read_hint} to check output.")
 
     def _exec_local_raw(self, command: str, arguments: dict) -> dict:
         """Execute locally, return dict with stdout/stderr/returncode."""

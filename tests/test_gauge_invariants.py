@@ -29,6 +29,9 @@ _ACTIVE_AGENTS_JS = Path(
     "tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
 _SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
 _RESOURCES_JS = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
+_SERVICES_JS = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
+_TABS_JS = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
+_FLOW_GRAPH_HTML = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
 _AGENT_CONTEXT_PY = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
 _AGENT_CORE_PY = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 _CONTEXT_OPS_PY = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
@@ -69,6 +72,21 @@ def test_compact_progress_done_marks_compact_pending():
     # markCompactJustHappened with the agent name.
     assert "markCompactJustHappened(agent)" in _SSE_JS, (
         "compact_progress 'done' must call markCompactJustHappened")
+
+
+def test_flow_graph_opens_reactflow_via_blob_to_avoid_frame_refusal():
+    assert "_openFlowGraphTab(instanceId)" in _SERVICES_JS
+    assert "window.__PAWFLOW_FLOW_INSTANCE_ID" in _SERVICES_JS
+    assert "addBlobHtmlTab(instanceId, html)" in _SERVICES_JS
+    assert "URL.createObjectURL(blob)" in _TABS_JS
+    assert "URL.revokeObjectURL" in _TABS_JS
+    assert "ReactFlow" in _FLOW_GRAPH_HTML
+    assert "@xyflow/react" in _FLOW_GRAPH_HTML
+    assert "window.__PAWFLOW_FLOW_INSTANCE_ID" in _FLOW_GRAPH_HTML
+    assert "ReactFlow base CSS inlined" in _FLOW_GRAPH_HTML
+    assert '<link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.6.0/dist/style.css">' not in _FLOW_GRAPH_HTML
+    assert "panOnDrag: true" in _FLOW_GRAPH_HTML
+    assert "zoomOnScroll: true" in _FLOW_GRAPH_HTML
 
 
 def test_compact_progress_done_applies_gauge_immediately():

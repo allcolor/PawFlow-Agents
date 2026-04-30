@@ -300,10 +300,57 @@ function addBrowserTab(label, iframeSrc) {
   return tabId;
 }
 
+/** Add a browser-like tab backed by a Blob URL.
+ *  Use this for same-origin HTML pages when deployment headers refuse framing;
+ *  unlike srcdoc it still lets module/CDN imports behave like a normal page.
+ */
+function addBlobHtmlTab(label, html) {
+  const tabId = 'browse-' + label.replace(/[^a-zA-Z0-9._-]/g, '_');
+  if (document.getElementById('tabContent_' + tabId)) {
+    switchTab(tabId);
+    return tabId;
+  }
+
+  const btn = document.createElement('button');
+  btn.className = 'tab-btn';
+  btn.dataset.tab = tabId;
+  btn.title = label;
+  btn.onclick = (e) => {
+    if (e.target.classList.contains('tab-close')) return;
+    switchTab(tabId);
+  };
+  btn.innerHTML = '<span style="font-size:13px">\ud83c\udf10</span>'
+    + '<span class="tab-close" onclick="closeBrowserTab(\'' + tabId + '\')">&times;</span>';
+
+  const spacer = document.querySelector('.tab-spacer');
+  spacer.parentNode.insertBefore(btn, spacer);
+
+  const panel = document.createElement('div');
+  panel.className = 'tab-content';
+  panel.id = 'tabContent_' + tabId;
+  panel.dataset.tab = tabId;
+
+  const iframe = document.createElement('iframe');
+  const blob = new Blob([html], { type: 'text/html' });
+  const blobUrl = URL.createObjectURL(blob);
+  panel.dataset.blobUrl = blobUrl;
+  iframe.src = blobUrl;
+  iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
+  iframe.allow = 'clipboard-read; clipboard-write';
+  panel.appendChild(iframe);
+
+  document.querySelector('.main').appendChild(panel);
+  switchTab(tabId);
+  return tabId;
+}
+
 /** Close a browser tab. */
 function closeBrowserTab(tabId) {
   const panel = document.getElementById('tabContent_' + tabId);
-  if (panel) panel.remove();
+  if (panel) {
+    if (panel.dataset.blobUrl) URL.revokeObjectURL(panel.dataset.blobUrl);
+    panel.remove();
+  }
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
   if (_activeTab === tabId) switchTab('chat');

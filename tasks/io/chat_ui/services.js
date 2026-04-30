@@ -22,7 +22,7 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
     item('\u25B6 Start...', () => _showFlowStartDialog(instanceId));
   }
   item('\u270F Edit params...', () => _showFlowStartDialog(instanceId, true));
-  item('\ud83d\udcc8 View graph', () => addBrowserTab(instanceId, '/chat/js/flow_graph.html?instance_id=' + encodeURIComponent(instanceId)));
+  item('\ud83d\udcc8 View graph', () => _openFlowGraphTab(instanceId));
   if (scope === 'conversation') {
     item('\u2B06 Promote to user', () => {
       action$('promote_flow', { instance_id: instanceId, target_scope: 'user' }).subscribe({
@@ -42,6 +42,20 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
     _flowAction(instanceId, 'undeploy_flow');
   }, true);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
+}
+
+async function _openFlowGraphTab(instanceId) {
+  try {
+    const graphUrl = '/chat/js/flow_graph.html?instance_id=' + encodeURIComponent(instanceId);
+    const resp = await fetch(graphUrl, { credentials: 'same-origin' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    let html = await resp.text();
+    const bootstrap = '<script>window.__PAWFLOW_FLOW_INSTANCE_ID=' + JSON.stringify(instanceId) + ';<\/script>\n';
+    html = html.replace('<script type="module">', bootstrap + '<script type="module">');
+    addBlobHtmlTab(instanceId, html);
+  } catch (e) {
+    addMsg('error', 'Unable to open flow graph: ' + (e.message || e));
+  }
 }
 
 function _showFlowStartDialog(instanceId, editOnly) {

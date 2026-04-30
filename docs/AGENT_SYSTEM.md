@@ -142,6 +142,20 @@ The system prompt is assembled in layers during `_prepare_agent_context()`:
 
 If a file named `{agent_name}.md` exists in the relay filesystem root, its content is injected into the context as project instructions (after the system prompt, or after a conversation summary if one exists). This allows per-project, per-agent customization without modifying the agent definition.
 
+### Programmable Skills
+
+Skills may declare `template_engine: jinja` in their YAML frontmatter. These prompts are rendered only at provider-context construction time, never persisted in JSONL and never sent to the summarizer. The Jinja environment is sandboxed and receives a read-only `pawflow` object scoped to the current user/conversation/agent.
+
+Available dynamic context includes:
+
+- `pawflow.conversation`, `pawflow.relays`, and `pawflow.default_relay`;
+- `pawflow.agents` and `pawflow.current_agent`;
+- `pawflow.media_services(kind)` and `pawflow.default_media_service(kind)`;
+- `pawflow.tool_schema(name)`;
+- `pawflow.service(service_id)`.
+
+The exposed data is a sanitized snapshot: no secrets, relay tokens, mutable stores, arbitrary filesystem access, or network calls are available to templates.
+
 ### Context Loading
 
 Messages are loaded from the conversation store with these strategies:

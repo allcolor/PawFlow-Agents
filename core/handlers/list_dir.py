@@ -46,7 +46,7 @@ class ListDirHandler(BaseFsHandler):
             return self._no_target_error(source)
 
         try:
-            entries = svc.list_dir(path)
+            entries = svc.list_dir(path, local=bool(arguments.get("local", False)))
             _svc_id = source or getattr(svc, 'service_id', '') or 'fs'
             _base = f"fs://{_svc_id}/{path.rstrip('/')}/" if path != "." else f"fs://{_svc_id}/"
             lines = []

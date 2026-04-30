@@ -106,6 +106,28 @@ class RelayFuseLaunchTests(unittest.TestCase):
             self.assertIn(needle, src,
                           f'docker/relay-dev/Dockerfile must contain: {needle}')
 
+    def test_dockerfile_installs_codex_cli(self):
+        import os
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'docker', 'relay-dev', 'Dockerfile')
+        with open(path, 'r') as f:
+            src = f.read()
+        self.assertIn('@openai/codex', src)
+
+    def test_worker_forwards_local_flag_to_host_helper(self):
+        from pawflow_relay import worker
+        src = inspect.getsource(worker)
+        self.assertIn('msg.get("local", False)', src)
+        self.assertIn('Start relay with --allow-local', src)
+        self.assertIn('Local execution requested but host helper is unavailable', src)
+
+    def test_host_helper_executes_forwarded_filesystem_actions(self):
+        from pawflow_relay import thread
+        src = inspect.getsource(thread)
+        self.assertIn('from fs_actions import ACTIONS as _FS_ACTIONS', src)
+        self.assertIn('handler(self.directory, abs_path, req, allow_exec=True)', src)
+
 
 if __name__ == '__main__':
     unittest.main()

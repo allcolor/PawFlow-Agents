@@ -405,6 +405,14 @@ def test_accepted_live_preempt_keeps_pending_rescue():
     assert "even_if_active=True" in src
 
 
+def test_final_drain_only_suppresses_proven_preempt_rescue_messages():
+    emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
+    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    assert "_msg._pending_source = _qmsg.get(\"_pending_source\"" in emitter_src
+    assert "_unhandled_user_msgs" in core_src
+    assert 'getattr(m, "_pending_source", "") != "preempt_rescue"' in core_src
+
+
 def test_pending_wake_is_not_lost_while_conversation_is_still_active():
     loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
     poller_src = Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")

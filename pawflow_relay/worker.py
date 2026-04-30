@@ -369,6 +369,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         if readonly and action in _WRITE_ACTIONS:
             return {"ok": False, "error": "Operation not allowed in readonly mode"}
 
+        if msg.get("local", False):
+            if not allow_local:
+                return {"ok": False, "error": "Local execution disabled. Start relay with --allow-local"}
+            _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
+            if not _host_helper:
+                return {"ok": False, "error": "Local execution requested but host helper is unavailable"}
+            _fwd = {k: v for k, v in msg.items() if k != "local"}
+            return _forward_to_host_helper(_host_helper, _fwd, ws_sock_ref[0], _ws_frame_send)
+
         abs_path = _resolve(rel_path)
         if abs_path is None:
             return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}

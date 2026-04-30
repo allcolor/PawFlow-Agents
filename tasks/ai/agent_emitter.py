@@ -473,6 +473,7 @@ class StreamEmitter(AgentEmitter):
                 msg_id=_mid, timestamp=_ts or 0.0, seq=_seq or 0,
                 conversation_id=self.conversation_id,
             )
+            _msg._pending_source = _qmsg.get("_pending_source", "") or ""
             append_fn(_msg)
 
         # Source 3 (transcript scan) removed. Cross-channel and cross-agent

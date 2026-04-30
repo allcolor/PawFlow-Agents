@@ -143,6 +143,8 @@ class GrepHandler(BaseFsHandler):
                 _grep_kwargs["limit"] = limit
             if offset:
                 _grep_kwargs["offset"] = offset
+            if arguments.get("local", False):
+                _grep_kwargs["local"] = True
             results = svc.grep(path, pattern, recursive, **_grep_kwargs)
             if isinstance(results, str):
                 return results  # relay returned formatted text

@@ -97,7 +97,8 @@ class BatchEditHandler(BaseFsHandler):
                 path = edit.get("path", "")
                 self._checkpoint_before(svc, path, service_name=service_name)
                 result = svc.edit(path, edit.get("old_string", ""),
-                                  edit.get("new_string", ""), False)
+                                  edit.get("new_string", ""), False,
+                                  local=bool(arguments.get("local", False)))
                 results.append(f"{path}: {result.get('replacements', 0)} replacement(s)")
             return "\n".join(results)
         except Exception as e:

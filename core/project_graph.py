@@ -209,7 +209,8 @@ class ProjectGraph:
 
     # ── Build via single relay exec ───────────────────────────────
 
-    def build_from_relay(self, fs_service, root_path: str = ".") -> Dict:
+    def build_from_relay(self, fs_service, root_path: str = ".",
+                         local: bool = False) -> Dict:
         """Build (or refresh) the project graph from the relay.
 
         Incremental: passes the relay the {file: mtime} map we already
@@ -228,16 +229,18 @@ class ProjectGraph:
             known_files: Dict[str, int] = (
                 self._graph.get("metadata", {}).get("files", {}) or {})
             script_name = ".pawflow_graph_extract.py"
-            fs_service.write_file(script_name, _RELAY_EXTRACT_SCRIPT.encode("utf-8"))
+            fs_service.write_file(script_name, _RELAY_EXTRACT_SCRIPT.encode("utf-8"),
+                                  local=local)
             try:
                 env = {
                     "PAWFLOW_GRAPH_ROOT": root_path,
                     "PAWFLOW_GRAPH_KNOWN": json.dumps(known_files),
                 }
-                result = fs_service.exec(".", f"python3 {script_name}", env=env)
+                result = fs_service.exec(".", f"python3 {script_name}", env=env,
+                                         local=local)
             finally:
                 try:
-                    fs_service.delete_file(script_name)
+                    fs_service.delete_file(script_name, local=local)
                 except Exception:
                     pass
 

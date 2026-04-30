@@ -56,7 +56,7 @@ class DeleteHandler(BaseFsHandler):
         try:
             service_name = fs or getattr(svc, '_service_id', '')
             self._checkpoint_before(svc, path, is_delete=True, service_name=service_name)
-            svc.delete_file(path)
+            svc.delete_file(path, local=bool(arguments.get("local", False)))
             return f"Deleted: {path}"
         except Exception as e:
             return f"Error deleting '{path}': {e}"

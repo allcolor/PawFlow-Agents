@@ -94,11 +94,25 @@ class ToolRelayService(BaseService):
         super().__init__(config)
         self._service_id = config.get("_service_id", "")
         self._connection = None  # main HTTPListenerService ref (set by connect)
+        try:
+            self._auto_bg_after_seconds = float(
+                config.get("auto_background_after_seconds", 0) or 0)
+        except (TypeError, ValueError):
+            self._auto_bg_after_seconds = 0.0
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "token": {"type": "string", "required": True, "sensitive": True,
                       "description": "Authentication token (MCP bridge must match)"},
+            "auto_background_after_seconds": {
+                "type": "number",
+                "required": False,
+                "default": 0,
+                "description": (
+                    "Optional auto-background delay for long tool calls. "
+                    "0 disables implicit backgrounding; use explicit "
+                    "run_in_background/background controls instead."),
+            },
         }
 
     @property
@@ -295,7 +309,7 @@ class ToolRelayService(BaseService):
     # In-flight request_id → (conv_id, agent_name) for targeted cancellation
     _inflight: Dict[str, tuple] = {}
     _inflight_lock = threading.Lock()
-    _auto_bg_after_seconds: float = 295.0
+    _auto_bg_after_seconds: float = 0.0
 
     @classmethod
     def cancel_request(cls, request_id: str) -> bool:
@@ -910,10 +924,15 @@ class ToolRelayService(BaseService):
             available = [h.name for h in registry.list_tools()]
             return {"type": "error", "request_id": request_id,
                     "error": f"Unknown tool '{tool_name}'. Available: {', '.join(available)}"}
+        try:
+            from core.handlers.meta_tools import _schema_with_local
+            schema = _schema_with_local(handler)
+        except Exception:
+            schema = handler.parameters_schema
         return {"type": "result", "request_id": request_id, "data": {
             "name": handler.name,
             "description": handler.description,
-            "parameters": handler.parameters_schema,
+            "parameters": schema,
         }}
 
     # Cache for idempotent retries: request_id → result dict
@@ -1064,16 +1083,16 @@ class ToolRelayService(BaseService):
         exec_thread = threading.Thread(target=_exec, daemon=True)
         exec_thread.start()
 
-        # Wait for completion, cancel, or background. Auto-BG fires before
-        # the 300s transport ceiling so the caller receives a placeholder
-        # instead of a raw MCP timeout.
-        _auto_bg_after = float(getattr(self, "_auto_bg_after_seconds", 295.0) or 295.0)
+        # Wait for completion, cancel, or explicit background. Optional auto-BG
+        # is disabled by default: there is no implicit timeout/backgrounding.
+        _auto_bg_after = max(0.0, float(getattr(self, "_auto_bg_after_seconds", 0.0) or 0.0))
         while not evt.is_set():
             _elapsed = time.time() - started_at
             # Auto-BG must not depend on a provider tool_call id: direct
             # MCP/tool-relay calls still need a placeholder before the
             # outer transport timeout.
-            if not background_event.is_set() and _elapsed >= _auto_bg_after:
+            if (_auto_bg_after > 0 and not background_event.is_set()
+                    and _elapsed >= _auto_bg_after):
                 logger.info("[tool-relay] auto-background after %ds for tc_id=%s",
                             int(_auto_bg_after), bg_tc_id)
                 background_event.set()
@@ -1144,8 +1163,11 @@ class ToolRelayService(BaseService):
                     self._inflight.pop(request_id, None)
                 return result
 
-            _remaining = _auto_bg_after - (time.time() - started_at)
-            _wait = min(0.5, max(0.01, _remaining)) if _remaining > 0 else 0.01
+            if _auto_bg_after > 0:
+                _remaining = _auto_bg_after - (time.time() - started_at)
+                _wait = min(0.5, max(0.01, _remaining)) if _remaining > 0 else 0.01
+            else:
+                _wait = 0.5
             if cancel_event.wait(timeout=_wait):
                 # Cancelled — return interrupt result immediately. The
                 # daemon thread is abandoned; best-effort subprocess kill
@@ -1315,6 +1337,13 @@ class ToolRelayService(BaseService):
 
         try:
             logger.debug("[tool-relay] execute %s [req=%s]", tool_name, request_id)
+            try:
+                handler = registry.get(tool_name)
+                from core.handlers.meta_tools import _normalize_tool_args
+                if handler and isinstance(arguments, dict):
+                    arguments = _normalize_tool_args(tool_name, arguments)
+            except Exception:
+                pass
             result = registry.execute(tool_name, arguments)
             result_str = str(result) if result is not None else "(no output)"
         except Exception as e:

@@ -53,7 +53,8 @@ class ApplyPatchHandler(BaseFsHandler):
         try:
             service_name = fs or getattr(svc, '_service_id', '')
             self._checkpoint_before(svc, path, service_name=service_name)
-            result = svc._request("apply_patch", path, patch=patch)
+            result = svc._request("apply_patch", path, patch=patch,
+                                  local=bool(arguments.get("local", False)))
             if isinstance(result, dict):
                 if result.get("applied") is False:
                     return f"Error: patch was not applied to {path}"

@@ -49,7 +49,7 @@ class ExistsHandler(BaseFsHandler):
             return self._no_target_error(source)
 
         try:
-            result = svc.exists(path)
+            result = svc.exists(path, local=bool(arguments.get("local", False)))
             return f"{'Exists' if result else 'Does not exist'}: {path}"
         except Exception as e:
             return f"Error: {e}"

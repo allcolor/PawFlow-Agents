@@ -49,7 +49,7 @@ class MkdirHandler(BaseFsHandler):
             return self._no_target_error(fs)
 
         try:
-            svc.mkdir(path)
+            svc.mkdir(path, local=bool(arguments.get("local", False)))
             return f"Created directory: {path}"
         except Exception as e:
             return f"Error: {e}"

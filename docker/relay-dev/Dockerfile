@@ -90,7 +90,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
        express @nestjs/cli next create-react-app \
        # Utilities
        nodemon concurrently pm2 http-server \
-       zod ajv \
+       zod ajv @openai/codex \
        # Database
        prisma drizzle-kit knex typeorm \
     && rm -rf /var/lib/apt/lists/*

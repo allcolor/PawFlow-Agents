@@ -131,7 +131,7 @@ class ReadHandler(BaseFsHandler):
 
         # Service — delegate
         try:
-            data = svc.read_file(path)
+            data = svc.read_file(path, local=bool(arguments.get("local", False)))
         except Exception as e:
             return f"Error reading '{path}': {e}"
 

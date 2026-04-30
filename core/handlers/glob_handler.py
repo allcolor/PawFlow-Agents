@@ -60,7 +60,8 @@ class GlobHandler(BaseFsHandler):
             return self._no_target_error(source)
 
         try:
-            results = svc.search(path, pattern, recursive)
+            results = svc.search(path, pattern, recursive,
+                                 local=bool(arguments.get("local", False)))
             return "\n".join(results) if results else "(no matches)"
         except Exception as e:
             return f"Error: {e}"

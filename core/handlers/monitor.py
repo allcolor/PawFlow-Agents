@@ -105,6 +105,13 @@ class MonitorHandler(ToolHandler):
                     "type": "string",
                     "description": "Relay service name (same semantics as bash tool).",
                 },
+                "local": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, execute through the relay host helper on the user's host. "
+                        "If false or omitted, execute inside the relay Docker container."
+                    ),
+                },
             },
             "required": ["command"],
         }
@@ -159,6 +166,8 @@ class MonitorHandler(ToolHandler):
         }
         if relay:
             bash_args["relay"] = relay
+        if arguments.get("local", False):
+            bash_args["local"] = True
 
         started_at = time.monotonic()
         try:

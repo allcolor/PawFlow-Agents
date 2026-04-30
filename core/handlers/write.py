@@ -94,7 +94,9 @@ class WriteHandler(BaseFsHandler):
         try:
             file_id = arguments.get("file_id", "")
             if file_id:
-                return self._write_from_filestore(file_id, path, svc=svc)
+                return self._write_from_filestore(
+                    file_id, path, svc=svc,
+                    local=bool(arguments.get("local", False)))
 
             content = (arguments.get("content") or arguments.get("command")
                        or arguments.get("data") or arguments.get("text") or "")
@@ -105,12 +107,14 @@ class WriteHandler(BaseFsHandler):
             self._checkpoint_before(svc, path,
                                     content.encode("utf-8") if isinstance(content, str) else content,
                                     service_name=service_name)
-            svc.write_file(path, content.encode("utf-8"))
+            svc.write_file(path, content.encode("utf-8"),
+                           local=bool(arguments.get("local", False)))
             return f"Written {len(content)} chars to {path}"
         except Exception as e:
             return f"Error writing '{path}': {e}"
 
-    def _write_from_filestore(self, file_id: str, path: str, svc=None, workdir: str = "") -> str:
+    def _write_from_filestore(self, file_id: str, path: str, svc=None,
+                              workdir: str = "", local: bool = False) -> str:
         """Copy a file from FileStore to a service or workdir."""
         from core.file_store import FileStore
         store = FileStore.instance()
@@ -133,5 +137,5 @@ class WriteHandler(BaseFsHandler):
             with open(full, "wb") as f:
                 f.write(data)
             return f"Copied {fname} ({len(data):,} bytes) to {path}"
-        svc.write_file(path, data)
+        svc.write_file(path, data, local=local)
         return f"Copied {fname} ({len(data):,} bytes) to {path}"

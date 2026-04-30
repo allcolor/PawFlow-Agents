@@ -127,7 +127,8 @@ class ProjectGraphHandler(BaseFsHandler):
             if workdir:
                 return "Error: project_graph build requires a relay filesystem service"
             # Build via relay
-            result = pg.build_from_relay(svc, path)
+            result = pg.build_from_relay(
+                svc, path, local=bool(arguments.get("local", False)))
             status = result.get("status", "?")
             if status == "built":
                 return (f"Project graph built: {result.get('nodes', 0)} nodes, "

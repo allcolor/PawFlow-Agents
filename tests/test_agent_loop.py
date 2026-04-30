@@ -531,7 +531,7 @@ class TestAgentLoopTask(unittest.TestCase):
         assert history_json is not None
         history = json.loads(history_json)
         roles = [m["role"] for m in history]
-        assert "system" in roles
+        assert "system" not in roles
         assert "user" in roles
         assert "assistant" in roles
 
@@ -547,7 +547,6 @@ class TestAgentLoopTask(unittest.TestCase):
         )
 
         existing_history = json.dumps([
-            {"role": "system", "content": "You are helpful."},
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi!"},
         ])
@@ -566,10 +565,10 @@ class TestAgentLoopTask(unittest.TestCase):
         # so we check the history stored in the output attribute
         history = json.loads(results[0].get_attribute("agent.history"))
         roles = [m["role"] for m in history]
-        # system, user, assistant (restored), user (new), assistant (new response)
-        assert roles == ["system", "user", "assistant", "user", "assistant"]
-        assert history[3]["content"] == "How are you?"
-        assert history[4]["content"] == "Still here!"
+        # Persisted history stays pure: system prompt is reconstructed per call.
+        assert roles == ["user", "assistant", "user", "assistant"]
+        assert history[2]["content"] == "How are you?"
+        assert history[3]["content"] == "Still here!"
 
     @patch.object(LLMClient, 'complete')
     def test_multiple_tool_calls_in_one_response(self, mock_complete):

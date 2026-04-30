@@ -120,14 +120,17 @@ class EditHandler(BaseFsHandler):
             if start_line > 0 and end_line > 0:
                 result = svc._request("edit", path,
                                       start_line=start_line, end_line=end_line,
-                                      new_string=new_string)
+                                      new_string=new_string,
+                                      local=bool(arguments.get("local", False)))
                 return (f"Edited {result.get('path', path)}: "
                         f"replaced lines {start_line}-{end_line} "
                         f"({result.get('lines_removed', 0)} removed, "
                         f"{result.get('lines_inserted', 0)} inserted)")
             else:
                 try:
-                    result = svc.edit(path, old_string, new_string, replace_all)
+                    result = svc.edit(
+                        path, old_string, new_string, replace_all,
+                        local=bool(arguments.get("local", False)))
                 except Exception as e:
                     # Record failure so the next identical old_string attempt
                     # gets refused by check_duplicate_failure.

@@ -24,6 +24,15 @@ _WRAPPER_TOOL_NAMES = {
     "use_tool",
 }
 
+_RELAY_SOURCE_TOOLS = {
+    "read", "grep", "glob", "list_dir", "stat", "exists", "see", "project_graph",
+}
+_RELAY_DESTINATION_TOOLS = {"write"}
+_RELAY_FILESYSTEM_TOOLS = {
+    "edit", "apply_patch", "notebook_edit", "delete", "mkdir",
+    "find_replace", "batch_edit",
+}
+
 
 def _canonical_tool_name(name: str) -> str:
     if not isinstance(name, str):
@@ -36,10 +45,69 @@ def _canonical_tool_name(name: str) -> str:
 
 
 def _normalize_tool_args(tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+    if "relay" in tool_args:
+        tool_args = dict(tool_args)
+        relay = tool_args.get("relay")
+        if tool_name in _RELAY_SOURCE_TOOLS and "source" not in tool_args:
+            tool_args["source"] = relay
+        elif tool_name in _RELAY_DESTINATION_TOOLS and "destination" not in tool_args:
+            tool_args["destination"] = relay
+        elif tool_name in _RELAY_FILESYSTEM_TOOLS and "filesystem" not in tool_args:
+            tool_args["filesystem"] = relay
+        elif tool_name == "copy":
+            if "source_service" not in tool_args:
+                tool_args["source_service"] = relay
+            if "dest_service" not in tool_args:
+                tool_args["dest_service"] = relay
     if tool_name == "bash" and "cwd" in tool_args and "path" not in tool_args:
         tool_args = dict(tool_args)
         tool_args["path"] = tool_args.pop("cwd")
+    if tool_name == "fetch" and "max_chars" in tool_args:
+        tool_args = dict(tool_args)
+        tool_args.setdefault("limit", tool_args.pop("max_chars"))
     return tool_args
+
+
+def _is_fs_handler(handler: Any) -> bool:
+    try:
+        from core.handlers._fs_base import BaseFsHandler
+        return isinstance(handler, BaseFsHandler)
+    except Exception:
+        return False
+
+
+def _schema_with_local(handler: Any) -> Dict[str, Any]:
+    schema = handler.parameters_schema or {}
+    if getattr(handler, "name", "") == "fetch":
+        schema = json.loads(json.dumps(schema))
+        props = schema.setdefault("properties", {})
+        props.setdefault("limit", {
+            "type": "integer",
+            "description": "Maximum number of characters to return from the fetched page.",
+        })
+        props.setdefault("max_chars", {
+            "type": "integer",
+            "description": "Alias for limit; maximum number of characters to return.",
+        })
+        return schema
+    if not _is_fs_handler(handler):
+        return schema
+    schema = json.loads(json.dumps(schema))
+    props = schema.setdefault("properties", {})
+    props.setdefault("relay", {
+        "type": "string",
+        "description": (
+            "Filesystem relay/service id to use. Equivalent to the filesystem "
+            "or service selector for filesystem-backed tools."),
+    })
+    props.setdefault("local", {
+        "type": "boolean",
+        "description": (
+            "If true, execute against the user's host via the relay host "
+            "helper instead of the relay Docker container. Requires the "
+            "relay to be started with --allow-local."),
+    })
+    return schema
 
 
 class GetToolSchemaHandler(ToolHandler):
@@ -104,7 +172,7 @@ class GetToolSchemaHandler(ToolHandler):
             "name": handler.name,
             "display_name": handler.display_name,
             "description": handler.description,
-            "parameters": handler.parameters_schema,
+            "parameters": _schema_with_local(handler),
         }, indent=2)
 
 
@@ -236,7 +304,7 @@ class UseToolHandler(ToolHandler):
         # Validate arguments against tool schema
         handler = self._registry.get(tool_name)
         if handler:
-            schema = handler.parameters_schema or {}
+            schema = _schema_with_local(handler)
             props = schema.get("properties", {})
             if props and isinstance(tool_args, dict):
                 unknown = [k for k in tool_args if k not in props]

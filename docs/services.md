@@ -29,11 +29,22 @@ Services are reusable integrations configured by id and referenced from flows, a
 | `oneDrive` | OneDrive filesystem backend. |
 | `browser` | Browser automation/screenshot/fetch support. |
 
+### Tool Relay Parameters
+
+`toolRelay` exposes PawFlow tools to CLI providers through the MCP bridge. Its
+required `token` authenticates bridge connections. The optional
+`auto_background_after_seconds` parameter defaults to `0`, which disables
+implicit backgrounding. Set it to a positive number only when a deployment wants
+long-running tool calls to return a background placeholder automatically; agents
+can still request background execution explicitly with tool-specific flags such
+as `bash(run_in_background=true)`.
+
 ## Media Services
 
 | Type | Purpose |
 |---|---|
 | `openaiImageGeneration` | OpenAI-backed image generation. |
+| `codexImageGeneration` | Codex CLI `$imagegen` generation/editing through a codex-app-server LLM service. |
 | `grokImageGeneration` | Grok/xAI-backed image generation. |
 | `grokVideoGeneration` | Grok/xAI-backed video generation. |
 | `klingVideoGeneration` | Kling video generation. |

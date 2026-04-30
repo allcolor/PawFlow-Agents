@@ -740,7 +740,43 @@ class RelayThread:
             conn.sendall(resp.encode("utf-8"))
 
         else:
-            resp = json.dumps({"type": "error", "error": f"Unknown action: {action}"}) + "\n"
+            try:
+                if not self.allow_local:
+                    raise PermissionError(
+                        "Local execution disabled. Start relay with --allow-local")
+                from fs_actions import ACTIONS as _FS_ACTIONS
+                handler = _FS_ACTIONS.get(action)
+                if not handler:
+                    raise ValueError(f"Unknown action: {action}")
+
+                def _host_abs(raw_path: str) -> str:
+                    raw = str(raw_path or ".").replace("\\", "/")
+                    if raw.startswith("fs://"):
+                        parts = raw[5:].split("/", 1)
+                        raw = parts[1] if len(parts) > 1 else "."
+                    root = Path(self.directory).resolve()
+                    if raw == "/workspace":
+                        target = root
+                    elif raw.startswith("/workspace/"):
+                        target = root / raw[len("/workspace/"):]
+                    elif raw.startswith("/"):
+                        target = Path(raw).resolve()
+                    else:
+                        target = (root / raw).resolve()
+                    try:
+                        target.relative_to(root)
+                    except ValueError:
+                        raise ValueError(f"Path traversal blocked: {raw_path}")
+                    return str(target)
+
+                abs_path = _host_abs(req.get("path", "."))
+                if action == "exec":
+                    result = handler(self.directory, abs_path, req, allow_exec=True)
+                else:
+                    result = handler(self.directory, abs_path, req)
+                resp = json.dumps({"type": "result", "data": result}) + "\n"
+            except Exception as e:
+                resp = json.dumps({"type": "error", "error": str(e)}) + "\n"
             conn.sendall(resp.encode("utf-8"))
 
     def _handle_host_screen_action(self, conn, req, action):

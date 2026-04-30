@@ -2176,9 +2176,13 @@ class AgentCoreMixin:
                               if m.role == "user" and m.msg_id not in _existing_ids]
             if _new_user_msgs:
                 _apply_queued_delegate_turn_mode(_new_user_msgs)
-            if _new_user_msgs and not _had_preempts:
+            _unhandled_user_msgs = [
+                m for m in _new_user_msgs
+                if getattr(m, "_pending_source", "") != "preempt_rescue"
+            ]
+            if _new_user_msgs and (not _had_preempts or _unhandled_user_msgs):
                 logger.info("[agent:%s] %d truly new message(s) arrived during last turn — re-triggering",
-                            conversation_id[:8], len(_new_user_msgs))
+                            conversation_id[:8], len(_unhandled_user_msgs or _new_user_msgs))
                 ctx["_retrigger_after_done"] = True
             elif _new_user_msgs and _had_preempts:
                 logger.info("[agent:%s] %d message(s) arrived but preempts were processed — NOT re-triggering",

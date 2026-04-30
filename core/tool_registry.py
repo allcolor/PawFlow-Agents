@@ -174,11 +174,12 @@ class ToolRegistry:
 
     def get_tool_definitions(self) -> List[Dict[str, Any]]:
         """Get tool definitions in a format suitable for LLMToolDefinition."""
+        from core.handlers.meta_tools import _schema_with_local
         return [
             {
                 "name": h.name,
                 "description": h.description,
-                "parameters": h.parameters_schema,
+                "parameters": _schema_with_local(h),
             }
             for h in self._handlers.values()
         ]
@@ -223,9 +224,18 @@ class ToolRegistry:
                     if _cc_name in args and _pf_name not in args:
                         if _cc_name not in _schema_props:
                             args[_pf_name] = args.pop(_cc_name)
+                try:
+                    from core.handlers.meta_tools import _normalize_tool_args
+                    args = _normalize_tool_args(name, args)
+                except Exception:
+                    pass
             # Validate: reject unknown arguments so the LLM learns
             if isinstance(args, dict) and hasattr(handler, 'parameters_schema'):
-                _schema = handler.parameters_schema
+                try:
+                    from core.handlers.meta_tools import _schema_with_local
+                    _schema = _schema_with_local(handler)
+                except Exception:
+                    _schema = handler.parameters_schema
                 _known = set((_schema.get("properties") or {}).keys())
                 if _known:
                     _unknown = [k for k in args if k not in _known and not k.startswith("_")]

@@ -1011,44 +1011,45 @@ class RelayService(BaseService):
 
     # ── Filesystem interface ──
 
-    def list_dir(self, path: str = "."):
+    def list_dir(self, path: str = ".", local: bool = False):
         from core.filesystem import FilesystemEntry
-        data = self._request("list_dir", path)
+        data = self._request("list_dir", path, local=local)
         return [FilesystemEntry(**e) if isinstance(e, dict) else e for e in data]
 
-    def read_file(self, path: str) -> bytes:
+    def read_file(self, path: str, local: bool = False) -> bytes:
         try:
-            data = self._request("read_file", path)
+            data = self._request("read_file", path, local=local)
             if isinstance(data, dict) and "content" in data:
                 return base64.b64decode(data["content"])
             return data.encode("utf-8") if isinstance(data, str) else data
         except Exception as e:
             if "too large" in str(e).lower():
-                return self._read_chunked(path)
+                return self._read_chunked(path, local=local)
             raise
 
-    def _read_chunked(self, path: str) -> bytes:
+    def _read_chunked(self, path: str, local: bool = False) -> bytes:
         """Read a large file in chunks via the relay."""
-        first = self._request("read_file_chunked", path)
+        first = self._request("read_file_chunked", path, local=local)
         chunks = [base64.b64decode(first["data"])]
         total_chunks = first.get("total_chunks", 1)
         chunk_size = first.get("chunk_size", 1024 * 1024)
         for i in range(1, total_chunks):
-            chunk = self._request("read_chunk", path, index=i, chunk_size=chunk_size)
+            chunk = self._request("read_chunk", path, index=i, chunk_size=chunk_size,
+                                  local=local)
             chunks.append(base64.b64decode(chunk["data"]))
             if chunk.get("done"):
                 break
         return b"".join(chunks)
 
-    def write_file(self, path: str, content: bytes):
+    def write_file(self, path: str, content: bytes, local: bool = False):
         if len(content) > 50 * 1024 * 1024:  # > 50MB → chunked
-            self._write_chunked(path, content)
+            self._write_chunked(path, content, local=local)
         else:
             self._request("write_file", path,
                            content=base64.b64encode(content).decode("ascii"),
-                           base64=True)
+                           base64=True, local=local)
 
-    def _write_chunked(self, path: str, content: bytes):
+    def _write_chunked(self, path: str, content: bytes, local: bool = False):
         """Write a large file in chunks via the relay."""
         chunk_size = 1024 * 1024  # 1MB
         total = len(content)
@@ -1058,54 +1059,62 @@ class RelayService(BaseService):
             self._request("write_file_chunked", path,
                            index=i // chunk_size,
                            data=base64.b64encode(chunk).decode("ascii"),
-                           done=done)
+                           done=done, local=local)
 
-    def delete_file(self, path: str):
-        self._request("delete_file", path)
+    def delete_file(self, path: str, local: bool = False):
+        self._request("delete_file", path, local=local)
 
-    def mkdir(self, path: str):
-        self._request("mkdir", path)
+    def mkdir(self, path: str, local: bool = False):
+        self._request("mkdir", path, local=local)
 
-    def stat(self, path: str):
+    def stat(self, path: str, local: bool = False):
         from core.filesystem import FilesystemEntry
         import dataclasses
-        data = self._request("stat", path)
+        data = self._request("stat", path, local=local)
         if isinstance(data, dict):
             # Filter to known fields only (relay may return extra like 'created')
             valid = {f.name for f in dataclasses.fields(FilesystemEntry)}
             return FilesystemEntry(**{k: v for k, v in data.items() if k in valid})
         return data
 
-    def exists(self, path: str) -> bool:
-        data = self._request("exists", path)
+    def exists(self, path: str, local: bool = False) -> bool:
+        data = self._request("exists", path, local=local)
         return data.get("exists", False) if isinstance(data, dict) else bool(data)
 
-    def search(self, path: str, pattern: str, recursive: bool = True):
-        return self._request("search", path, pattern=pattern, recursive=recursive)
+    def search(self, path: str, pattern: str, recursive: bool = True,
+               local: bool = False):
+        return self._request("search", path, pattern=pattern,
+                             recursive=recursive, local=local)
 
     def grep(self, path: str, regex: str, recursive: bool = True, **kwargs):
         return self._request("grep", path, regex=regex, recursive=recursive, **kwargs)
 
-    def find_replace(self, path: str, pattern: str, replacement: str):
-        return self._request("find_replace", path, pattern=pattern, replacement=replacement)
+    def find_replace(self, path: str, pattern: str, replacement: str,
+                     local: bool = False):
+        return self._request("find_replace", path, pattern=pattern,
+                             replacement=replacement, local=local)
 
-    def edit(self, path: str, old_string: str, new_string: str, replace_all: bool = False):
+    def edit(self, path: str, old_string: str, new_string: str,
+             replace_all: bool = False, local: bool = False):
         return self._request("edit", path, old_string=old_string,
-                              new_string=new_string, replace_all=replace_all)
+                              new_string=new_string, replace_all=replace_all,
+                              local=local)
 
-    def batch_edit(self, edits: list):
-        return self._request("batch_edit", ".", edits=edits)
+    def batch_edit(self, edits: list, local: bool = False):
+        return self._request("batch_edit", ".", edits=edits, local=local)
 
-    def apply_patch(self, patch: str):
-        return self._request("apply_patch", ".", patch=patch)
+    def apply_patch(self, patch: str, local: bool = False):
+        return self._request("apply_patch", ".", patch=patch, local=local)
 
     def edit_notebook(self, path: str, cell_index: int, new_source: str = "",
-                      cell_type: str = "", operation: str = "edit"):
+                      cell_type: str = "", operation: str = "edit",
+                      local: bool = False):
         return self._request("edit_notebook", path, cell_index=cell_index,
                               new_source=new_source, cell_type=cell_type,
-                              operation=operation)
+                              operation=operation, local=local)
 
-    def exec(self, path: str, command: str, timeout=None, shell: str = "", env: dict = None):
+    def exec(self, path: str, command: str, timeout=None, shell: str = "", env: dict = None,
+             local: bool = False):
         kwargs = {"command": command}
         if timeout is not None:
             kwargs["timeout"] = timeout
@@ -1113,6 +1122,8 @@ class RelayService(BaseService):
             kwargs["shell"] = shell
         if env:
             kwargs["env"] = env
+        if local:
+            kwargs["local"] = True
         return self._request("exec", path, **kwargs)
 
     def exec_stream(self, path: str, command: str, timeout=None,

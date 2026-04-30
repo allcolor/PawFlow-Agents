@@ -85,7 +85,7 @@ class SeeHandler(BaseFsHandler):
                 with open(full, "rb") as f:
                     data = f.read()
             elif svc:
-                data = svc.read_file(path)
+                data = svc.read_file(path, local=bool(arguments.get("local", False)))
             else:
                 return self._no_target_error(source)
         except Exception as e:

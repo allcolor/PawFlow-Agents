@@ -55,7 +55,8 @@ class FindReplaceHandler(BaseFsHandler):
         try:
             service_name = fs or getattr(svc, '_service_id', '')
             self._checkpoint_before(svc, path, service_name=service_name)
-            result = svc.find_replace(path, pattern, replacement)
+            result = svc.find_replace(path, pattern, replacement,
+                                      local=bool(arguments.get("local", False)))
             return f"Replaced {result.get('replacements', 0)} occurrences in {result.get('path', path)}"
         except Exception as e:
             return f"Error: {e}"

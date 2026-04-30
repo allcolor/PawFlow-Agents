@@ -129,6 +129,11 @@ class ImageGenerationHandler(ToolHandler):
         destination = arguments.get("destination", "filestore")
 
         try:
+            if hasattr(service, "set_runtime_context"):
+                service.set_runtime_context(
+                    user_id=self._user_id,
+                    conversation_id=getattr(self, "_conversation_id", "") or "",
+                )
             gen_args = {k: v for k, v in arguments.items()
                         if k not in ("destination", "path")}
             result = service.generate(**gen_args)
@@ -278,6 +283,11 @@ class EditImageHandler(ToolHandler):
                     "operation (e.g. 'nano-banana').")
 
         try:
+            if hasattr(service, "set_runtime_context"):
+                service.set_runtime_context(
+                    user_id=self._user_id,
+                    conversation_id=getattr(self, "_conversation_id", "") or "",
+                )
             edit_kwargs = {k: v for k, v in arguments.items()
                            if k not in ("destination", "path", "image_urls")}
             edit_kwargs["image_urls"] = image_urls

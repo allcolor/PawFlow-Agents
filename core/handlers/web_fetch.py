@@ -405,9 +405,30 @@ class ScraplingFetchHandler(ToolHandler):
                     "type": "string",
                     "description": "Request body for POST/PUT (raw mode)",
                 },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of characters to return",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Alias for limit; maximum number of characters to return",
+                },
             },
             "required": ["url"],
         }
+
+    @staticmethod
+    def _limit_output(text: str, arguments: Dict[str, Any]) -> str:
+        limit = arguments.get("limit")
+        if limit is None:
+            limit = arguments.get("max_chars")
+        try:
+            limit = int(limit or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        if limit > 0 and len(text) > limit:
+            return text[:limit] + f"\n\n... [truncated to {limit} chars; {len(text)} chars total]"
+        return text
 
     # Minimal GDPR consent cookies for common European consent providers.
     # These signal "all cookies rejected" to bypass consent walls without
@@ -438,7 +459,7 @@ class ScraplingFetchHandler(ToolHandler):
 
         # Raw mode: direct HTTP request (replaces old web_fetch behavior)
         if mode == "raw":
-            return self._raw_fetch(url, arguments)
+            return self._limit_output(self._raw_fetch(url, arguments), arguments)
 
         try:
             # Step 1: Always try fast mode first (httpx, no Playwright)
@@ -466,16 +487,16 @@ class ScraplingFetchHandler(ToolHandler):
                                 f"escalating to stealth subprocess")
                     needs_stealth = True
                 else:
-                    return self._finalize(text)
+                    return self._limit_output(self._finalize(text), arguments)
 
             # Step 4: Stealth mode via subprocess (avoids Playwright asyncio bug)
             if needs_stealth:
                 stealth_result = self._stealth_subprocess(url, selector)
                 if stealth_result is not None:
-                    return self._finalize(stealth_result)
+                    return self._limit_output(self._finalize(stealth_result), arguments)
                 # Stealth failed — use fast result if available (even if suspect)
                 if page is not None:
-                    return self._finalize(self._extract_text(page, selector))
+                    return self._limit_output(self._finalize(self._extract_text(page, selector)), arguments)
 
             if fast_err:
                 raise fast_err
@@ -487,7 +508,7 @@ class ScraplingFetchHandler(ToolHandler):
             error_detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             logger.warning(f"scrapling failed for {url}: {error_detail}",
                            exc_info=True)
-            return self._http_fallback(url, error_detail)
+            return self._limit_output(self._http_fallback(url, error_detail), arguments)
 
     def _is_pdf(self, page, url: str) -> bool:
         """Check if the response is a PDF."""

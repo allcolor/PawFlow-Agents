@@ -213,3 +213,13 @@ def test_tool_relay_auto_backgrounds_without_provider_tc_id(monkeypatch):
         time.sleep(0.01)
 
     assert injected == [("rid-no-provider-tc", "done", False)]
+
+
+def test_tool_relay_auto_background_disabled_by_default():
+    from services.tool_relay_service import ToolRelayService
+
+    svc = ToolRelayService({})
+    schema = svc.get_parameter_schema()
+
+    assert svc._auto_bg_after_seconds == 0.0
+    assert schema["auto_background_after_seconds"]["default"] == 0

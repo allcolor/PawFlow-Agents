@@ -1988,7 +1988,8 @@ function _renderSchemaFields(schema, values, readonly) {
     } else if (ptype === 'service_ref') {
       const st = (pdef.service_type || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       const pf = (pdef.provider_field || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-      html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-provider-field="' + pf + '" data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
+      const fp = (pdef.provider || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      html += '<select id="svc-p-' + pname + '" data-service-ref="1" data-service-type="' + st + '" data-provider-field="' + pf + '" data-provider="' + fp + '" data-current="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
       html += '<option value="' + escaped + '">' + (escaped || '(auto)') + '</option>';
       html += '</select>';
     } else if (ptype === 'textarea' || ptype === 'map' || ptype === 'object') {
@@ -2015,11 +2016,11 @@ async function _populateServiceRefs(container) {
     const serviceType = sel.dataset.serviceType || '';
     const providerField = sel.dataset.providerField || '';
     const providerEl = providerField ? container.querySelector('#svc-p-' + providerField) : null;
-    const wantedProvider = providerEl ? providerEl.value : '';
+    const wantedProvider = (sel.dataset.provider || '') || (providerEl ? providerEl.value : '');
     const current = sel.value || sel.dataset.current || '';
     try {
       const data = await rxjs.firstValueFrom(listServices$(serviceType));
-      const services = (data.services || []).filter(s => !wantedProvider || !s.provider || s.provider === wantedProvider);
+      const services = (data.services || []).filter(s => !wantedProvider || s.provider === wantedProvider);
       let html = '<option value="">(auto)</option>';
       for (const s of services) {
         const id = String(s.service_id || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

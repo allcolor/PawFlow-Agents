@@ -15,7 +15,9 @@ def _register_all_services():
     from core import ServiceFactory
     # Check a late-registered type to know if ALL modules are loaded
     # (llmConnection alone is not enough — image/video may be missing)
-    if "pixazoImageGeneration" in ServiceFactory.list_types():
+    _registered_types = set(ServiceFactory.list_types())
+    if ("pixazoImageGeneration" in _registered_types
+            and "codexImageGeneration" in _registered_types):
         return  # All modules already registered
 
     # Force project root into sys.path — always, no conditional check
@@ -55,6 +57,7 @@ def _register_all_services():
     import services.pixazo_image_service      # noqa: F401
     import services.grok_image_service        # noqa: F401
     import services.openai_image_service      # noqa: F401
+    import services.codex_image_service       # noqa: F401
 
     # Video generation services
     import services.kling_video_service       # noqa: F401

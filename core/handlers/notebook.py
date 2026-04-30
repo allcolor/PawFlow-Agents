@@ -75,7 +75,8 @@ class NotebookEditHandler(BaseFsHandler):
             operation = arguments.get("operation", "edit")
             result = svc._request("edit_notebook", path,
                                    cell_index=cell_index, new_source=new_source,
-                                   cell_type=cell_type, operation=operation)
+                                   cell_type=cell_type, operation=operation,
+                                   local=bool(arguments.get("local", False)))
             op = result.get("operation", operation)
             idx = result.get("cell_index", cell_index)
             total = result.get("total_cells", "?")

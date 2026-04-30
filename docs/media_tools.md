@@ -74,6 +74,7 @@ Only clone voices when the user has explicit rights to use the speaker's voice.
 Media tools are provider-agnostic. They resolve the active service at runtime. Supported service families include:
 
 - `openaiImageGeneration`
+- `codexImageGeneration`
 - `grokImageGeneration`
 - `grokVideoGeneration`
 - `klingVideoGeneration`
@@ -91,6 +92,26 @@ Media tools are provider-agnostic. They resolve the active service at runtime. S
 - `elevenLabsVoiceClone`
 
 For Pixazo model-specific schemas and pricing notes, see [Pixazo](pixazo.md). For voice clone internals, see [Voice Clone](voice_clone.md).
+
+### Codex CLI Image Service
+
+`codexImageGeneration` runs a fresh isolated `codex exec` job through PawFlow's server-side Codex CLI Docker pool and asks Codex to use the built-in `$imagegen` skill. It is not tied to a PawFlow agent conversation and does not expose a relay, local, or binary path knob. Authentication and provider settings come from the selected `llmConnection` service.
+
+Recommended config:
+
+```json
+{
+  "service_type": "codexImageGeneration",
+  "config": {
+    "llm_service": "codex_appserver_llm_service",
+    "timeout": 900
+  }
+}
+```
+
+The `llm_service` field is a service selector filtered to `llmConnection` services whose `provider` is `codex-app-server`. The image job reuses that service's Codex OAuth credential pool or API-key fallback, then runs in `data/runtime/sessions/codex/<user>/_image_generation/<job>/` inside the common CLI Docker image.
+
+For generation, the service runs a prompt equivalent to `codex exec "... $imagegen"`. For editing, source images are copied into the job directory and passed with repeated `-i` / `--image` inputs. The installed Codex CLI currently supports image inputs and `$imagegen`; it does not expose a stable `--image-dir` flag, so output collection is handled by reading `output.*` first and falling back to `$CODEX_HOME/generated_images`.
 
 ## Flow Usage
 

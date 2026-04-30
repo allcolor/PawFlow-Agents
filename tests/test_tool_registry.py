@@ -12,6 +12,7 @@ Tests cover:
 
 import json
 import unittest
+from unittest.mock import patch
 from typing import Dict, Any
 
 from core.tool_handler import ToolHandler
@@ -293,6 +294,225 @@ class TestMetaToolAliases(unittest.TestCase):
         assert "start_line" in props
         assert "end_line" in props
         assert "ranges" in props
+
+    def test_fs_meta_schema_exposes_local_flag_for_bash(self):
+        from core.handlers.bash import BashHandler
+        from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
+
+        received = {}
+
+        class CapturingBash(BashHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "bash-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingBash())
+
+        schema = json.loads(GetToolSchemaHandler(reg).execute({"tool_name": "bash"}))
+        assert "local" in schema["parameters"]["properties"]
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "bash",
+            "arguments": {"command": "pwd", "local": True},
+        })
+        assert result == "bash-ok"
+        assert received == {"command": "pwd", "local": True}
+
+    def test_fs_meta_schema_exposes_relay_and_normalizes_to_source(self):
+        from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
+        from core.handlers.read import ReadHandler
+
+        received = {}
+
+        class CapturingRead(ReadHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "read-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingRead())
+
+        schema = json.loads(GetToolSchemaHandler(reg).execute({"tool_name": "read"}))
+        props = schema["parameters"]["properties"]
+        assert "relay" in props
+        assert "local" in props
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "read",
+            "arguments": {
+                "path": "/workspace/README.md",
+                "relay": "fs_main",
+                "local": True,
+            },
+        })
+        assert result == "read-ok"
+        assert received["relay"] == "fs_main"
+        assert received["source"] == "fs_main"
+        assert received["local"] is True
+
+    def test_fetch_schema_accepts_max_chars_alias(self):
+        from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
+
+        received = {}
+
+        class CapturingFetch(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "fetch-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingFetch(
+            name="fetch",
+            schema={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                },
+                "required": ["url"],
+            },
+        ))
+
+        schema = json.loads(GetToolSchemaHandler(reg).execute({"tool_name": "fetch"}))
+        assert "max_chars" in schema["parameters"]["properties"]
+        result = UseToolHandler(reg).execute({
+            "tool_name": "fetch",
+            "arguments": {"url": "https://example.com", "max_chars": 1000},
+        })
+        assert result == "fetch-ok"
+        assert received == {"url": "https://example.com", "limit": 1000}
+
+    def test_tool_relay_schema_exposes_local_flag_for_bash(self):
+        from services.tool_relay_service import ToolRelayService
+
+        svc = ToolRelayService({})
+        result = svc._handle_get_schema("rid", "bash", "user", "conv")
+
+        assert result["type"] == "result"
+        assert "local" in result["data"]["parameters"]["properties"]
+
+    def test_tool_relay_schema_exposes_relay_for_read_and_max_chars_for_fetch(self):
+        from services.tool_relay_service import ToolRelayService
+
+        svc = ToolRelayService({})
+        read_schema = svc._handle_get_schema("rid1", "read", "user", "conv")
+        fetch_schema = svc._handle_get_schema("rid2", "fetch", "user", "conv")
+
+        assert "relay" in read_schema["data"]["parameters"]["properties"]
+        assert "local" in read_schema["data"]["parameters"]["properties"]
+        assert "max_chars" in fetch_schema["data"]["parameters"]["properties"]
+
+    def test_all_filesystem_handlers_expose_relay_and_local(self):
+        from core.handlers._fs_base import BaseFsHandler
+        from core.handlers.meta_tools import _schema_with_local
+        from core.tool_registry import create_default_registry
+
+        registry = create_default_registry()
+        fs_handlers = [h for h in registry.list_tools()
+                       if isinstance(h, BaseFsHandler)]
+
+        assert fs_handlers
+        for handler in fs_handlers:
+            props = (_schema_with_local(handler).get("properties") or {})
+            assert "relay" in props, handler.name
+            assert "local" in props, handler.name
+
+    def test_relay_alias_maps_to_native_selector_names(self):
+        from core.handlers.meta_tools import _normalize_tool_args
+
+        assert _normalize_tool_args(
+            "read", {"path": "a", "relay": "fs1"})["source"] == "fs1"
+        assert _normalize_tool_args(
+            "write", {"path": "a", "relay": "fs1"})["destination"] == "fs1"
+        assert _normalize_tool_args(
+            "edit", {"path": "a", "relay": "fs1"})["filesystem"] == "fs1"
+        copy_args = _normalize_tool_args(
+            "copy", {"source_path": "a", "dest_path": "b", "relay": "fs1"})
+        assert copy_args["source_service"] == "fs1"
+        assert copy_args["dest_service"] == "fs1"
+        assert _normalize_tool_args(
+            "bash", {"command": "pwd", "relay": "fs1"})["relay"] == "fs1"
+
+    def test_relay_service_methods_forward_local_to_request(self):
+        from services.filesystem_service import RelayService
+
+        svc = RelayService({"_service_id": "fs1"})
+        calls = []
+
+        def fake_request(action, path=".", **kwargs):
+            calls.append((action, path, kwargs))
+            if action == "read_file":
+                return {"content": ""}
+            if action == "list_dir":
+                return []
+            if action == "stat":
+                return {"name": "x", "path": "x", "kind": "file", "size": 0}
+            if action == "exists":
+                return {"exists": True}
+            if action == "grep":
+                return []
+            if action in {"find_replace", "edit"}:
+                return {"replacements": 0}
+            if action == "exec":
+                return {"stdout": "", "stderr": "", "returncode": 0}
+            if action == "edit_notebook":
+                return {"operation": "edit", "cell_index": 0, "total_cells": 1}
+            return {}
+
+        svc._request = fake_request
+        svc.read_file("a", local=True)
+        svc.write_file("a", b"x", local=True)
+        svc.delete_file("a", local=True)
+        svc.mkdir("a", local=True)
+        svc.list_dir(".", local=True)
+        svc.stat("a", local=True)
+        svc.exists("a", local=True)
+        svc.search(".", "*.py", local=True)
+        svc.grep(".", "x", local=True)
+        svc.find_replace("a", "x", "y", local=True)
+        svc.edit("a", "x", "y", local=True)
+        svc.batch_edit([], local=True)
+        svc.apply_patch("diff", local=True)
+        svc.edit_notebook("a.ipynb", 0, local=True)
+        svc.exec(".", "pwd", local=True)
+
+        assert calls
+        for action, _path, kwargs in calls:
+            assert kwargs.get("local") is True, action
+
+    def test_monitor_exposes_and_forwards_relay_local_to_bash(self):
+        from core.handlers import bash as bash_mod
+        from core.handlers.monitor import MonitorHandler
+
+        received = {}
+
+        class FakeBash:
+            def set_conversation_id(self, conversation_id):
+                pass
+
+            def set_user_id(self, user_id):
+                pass
+
+            def execute(self, arguments):
+                received.update(arguments)
+                return "ok"
+
+        handler = MonitorHandler()
+        props = handler.parameters_schema["properties"]
+        assert "relay" in props
+        assert "local" in props
+
+        with patch.object(bash_mod, "BashHandler", FakeBash):
+            result = handler.execute({
+                "command": "pytest -q",
+                "relay": "fs1",
+                "local": True,
+                "timeout_ms": 1000,
+            })
+
+        assert "ok" in result
+        assert received["relay"] == "fs1"
+        assert received["local"] is True
 
 
 class TestJsonStringUnwrapping(unittest.TestCase):

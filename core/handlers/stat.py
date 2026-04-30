@@ -51,7 +51,7 @@ class StatHandler(BaseFsHandler):
 
         try:
             from dataclasses import asdict
-            entry = svc.stat(path)
+            entry = svc.stat(path, local=bool(arguments.get("local", False)))
             return json.dumps(asdict(entry), default=str, indent=2)
         except Exception as e:
             return f"Error: {e}"

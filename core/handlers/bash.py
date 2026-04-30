@@ -192,7 +192,9 @@ class BashHandler(BaseFsHandler):
             # Pass secret env vars (injected by tool_relay_service)
             if arguments.get("_secret_env"):
                 _exec_kwargs["env"] = arguments["_secret_env"]
-            result = svc.exec(path, command, **_exec_kwargs)
+            result = svc.exec(
+                path, command, local=bool(arguments.get("local", False)),
+                **_exec_kwargs)
             output = result.get("stdout", "")
             if result.get("stderr"):
                 output += "\nSTDERR:\n" + result["stderr"]
@@ -262,7 +264,9 @@ class BashHandler(BaseFsHandler):
                     path = arguments.get("path", ".")
                     shell = arguments.get("shell", "")
                     timeout = self._resolve_timeout(arguments)
-                    result = svc.exec(path, command, shell=shell, timeout=timeout)
+                    result = svc.exec(
+                        path, command, shell=shell, timeout=timeout,
+                        local=bool(arguments.get("local", False)))
                 else:
                     result = {"stdout": "Error: no relay", "returncode": 1}
                 output = result.get("stdout", "")

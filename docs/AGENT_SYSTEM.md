@@ -391,6 +391,8 @@ For filesystem tools, the relay service is resolved in this order:
 2. Global relay bindings for the conversation.
 3. Fallback: any filesystem service available to the user.
 
+Agents can override the relay per call with `relay="<service-id>"`. The meta-tool layer maps this to the tool's native selector (`source`, `destination`, `filesystem`, or `service`) before validation and execution. Filesystem-backed tools also expose `local`: omitted/false runs in the relay Docker container; true forwards through the relay host helper and requires the relay to run with `--allow-local`.
+
 ### Meta-tools (Lazy Tools)
 
 Instead of sending all tool schemas to the LLM (which can consume thousands of tokens), PawFlow uses two meta-tools:

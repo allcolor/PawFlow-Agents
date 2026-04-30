@@ -6,6 +6,13 @@ This catalog is grouped by purpose. Use `get_tool_schema(tool_name)` at runtime 
 
 ## Filesystem and Editing
 
+Filesystem-backed tools accept two routing controls in their runtime schema:
+
+- `relay`: select the relay/filesystem service id for the operation. It is an alias for the tool's native selector (`source`, `destination`, `filesystem`, or `service`) depending on the tool.
+- `local`: when `false` or omitted, execute inside the relay Docker container. When `true`, forward the operation through the relay host helper and execute against the host filesystem/process namespace. This requires the relay to run with `--allow-local`.
+
+Use `get_tool_schema(tool_name)` for the exact native selector names and required fields.
+
 | Tool | Purpose |
 |---|---|
 | `read` | Read a file through the active filesystem/relay. |

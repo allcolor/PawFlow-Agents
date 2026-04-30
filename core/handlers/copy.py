@@ -75,18 +75,19 @@ class CopyHandler(BaseFsHandler):
 
         try:
             # Read from source
-            data = self._read_bytes(src_svc, src_workdir, source_path)
+            _local = bool(arguments.get("local", False))
+            data = self._read_bytes(src_svc, src_workdir, source_path, local=_local)
             if isinstance(data, str):
                 return data  # error message
 
             # Write to dest
-            result = self._write_bytes(dst_svc, dst_workdir, dest_path, data)
+            result = self._write_bytes(dst_svc, dst_workdir, dest_path, data, local=_local)
             fname = source_path.rsplit("/", 1)[-1] if "/" in source_path else source_path
             return f"Copied {fname} ({len(data):,} bytes): {source_path} → {dest_path}"
         except Exception as e:
             return f"Error copying: {e}"
 
-    def _read_bytes(self, svc, workdir, path):
+    def _read_bytes(self, svc, workdir, path, local: bool = False):
         """Read raw bytes from source."""
         import os
         import re
@@ -112,9 +113,9 @@ class CopyHandler(BaseFsHandler):
             with open(full, "rb") as f:
                 return f.read()
 
-        return svc.read_file(path)
+        return svc.read_file(path, local=local)
 
-    def _write_bytes(self, svc, workdir, path, data):
+    def _write_bytes(self, svc, workdir, path, data, local: bool = False):
         """Write raw bytes to dest."""
         import os
 
@@ -136,5 +137,5 @@ class CopyHandler(BaseFsHandler):
                 f.write(data)
             return path
 
-        svc.write_file(path, data)
+        svc.write_file(path, data, local=local)
         return path

@@ -1038,11 +1038,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     system_prompt += (
                         "\n\n## Connected Relays\n"
                         + "\n".join(_relay_lines)
-                        + "\n\nWhen using file/exec tools (read, write, bash, screen, etc.):\n"
-                        "- `relay`: relay ID (optional if default is set)\n"
-                        "- `local`: true = execute on the host machine, false = execute in Docker container (default)\n"
-                        "  Use local=true for: accessing host files, host screen, host clipboard\n"
-                        "  Use local=false (default) for: sandboxed execution, desktop apps, web browsing"
+                        + "\n\nWhen using filesystem-backed tools (read, write, grep, glob, bash, screen, etc.):\n"
+                        "- `relay`: relay/filesystem service ID (optional if a default relay is set)\n"
+                        "- `local`: false/omitted = execute in the relay Docker container (default)\n"
+                        "- `local`: true = execute through the relay host helper on the user's host; requires allow_local=true\n"
+                        "  Use local=true only when you specifically need host files, host screen, or host clipboard"
                     )
                     # FileStore FUSE hint — every connected relay container
                     # has /filestore mounted read-only with the conv-first

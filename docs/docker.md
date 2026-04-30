@@ -16,14 +16,21 @@ image, then complete the bootstrap wizard in the browser.
 ### Pull and run the published image
 
 ```bash
+bash scripts/doctor-pawflow.sh
 bash scripts/install-pawflow.sh
 ```
 
 This pulls `ghcr.io/allcolor/pawflow:latest`, creates persistent directories
-under `~/pawflow`, starts `pawflow-server`, and exposes `http://localhost:9090`.
+under `~/pawflow`, starts `pawflow-server`, and exposes `https://localhost:9090`.
 When `/var/run/docker.sock` is available on the host, the run script mounts it
 into the PawFlow container so first-run bootstrap can build the Claude/Codex/
 Gemini CLI image and relay image.
+
+The installer starts with a self-signed bootstrap certificate generated inside
+the persistent data volume. Your browser will warn until the wizard configures
+the final certificate, either by using provided cert/key files, generating an
+ACME certificate such as Let's Encrypt, or keeping a self-signed certificate for
+private deployments.
 
 The initial Private Gateway bootstrap key is:
 
@@ -37,11 +44,27 @@ the installation.
 ### Build from source
 
 ```bash
+bash scripts/doctor-pawflow.sh --source
 bash scripts/install-pawflow.sh --source
 ```
 
 This checks out the PawFlow repository, builds the server image locally, and
 starts the same persistent container layout.
+
+The doctor script validates host prerequisites before install. It detects
+Linux, macOS, Windows shells, and WSL, checks Docker CLI/daemon access, WSL
+health where applicable, source-install Git availability, Docker socket access
+for first-run image builds, selected port availability, and prints OS-specific
+installation instructions for missing prerequisites.
+
+On native Windows before WSL is available, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1
+```
+
+It validates WSL2, Docker Desktop, Linux-container mode, port availability, and
+explains how to install/enable the missing pieces.
 
 ### Agent-assisted install prompt
 

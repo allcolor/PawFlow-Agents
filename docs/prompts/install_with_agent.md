@@ -25,6 +25,8 @@ Prerequisites to check first:
 3. Verify Docker daemon is reachable with `docker info`.
 4. Verify the selected port is available. Default port: 9090.
 5. Verify internet access to GitHub and the Docker registry.
+6. Prefer running `bash scripts/doctor-pawflow.sh` when this repository is available; follow its OS-specific remediation instructions.
+7. On native Windows before WSL is available, run `powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1`; if it reports missing WSL2 or Docker Desktop WSL integration, stop and ask the user to install/enable them.
 
 Install path A: published image, preferred
 1. Create persistent directories:
@@ -51,9 +53,11 @@ Install path B: build from source
 1. Clone or update the repository:
    git clone https://github.com/allcolor/PawFlow-Agents.git ~/pawflow-src
    cd ~/pawflow-src
-2. Build the server image:
+2. Run the host prerequisite doctor:
+   bash scripts/doctor-pawflow.sh --source
+3. Build the server image:
    bash scripts/build-pawflow-docker.sh
-3. Run the server:
+4. Run the server:
    bash scripts/run-pawflow-docker.sh
 
 After starting:
@@ -61,11 +65,12 @@ After starting:
    docker logs -f pawflow-server
 2. Wait until PawFlow reports that the web server is listening.
 3. Open:
-   http://localhost:9090
+   https://localhost:9090
+   The first run uses a self-signed bootstrap certificate; browser trust warnings are expected until the wizard configures final certificates.
 4. Use the initial Private Gateway bootstrap key:
    RoyBetty
 5. Tell the user that the bootstrap wizard must replace RoyBetty before finalization.
-6. Stop here. The wizard will configure server settings, auth, LLM services, summarizer service, variables, secrets, CLI credential pools, and final flows.
+6. Stop here. The wizard will configure server settings, final certificates (provided cert/key, ACME/Let's Encrypt, or self-signed), auth, LLM services, summarizer service, variables, secrets, CLI credential pools, and final flows.
 
 Expected final answer:
 - Whether Docker prerequisites passed.

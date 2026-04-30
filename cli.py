@@ -272,7 +272,8 @@ def cmd_start(args):
         from core.install_bootstrap import ensure_install_bootstrap
         ensure_install_bootstrap(port=int(args.port))
     except Exception as _ib_err:
-        logger.warning("Install bootstrap setup failed: %s", _ib_err, exc_info=True)
+        logger.error("Install bootstrap setup failed: %s", _ib_err, exc_info=True)
+        raise
 
     logger.info("Restoring deployed flows...")
     from core.executor_registry import ExecutorRegistry

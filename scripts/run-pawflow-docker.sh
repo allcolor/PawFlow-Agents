@@ -69,7 +69,10 @@ cat <<MSG
 PawFlow is starting.
 
 URL:
-  http://localhost:$PORT
+  https://localhost:$PORT
+
+The first run uses a self-signed bootstrap certificate, so your browser will
+warn until the installer configures final certificates.
 
 Initial bootstrap Private Gateway key:
   RoyBetty

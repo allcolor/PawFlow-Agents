@@ -16,6 +16,7 @@ REPO_URL="${PAWFLOW_REPO_URL}"
 INSTALL_DIR="${PAWFLOW_INSTALL_DIR}"
 PORT="${PAWFLOW_PORT}"
 MODE="image"
+RUN_DOCTOR=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -24,6 +25,7 @@ while [[ $# -gt 0 ]]; do
     --repo) REPO_URL="$2"; shift 2 ;;
     --dir) INSTALL_DIR="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
+    --skip-doctor) RUN_DOCTOR=0; shift ;;
     --help|-h)
       sed -n '1,18p' "$0"
       exit 0
@@ -40,6 +42,15 @@ need_cmd() {
 }
 
 need_cmd docker
+if [[ "$RUN_DOCTOR" == "1" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  DOCTOR_ARGS=("--port" "$PORT")
+  if [[ "$MODE" == "source" ]]; then
+    DOCTOR_ARGS+=("--source")
+  fi
+  bash "$SCRIPT_DIR/doctor-pawflow.sh" "${DOCTOR_ARGS[@]}"
+fi
+
 if ! docker info >/dev/null 2>&1; then
   echo "Docker is installed but the daemon is not reachable." >&2
   echo "Start Docker, or add your user to the docker group on Linux." >&2

@@ -13,6 +13,25 @@ PawFlow server.
 
 ## Server Installation Paths
 
+Before starting either install path, run:
+
+```bash
+bash scripts/doctor-pawflow.sh
+```
+
+On Windows before WSL is installed, run the native PowerShell doctor instead:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/doctor-pawflow.ps1
+```
+
+For source builds, run `bash scripts/doctor-pawflow.sh --source`. The doctor
+checks Docker CLI/daemon access, WSL/Docker Desktop integration on Windows,
+Git for source installs, Docker socket availability for first-run runtime image
+builds, selected port availability, and prints OS-specific remediation steps.
+The PowerShell doctor specifically tells users to install WSL2 and Docker
+Desktop with WSL integration when those prerequisites are missing.
+
 ### Published image
 
 The default path is to run a published Docker image:
@@ -51,8 +70,9 @@ On a fresh server data volume, PawFlow should start in bootstrap mode:
    - `pawflow-relay-dev:latest`
 2. Deploy only the `PawFlow Installer` flow.
 3. Protect the installer with Private Gateway key `RoyBetty`.
-4. Persist installer progress in a server-side install state file.
-5. Never create a default user relay during bootstrap.
+4. Generate and use a bootstrap self-signed TLS certificate.
+5. Persist installer progress in a server-side install state file.
+6. Never create a default user relay during bootstrap.
 
 The server container receives the host Docker socket when available so the
 bootstrap can build those runtime images from inside the PawFlow container. The
@@ -63,6 +83,12 @@ manually.
 
 `RoyBetty` is a temporary bootstrap key. The installer must force a replacement
 before finalization.
+
+Bootstrap HTTPS is mandatory. A first-run self-signed certificate is generated
+under `data/system/ssl/bootstrap.crt` with key
+`data/system/ssl/bootstrap.key`. The browser will show a trust warning until the
+wizard installs final certificates. If the bootstrap certificate cannot be
+generated, startup must fail loudly instead of falling back to plain HTTP.
 
 The installer template is stored at
 `data/repository/flows/global/default/pawflow_installer/versions/1.0.0.json`.
@@ -76,6 +102,9 @@ separate implementation step.
    - public base URL
    - HTTP/HTTPS port
    - certificate upload, generated certificate, or mounted cert path
+   - ACME-compatible certificate generation, starting with Let's Encrypt
+     support; ZeroSSL and other ACME CAs can use the same abstraction later
+   - self-signed certificate generation for private/local deployments
    - bind and certificate validation
 
 2. Private Gateway

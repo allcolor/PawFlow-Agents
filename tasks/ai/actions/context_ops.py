@@ -224,7 +224,7 @@ def _load_codex_session_context(conv_id: str, agent_name: str, store,
     messages = []
     try:
         with open(jsonl_path, "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
+            for line_no, line in enumerate(fh):
                 try:
                     entry = json.loads(line)
                 except json.JSONDecodeError:
@@ -236,7 +236,8 @@ def _load_codex_session_context(conv_id: str, agent_name: str, store,
                 content = _text_from_cli_content(payload.get("content"))
                 if not content:
                     continue
-                msg = {"role": role, "content": content, "msg_id": entry.get("id", "")}
+                msg_id = entry.get("id") or entry.get("msg_id") or f"codex:{thread_id}:{line_no}"
+                msg = {"role": role, "content": content, "msg_id": msg_id}
                 msg["source"] = {"name": "codex-app-server"}
                 messages.append(msg)
     except Exception as exc:
@@ -261,7 +262,7 @@ def _load_gemini_session_context(conv_id: str, agent_name: str, store,
             found_session = False
             current = []
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
+                for line_no, line in enumerate(fh):
                     try:
                         rec = json.loads(line)
                     except json.JSONDecodeError:
@@ -275,7 +276,8 @@ def _load_gemini_session_context(conv_id: str, agent_name: str, store,
                     content = _text_from_cli_content(rec.get("content"))
                     if not content:
                         continue
-                    msg = {"role": role, "content": content, "msg_id": rec.get("id", "")}
+                    msg_id = rec.get("id") or rec.get("msg_id") or f"gemini:{os.path.basename(path)}:{line_no}"
+                    msg = {"role": role, "content": content, "msg_id": msg_id}
                     if rec.get("model"):
                         msg["source"] = {"name": "gemini", "model": rec.get("model")}
                     current.append(msg)

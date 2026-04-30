@@ -393,15 +393,27 @@ def _grep_split_glob_path(path: str) -> tuple[str, str]:
     return base, "/".join(glob_parts)
 
 
-def _grep_effective_glob(glob_pattern: str, recursive: bool) -> str:
-    """Make basename globs recursive by default, matching ripgrep semantics."""
-    glob_pattern = (glob_pattern or "").strip()
-    if not glob_pattern or not recursive:
-        return glob_pattern
-    normalized = glob_pattern.replace("\\", "/")
-    if "/" in normalized or normalized.startswith("**/"):
-        return normalized
-    return f"**/{normalized}"
+def _grep_effective_globs(glob_pattern: Any, recursive: bool) -> list[str]:
+    """Normalize include/glob filters.
+
+    Accept comma/space-separated strings and lists. Basename globs are
+    recursive by default, matching the MCP grep contract.
+    """
+    if not glob_pattern:
+        return []
+    if isinstance(glob_pattern, (list, tuple, set)):
+        raw_parts = [str(g).strip() for g in glob_pattern]
+    else:
+        raw_parts = [g.strip() for g in str(glob_pattern).replace(",", " ").split()]
+    globs = []
+    for part in raw_parts:
+        if not part:
+            continue
+        normalized = part.replace("\\", "/")
+        if recursive and "/" not in normalized and not normalized.startswith("**/"):
+            normalized = f"**/{normalized}"
+        globs.append(normalized)
+    return globs
 
 
 def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
@@ -412,7 +424,7 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         raise ValueError("Missing 'regex' parameter")
     if not glob_pattern:
         path, glob_pattern = _grep_split_glob_path(path)
-    glob_pattern = _grep_effective_glob(glob_pattern, recursive)
+    glob_patterns = _grep_effective_globs(glob_pattern, recursive)
     # Suppress Python 3.12+ FutureWarning for user-supplied regex quirks
     # (e.g. `[[..]]` patterns flagged as possible nested sets). The regex
     # still compiles correctly — we just don't want the warning to pollute
@@ -447,14 +459,21 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         _scan_file(p, p.name)
         return results
 
-    scan_pattern = glob_pattern or ("**/*" if recursive else "*")
-    for fpath in p.glob(scan_pattern):
-        if not fpath.is_file():
-            continue
-        # Skip any path whose parents include an ignored dir.
-        if any(part in _GREP_SKIP_DIRS for part in fpath.parts):
-            continue
-        _scan_file(fpath, str(fpath.relative_to(p)).replace("\\", "/"))
+    scan_patterns = glob_patterns or ["**/*" if recursive else "*"]
+    seen = set()
+    for scan_pattern in scan_patterns:
+        for fpath in p.glob(scan_pattern):
+            if fpath in seen:
+                continue
+            seen.add(fpath)
+            if not fpath.is_file():
+                continue
+            # Skip any path whose parents include an ignored dir.
+            if any(part in _GREP_SKIP_DIRS for part in fpath.parts):
+                continue
+            _scan_file(fpath, str(fpath.relative_to(p)).replace("\\", "/"))
+            if len(results) >= 200:
+                break
         if len(results) >= 200:
             break
     return results

@@ -87,6 +87,31 @@ def test_context_shrinks_only_through_threshold_compact():
     assert "mid-turn compact" not in _AGENT_CORE_PY
 
 
+def test_proactive_compact_only_runs_after_threshold_estimate():
+    """A non-zero compact_threshold_pct is only a configured limit.
+
+    It must not call _compact on every turn below that limit; otherwise the
+    returned unchanged copy is mistaken for a compact and live CLI sessions are
+    invalidated on normal turns.
+    """
+    assert "def _should_proactive_compact" in _AGENT_CORE_PY
+    assert "used_tokens >= trigger_tokens" in _AGENT_CORE_PY
+    proactive_region = _AGENT_CORE_PY[
+        _AGENT_CORE_PY.index("if ctx.get(\"_is_claude_code\"):"):
+        _AGENT_CORE_PY.index("llm_context = _with_provider_system_prompt")]
+    assert "if _trigger_frac > 0:" not in proactive_region
+    assert "if _should_proactive_compact(messages, _max_ctx, _cpt):" in proactive_region
+
+
+def test_cli_session_invalidation_requires_real_compact_change():
+    """Codex and Gemini live sessions must survive normal below-threshold turns."""
+    invalidation = _AGENT_CORE_PY.index(
+        "invalidate_claude_session_for_agent(")
+    guard = _AGENT_CORE_PY.rfind("if _messages_changed", 0, invalidation)
+    assert guard != -1
+    assert invalidation - guard < 600
+
+
 def test_no_direct_active_interactions_mutation_for_context():
     """Direct mutation of `activeInteractions[k].contextUsed` from
     sse.js bypasses the monotonic invariants — that path must go

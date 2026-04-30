@@ -832,22 +832,64 @@ class AgentCoreMixin:
                         _compact_pct = 0
                     _trigger_frac = (_compact_pct / 100.0) if _compact_pct > 0 else 0.0
 
+                    def _with_provider_system_prompt(stored_msgs):
+                        prompt = ctx.get("_provider_system_prompt", "") or ""
+                        out = list(stored_msgs)
+                        if not prompt:
+                            return out
+                        sys_msg = LLMMessage(
+                            role="system", content=prompt,
+                            source={"type": "provider_prompt"},
+                            conversation_id=conversation_id)
+                        if out and out[0].role == "system":
+                            out[0] = sys_msg
+                        else:
+                            out.insert(0, sys_msg)
+                        return out
+
+                    def _should_proactive_compact(stored_msgs, max_ctx, cpt):
+                        if _trigger_frac <= 0:
+                            return False
+                        trigger_tokens = int(max_ctx * _trigger_frac)
+                        if trigger_tokens <= 0:
+                            return False
+                        provider_view = _with_provider_system_prompt(stored_msgs)
+                        used_tokens = self._estimate_tokens(
+                            provider_view, tool_defs=tool_defs, chars_per_token=cpt)
+                        return used_tokens >= trigger_tokens
+
+                    def _messages_changed(candidate, current):
+                        if not candidate:
+                            return False
+                        try:
+                            return self._serialize_messages(candidate) != self._serialize_messages(current)
+                        except Exception:
+                            if len(candidate) != len(current):
+                                return True
+                            for left, right in zip(candidate, current):
+                                if (getattr(left, "role", None) != getattr(right, "role", None)
+                                        or getattr(left, "content", None) != getattr(right, "content", None)
+                                        or getattr(left, "tool_calls", None) != getattr(right, "tool_calls", None)
+                                        or getattr(left, "tool_call_id", None) != getattr(right, "tool_call_id", None)):
+                                    return True
+                            return False
+
                     # Claude-code: CC session and PawFlow ctx MUST stay
                     # identical. On a new session we feed the full PawFlow
                     # ctx (already compacted at load time if needed).
                     # On resume, CC's jsonl is the authoritative continuation
                     # — we don't re-send messages.
                     if ctx.get("_is_claude_code"):
+                        _max_ctx = ctx.get("max_context_size", 64000)
+                        _cpt = ctx.get("chars_per_token", 0)
                         # Optional proactive compact for CC when
                         # `compact_threshold_pct > 0`: fire BEFORE letting
                         # CC see the over-budget context. Both this and
                         # CC's own `compact_boundary` event remain active;
                         # whichever fires first compacts. Skip when
                         # threshold = 0 (default) — CC's mechanism handles it.
-                        if _trigger_frac > 0:
-                            _max_ctx = ctx.get("max_context_size", 64000)
-                            _cpt = ctx.get("chars_per_token", 0)
-                            messages[:] = self._compact(
+                        if _should_proactive_compact(messages, _max_ctx, _cpt):
+                            compacted_messages = self._compact(
                                 copy.deepcopy(messages), compact_client, _max_ctx,
                                 trigger_fraction=_trigger_frac,
                                 conversation_id=conversation_id,
@@ -856,6 +898,8 @@ class AgentCoreMixin:
                                 chars_per_token=_cpt,
                                 user_id=user_id,
                             )
+                            if _messages_changed(compacted_messages, messages):
+                                messages[:] = compacted_messages
                         llm_context = list(messages)
                     else:
                         _max_ctx = ctx.get("max_context_size", 64000)
@@ -873,7 +917,7 @@ class AgentCoreMixin:
                         # call. With threshold > 0, fire the proactive
                         # compact at that fraction. Guarantees output ≤
                         # compact_target_tokens (or 0.25 × max_context).
-                        if _trigger_frac > 0:
+                        if _should_proactive_compact(messages, _max_ctx, _cpt):
                             compacted_messages = self._compact(
                                 copy.deepcopy(messages), compact_client, _max_ctx,
                                 trigger_fraction=_trigger_frac,
@@ -883,7 +927,7 @@ class AgentCoreMixin:
                                 chars_per_token=_cpt,
                                 user_id=user_id,
                             )
-                            if compacted_messages and len(compacted_messages) <= len(messages):
+                            if _messages_changed(compacted_messages, messages):
                                 messages[:] = compacted_messages
                                 ctx.pop("_context_usage_cache", None)
                                 ctx.pop("_auto_compact_usage_cache", None)
@@ -902,21 +946,6 @@ class AgentCoreMixin:
                             # *_compact site below — e.g. context-overflow
                             # retry — still applies as a safety net).
                             llm_context = list(messages)
-
-                    def _with_provider_system_prompt(stored_msgs):
-                        prompt = ctx.get("_provider_system_prompt", "") or ""
-                        out = list(stored_msgs)
-                        if not prompt:
-                            return out
-                        sys_msg = LLMMessage(
-                            role="system", content=prompt,
-                            source={"type": "provider_prompt"},
-                            conversation_id=conversation_id)
-                        if out and out[0].role == "system":
-                            out[0] = sys_msg
-                        else:
-                            out.insert(0, sys_msg)
-                        return out
 
                     llm_context = _with_provider_system_prompt(llm_context)
 
@@ -1041,7 +1070,7 @@ class AgentCoreMixin:
                                 # crossed the configured threshold. Force the
                                 # compact so _compact() cannot recompute a lower
                                 # pre-assembly estimate and silently skip.
-                                llm_context = self._compact(
+                                compacted_llm_context = self._compact(
                                     copy.deepcopy(llm_context), compact_client,
                                     _max_ctx,
                                     force=True,
@@ -1052,6 +1081,18 @@ class AgentCoreMixin:
                                     chars_per_token=ctx.get("chars_per_token", 0),
                                     user_id=user_id,
                                 )
+                                if _messages_changed(compacted_llm_context, llm_context):
+                                    llm_context = compacted_llm_context
+                                    if ctx.get("_is_cli_provider") and conversation_id:
+                                        try:
+                                            from core.conversation_store import ConversationStore
+                                            ConversationStore.instance().invalidate_claude_session_for_agent(
+                                                conversation_id,
+                                                ctx.get("active_agent_name") or "")
+                                        except Exception:
+                                            logger.debug(
+                                                "CLI session invalidation after pre-send compact failed",
+                                                exc_info=True)
                                 _pre_send_est = self._estimate_tokens(
                                     llm_context, tool_defs=ctx.get("tool_defs"),
                                     chars_per_token=ctx.get("chars_per_token", 0),

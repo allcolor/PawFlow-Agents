@@ -54,6 +54,22 @@ def test_relay_action_grep_include_alias_is_recursive(tmp_path):
     assert [row["path"] for row in results] == ["pkg/mod.py"]
 
 
+def test_relay_action_grep_accepts_comma_separated_include(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "mod.py").write_text("needle = 'gemini'\n", encoding="utf-8")
+    (pkg / "view.js").write_text("needle = 'gemini'\n", encoding="utf-8")
+    (pkg / "skip.txt").write_text("needle = 'gemini'\n", encoding="utf-8")
+
+    results = action_grep(str(tmp_path), str(tmp_path), {
+        "regex": "gemini",
+        "include": "*.py,*.js",
+        "recursive": True,
+    })
+
+    assert [row["path"] for row in results] == ["pkg/mod.py", "pkg/view.js"]
+
+
 def test_grep_handler_accepts_include_alias(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()

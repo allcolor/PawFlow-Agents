@@ -223,6 +223,8 @@ def test_cli_providers_do_not_force_default_model_flags():
 
     assert '"--model", model or "sonnet"' not in inspect.getsource(
         ClaudeCodeSessionMixin._build_claude_cmd)
+    cc_cmd_src = inspect.getsource(ClaudeCodeSessionMixin._build_claude_cmd)
+    assert '"--thinking-display", "summarized"' in cc_cmd_src
     assert '"--model", model or "gpt-5.2-codex"' not in inspect.getsource(
         CodexSessionMixin._build_codex_cmd)
     codex_src = inspect.getsource(LLMCodexAppServerMixin)

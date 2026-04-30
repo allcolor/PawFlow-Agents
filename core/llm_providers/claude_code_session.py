@@ -881,6 +881,7 @@ class ClaudeCodeSessionMixin:
             "--dangerously-skip-permissions",
             "--max-turns", "1000",
             "--verbose",
+            "--thinking-display", "summarized",
             "--strict-mcp-config",
         ])
         _effort = self._cfg("effort", "")

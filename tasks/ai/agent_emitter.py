@@ -182,20 +182,17 @@ class StreamEmitter(AgentEmitter):
         _ctx_used = (int(result.tokens_in or 0)
                      + int(getattr(result, 'cache_creation_tokens', 0) or 0)
                      + int(getattr(result, 'cache_read_tokens', 0) or 0))
-        # Real context window: provider's self-reported value first
-        # (claude-code caches CC's result.modelUsage[model].contextWindow
-        # per-stream in client._cc_context_window_by_stream keyed by
-        # (conv_id, agent_name) — the old singleton attr was clobbered
-        # across concurrent streams), then the user's max_context_size
-        # service config. No hardcoded fallback — unknown means 0,
-        # UI skips the gauge.
+        # Effective context window: min(PawFlow configured budget,
+        # provider-reported real window) when both are known. This lets users
+        # compact below the model hard limit intentionally.
         _client = self.ctx.get("client")
         _cw_map = (getattr(_client, '_cc_context_window_by_stream', None)
                    if _client else None) or {}
         _cw_key = (self.conversation_id or "", self._agent_name or "")
-        _ctx_max = int(_cw_map.get(_cw_key, 0)
-                       or self.ctx.get("max_context_size", 0)
-                       or 0)
+        from core.context_window import effective_context_window
+        _ctx_max = effective_context_window(
+            self.ctx.get("max_context_size", 0), _cw_map.get(_cw_key, 0),
+            fallback=0)
         _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
         self._emit("done", {
             "response": result.response_content,

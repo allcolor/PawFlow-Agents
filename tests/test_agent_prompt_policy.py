@@ -127,3 +127,13 @@ def test_context_editor_displays_tool_call_only_messages():
     assert "if (!String(content).trim() && m.has_tool_calls)" in editor_src
     assert "parsed && parsed.tool_name" in editor_src
     assert "function _ctxStripToolOutputEnvelope" in editor_src
+
+
+def test_agent_context_tracks_effective_context_budget():
+    from tasks.ai.agent_context import AgentContextMixin
+
+    src = inspect.getsource(AgentContextMixin)
+    assert "_configured_max_ctx = _svc_max or _agent_max or _task_max or 0" in src
+    assert "effective_context_window(" in src
+    assert '"configured_context_size": int(_configured_max_ctx or 0)' in src
+    assert '"real_context_size": int(_real_max_ctx or 0)' in src

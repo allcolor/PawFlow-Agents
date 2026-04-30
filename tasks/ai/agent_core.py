@@ -194,14 +194,8 @@ class AgentCoreMixin:
         client._agent_service = ctx.get("active_llm_service", "")
         client._event_cid = ctx.get("_event_cid", conversation_id)
         client._agent_ctx = ctx  # for SSE event enrichment (task_iteration etc)
-        # Config-side budget, used only as fallback when the provider
-        # doesn't self-report a context window. For CC the authoritative
-        # value comes from result.modelUsage[model].contextWindow and is
-        # cached PER-STREAM as client._cc_context_window_by_stream
-        # (keyed by (conv_id, agent_name)); the cascade in
-        # agent_emitter/claude_code always picks that first. Default 0
-        # means "unknown" — UI skips the gauge rather than display a
-        # fictional 200k budget for providers that haven't reported yet.
+        # PawFlow budget. Provider-reported windows are hard caps, not a
+        # reason to exceed a smaller configured context budget.
         client._max_context_size = int(ctx.get("max_context_size", 0) or 0)
 
         # Register active claude-code client for preempt (stdin injection)
@@ -267,16 +261,16 @@ class AgentCoreMixin:
             # tokens_in/tokens_out, but derive context_used from the same
             # PawFlow message list that compaction uses.
             #
-            # context_max comes from the provider-reported window when known,
-            # then PawFlow config (service/agent/task cascade). Unknown means
-            # 0, so the UI skips the gauge rather than displaying a fictional
-            # budget.
+            # context_max is PawFlow's effective budget: min(configured,
+            # provider-reported) when both are known.
             _cw_map = getattr(client, '_cc_context_window_by_stream', None) or {}
             _cw_key = (conversation_id or "",
                        ctx.get("active_agent_name", "") or "")
-            _ctx_max = int(_cw_map.get(_cw_key, 0) or
-                           getattr(client, '_max_context_size', 0) or
-                           ctx.get("max_context_size", 0) or 0)
+            from core.context_window import effective_context_window
+            _ctx_max = effective_context_window(
+                getattr(client, '_max_context_size', 0)
+                or ctx.get("max_context_size", 0) or 0,
+                _cw_map.get(_cw_key, 0), fallback=0)
             _ctx_usage = None
             try:
                 from core.token_counter import resolve_token_multiplier

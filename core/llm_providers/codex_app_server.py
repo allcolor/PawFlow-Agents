@@ -62,8 +62,14 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         return "none" if effort == "low" else "auto"
 
     def _codex_app_context_window(self, model: str) -> int:
-        """Return Codex app-server's effective context window for `model`."""
+        """Return Codex app-server's effective context budget for `model`."""
+        cfg = getattr(self, "_config_ref", None) or {}
+        try:
+            configured = int(cfg.get("max_context_size", 0) or 0)
+        except (TypeError, ValueError):
+            configured = 0
         runtime_windows = getattr(self, "_codex_context_windows", None)
+        real = 0
         if isinstance(runtime_windows, dict):
             for key in (model, (model or "").lower()):
                 try:
@@ -71,13 +77,11 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 except (TypeError, ValueError):
                     value = 0
                 if value > 0:
-                    return value
+                    real = value
+                    break
 
-        cfg = getattr(self, "_config_ref", None) or {}
-        try:
-            value = int(cfg.get("max_context_size", 0) or 0)
-        except (TypeError, ValueError):
-            value = 0
+        from core.context_window import effective_context_window
+        value = effective_context_window(configured, real, fallback=0)
         if value <= 0:
             from core.llm_client import LLMClientError
             raise LLMClientError(

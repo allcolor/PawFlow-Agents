@@ -5,17 +5,35 @@ from pathlib import Path
 import pytest
 
 from core.llm_client import LLMClientError
+from core.context_window import effective_context_window
+from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
 from core.llm_providers.gemini import LLMGeminiMixin
 
 _GEMINI_SRC = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 
 
-def test_gemini_context_window_uses_runtime_metadata_first():
+def test_effective_context_window_uses_smaller_known_budget():
+    assert effective_context_window(200_000, 1_048_576) == 200_000
+    assert effective_context_window(1_000_000, 400_000) == 400_000
+    assert effective_context_window(200_000, 0) == 200_000
+    assert effective_context_window(0, 1_048_576) == 1_048_576
+    assert effective_context_window(0, 0, fallback=0) == 0
+
+
+def test_gemini_context_window_caps_runtime_metadata_by_config():
     provider = LLMGeminiMixin()
     provider._config_ref = {"max_context_size": 400_000}
     provider._gemini_context_windows = {"gemini-3-pro": 1_048_576}
 
-    assert provider._gemini_context_window("gemini-3-pro") == 1_048_576
+    assert provider._gemini_context_window("gemini-3-pro") == 400_000
+
+
+def test_codex_context_window_caps_runtime_metadata_by_config():
+    provider = LLMCodexAppServerMixin()
+    provider._config_ref = {"max_context_size": 200_000}
+    provider._codex_context_windows = {"gpt-5.5": 1_000_000}
+
+    assert provider._codex_app_context_window("gpt-5.5") == 200_000
 
 
 def test_gemini_context_window_uses_required_service_config():

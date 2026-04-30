@@ -1123,16 +1123,30 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
         # Lazy tools mode: for small-context LLMs, replace full tool schemas
         # with just get_tool_schema + use_tool (~200 tokens instead of ~7000)
-        # Resolve max_context_size: service > agent > task config.
-        # 0 means "not set" (use next level), explicit value wins.
+        # Resolve the PawFlow configured context budget: service > agent >
+        # task config. 0 means "not set" (use next level). Provider/CLI
+        # real windows are a hard cap when known, but do not override a
+        # smaller PawFlow budget.
         _svc_cfg = (getattr(resolved_svc, 'config', {}) or {})
         _svc_max = int(_svc_cfg.get("max_context_size", 0) or 0)
         _agent_max = int((_selected_agent_def or {}).get("max_context_size", 0) or 0)
         _task_max = int(self.config.get("max_context_size", 0) or 0)
-        _resolved_max_ctx = _svc_max or _agent_max or _task_max or 200000
-        logger.info("max_context_size: svc=%s agent=%s task=%s → %d (svc_type=%s)",
-                     _svc_max, _agent_max, _task_max, _resolved_max_ctx,
-                     getattr(resolved_svc, 'TYPE', '?'))
+        _configured_max_ctx = _svc_max or _agent_max or _task_max or 0
+        _real_max_ctx = 0
+        try:
+            _real_max_ctx = int(
+                getattr(client, "_real_context_size", 0)
+                or getattr(client, "_context_window", 0)
+                or 0)
+        except (TypeError, ValueError):
+            _real_max_ctx = 0
+        from core.context_window import effective_context_window
+        _resolved_max_ctx = effective_context_window(
+            _configured_max_ctx, _real_max_ctx, fallback=200000)
+        logger.info(
+            "max_context_size: svc=%s agent=%s task=%s configured=%s real=%s → effective=%d (svc_type=%s)",
+            _svc_max, _agent_max, _task_max, _configured_max_ctx,
+            _real_max_ctx, _resolved_max_ctx, getattr(resolved_svc, 'TYPE', '?'))
         # Estimate tool definitions token cost
         _tools_tokens = 0
         if tool_defs:
@@ -1444,6 +1458,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 # Per-agent: use service max_tokens (= context window size)
                 _resolved_max_ctx
             ),
+            "configured_context_size": int(_configured_max_ctx or 0),
+            "real_context_size": int(_real_max_ctx or 0),
             "context_keep_recent": int(_cfg("context_keep_recent", 6)),
             "chars_per_token": float(
                 (getattr(resolved_svc, 'config', {}) or {}).get("chars_per_token", 0)

@@ -170,16 +170,6 @@ def _load_cc_session_context(conv_id: str, agent_name: str, store,
                                     if isinstance(b, dict))
                             parts.append(f"[tool_result: {str(_tr_content)[:200]}]")
                     content = "\n".join(parts) if parts else ""
-                    # Anthropic's wire protocol wraps tool_result replies
-                    # as role=user. For the Context Editor that is a pure
-                    # noise source — CC-heavy conversations produce
-                    # hundreds of "user" rows whose only content is
-                    # `[tool_result: ...]`, drowning the actual user-typed
-                    # messages in the list. This function is display-only
-                    # (see callers: get_context action), NOT used to
-                    # synthesize the LLM payload, so relabel these rows as
-                    # role=tool. The user's real messages remain role=user
-                    # and stand out.
                     _display_role = "tool" if (_had_tool_result and not any(
                         p and not p.startswith("[tool_result:") for p in parts
                     )) else role
@@ -191,7 +181,6 @@ def _load_cc_session_context(conv_id: str, agent_name: str, store,
                 else:
                     msg_entry = {"role": role, "content": str(content_blocks)}
 
-                # Add metadata
                 msg_entry["msg_id"] = entry.get("uuid", "")
                 if msg.get("model"):
                     msg_entry["source"] = {"name": "claude-code", "model": msg["model"]}
@@ -201,6 +190,99 @@ def _load_cc_session_context(conv_id: str, agent_name: str, store,
         logger.error("[cc-session] Failed to read session JSONL: %s", e)
         return []
 
+    return messages
+
+
+def _text_from_cli_content(content) -> str:
+    if isinstance(content, str):
+        return content
+    parts = []
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                text = part.get("text") or part.get("input_text") or part.get("output_text") or ""
+                if text:
+                    parts.append(str(text))
+    return "".join(parts)
+
+
+def _load_codex_session_context(conv_id: str, agent_name: str, store,
+                                user_id: str = "") -> list:
+    thread_id = store.get_extra(conv_id, f"codex_app_server_thread:{agent_name or 'default'}") or ""
+    if not thread_id:
+        return []
+    import os
+    from core.llm_providers.codex_session import _get_sessions_base
+    from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
+    uid = user_id or store.get_user_id(conv_id) or "default"
+    workdir = os.path.join(_get_sessions_base(), uid, conv_id.replace(":", "_"), agent_name)
+    jsonl_path = LLMCodexAppServerMixin._codex_app_rollout_path(workdir, thread_id)
+    if not jsonl_path:
+        return []
+    messages = []
+    try:
+        with open(jsonl_path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                payload = entry.get("payload") if isinstance(entry, dict) else None
+                if not isinstance(payload, dict) or payload.get("type") != "message":
+                    continue
+                role = payload.get("role") or "assistant"
+                content = _text_from_cli_content(payload.get("content"))
+                if not content:
+                    continue
+                msg = {"role": role, "content": content, "msg_id": entry.get("id", "")}
+                msg["source"] = {"name": "codex-app-server"}
+                messages.append(msg)
+    except Exception as exc:
+        logger.error("[codex-session] Failed to read rollout JSONL: %s", exc)
+        return []
+    return messages
+
+
+def _load_gemini_session_context(conv_id: str, agent_name: str, store,
+                                 user_id: str = "") -> list:
+    session_id = store.get_extra(conv_id, f"gemini_acp_session:{agent_name or 'default'}") or ""
+    if not session_id:
+        return []
+    import os
+    from core.llm_providers.gemini_session import _get_sessions_base
+    from core.llm_providers.gemini import LLMGeminiMixin
+    uid = user_id or store.get_user_id(conv_id) or "default"
+    workdir = os.path.join(_get_sessions_base(), uid, conv_id.replace(":", "_"), agent_name)
+    messages = []
+    for path in LLMGeminiMixin._gemini_acp_history_paths(workdir):
+        try:
+            found_session = False
+            current = []
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("sessionId") == session_id:
+                        found_session = True
+                    rtype = rec.get("type") or ""
+                    if rtype not in ("user", "gemini"):
+                        continue
+                    role = "assistant" if rtype == "gemini" else "user"
+                    content = _text_from_cli_content(rec.get("content"))
+                    if not content:
+                        continue
+                    msg = {"role": role, "content": content, "msg_id": rec.get("id", "")}
+                    if rec.get("model"):
+                        msg["source"] = {"name": "gemini", "model": rec.get("model")}
+                    current.append(msg)
+            if found_session:
+                messages.extend(current)
+        except Exception as exc:
+            logger.error("[gemini-session] Failed to read history JSONL: %s", exc)
     return messages
 
 
@@ -700,6 +782,18 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             total_count = len(context_data)
             has_more = False
             diverged = True
+        elif _ctx_agent.startswith("codex_session:"):
+            _codex_agent = _ctx_agent[len("codex_session:"):]
+            context_data = _load_codex_session_context(conv_id, _codex_agent, store, user_id=user_id)
+            total_count = len(context_data)
+            has_more = False
+            diverged = True
+        elif _ctx_agent.startswith("gemini_session:"):
+            _gemini_agent = _ctx_agent[len("gemini_session:"):]
+            context_data = _load_gemini_session_context(conv_id, _gemini_agent, store, user_id=user_id)
+            total_count = len(context_data)
+            has_more = False
+            diverged = True
         elif _ctx_agent.startswith("task:"):
             _sub_tid = _ctx_agent.split("(")[0].replace("task:", "").strip()
             _sub_cid = f"{conv_id}::task::{_sub_tid}"
@@ -730,7 +824,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         # content length. For every other source (shared, agent ctx, task
         # sub-conv, transcript page) we go through _deserialize_messages
         # which enforces the invariant.
-        if _ctx_agent.startswith("cc_session:"):
+        if _ctx_agent.startswith(("cc_session:", "codex_session:", "gemini_session:")):
             _total_chars = 0
             for _m in context_data:
                 _c = _m.get("content", "")
@@ -775,6 +869,12 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 if ek.startswith("claude_session:") and ev:
                     _cc_agent = ek[len("claude_session:"):]
                     _agent_ctx_map[f"cc_session:{_cc_agent}"] = "cc-active"
+                elif ek.startswith("codex_app_server_thread:") and ev:
+                    _codex_agent = ek[len("codex_app_server_thread:"):]
+                    _agent_ctx_map[f"codex_session:{_codex_agent}"] = "codex-active"
+                elif ek.startswith("gemini_acp_session:") and ev:
+                    _gemini_agent = ek[len("gemini_acp_session:"):]
+                    _agent_ctx_map[f"gemini_session:{_gemini_agent}"] = "gemini-active"
             _tasks_data = _extras.get("agent_tasks", {})
             if isinstance(_tasks_data, dict):
                 for _tid, _t_entry in _tasks_data.items():
@@ -808,6 +908,18 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         elif not _ctx_agent or _ctx_agent == "shared":
             context_data = _ctx_load(conv_id, "")
             diverged = True
+        elif _ctx_agent.startswith("cc_session:"):
+            _cc_agent = _ctx_agent[len("cc_session:"):]
+            context_data = _load_cc_session_context(conv_id, _cc_agent, store, user_id=user_id)
+            diverged = True
+        elif _ctx_agent.startswith("codex_session:"):
+            _codex_agent = _ctx_agent[len("codex_session:"):]
+            context_data = _load_codex_session_context(conv_id, _codex_agent, store, user_id=user_id)
+            diverged = True
+        elif _ctx_agent.startswith("gemini_session:"):
+            _gemini_agent = _ctx_agent[len("gemini_session:"):]
+            context_data = _load_gemini_session_context(conv_id, _gemini_agent, store, user_id=user_id)
+            diverged = True
         else:
             private_ctx = store.load_agent_context(conv_id, _ctx_agent)
             diverged = private_ctx is not None
@@ -827,6 +939,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         new_role = body.get("role")
         if not conv_id or not msg_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or msg_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if _ctx_agent.startswith(("cc_session:", "codex_session:", "gemini_session:")):
+            flowfile.set_content(json.dumps({"error": "Runtime session context is read-only"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         context_data = _ctx_load(conv_id, _ctx_agent)
@@ -859,11 +975,19 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
     if action == "delete_agent_context":
         conv_id = body.get("conversation_id", "")
         agent_name = body.get("agent_name", "")
-        # CC session: invalidate instead of deleting context
+        # Runtime CLI sessions: invalidate instead of editing/deleting JSONL rows.
         if agent_name.startswith("cc_session:"):
             _cc_agent = agent_name[len("cc_session:"):]
             try:
                 self._clear_claude_session(conv_id, _cc_agent)
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+        if agent_name.startswith(("codex_session:", "gemini_session:")):
+            _agent = agent_name.split(":", 1)[1]
+            try:
+                store.invalidate_claude_session_for_agent(conv_id, _agent)
                 flowfile.set_content(json.dumps({"ok": True}).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())

@@ -2161,6 +2161,51 @@ class ConversationStore:
                 self._cache[cid]["updated_at"] = time.time()
         return True
 
+    def _delete_cli_runtime_session_dirs(self, cid: str, provider: str,
+                                         agent_name: str = "") -> int:
+        """Delete runtime session dirs for one CLI provider/conv.
+
+        Used when a PawFlow context edit invalidates the provider's session.
+        The live process is evicted separately; once extras are cleared, every
+        file under the targeted provider dir is stale history.
+        """
+        import shutil
+        try:
+            owner = self._cid_user.get(cid, "") or self.get_user_id(cid) or ""
+        except Exception:
+            owner = self._cid_user.get(cid, "") or ""
+        if not owner:
+            return 0
+        from core import paths as _paths
+        base_map = {
+            "codex": _paths.CODEX_SESSIONS_DIR,
+            "gemini": _paths.GEMINI_SESSIONS_DIR,
+        }
+        base = base_map.get(provider)
+        if base is None:
+            return 0
+        safe_owner = owner.replace(":", "_").replace("/", "_").replace("\\", "_")
+        conv_dir = base / safe_owner / cid.replace(":", "_")
+        if agent_name:
+            targets = [conv_dir / agent_name]
+        else:
+            try:
+                targets = [p for p in conv_dir.iterdir() if p.is_dir()]
+            except OSError:
+                targets = []
+        removed = 0
+        for target in targets:
+            try:
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                    removed += 1
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
+        if removed:
+            logger.info("Deleted %d %s runtime session dir(s) for %s%s",
+                        removed, provider, cid[:8], f"/{agent_name}" if agent_name else "")
+        return removed
+
     def invalidate_claude_sessions(self, cid: str) -> None:
         """Clear all claude-code session IDs for this conversation.
 
@@ -2186,6 +2231,8 @@ class ConversationStore:
         for key in list(extras.keys()):
             if (key.startswith("claude_session:")
                     or key.startswith("codex_session:")
+                    or key.startswith("codex_app_server_thread:")
+                    or key.startswith("codex_app_pool_idx:")
                     or key.startswith("gemini_acp_session:")
                     or key.startswith("gemini_acp_pool_idx:")
                     or key.startswith("gemini_acp_session_version:")):
@@ -2196,14 +2243,16 @@ class ConversationStore:
         # for this conv). Safe: we just cleared the "current" flags,
         # so every jsonl under sess_dir is now obsolete.
         try:
-            owner = self._cid_user.get(cid, "")
-            if not owner:
-                return
-            from core import paths as _paths
-            sanitized_cid = cid.replace(":", "_")
-            sess_dir = _paths.CLAUDE_SESSIONS_DIR / owner / sanitized_cid
-            if sess_dir.is_dir():
-                self._prune_stale_cc_sessions(sess_dir, cid, wipe_all=True)
+            owner = self._cid_user.get(cid, "") or self.get_user_id(cid) or ""
+            if owner:
+                from core import paths as _paths
+                safe_owner = owner.replace(":", "_").replace("/", "_").replace("\\", "_")
+                sanitized_cid = cid.replace(":", "_")
+                sess_dir = _paths.CLAUDE_SESSIONS_DIR / safe_owner / sanitized_cid
+                if sess_dir.is_dir():
+                    self._prune_stale_cc_sessions(sess_dir, cid, wipe_all=True)
+            self._delete_cli_runtime_session_dirs(cid, "codex")
+            self._delete_cli_runtime_session_dirs(cid, "gemini")
         except Exception as _e:
             logger.debug("invalidate_claude_sessions disk prune failed for %s: %s",
                          cid[:8], _e)
@@ -2274,6 +2323,8 @@ class ConversationStore:
         for _k in (
                 f"claude_session:{agent_name}",
                 f"codex_session:{agent_name}",
+                f"codex_app_server_thread:{agent_name}",
+                f"codex_app_pool_idx:{agent_name}",
                 f"gemini_acp_session:{agent_name}",
                 f"gemini_acp_pool_idx:{agent_name}",
                 f"gemini_acp_session_version:{agent_name}"):
@@ -2281,9 +2332,9 @@ class ConversationStore:
                 self.set_extra(cid, _k, "")
                 logger.info("Invalidated %s for conv %s", _k, cid[:8])
                 cleared_any = True
-        # CC-specific disk prune happens below by sid; codex/gemini sessions
-        # live under their per-conv volume and are recreated lazily on the
-        # next turn, so the wiped extras alone are sufficient for them.
+        # CC-specific disk prune happens below by sid; codex/gemini runtime
+        # dirs are removed by exact (conv, agent) because their resume pointers
+        # have just been cleared.
         key = f"claude_session:{agent_name}"
         sid = str(extras.get(key) or "")
         if sid:
@@ -2309,6 +2360,13 @@ class ConversationStore:
                 logger.debug(
                     "invalidate_claude_session_for_agent disk prune failed "
                     "for %s/%s: %s", cid[:8], agent_name, _e)
+        try:
+            self._delete_cli_runtime_session_dirs(cid, "codex", agent_name)
+            self._delete_cli_runtime_session_dirs(cid, "gemini", agent_name)
+        except Exception as _e:
+            logger.debug(
+                "invalidate_claude_session_for_agent cli disk prune failed "
+                "for %s/%s: %s", cid[:8], agent_name, _e)
         # Kill any warm CC / codex / gemini session for this (conv, agent)
         # pair so the next turn spawns fresh.
         try:
@@ -2727,6 +2785,92 @@ class ConversationStore:
 
     # ── Cleanup ───────────────────────────────────────────────────────
 
+    def _prune_cli_agent_runtime(self, provider: str, agent_dir: Path,
+                                 session_id: str) -> int:
+        """Prune old provider JSONL sessions inside a live agent runtime dir."""
+        if not session_id or not agent_dir.is_dir():
+            return 0
+        removed = 0
+        if provider == "codex":
+            for path in agent_dir.glob(".codex/sessions/**/*.jsonl"):
+                try:
+                    if session_id not in path.name:
+                        path.unlink()
+                        removed += 1
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
+        elif provider == "gemini":
+            for path in agent_dir.glob(".gemini/tmp/gemini/chats/*.jsonl"):
+                try:
+                    current = False
+                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                        for line in fh:
+                            if "sessionId" not in line:
+                                continue
+                            try:
+                                rec = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            if str(rec.get("sessionId") or "") == session_id:
+                                current = True
+                            break
+                    if not current:
+                        path.unlink()
+                        removed += 1
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
+        return removed
+
+    def cleanup_orphan_cli_sessions(self) -> int:
+        """Remove stale Codex/Gemini runtime dirs and old non-current JSONLs."""
+        import shutil
+        try:
+            from core import paths as _paths
+        except Exception:
+            return 0
+        self._ensure_loaded()
+        with self._cache_lock:
+            live_sanitized = {cid.replace(":", "_"): cid
+                              for cid in self._cache.keys()}
+        removed = 0
+        conv_base = _paths.CONVERSATIONS_DIR
+        providers = (
+            ("codex", _paths.CODEX_SESSIONS_DIR, "codex_app_server_thread:"),
+            ("gemini", _paths.GEMINI_SESSIONS_DIR, "gemini_acp_session:"),
+        )
+        for provider, base, key_prefix in providers:
+            if not base.is_dir():
+                continue
+            for user_dir in base.iterdir():
+                if not user_dir.is_dir():
+                    continue
+                for conv_dir in user_dir.iterdir():
+                    if not conv_dir.is_dir():
+                        continue
+                    live_cid = live_sanitized.get(conv_dir.name)
+                    if not live_cid:
+                        if (conv_base / user_dir.name / conv_dir.name).is_dir():
+                            live_cid = conv_dir.name.replace("__", ":")
+                        else:
+                            shutil.rmtree(conv_dir, ignore_errors=True)
+                            removed += 1
+                            logger.info("Removed orphan %s session dir: %s/%s",
+                                        provider, user_dir.name, conv_dir.name)
+                            continue
+                    extras = self.get_extras(live_cid) or {}
+                    for agent_dir in list(conv_dir.iterdir()):
+                        if not agent_dir.is_dir():
+                            continue
+                        sid = str(extras.get(f"{key_prefix}{agent_dir.name}") or "")
+                        if not sid:
+                            shutil.rmtree(agent_dir, ignore_errors=True)
+                            removed += 1
+                            logger.info("Removed stale %s agent session dir: %s/%s/%s",
+                                        provider, user_dir.name, conv_dir.name, agent_dir.name)
+                            continue
+                        removed += self._prune_cli_agent_runtime(provider, agent_dir, sid)
+        return removed
+
     def vacuum(self, cid: str) -> dict:
         """Manual vacuum — no-op (extras are now atomic JSON, contexts are separate files)."""
         return {"status": "ok"}
@@ -2742,6 +2886,7 @@ class ConversationStore:
             self.delete(cid)
             removed += 1
         removed += self.cleanup_orphan_claude_sessions()
+        removed += self.cleanup_orphan_cli_sessions()
         return removed
 
     def cleanup_orphan_claude_sessions(self) -> int:

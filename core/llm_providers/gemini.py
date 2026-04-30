@@ -300,21 +300,25 @@ class LLMGeminiMixin(GeminiSessionMixin):
         return LLMGeminiMixin._gemini_acp_extract_tool_arguments(update.get("content"))
 
     @staticmethod
-    def _gemini_acp_history_tool_arguments(workdir: str, tool_call_id: str) -> dict:
-        """Recover ACP tool args from Gemini's session JSONL on replayed events."""
-        if not workdir or not tool_call_id:
-            return {}
-        chats_dir = os.path.join(workdir, ".gemini", "tmp", "gemini", "chats")
+    def _gemini_acp_history_paths(workdir: str) -> list:
+        chats_dir = os.path.join(workdir or "", ".gemini", "tmp", "gemini", "chats")
         try:
             names = [n for n in os.listdir(chats_dir) if n.endswith(".jsonl")]
         except Exception:
-            return {}
+            return []
         paths = [os.path.join(chats_dir, n) for n in names]
         try:
             paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
         except Exception:
             paths.sort(reverse=True)
-        for path in paths[:8]:
+        return paths
+
+    @staticmethod
+    def _gemini_acp_history_tool_arguments(workdir: str, tool_call_id: str) -> dict:
+        """Recover ACP tool args from Gemini's session JSONL on replayed events."""
+        if not workdir or not tool_call_id:
+            return {}
+        for path in LLMGeminiMixin._gemini_acp_history_paths(workdir)[:8]:
             try:
                 with open(path, "r", encoding="utf-8") as fh:
                     for line in fh:
@@ -328,6 +332,65 @@ class LLMGeminiMixin(GeminiSessionMixin):
             except Exception:
                 logger.debug("[gemini-acp] history tool args lookup failed", exc_info=True)
         return {}
+
+    @staticmethod
+    def _gemini_acp_history_content_text(rec: dict) -> str:
+        content = rec.get("content") if isinstance(rec, dict) else None
+        if isinstance(content, str):
+            return content
+        parts = []
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict):
+                    text = part.get("text") or part.get("content") or ""
+                    if text:
+                        parts.append(str(text))
+        return "".join(parts)
+
+    @classmethod
+    def _gemini_acp_check_preempt_in_history(cls, workdir: str, sent_texts: list) -> str:
+        if not sent_texts or not workdir:
+            return "unknown"
+        found_flags = [False] * len(sent_texts)
+        preempt_positions = [-1] * len(sent_texts)
+        last_assistant_pos = -1
+        pos = 0
+        paths = cls._gemini_acp_history_paths(workdir)
+        if not paths:
+            return "unknown"
+        for path in reversed(paths[:8]):
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        rtype = rec.get("type") or ""
+                        if rtype == "gemini":
+                            last_assistant_pos = pos
+                        elif rtype == "user":
+                            text_blob = cls._gemini_acp_history_content_text(rec)
+                            for idx, sent in enumerate(sent_texts):
+                                if sent and sent in text_blob:
+                                    found_flags[idx] = True
+                                    preempt_positions[idx] = pos
+                        pos += 1
+            except OSError:
+                return "unknown"
+        if not any(found_flags):
+            return "unread"
+        for idx, hit_pos in enumerate(preempt_positions):
+            if found_flags[idx] and hit_pos > last_assistant_pos:
+                return "pending"
+        if not all(found_flags):
+            return "unread"
+        return "done"
 
     def _gemini_acp_enqueue_live_tool_tc(self, conv_id: str, agent_name: str,
                                          tc_id: str, raw_name: str,
@@ -551,6 +614,11 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     state["preempt_req_id"] = req_id
                     state["preempt_started_at"] = time.time()
                     state["preempt_text"] = text or ""
+                    self._gemini_acp_preempt_pending = int(
+                        getattr(self, "_gemini_acp_preempt_pending", 0) or 0) + 1
+                    sent = list(getattr(self, "_gemini_acp_sent_preempt_texts", []) or [])
+                    sent.append(text or "")
+                    self._gemini_acp_sent_preempt_texts = sent
                     logger.info(
                         "[gemini-acp-live] preempted active session %s with prompt id=%s",
                         session_id[:12], req_id)
@@ -752,6 +820,9 @@ class LLMGeminiMixin(GeminiSessionMixin):
         deferred_tool_ids = set()
         usage_meta: Dict[str, Any] = {}
         loaded_session_replay_barrier = False
+        self._had_preempts_this_turn = False
+        self._gemini_acp_preempt_pending = 0
+        self._gemini_acp_sent_preempt_texts = []
 
         def _flush_text():
             nonlocal turn_text_parts
@@ -870,6 +941,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
             self._gemini_acp_log_stderr(stderr_lines)
 
             _prompt_activity_seen = False
+            _preempt_prompt_active = False
             _skip_resume_replay = bool(loaded_session_replay_barrier and not is_reuse)
             _resume_replay_skipped = 0
             _last_acp_event_at = time.monotonic()
@@ -901,6 +973,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         and incoming_id != req_id):
                     req_id = int(incoming_id)
                     active_state.pop("preempt_req_id", None)
+                    _preempt_prompt_active = True
                     _prompt_activity_seen = True
                     logger.info("[gemini-acp-live] switched reader to preempt prompt id=%s", req_id)
 
@@ -921,12 +994,27 @@ class LLMGeminiMixin(GeminiSessionMixin):
                         next_req_id = active_state.pop("preempt_req_id", None)
                         if next_req_id and next_req_id != req_id:
                             req_id = int(next_req_id)
+                            _preempt_prompt_active = True
                             _prompt_activity_seen = False
                             logger.info(
                                 "[gemini-acp-live] cancelled old prompt; waiting for preempt id=%s",
                                 req_id)
                             continue
                         break
+                    if _preempt_prompt_active:
+                        sent = list(getattr(self, "_gemini_acp_sent_preempt_texts", []) or [])
+                        pstatus = self._gemini_acp_check_preempt_in_history(workdir, sent)
+                        if pstatus in ("done", "pending", "unknown"):
+                            self._had_preempts_this_turn = True
+                            logger.info(
+                                "[gemini-acp-live] preempt prompt completed (history=%s, count=%d)",
+                                pstatus, len(sent))
+                        else:
+                            logger.info(
+                                "[gemini-acp-live] preempt prompt completed but history status=%s; pending rescue may retrigger",
+                                pstatus)
+                        self._gemini_acp_preempt_pending = 0
+                        self._gemini_acp_sent_preempt_texts = []
                     if stop_reason not in ("end_turn", "stop", "max_tokens"):
                         logger.info("[gemini-acp] prompt stopped: %s", stop_reason)
                     break

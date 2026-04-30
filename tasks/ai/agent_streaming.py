@@ -139,6 +139,33 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         "[agent:%s] pre-persist user message failed: %s",
                         conversation_id[:8], _pe)
 
+        def _ensure_stamped_user():
+            nonlocal _stamped_user
+            if _stamped_user is None and (_user_text.strip() or _attachments_body):
+                _stamped_user = stamp_message({
+                    "role": "user",
+                    "content": _user_text,
+                    "source": {"type": "user", "name": _uid,
+                               "target_agent": _target or None},
+                    "msg_id": _user_msg_id or None,
+                    "channel": "web",
+                }, conversation_id)
+                if _attachments_body:
+                    _stamped_user["attachments"] = _attachments_body
+            return _stamped_user
+
+        def _queue_pending_user(source: str, publish: bool = True) -> bool:
+            msg = _ensure_stamped_user()
+            if not msg:
+                return False
+            from core.pending_queue import PendingQueue
+            PendingQueue.for_agent(conversation_id, _target or "").enqueue(
+                dict(msg), source=source)
+            if publish:
+                bus.publish_event(conversation_id, "message_queued", {
+                    "conversation_id": conversation_id})
+            return True
+
         _fast_restart_after_preempt = False
         if _already_active:
             # Sticky-mode rule: only preempt the running turn if the
@@ -181,7 +208,11 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     and _user_text and _modes_match):
                 _attachments = _body.get("attachments", [])
                 if _active_client.send_user_message(_user_text, attachments=_attachments):
-                    logger.debug("[agent:%s] preempted active CC session", conversation_id[:8])
+                    _rescued = _queue_pending_user(source="preempt_rescue", publish=False)
+                    logger.info(
+                        "[agent:%s] preempted active provider session%s",
+                        conversation_id[:8],
+                        "; queued rescue" if _rescued else "")
                     ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
                                       "message_count": ConversationStore.instance().message_count(conversation_id),
                                       "server_start_time": SERVER_START_TIME})
@@ -214,21 +245,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             # Queue this user message in the agent's PendingQueue —
             # the active turn will drain at its end, or a wake will
             # fire if the turn somehow ended before we got here.
-            from core.pending_queue import PendingQueue
-            if _stamped_user is None:
-                _stamped_user = stamp_message({
-                    "role": "user",
-                    "content": _user_text,
-                    "source": {"type": "user", "name": _uid,
-                               "target_agent": _target or None},
-                    "msg_id": _user_msg_id or None,
-                    "channel": "web",
-                }, conversation_id)
-                if _attachments_body:
-                    _stamped_user["attachments"] = _attachments_body
-            PendingQueue.for_agent(conversation_id, _target or "").enqueue(
-                dict(_stamped_user), source="http")
-            bus.publish_event(conversation_id, "message_queued", {"conversation_id": conversation_id})
+            _queue_pending_user(source="http")
             ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
                               "message_count": ConversationStore.instance().message_count(conversation_id),
                               "server_start_time": SERVER_START_TIME})

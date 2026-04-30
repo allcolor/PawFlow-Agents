@@ -138,6 +138,9 @@ def test_gemini_provider_uses_acp_runtime_contracts():
     assert '"session/prompt"' in send_src
     assert "preempt_req_id" in send_src
     assert "return True" in send_src
+    assert "_had_preempts_this_turn = False" in stream_src
+    assert "_preempt_prompt_active = True" in stream_src
+    assert "self._had_preempts_this_turn = True" in stream_src
     assert '"type": "image"' in inspect.getsource(LLMGeminiMixin._gemini_acp_image_item)
     assert '"mimeType"' in inspect.getsource(LLMGeminiMixin._gemini_acp_image_item)
     assert '"includeThoughts": True' in settings_src

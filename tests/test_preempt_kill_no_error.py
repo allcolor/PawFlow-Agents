@@ -7,7 +7,7 @@ _AGENT_STREAMING = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8
 
 
 def test_gemini_acp_preempt_uses_live_prompt():
-    """ACP preempt should steer the warm session, not enqueue a reloop."""
+    """ACP preempt should steer the warm session; rescue queuing is shared."""
     body = _GEMINI[_GEMINI.index("def _gemini_send_user_message"):]
     body = body[:body.index("def cancel_gemini")]
     assert '"session/cancel"' in body

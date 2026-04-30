@@ -27,6 +27,13 @@ function _ctxScopedAgentName() {
   return (_ctxAgentFilter && _ctxAgentFilter !== 'transcript') ? _ctxAgentFilter : '';
 }
 
+function _ctxIsReadonly() {
+  return !!(_ctxAgentFilter && (
+    _ctxAgentFilter.startsWith('cc_session:')
+    || _ctxAgentFilter.startsWith('codex_session:')
+    || _ctxAgentFilter.startsWith('gemini_session:')));
+}
+
 function _ctxScopedMutation(body) {
   const scoped = Object.assign({}, body);
   const agent = _ctxScopedAgentName();
@@ -60,6 +67,7 @@ function ctxRefresh() {
 }
 
 async function ctxEditMessage(msgId) {
+  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
   const full = await ctxLoadFull();
   if (full.error) { addMsg('error', full.error); return; }
   const msg = (full.context || []).find(m => (m.msg_id || m.trace_id) === msgId);
@@ -120,6 +128,7 @@ function ctxLoadMore() {
     // Server returns chronological (oldest first) — reverse for newest-first display
     const olderMsgs = data.context || [];
     const reversed = [...olderMsgs].reverse();
+    const readonly = _ctxIsReadonly();
     reversed.forEach((m) => {
       const mid = m.msg_id || m.trace_id || '';
       if (!mid) return;
@@ -127,8 +136,8 @@ function ctxLoadMore() {
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
-      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
+      const editBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
+      const delBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
       const row = document.createElement('div');
       row.dataset.msgid = mid;
       row.style.cssText = 'padding:6px 8px;border-bottom:1px solid #222;cursor:pointer';
@@ -170,6 +179,7 @@ async function ctxSaveEdit(msgId) {
 }
 
 async function ctxDeleteMessage(msgId) {
+  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
   if (!confirm(t('contextDeleteConfirm'))) return;
   if (_ctxAgentFilter === 'transcript') {
     await _ctxMutate({action: 'delete_message', msg_id: msgId});
@@ -181,6 +191,7 @@ async function ctxDeleteMessage(msgId) {
 }
 
 async function ctxAddMessage() {
+  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
   const container = document.getElementById('ctx-add-form');
   if (container) { container.remove(); return; }
   const list = document.getElementById('ctx-msg-list');
@@ -200,6 +211,7 @@ async function ctxAddMessage() {
 }
 
 async function ctxSaveNewMessage() {
+  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
   if (_ctxAgentFilter === 'transcript') {
     addMsg('error', 'Switch to Shared or an agent context before adding context messages.');
     return;
@@ -213,6 +225,7 @@ async function ctxSaveNewMessage() {
 }
 
 async function ctxReplaceAll() {
+  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
   if (_ctxAgentFilter === 'transcript') {
     addMsg('error', 'Transcript cannot be replaced from the context editor.');
     return;
@@ -262,6 +275,10 @@ function _buildCtxAgentDropdown(data) {
     let label;
     if (n.startsWith('cc_session:')) {
       label = n.replace('cc_session:', '') + ' (CC session \uD83D\uDC33)';
+    } else if (n.startsWith('codex_session:')) {
+      label = n.replace('codex_session:', '') + ' (Codex session)';
+    } else if (n.startsWith('gemini_session:')) {
+      label = n.replace('gemini_session:', '') + ' (Gemini session)';
     } else {
       label = n + (status === 'diverged' ? ' \u2733' : '');
     }
@@ -277,7 +294,10 @@ async function ctxAgentChanged() {
 }
 async function ctxDeleteContext() {
   if (!_ctxAgentFilter) return;
-  if (!confirm('Delete the entire "' + _ctxAgentFilter + '" context? This cannot be undone.')) return;
+  const msg = _ctxIsReadonly()
+    ? 'Invalidate runtime session "' + _ctxAgentFilter + '"? This will force a fresh session next turn.'
+    : 'Delete the entire "' + _ctxAgentFilter + '" context? This cannot be undone.';
+  if (!confirm(msg)) return;
   const name = _ctxAgentFilter;
   _ctxAgentFilter = 'transcript';  // switch to transcript after delete
   _ctxMutate({action: 'delete_agent_context', agent_name: name}, 'Context "' + name + '" deleted.');
@@ -328,6 +348,7 @@ function ctxToggleSelect(row, event) {
   if (bar) bar.querySelector('span').textContent = _ctxSelected.size + ' selected';
 }
 async function ctxDeleteSelected() {
+  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
   if (!_ctxSelected.size) return;
   const mids = Array.from(_ctxSelected);
   _ctxSelected.clear();
@@ -347,6 +368,7 @@ function showContextOverlay(data) {
   overlay.id = 'contextOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
   const _isTranscript = _ctxAgentFilter === 'transcript';
+  const _isReadonly = !!data.readonly || _ctxIsReadonly();
   const statusBadge = _isTranscript ? ''
     : data.diverged
       ? '<span style="background:#5a3e00;color:#f4a261;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">' + t('contextDiverged') + '</span>'
@@ -366,8 +388,8 @@ function showContextOverlay(data) {
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const src = m.source ? '<span style="color:#808090;font-size:10px;margin-left:4px">[' + (m.source.name||'') + ']</span>' : '';
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
-      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
+      const editBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
+      const delBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
       msgsHtml += '<div data-msgid="' + mid + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
         + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>'
@@ -387,17 +409,17 @@ function showContextOverlay(data) {
     + statusBadge
     + _buildCtxAgentDropdown(data)
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
-    + (_isTranscript ? '' : '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>')
-    + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="Delete this context entirely">\u{1F5D1} Delete</button>' : '')
+    + (_isTranscript || _isReadonly ? '' : '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>')
+    + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + (_isReadonly ? 'Invalidate this runtime session' : 'Delete this context entirely') + '">\u{1F5D1} ' + (_isReadonly ? 'Invalidate' : 'Delete') + '</button>' : '')
     + '<button onclick="ctxClose()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'
     + '<div id="ctx-msg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
     + '<div id="ctxSelectBar" style="display:none;padding:6px 0;align-items:center;gap:8px;justify-content:center">'
     + '<span style="color:#6c5ce7;font-size:12px">0 selected</span>'
-    + '<button onclick="ctxDeleteSelected()" style="background:#e94560;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px">Delete selected</button>'
+    + (_isReadonly ? '' : '<button onclick="ctxDeleteSelected()" style="background:#e94560;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px">Delete selected</button>')
     + '<button onclick="document.querySelectorAll(\'.ctx-selected\').forEach(r=>{r.classList.remove(\'ctx-selected\');r.style.outline=\'\'});_ctxSelected.clear();document.getElementById(\'ctxSelectBar\').style.display=\'none\'" style="background:transparent;color:#aaa;border:1px solid #555;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px">Cancel</button>'
     + '</div>'
-    + (_isTranscript ? '' : '<div style="padding:8px 0 0 0;text-align:center"><button onclick="ctxAddMessage()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:8px;padding:6px 18px;cursor:pointer;font-size:13px">+ ' + t('contextAdd') + '</button></div>')
+    + (_isTranscript || _isReadonly ? '' : '<div style="padding:8px 0 0 0;text-align:center"><button onclick="ctxAddMessage()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:8px;padding:6px 18px;cursor:pointer;font-size:13px">+ ' + t('contextAdd') + '</button></div>')
     + '</div>';
   document.body.appendChild(overlay);
   const _sel = document.getElementById('ctxAgentFilter');

@@ -11,6 +11,7 @@ Tests cover:
 - save_agent_context / load_agent_context — per-agent context
 """
 
+import json
 import time
 import uuid
 import pytest
@@ -721,3 +722,97 @@ class TestCleanupOrphanClaudeSessions:
         store.invalidate_claude_session_for_agent(cid, "claude")
         assert not jf.exists()
         assert not companion.exists()
+
+
+class TestCleanupCliRuntimeSessions:
+    def _setup(self, tmp_path, monkeypatch):
+        from core import paths as _paths
+        codex = tmp_path / "sessions" / "codex"
+        gemini = tmp_path / "sessions" / "gemini"
+        codex.mkdir(parents=True)
+        gemini.mkdir(parents=True)
+        monkeypatch.setattr(_paths, "CODEX_SESSIONS_DIR", codex)
+        monkeypatch.setattr(_paths, "GEMINI_SESSIONS_DIR", gemini)
+        return codex, gemini
+
+    def _codex_jsonl(self, base, cid, thread_id, agent="assistant", user="alice"):
+        d = base / user / cid.replace(":", "_") / agent / ".codex" / "sessions" / "2026" / "04" / "30"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"rollout-2026-04-30T00-00-00-{thread_id}.jsonl"
+        p.write_text("{}\n", encoding="utf-8")
+        return p
+
+    def _gemini_jsonl(self, base, cid, session_id, agent="gemini", user="alice"):
+        d = base / user / cid.replace(":", "_") / agent / ".gemini" / "tmp" / "gemini" / "chats"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"session-{session_id}.jsonl"
+        p.write_text(json.dumps({"sessionId": session_id}) + "\n", encoding="utf-8")
+        return p
+
+    def test_cleanup_prunes_non_current_codex_and_gemini_jsonls(self, store, tmp_path, monkeypatch):
+        codex, gemini = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        store.set_extra(cid, "codex_app_server_thread:assistant", "thread-live")
+        store.set_extra(cid, "gemini_acp_session:gemini", "gemini-live")
+
+        codex_live = self._codex_jsonl(codex, cid, "thread-live")
+        codex_old = self._codex_jsonl(codex, cid, "thread-old")
+        gemini_live = self._gemini_jsonl(gemini, cid, "gemini-live")
+        gemini_old = self._gemini_jsonl(gemini, cid, "gemini-old")
+
+        removed = store.cleanup_orphan_cli_sessions()
+
+        assert removed >= 2
+        assert codex_live.exists()
+        assert not codex_old.exists()
+        assert gemini_live.exists()
+        assert not gemini_old.exists()
+
+    def test_invalidate_all_removes_codex_and_gemini_agent_dirs(self, store, tmp_path, monkeypatch):
+        codex, gemini = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        store.set_extra(cid, "codex_app_server_thread:assistant", "thread-live")
+        store.set_extra(cid, "codex_app_pool_idx:assistant", "0")
+        store.set_extra(cid, "gemini_acp_session:gemini", "gemini-live")
+        store.set_extra(cid, "gemini_acp_pool_idx:gemini", "0")
+
+        codex_file = self._codex_jsonl(codex, cid, "thread-live")
+        gemini_file = self._gemini_jsonl(gemini, cid, "gemini-live")
+        codex_agent = codex_file.parents[5]
+        gemini_agent = gemini_file.parents[4]
+
+        store.invalidate_claude_sessions(cid)
+
+        assert store.get_extra(cid, "codex_app_server_thread:assistant") == ""
+        assert store.get_extra(cid, "codex_app_pool_idx:assistant") == ""
+        assert store.get_extra(cid, "gemini_acp_session:gemini") == ""
+        assert store.get_extra(cid, "gemini_acp_pool_idx:gemini") == ""
+        assert not codex_agent.exists()
+        assert not gemini_agent.exists()
+
+    def test_invalidate_one_agent_removes_only_matching_cli_dirs(self, store, tmp_path, monkeypatch):
+        codex, gemini = self._setup(tmp_path, monkeypatch)
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        store.set_extra(cid, "codex_app_server_thread:assistant", "thread-live")
+        store.set_extra(cid, "codex_app_server_thread:other", "thread-other")
+        store.set_extra(cid, "gemini_acp_session:assistant", "gemini-live")
+        store.set_extra(cid, "gemini_acp_session:other", "gemini-other")
+
+        codex_file = self._codex_jsonl(codex, cid, "thread-live", agent="assistant")
+        codex_other = self._codex_jsonl(codex, cid, "thread-other", agent="other")
+        gemini_file = self._gemini_jsonl(gemini, cid, "gemini-live", agent="assistant")
+        gemini_other = self._gemini_jsonl(gemini, cid, "gemini-other", agent="other")
+
+        store.invalidate_claude_session_for_agent(cid, "assistant")
+
+        assert not codex_file.parents[5].exists()
+        assert codex_other.parents[5].exists()
+        assert not gemini_file.parents[4].exists()
+        assert gemini_other.parents[4].exists()
+        assert store.get_extra(cid, "codex_app_server_thread:assistant") == ""
+        assert store.get_extra(cid, "codex_app_server_thread:other") == "thread-other"
+        assert store.get_extra(cid, "gemini_acp_session:assistant") == ""
+        assert store.get_extra(cid, "gemini_acp_session:other") == "gemini-other"

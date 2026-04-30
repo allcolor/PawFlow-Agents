@@ -360,6 +360,19 @@ def test_interrupt_uses_live_user_stop_or_pending_user_stop():
     assert "resp = client.complete_stream(" not in src
 
 
+def test_accepted_live_preempt_keeps_pending_rescue():
+    """A live provider steer is not proof that the turn consumed the message.
+
+    The stamped user message must remain in PendingQueue until the final drain:
+    providers that can prove inline consumption suppress the rerun; providers
+    without proof cannot lose a late steer.
+    """
+    src = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
+    assert "source=\"preempt_rescue\"" in src
+    assert "preempted active provider session" in src
+    assert "_queue_pending_user(source=\"http\")" in src
+
+
 def test_bg_bucket_yields_to_pending_queue_before_memory_llm_work():
     """Background pyramid jobs must not start extra memory-extract LLM calls
     while the user already has a queued message waiting for the foreground

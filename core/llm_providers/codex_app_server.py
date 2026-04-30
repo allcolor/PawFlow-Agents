@@ -229,6 +229,89 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         text = str(exc).lower()
         return "thread/resume failed" in text and "no rollout found" in text
 
+    @staticmethod
+    def _codex_app_rollout_path(workdir: str, thread_id: str) -> str:
+        if not workdir or not thread_id:
+            return ""
+        sessions_dir = os.path.join(workdir, ".codex", "sessions")
+        matches = []
+        try:
+            for root, _dirs, files in os.walk(sessions_dir):
+                for name in files:
+                    if name.endswith(".jsonl") and thread_id in name:
+                        matches.append(os.path.join(root, name))
+        except Exception:
+            return ""
+        if not matches:
+            return ""
+        try:
+            return max(matches, key=os.path.getmtime)
+        except Exception:
+            return matches[-1]
+
+    @staticmethod
+    def _codex_app_payload_text(payload: dict) -> str:
+        content = payload.get("content") if isinstance(payload, dict) else None
+        if isinstance(content, str):
+            return content
+        parts = []
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict):
+                    text = part.get("text") or part.get("input_text") or part.get("output_text") or ""
+                    if text:
+                        parts.append(str(text))
+        return "".join(parts)
+
+    @classmethod
+    def _codex_app_check_preempt_in_rollout(cls, jsonl_path: str, sent_texts: list) -> str:
+        """Return done/pending/unread/unknown for steered user texts in Codex JSONL."""
+        if not sent_texts or not jsonl_path:
+            return "unknown"
+        last_assistant_pos = -1
+        found_flags = [False] * len(sent_texts)
+        preempt_positions = [-1] * len(sent_texts)
+        try:
+            with open(jsonl_path, "r", encoding="utf-8", errors="replace") as fh:
+                for i, line in enumerate(fh):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    payload = entry.get("payload") if isinstance(entry, dict) else None
+                    if not isinstance(payload, dict):
+                        continue
+                    if payload.get("type") != "message":
+                        continue
+                    role = payload.get("role") or ""
+                    if role == "assistant":
+                        last_assistant_pos = i
+                        continue
+                    if role != "user":
+                        continue
+                    text_blob = cls._codex_app_payload_text(payload)
+                    if not text_blob:
+                        continue
+                    for idx, sent in enumerate(sent_texts):
+                        if sent and sent in text_blob:
+                            found_flags[idx] = True
+                            preempt_positions[idx] = i
+        except OSError:
+            return "unknown"
+        if not any(found_flags):
+            return "unread"
+        for idx, pos in enumerate(preempt_positions):
+            if found_flags[idx] and pos > last_assistant_pos:
+                return "pending"
+        if not all(found_flags):
+            return "unread"
+        return "done"
+
     def _codex_app_full_initial_text(self, messages) -> str:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         system_prompt = (
@@ -284,7 +367,14 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         "input": input_items,
                     },
                 })
-                logger.info("[codex-app] steered active turn %s", turn_id[:12])
+                self._codex_app_preempt_pending = int(
+                    getattr(self, "_codex_app_preempt_pending", 0) or 0) + 1
+                sent = list(getattr(self, "_codex_app_sent_preempt_texts", []) or [])
+                sent.append(text or "")
+                self._codex_app_sent_preempt_texts = sent
+                logger.info(
+                    "[codex-app] steered active turn %s (pending=%d)",
+                    turn_id[:12], self._codex_app_preempt_pending)
                 return True
             except Exception as exc:
                 logger.warning("[codex-app] turn/steer failed: %s", exc)
@@ -455,6 +545,9 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         stream_uniq = f"codexapp-{uuid.uuid4().hex[:8]}"
         stream_tc_names: Dict[str, str] = {}
         completed_tool_ids = set()
+        self._had_preempts_this_turn = False
+        self._codex_app_preempt_pending = 0
+        self._codex_app_sent_preempt_texts = []
 
         def _flush_text():
             nonlocal turn_text_parts
@@ -673,6 +766,25 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     if status in ("failed", "error") or err:
                         raise LLMClientError(
                             f"codex app-server turn failed: {err or status}")
+                    if getattr(self, "_codex_app_preempt_pending", 0) > 0:
+                        sent = list(getattr(self, "_codex_app_sent_preempt_texts", []) or [])
+                        rollout = self._codex_app_rollout_path(workdir, thread_id)
+                        pstatus = self._codex_app_check_preempt_in_rollout(rollout, sent)
+                        deadline = time.time() + 3.0
+                        while pstatus in ("unread", "unknown") and time.time() < deadline:
+                            time.sleep(0.1)
+                            pstatus = self._codex_app_check_preempt_in_rollout(rollout, sent)
+                        if pstatus == "done":
+                            self._had_preempts_this_turn = True
+                            logger.info(
+                                "[codex-app] turn completed; rollout shows %d preempt(s) answered inline",
+                                len(sent))
+                        else:
+                            logger.info(
+                                "[codex-app] turn completed; %d preempt(s) not proven answered in rollout (status=%s) - pending rescue will retrigger",
+                                len(sent), pstatus)
+                        self._codex_app_preempt_pending = 0
+                        self._codex_app_sent_preempt_texts = []
                     break
 
                 if method == "error":

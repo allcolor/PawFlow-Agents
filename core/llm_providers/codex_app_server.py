@@ -327,20 +327,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         return self._codex_app_build_stdin_with_system(system_prompt, user_text)
 
     def _codex_app_resume_text(self, messages) -> str:
-        system_prompt = ""
-        for msg in messages:
-            if getattr(msg, "role", "") == "system":
-                content = getattr(msg, "content", "")
-                system_prompt = (
-                    getattr(msg, "text_content", "")
-                    if isinstance(content, list) else (content or ""))
-                break
-        system_prompt = (
-            self._CODEX_PAWFLOW_PREAMBLE
-            + ("\n" + system_prompt if system_prompt else "")
-        )
-        return self._codex_app_build_stdin_with_system(
-            system_prompt, self._codex_app_last_user_text(messages))
+        return self._codex_app_last_user_text(messages)
 
     def _codex_app_send_user_message(self, text: str, attachments: list = None):
         """Preempt/steer entrypoint for active app-server turns.

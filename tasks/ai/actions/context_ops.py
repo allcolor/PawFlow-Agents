@@ -859,6 +859,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 "role": role,
                 "content": content[:300] if isinstance(content, str) else str(content)[:300],
                 "has_tool_calls": has_tool_calls,
+                "tool_calls": m.get("tool_calls") or [],
                 "source": m.get("source"),
                 "msg_id": _row_mid,
             })

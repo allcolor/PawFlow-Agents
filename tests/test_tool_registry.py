@@ -252,6 +252,40 @@ class TestMetaToolAliases(unittest.TestCase):
         assert result == "read-ok"
         assert received == {"path": "/workspace/cli.py", "start_line": 1}
 
+    def test_nested_mcp_pawflow_use_tool_is_unwrapped(self):
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "bash-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="bash",
+            schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+                "required": ["command"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "mcp_pawflow_use_tool",
+            "arguments": {
+                "tool_name": "bash",
+                "arguments": {"command": "git status", "cwd": "/workspace"},
+            },
+        })
+
+        assert result == "bash-ok"
+        assert received == {"command": "git status", "path": "/workspace"}
+
     def test_read_handler_schema_accepts_claude_line_aliases(self):
         from core.handlers.read import ReadHandler
 

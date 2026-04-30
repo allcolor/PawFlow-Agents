@@ -487,7 +487,7 @@ def main():
                 # nested the bridge wrapper inside itself, peel until we hit a
                 # real tool. Bounded to prevent pathological loops.
                 _unwrap_budget = 3
-                while (tool_name in ("mcp__pawflow__use_tool", "use_tool")
+                while (tool_name in ("mcp__pawflow__use_tool", "mcp_pawflow_use_tool", "use_tool")
                        and _unwrap_budget > 0):
                     _inner_args = args.get("arguments", {})
                     if isinstance(_inner_args, str):

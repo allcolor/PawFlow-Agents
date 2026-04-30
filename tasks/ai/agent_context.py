@@ -1461,6 +1461,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "_pawflow_initial_context_source": _cold_cli_initial_source,
             "_nicknames": _nicknames if conversation_id else {},
             "_is_cli_provider": _is_cli_provider,
+            "_cli_has_session": _cli_has_session,
             "_is_claude_code": _is_claude_code,
             "_claude_has_session": _claude_has_session,
             "_agent_md_content": _agent_md_content,

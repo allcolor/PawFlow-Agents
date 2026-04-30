@@ -837,6 +837,8 @@ class AgentCoreMixin:
                         out = list(stored_msgs)
                         if not prompt:
                             return out
+                        if ctx.get("_is_cli_provider") and ctx.get("_cli_has_session"):
+                            return out
                         sys_msg = LLMMessage(
                             role="system", content=prompt,
                             source={"type": "provider_prompt"},
@@ -937,6 +939,7 @@ class AgentCoreMixin:
                                         ConversationStore.instance().invalidate_claude_session_for_agent(
                                             conversation_id,
                                             ctx.get("active_agent_name") or "")
+                                        ctx["_cli_has_session"] = False
                                     except Exception:
                                         logger.debug("CLI session invalidation after compact failed", exc_info=True)
                             llm_context = list(messages)

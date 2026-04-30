@@ -78,6 +78,7 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
     """Unwrap wrapper tool names to the inner tool name + arguments.
 
     mcp__pawflow__use_tool({tool_name: X, arguments: Y}) → (X, Y)
+    mcp_pawflow_use_tool({tool_name: X, arguments: Y}) → (X, Y)
     use_tool({tool_name: X, arguments: Y}) → (X, Y)
     mcp__pawflow__get_tool_schema(...) → ("get_tool_schema", arguments)
     get_tool_schema(...) → ("get_tool_schema", arguments)
@@ -85,7 +86,7 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
 
     Also resolves tool aliases (shell → bash, etc.) so display is correct.
     """
-    if name in ("mcp__pawflow__use_tool", "use_tool"):
+    if name in ("mcp__pawflow__use_tool", "mcp_pawflow_use_tool", "use_tool"):
         # Arguments may arrive as a JSON string (some LLMs serialize it).
         if isinstance(arguments, str):
             try:
@@ -102,7 +103,7 @@ def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
                 except (ValueError, TypeError):
                     pass
             return tool_name, inner
-    if name in ("mcp__pawflow__get_tool_schema", "get_tool_schema"):
+    if name in ("mcp__pawflow__get_tool_schema", "mcp_pawflow_get_tool_schema", "get_tool_schema"):
         return "get_tool_schema", arguments
     return name, arguments
 

@@ -59,12 +59,33 @@ def test_agent_builders_inject_common_prompt_and_cli_mcp_separately():
     agent_core_src = inspect.getsource(AgentCoreMixin)
     assert "_with_provider_system_prompt" in agent_core_src
     assert "_provider_system_prompt" in agent_core_src
+    assert 'ctx.get("_is_cli_provider") and ctx.get("_cli_has_session")' in agent_core_src
     assert "append_cli_mcp_system_prompt" in inspect.getsource(
         LLMClaudeCodeMixin._stream_claude_code)
     assert "_codex_app_resume_text" in inspect.getsource(
         LLMCodexAppServerMixin._stream_codex_app_server)
     assert "_gemini_acp_resume_text" in inspect.getsource(
         LLMGeminiMixin._stream_gemini)
+
+
+def test_cli_resume_prompts_do_not_reinject_system_prompt():
+    from core.llm_client import LLMMessage
+    from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    messages = [
+        LLMMessage(role="system", content="SYSTEM", conversation_id="conv1"),
+        LLMMessage(role="user", content="hello", conversation_id="conv1"),
+    ]
+
+    codex = LLMCodexAppServerMixin()
+    gemini = LLMGeminiMixin()
+
+    assert codex._codex_app_resume_text(messages) == "hello"
+    assert "<system_instructions>" not in codex._codex_app_resume_text(messages)
+    assert gemini._gemini_acp_resume_text(messages) == "hello"
+    assert "<system_instructions>" not in gemini._gemini_acp_resume_text(messages)
+    assert gemini._gemini_acp_live_text("preempt") == "preempt"
 
 
 def test_agent_skills_use_assigned_skills_as_single_source():
@@ -93,3 +114,14 @@ def test_compaction_does_not_persist_provider_system_prompt():
     src = inspect.getsource(AgentCompactionMixin._persist_context)
     assert 'persisted[0].role == "system"' in src
     assert "persisted = persisted[1:]" in src
+
+
+def test_context_editor_displays_tool_call_only_messages():
+    from tasks.ai.actions import context_ops
+
+    context_ops_src = inspect.getsource(context_ops)
+    editor_src = open("tasks/io/chat_ui/context_editor.js", encoding="utf-8").read()
+
+    assert '"tool_calls": m.get("tool_calls") or []' in context_ops_src
+    assert "function _ctxToolCallsText" in editor_src
+    assert "if (!String(content).trim() && m.has_tool_calls)" in editor_src

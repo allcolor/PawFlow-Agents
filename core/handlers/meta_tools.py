@@ -18,11 +18,28 @@ _TOOL_ALIASES = {
     "read_file": "read",
 }
 
+_WRAPPER_TOOL_NAMES = {
+    "mcp__pawflow__use_tool",
+    "mcp_pawflow_use_tool",
+    "use_tool",
+}
+
 
 def _canonical_tool_name(name: str) -> str:
     if not isinstance(name, str):
         return ""
+    if name.startswith("mcp__pawflow__"):
+        name = name[len("mcp__pawflow__"):]
+    elif name.startswith("mcp_pawflow_"):
+        name = name[len("mcp_pawflow_"):]
     return _TOOL_ALIASES.get(name) or _TOOL_ALIASES.get(name.lower()) or name
+
+
+def _normalize_tool_args(tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+    if tool_name == "bash" and "cwd" in tool_args and "path" not in tool_args:
+        tool_args = dict(tool_args)
+        tool_args["path"] = tool_args.pop("cwd")
+    return tool_args
 
 
 class GetToolSchemaHandler(ToolHandler):
@@ -70,8 +87,6 @@ class GetToolSchemaHandler(ToolHandler):
         # the caller was trying to reach get_tool_schema or use_tool —
         # point them at the direct tool.
         _raw = name
-        if name.startswith("mcp__pawflow__"):
-            name = name[len("mcp__pawflow__"):]
         name = _canonical_tool_name(name)
         if name in ("get_tool_schema", "use_tool"):
             return json.dumps({
@@ -170,19 +185,14 @@ class UseToolHandler(ToolHandler):
                 break
         if not isinstance(tool_args, dict):
             return f"Error: arguments for '{tool_name}' must be a JSON object, got {type(tool_args).__name__}"
-        def _normalize_tool_name(name: Any) -> str:
-            if isinstance(name, str) and name.startswith("mcp__pawflow__"):
-                name = name[len("mcp__pawflow__"):]
-            return _canonical_tool_name(name)
-
-        tool_name = _normalize_tool_name(tool_name)
+        tool_name = _canonical_tool_name(tool_name)
 
         # Recover the common nested meta-tool mistake:
         # use_tool(tool_name="use_tool", arguments={"tool_name": "read", ...})
         # This is mechanically unambiguous, so unwrap it instead of making
         # the model spend another turn correcting the envelope.
         unwrap_budget = 3
-        while tool_name == "use_tool" and isinstance(tool_args, dict) and unwrap_budget > 0:
+        while tool_name in _WRAPPER_TOOL_NAMES and isinstance(tool_args, dict) and unwrap_budget > 0:
             nested_name = (tool_args.get("tool_name")
                            or tool_args.get("name")
                            or tool_args.get("tool")
@@ -209,7 +219,7 @@ class UseToolHandler(ToolHandler):
                         f"got {type(nested_args).__name__}")
             if not nested_name:
                 break
-            tool_name = _normalize_tool_name(nested_name)
+            tool_name = _canonical_tool_name(nested_name)
             tool_args = nested_args
             unwrap_budget -= 1
 
@@ -222,6 +232,7 @@ class UseToolHandler(ToolHandler):
         if tool_name in ("get_tool_schema", "use_tool"):
             return (f"Error: '{tool_name}' is a meta-tool -- call it directly "
                     f"as a top-level tool call, not via use_tool.")
+        tool_args = _normalize_tool_args(tool_name, tool_args)
         # Validate arguments against tool schema
         handler = self._registry.get(tool_name)
         if handler:

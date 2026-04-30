@@ -34,6 +34,35 @@ function _ctxIsReadonly() {
     || _ctxAgentFilter.startsWith('gemini_session:')));
 }
 
+function _ctxEscape(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function _ctxToolCallsText(m) {
+  const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+  if (!calls.length) return '';
+  return calls.map(tc => {
+    const name = tc.name || tc.tool || (tc.function && tc.function.name) || 'tool';
+    const args = tc.arguments !== undefined ? tc.arguments : (tc.args !== undefined ? tc.args : (tc.function && tc.function.arguments));
+    let argsText = '';
+    if (args !== undefined) {
+      argsText = typeof args === 'string' ? args : JSON.stringify(args);
+    }
+    return name + '(' + argsText + ')';
+  }).join('\n');
+}
+
+function _ctxDisplayContent(m) {
+  let content = m.content || '';
+  if (!String(content).trim() && m.has_tool_calls) {
+    content = _ctxToolCallsText(m);
+  }
+  return _ctxEscape(content);
+}
+
 function _ctxScopedMutation(body) {
   const scoped = Object.assign({}, body);
   const agent = _ctxScopedAgentName();
@@ -135,7 +164,7 @@ function ctxLoadMore() {
       const color = roleColors[m.role] || '#808090';
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
-      const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const content = _ctxDisplayContent(m);
       const editBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
       const delBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
       const row = document.createElement('div');
@@ -387,7 +416,7 @@ function showContextOverlay(data) {
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const src = m.source ? '<span style="color:#808090;font-size:10px;margin-left:4px">[' + (m.source.name||'') + ']</span>' : '';
-      const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const content = _ctxDisplayContent(m);
       const editBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
       const delBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
       msgsHtml += '<div data-msgid="' + mid + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'

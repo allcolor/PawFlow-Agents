@@ -519,24 +519,10 @@ class LLMGeminiMixin(GeminiSessionMixin):
         return self._gemini_acp_build_stdin_with_system(system_prompt, user_text)
 
     def _gemini_acp_live_text(self, user_text: str) -> str:
-        return self._gemini_acp_build_stdin_with_system(
-            self._GEMINI_PAWFLOW_PREAMBLE, user_text or "")
+        return user_text or ""
 
     def _gemini_acp_resume_text(self, messages) -> str:
-        system_prompt = ""
-        for msg in messages:
-            if getattr(msg, "role", "") == "system":
-                content = getattr(msg, "content", "")
-                system_prompt = (
-                    getattr(msg, "text_content", "")
-                    if isinstance(content, list) else (content or ""))
-                break
-        system_prompt = (
-            self._GEMINI_PAWFLOW_PREAMBLE
-            + ("\n\n" + system_prompt if system_prompt else "")
-        )
-        return self._gemini_acp_build_stdin_with_system(
-            system_prompt, self._gemini_acp_last_user_text(messages))
+        return self._gemini_acp_last_user_text(messages)
 
     @staticmethod
     def _gemini_acp_last_user_text(messages) -> str:

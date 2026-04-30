@@ -47,6 +47,8 @@ class EditHandler(BaseFsHandler):
                 "path": {"type": "string", "description": "File path to edit"},
                 "old_string": {"type": "string", "description": "Exact string to find and replace"},
                 "new_string": {"type": "string", "description": "Replacement string"},
+                "old": {"type": "string", "description": "Alias for old_string"},
+                "new": {"type": "string", "description": "Alias for new_string"},
                 "replace_all": {"type": "boolean", "description": "Replace all occurrences (default: first only)"},
                 "start_line": {"type": "integer", "description": "Start line for line-based edit (1-based)"},
                 "end_line": {"type": "integer", "description": "End line for line-based edit"},
@@ -58,6 +60,10 @@ class EditHandler(BaseFsHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
         arguments = self._resolve_expressions(arguments)
+        if "old_string" not in arguments and "old" in arguments:
+            arguments["old_string"] = arguments.get("old", "")
+        if "new_string" not in arguments and "new" in arguments:
+            arguments["new_string"] = arguments.get("new", "")
         path = arguments.get("path", "")
         if not path:
             return "Error: 'path' is required"

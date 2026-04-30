@@ -62,9 +62,13 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
 
     doctor_ps1_src = doctor_ps1.read_text(encoding="utf-8")
     assert "wsl.exe --status" in doctor_ps1_src
+    assert "wsl.exe --list --verbose" in doctor_ps1_src
     assert "wsl --install" in doctor_ps1_src
     assert "Docker Desktop" in doctor_ps1_src
     assert "Linux containers" in doctor_ps1_src
+    assert "docker info >/dev/null 2>&1" in doctor_ps1_src
+    assert "Docker daemon reachable from WSL" in doctor_ps1_src
+    assert "test -S /var/run/docker.sock" in doctor_ps1_src
     assert "Port $Port" in doctor_ps1_src
 
 

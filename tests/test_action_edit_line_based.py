@@ -103,6 +103,14 @@ def test_string_based_unique_match(src, tmp_path):
     assert "LINE 3" in src.read_text(encoding="utf-8")
 
 
+def test_string_based_accepts_old_new_aliases(src, tmp_path):
+    result = action_edit(str(tmp_path), str(src), {
+        "old": "line 3", "new": "LINE 3",
+    })
+    assert result["replacements"] == 1
+    assert "LINE 3" in src.read_text(encoding="utf-8")
+
+
 def test_string_based_missing_old_string_rejects(src, tmp_path):
     # No old_string AND no line range -> hard error.
     with pytest.raises(ValueError, match="Missing 'old_string' parameter"):

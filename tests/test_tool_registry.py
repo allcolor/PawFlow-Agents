@@ -17,6 +17,7 @@ from typing import Dict, Any
 
 from core.tool_handler import ToolHandler
 from core.tool_registry import ToolRegistry, create_default_registry
+from core.handlers.edit_handler import EditHandler
 
 
 # ── Mock handler ────────────────────────────────────────────────────
@@ -597,6 +598,11 @@ class TestArgumentValidation(unittest.TestCase):
         ))
         result = reg.execute("strict", {"input": "ok"})
         assert result == "mock_result"
+
+    def test_edit_schema_accepts_old_new_aliases(self):
+        schema = EditHandler().parameters_schema
+        assert "old" in schema["properties"]
+        assert "new" in schema["properties"]
 
     def test_underscore_prefixed_args_allowed(self):
         """Arguments starting with _ are not validated (internal use)."""

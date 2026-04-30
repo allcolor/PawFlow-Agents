@@ -609,6 +609,10 @@ def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     dispatcher copy, which had become dead code and was removed — but the
     fs_actions copy (the one actually reached by the relay) never got it.
     """
+    if "old_string" not in req and "old" in req:
+        req["old_string"] = req.get("old", "")
+    if "new_string" not in req and "new" in req:
+        req["new_string"] = req.get("new", "")
     new_string = req.get("new_string", "")
     start_line = int(req.get("start_line", 0) or 0)
     end_line = int(req.get("end_line", 0) or 0)

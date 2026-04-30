@@ -169,21 +169,23 @@ class AgentPollerMixin:
 
         # Process non-thought polls (grouped by conversation, one at a time)
         for conversation_id in to_poll:
-            # Skip if already being processed — but reschedule so we don't lose it
+            # Skip if already being processed — but reschedule so we don't lose it.
+            # Pending/preempt rescue wakes can become due while the current turn is
+            # still cleaning up. Dropping generic reasons here loses the user
+            # message until another event happens.
             with self._active_lock:
                 if conversation_id in self._active_conversations:
-                    # Re-schedule the reasons so they're not lost
-                    reasons = scheduled_reasons.get(conversation_id, [])
+                    reasons = scheduled_reasons.get(conversation_id, []) or ["[pending] active retry"]
                     for r in reasons:
                         import re as _re_resched
-                        # Extract task_id from reason pattern [agent_task:t_xxx]
                         _tid_m = _re_resched.search(r'\[agent_task:(t_\w+)\]', r)
                         if _tid_m:
-                            scheduler.schedule_delay(
-                                conversation_id, 10,  # retry in 10s
-                                key=f"{conversation_id}::task::{_tid_m.group(1)}",
-                                reason=r,
-                            )
+                            key = f"{conversation_id}::task::{_tid_m.group(1)}"
+                        else:
+                            import hashlib as _hashlib_resched
+                            key = f"{conversation_id}::pending::{_hashlib_resched.sha1(r.encode('utf-8', 'ignore')).hexdigest()[:8]}"
+                        scheduler.schedule_delay(
+                            conversation_id, 10, key=key, reason=r)
                     continue
 
             # Load conversation history

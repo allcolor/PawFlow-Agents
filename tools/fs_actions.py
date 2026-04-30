@@ -393,14 +393,26 @@ def _grep_split_glob_path(path: str) -> tuple[str, str]:
     return base, "/".join(glob_parts)
 
 
+def _grep_effective_glob(glob_pattern: str, recursive: bool) -> str:
+    """Make basename globs recursive by default, matching ripgrep semantics."""
+    glob_pattern = (glob_pattern or "").strip()
+    if not glob_pattern or not recursive:
+        return glob_pattern
+    normalized = glob_pattern.replace("\\", "/")
+    if "/" in normalized or normalized.startswith("**/"):
+        return normalized
+    return f"**/{normalized}"
+
+
 def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     regex = req.get("regex", "")
     recursive = req.get("recursive", True)
-    glob_pattern = req.get("glob", "")
+    glob_pattern = req.get("glob", "") or req.get("include", "")
     if not regex:
         raise ValueError("Missing 'regex' parameter")
     if not glob_pattern:
         path, glob_pattern = _grep_split_glob_path(path)
+    glob_pattern = _grep_effective_glob(glob_pattern, recursive)
     # Suppress Python 3.12+ FutureWarning for user-supplied regex quirks
     # (e.g. `[[..]]` patterns flagged as possible nested sets). The regex
     # still compiles correctly — we just don't want the warning to pollute
@@ -684,13 +696,188 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     return {"edits_applied": len(edits), "files_modified": modified}
 
 
+def _patch_target(root_dir: str, raw_path: str):
+    root = Path(root_dir).resolve()
+    name = (raw_path or "").strip()
+    if not name:
+        raise ValueError("Patch target path is empty")
+    if name.startswith("a/") or name.startswith("b/"):
+        name = name[2:]
+    # LLMs often emit container paths while the relay root is the host path.
+    if name.startswith("/workspace/"):
+        name = name[len("/workspace/"):]
+    p = Path(name)
+    target = p if p.is_absolute() else root / p
+    target = target.resolve()
+    try:
+        rel = target.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ValueError(f"Patch target escapes workspace: {raw_path}") from exc
+    return target, rel
+
+
+def _find_patch_sequence(lines, seq, start=0):
+    if not seq:
+        return start
+    end = len(lines) - len(seq) + 1
+    for idx in range(max(0, start), max(0, end)):
+        if lines[idx:idx + len(seq)] == seq:
+            return idx
+    for idx in range(0, max(0, end)):
+        if lines[idx:idx + len(seq)] == seq:
+            return idx
+    return -1
+
+
+def _apply_patch_hunks(content: str, hunks, rel: str):
+    content_lines = content.splitlines(True)
+    cursor = 0
+    applied = 0
+    for hunk in hunks:
+        old_seq = []
+        new_seq = []
+        for line in hunk:
+            if not line:
+                continue
+            prefix = line[:1]
+            body = line[1:]
+            if prefix in (" ", "-"):
+                old_seq.append(body)
+            if prefix in (" ", "+"):
+                new_seq.append(body)
+        if not old_seq and not new_seq:
+            continue
+        pos = _find_patch_sequence(content_lines, old_seq, cursor)
+        if pos < 0:
+            preview = "".join(old_seq[:5]).strip().replace("\n", "\\n")
+            raise ValueError(f"Patch context not found in {rel}: {preview[:160]}")
+        content_lines[pos:pos + len(old_seq)] = new_seq
+        cursor = pos + len(new_seq)
+        applied += 1
+    return "".join(content_lines), applied
+
+
+def _parse_openai_patch_sections(patch: str):
+    raw_lines = patch.splitlines(True)
+    stripped = [ln.rstrip("\r\n") for ln in raw_lines]
+    if not stripped or stripped[0] != "*** Begin Patch":
+        raise ValueError("OpenAI patch must start with '*** Begin Patch'")
+    sections = []
+    i = 1
+    while i < len(raw_lines):
+        marker = stripped[i]
+        if marker == "*** End Patch":
+            return sections
+        if marker.startswith("*** Add File: "):
+            path = marker[len("*** Add File: "):].strip()
+            i += 1
+            body = []
+            while i < len(raw_lines) and not stripped[i].startswith("*** "):
+                if raw_lines[i].startswith("+"):
+                    body.append(raw_lines[i][1:])
+                elif raw_lines[i].strip():
+                    raise ValueError(f"Invalid Add File line for {path}: {stripped[i]}")
+                i += 1
+            sections.append(("add", path, body, None))
+            continue
+        if marker.startswith("*** Delete File: "):
+            sections.append(("delete", marker[len("*** Delete File: "):].strip(), [], None))
+            i += 1
+            continue
+        if marker.startswith("*** Update File: "):
+            path = marker[len("*** Update File: "):].strip()
+            i += 1
+            hunks = []
+            current = []
+            move_to = None
+            while i < len(raw_lines) and not stripped[i].startswith("*** Update File: ") and not stripped[i].startswith("*** Add File: ") and not stripped[i].startswith("*** Delete File: ") and stripped[i] != "*** End Patch":
+                line = raw_lines[i]
+                sm = stripped[i]
+                if sm.startswith("*** Move to: "):
+                    move_to = sm[len("*** Move to: "):].strip()
+                elif sm == "*** End of File":
+                    pass
+                elif line.startswith("@@"):
+                    if current:
+                        hunks.append(current)
+                    current = []
+                elif line.startswith((" ", "+", "-")):
+                    if current is None:
+                        current = []
+                    current.append(line)
+                elif sm.startswith("\\ No newline"):
+                    pass
+                elif sm.strip():
+                    raise ValueError(f"Invalid Update File line for {path}: {sm}")
+                i += 1
+            if current:
+                hunks.append(current)
+            sections.append(("update", path, hunks, move_to))
+            continue
+        if marker.strip():
+            raise ValueError(f"Unsupported patch marker: {marker}")
+        i += 1
+    raise ValueError("OpenAI patch missing '*** End Patch'")
+
+
+def _apply_openai_patch(root_dir: str, patch: str) -> Dict[str, Any]:
+    sections = _parse_openai_patch_sections(patch)
+    if not sections:
+        raise ValueError("Patch did not contain any applicable hunks")
+    files_modified = []
+    hunks_applied = 0
+    for action, raw_path, payload, move_to in sections:
+        target, rel = _patch_target(root_dir, raw_path)
+        if action == "add":
+            if target.exists():
+                raise ValueError(f"Add File target already exists: {rel}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("".join(payload), encoding="utf-8")
+            files_modified.append(rel)
+            hunks_applied += 1
+        elif action == "delete":
+            if not target.exists():
+                raise ValueError(f"Delete File target does not exist: {rel}")
+            target.unlink()
+            files_modified.append(rel)
+            hunks_applied += 1
+        elif action == "update":
+            if not target.exists():
+                raise ValueError(f"Update File target does not exist: {rel}")
+            content = target.read_text(encoding="utf-8")
+            new_content, applied = _apply_patch_hunks(content, payload, rel)
+            if applied == 0 and not move_to:
+                raise ValueError(f"Patch did not contain applicable hunks for {rel}")
+            dest = target
+            dest_rel = rel
+            if move_to:
+                dest, dest_rel = _patch_target(root_dir, move_to)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if dest != target:
+                    target.unlink()
+            dest.write_text(new_content, encoding="utf-8")
+            files_modified.append(dest_rel)
+            hunks_applied += applied or 1
+    if not files_modified or hunks_applied <= 0:
+        raise ValueError("Patch did not modify any files")
+    return {
+        "method": "openai_apply_patch",
+        "files_modified": files_modified,
+        "hunks_applied": hunks_applied,
+        "applied": True,
+    }
+
+
 def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
-    """Apply a unified diff patch."""
+    """Apply a unified diff patch or Codex/OpenAI *** Begin Patch block."""
     patch = req.get("patch", "")
     if not patch:
         raise ValueError("Missing 'patch' parameter")
 
-    # Try git apply first
+    if patch.lstrip().startswith("*** Begin Patch"):
+        return _apply_openai_patch(root_dir, patch.lstrip())
+
+    # Try git apply first for real unified diffs.
     try:
         result = subprocess.run(
             ["git", "apply", "--stat", "-"],
@@ -698,25 +885,26 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
-            stat_output = result.stdout
-            # Actually apply
+            stat_output = result.stdout.strip()
             result = subprocess.run(
                 ["git", "apply", "-"],
                 input=patch, cwd=root_dir,
                 capture_output=True, text=True,
             )
             if result.returncode == 0:
-                return {"method": "git_apply", "stats": stat_output.strip(), "applied": True}
-            else:
-                raise ValueError(f"git apply failed: {result.stderr}")
+                if not stat_output:
+                    raise ValueError("Patch did not contain any applicable hunks")
+                return {"method": "git_apply", "stats": stat_output, "applied": True}
+            raise ValueError(f"git apply failed: {result.stderr}")
     except FileNotFoundError:
-        pass  # git not available, fall through to manual
+        pass
     except subprocess.TimeoutExpired:
         raise ValueError("Patch application timed out")
 
-    # Manual fallback: parse unified diff
+    # Manual fallback: simple unified diff parser.
     files_modified = []
     current_file = None
+    current_rel = ""
     current_content = None
     hunks_applied = 0
 
@@ -724,60 +912,64 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     i = 0
     while i < len(lines):
         line = lines[i]
-        # New file header
         if line.startswith("+++ b/") or line.startswith("+++ "):
             if current_file and current_content is not None:
                 Path(current_file).write_text(current_content, encoding="utf-8")
             fname = line[6:].strip() if line.startswith("+++ b/") else line[4:].strip()
-            current_file = str(Path(root_dir) / fname)
-            p = Path(current_file)
-            if p.is_file():
-                current_content = p.read_text(encoding="utf-8")
-            else:
-                current_content = ""
-            files_modified.append(fname)
+            if fname == "/dev/null":
+                current_file = None
+                current_content = None
+                i += 1
+                continue
+            target, current_rel = _patch_target(root_dir, fname)
+            current_file = str(target)
+            current_content = target.read_text(encoding="utf-8") if target.is_file() else ""
+            files_modified.append(current_rel)
             i += 1
             continue
         if line.startswith("--- "):
             i += 1
             continue
-        # Hunk header
         if line.startswith("@@") and current_content is not None:
-            import re as _re
-            m = _re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
+            m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
             if not m:
                 i += 1
                 continue
             orig_start = int(m.group(1)) - 1
             content_lines = current_content.splitlines(True)
-            # Ensure content_lines has enough entries
             while len(content_lines) <= orig_start:
                 content_lines.append("")
             j = orig_start
             i += 1
+            applied_this_hunk = False
             while i < len(lines):
                 dl = lines[i]
-                if dl.startswith("@@") or dl.startswith("diff ") or dl.startswith("--- ") or dl.startswith("+++ "):
+                if dl.startswith(("@@", "diff ", "--- ", "+++ ")):
                     break
                 if dl.startswith("-"):
                     if j < len(content_lines):
                         content_lines.pop(j)
+                    applied_this_hunk = True
                 elif dl.startswith("+"):
                     content_lines.insert(j, dl[1:])
                     j += 1
-                else:  # context line
+                    applied_this_hunk = True
+                else:
                     j += 1
                 i += 1
             current_content = "".join(content_lines)
-            hunks_applied += 1
+            if applied_this_hunk:
+                hunks_applied += 1
             continue
         i += 1
 
-    # Write last file
     if current_file and current_content is not None:
         Path(current_file).write_text(current_content, encoding="utf-8")
 
-    return {"method": "manual", "files_modified": files_modified, "hunks_applied": hunks_applied, "applied": True}
+    if not files_modified or hunks_applied <= 0:
+        raise ValueError("Patch did not contain any applicable unified diff hunks")
+    return {"method": "manual_unified", "files_modified": files_modified,
+            "hunks_applied": hunks_applied, "applied": True}
 
 
 

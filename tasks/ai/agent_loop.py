@@ -199,14 +199,15 @@ class AgentLoopTask(
 
     @classmethod
     def wake_agent(cls, conversation_id: str, agent_name: str,
-                   reason: str = "", user_id: str = "", delay: float = 1.0):
+                   reason: str = "", user_id: str = "", delay: float = 1.0,
+                   even_if_active: bool = False):
         """Trigger an agent turn — no-op if it's already running.
 
         When the agent is active, the PendingQueue is drained at the end
         of the current turn; no external wake needed. When idle, schedule
         a turn so the queued messages are picked up.
         """
-        if cls.is_agent_active(conversation_id, agent_name):
+        if cls.is_agent_active(conversation_id, agent_name) and not even_if_active:
             return  # current turn will drain pending at its end
         try:
             from core.poll_scheduler import PollScheduler

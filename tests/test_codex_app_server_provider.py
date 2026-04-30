@@ -93,6 +93,15 @@ def test_codex_mcp_config_uses_absolute_python_for_app_server_spawn():
     assert 'python_bin = "/usr/bin/python3"' in src
 
 
+def test_codex_preamble_names_disabled_native_tools():
+    from core.llm_providers.codex_session import CodexSessionMixin
+
+    preamble = CodexSessionMixin._CODEX_PAWFLOW_PREAMBLE
+    assert "ApplyPatch" in preamble
+    assert "exec_command" in preamble
+    assert "PawFlow MCP tools" in preamble
+
+
 def test_codex_app_server_container_dir_matches_pool_namespace():
     from core.llm_providers.codex_session import _get_sessions_base
 

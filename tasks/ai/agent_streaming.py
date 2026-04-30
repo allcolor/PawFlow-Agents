@@ -377,6 +377,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         conversation_id, _agent_n2,
                         reason="[pending] safety-net wake",
                         user_id=ctx.get("user_id", ""),
+                        even_if_active=True,
                     )
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
@@ -471,6 +472,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         reason=f"[pending] {_pending_count} queued msg(s)",
                         user_id=ctx.get("user_id", ""),
                         delay=1.0,
+                        even_if_active=True,
                     )
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)

@@ -58,7 +58,7 @@ def test_agent_core_rechecks_compact_threshold_after_context_injections():
     call_start = _AGENT_CORE.index("# LLM call", guard_start)
     guard = _AGENT_CORE[guard_start:call_start]
     assert "_trigger_frac > 0" in guard
-    assert "_pre_send_est > _trigger_tokens" in guard
+    assert "_pre_send_est >= _trigger_tokens" in guard
     assert "self._compact(" in guard
     assert "force=True" in guard
 
@@ -82,7 +82,7 @@ def test_auto_compact_threshold_is_enforced_after_visible_appends():
         _AGENT_CORE.index("def _append")
     ]
     assert "trigger_fraction=trigger_fraction" in helper
-    assert "force=True" not in helper
+    assert "force=True" in helper
 
 
 def test_proactive_compact_replaces_active_messages_for_cli_providers():

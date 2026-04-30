@@ -754,7 +754,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         _initial_output = _build_output(messages[start_idx:])
         _original_tokens = _estimate(_initial_output)
 
-        if not force and _original_tokens <= trigger:
+        if not force and _original_tokens < trigger:
             return messages
 
         logger.info("[compact] %s: %d tokens (trigger=%d, cap=%d, %d msgs)",

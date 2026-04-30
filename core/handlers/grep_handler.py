@@ -46,6 +46,7 @@ class GrepHandler(BaseFsHandler):
                 "pattern": {"type": "string", "description": "Regex pattern to search for"},
                 "path": {"type": "string", "description": "Directory or file to search in (default: root)"},
                 "glob": {"type": "string", "description": "Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\")"},
+                "include": {"type": "string", "description": "Alias for glob. Basename patterns like '*.py' are recursive by default."},
                 "output_mode": {
                     "type": "string",
                     "enum": ["content", "files_with_matches", "count"],
@@ -81,7 +82,7 @@ class GrepHandler(BaseFsHandler):
         limit = int(arguments.get("head_limit") or arguments.get("limit") or 250)
         offset = int(arguments.get("offset", 0) or 0)
         output_mode = arguments.get("output_mode", "files_with_matches")
-        glob_pattern = arguments.get("glob", "")
+        glob_pattern = arguments.get("glob", "") or arguments.get("include", "")
         case_insensitive = arguments.get("-i", False)
         context_before = arguments.get("-B", 0)
         context_after = arguments.get("-A", 0)

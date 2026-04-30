@@ -418,6 +418,7 @@ class AgentCoreMixin:
                 compacted = self._compact(
                     copy.deepcopy(messages), compact_owner, max_ctx,
                     trigger_fraction=trigger_fraction,
+                    force=True,
                     conversation_id=conversation_id,
                     agent_name=ctx.get("active_agent_name") or "",
                     tool_defs=ctx.get("tool_defs"),
@@ -1005,10 +1006,10 @@ class AgentCoreMixin:
                             f"{len(llm_context)} msgs, max={_max_ctx}")
                         if _trigger_frac > 0:
                             _trigger_tokens = int(_max_ctx * _trigger_frac)
-                            if _pre_send_est > _trigger_tokens:
+                            if _pre_send_est >= _trigger_tokens:
                                 logger.info(
                                     "[compact] pre-send threshold crossed after injections: "
-                                    "%d > %d (%.0f%%)",
+                                    "%d >= %d (%.0f%%)",
                                     _pre_send_est, _trigger_tokens,
                                     _trigger_frac * 100)
                                 # The final post-injection estimate has already

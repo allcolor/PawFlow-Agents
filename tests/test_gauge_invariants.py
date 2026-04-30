@@ -371,6 +371,16 @@ def test_accepted_live_preempt_keeps_pending_rescue():
     assert "source=\"preempt_rescue\"" in src
     assert "preempted active provider session" in src
     assert "_queue_pending_user(source=\"http\")" in src
+    assert "even_if_active=True" in src
+
+
+def test_pending_wake_is_not_lost_while_conversation_is_still_active():
+    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    poller_src = Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
+    assert "even_if_active: bool = False" in loop_src
+    assert "and not even_if_active" in loop_src
+    assert "pending::" in poller_src
+    assert "hashlib_resched" in poller_src
 
 
 def test_bg_bucket_yields_to_pending_queue_before_memory_llm_work():

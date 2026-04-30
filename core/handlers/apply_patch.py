@@ -55,7 +55,20 @@ class ApplyPatchHandler(BaseFsHandler):
             self._checkpoint_before(svc, path, service_name=service_name)
             result = svc._request("apply_patch", path, patch=patch)
             if isinstance(result, dict):
-                return result.get("output", f"Patch applied to {path}")
+                if result.get("applied") is False:
+                    return f"Error: patch was not applied to {path}"
+                files = result.get("files_modified") or []
+                hunks = int(result.get("hunks_applied", 0) or 0)
+                stats = result.get("stats", "") or ""
+                output = result.get("output", "") or ""
+                if files:
+                    return (f"Patch applied ({result.get('method', 'apply_patch')}, "
+                            f"{hunks} hunk(s)): " + ", ".join(files))
+                if stats:
+                    return f"Patch applied ({result.get('method', 'apply_patch')}): {stats}"
+                if output:
+                    return output
+                return "Error: patch reported success but no files or hunks were modified"
             return str(result)
         except Exception as e:
             return f"Error: {e}"

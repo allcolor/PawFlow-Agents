@@ -1057,7 +1057,10 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             return
         try:
             from core.conversation_store import ConversationStore
-            serialized = self._serialize_messages(compacted)
+            persisted = list(compacted)
+            if persisted and persisted[0].role == "system":
+                persisted = persisted[1:]
+            serialized = self._serialize_messages(persisted)
             ConversationStore.instance().save_agent_context(
                 conversation_id, agent_name, serialized,
             )

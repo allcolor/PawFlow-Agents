@@ -46,18 +46,50 @@ def test_agent_builders_inject_common_prompt_and_cli_mcp_separately():
     from core.llm_providers.codex_app_server import LLMCodexAppServerMixin
     from core.llm_providers.claude_code import LLMClaudeCodeMixin
     from core.llm_providers.gemini import LLMGeminiMixin
+    from tasks.ai.agent_core import AgentCoreMixin
     from tasks.ai.agent_context import AgentContextMixin
 
     assert "inject_common_agent_system_prompt" in inspect.getsource(
         AgentContextMixin)
     agent_context_src = inspect.getsource(AgentContextMixin)
-    assert "messages.insert(0, LLMMessage(role=\"system\"" in agent_context_src
-    assert "base_message_count += 1" in agent_context_src
+    assert '"_provider_system_prompt": _provider_system_prompt' in agent_context_src
+    assert "messages.insert(0, LLMMessage(role=\"system\"" not in agent_context_src
     assert "inject_common_agent_system_prompt" in inspect.getsource(
         resolve_agent_task)
+    agent_core_src = inspect.getsource(AgentCoreMixin)
+    assert "_with_provider_system_prompt" in agent_core_src
+    assert "_provider_system_prompt" in agent_core_src
     assert "append_cli_mcp_system_prompt" in inspect.getsource(
         LLMClaudeCodeMixin._stream_claude_code)
     assert "_codex_app_resume_text" in inspect.getsource(
         LLMCodexAppServerMixin._stream_codex_app_server)
     assert "_gemini_acp_resume_text" in inspect.getsource(
         LLMGeminiMixin._stream_gemini)
+
+
+def test_agent_skills_use_assigned_skills_as_single_source():
+    from core.agent_executor import resolve_agent_task
+    import core.conv_agent_config as conv_agent_config
+    from core.conv_agent_config import add_agent_to_conv
+    from tasks.ai.actions import agent_resource
+    from tasks.ai.agent_context import AgentContextMixin
+
+    context_src = inspect.getsource(AgentContextMixin)
+    executor_src = inspect.getsource(resolve_agent_task)
+    resource_src = inspect.getsource(agent_resource)
+    add_src = inspect.getsource(add_agent_to_conv)
+    config_src = inspect.getsource(conv_agent_config)
+
+    assert 'get("assigned_skills")' in context_src
+    assert 'agent_def.get("assigned_skills")' in executor_src
+    assert '"skills": []' not in config_src
+    assert '"skills": skills or []' not in add_src
+    assert '"assigned_skills"' in resource_src
+
+
+def test_compaction_does_not_persist_provider_system_prompt():
+    from tasks.ai.agent_compaction import AgentCompactionMixin
+
+    src = inspect.getsource(AgentCompactionMixin._persist_context)
+    assert 'persisted[0].role == "system"' in src
+    assert "persisted = persisted[1:]" in src

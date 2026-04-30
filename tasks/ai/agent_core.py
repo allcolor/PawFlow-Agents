@@ -887,6 +887,14 @@ class AgentCoreMixin:
                                 messages[:] = compacted_messages
                                 ctx.pop("_context_usage_cache", None)
                                 ctx.pop("_auto_compact_usage_cache", None)
+                                if ctx.get("_is_cli_provider") and conversation_id:
+                                    try:
+                                        from core.conversation_store import ConversationStore
+                                        ConversationStore.instance().invalidate_claude_session_for_agent(
+                                            conversation_id,
+                                            ctx.get("active_agent_name") or "")
+                                    except Exception:
+                                        logger.debug("CLI session invalidation after compact failed", exc_info=True)
                             llm_context = list(messages)
                         else:
                             # threshold = 0: no proactive compact, send the
@@ -894,6 +902,23 @@ class AgentCoreMixin:
                             # *_compact site below — e.g. context-overflow
                             # retry — still applies as a safety net).
                             llm_context = list(messages)
+
+                    def _with_provider_system_prompt(stored_msgs):
+                        prompt = ctx.get("_provider_system_prompt", "") or ""
+                        out = list(stored_msgs)
+                        if not prompt:
+                            return out
+                        sys_msg = LLMMessage(
+                            role="system", content=prompt,
+                            source={"type": "provider_prompt"},
+                            conversation_id=conversation_id)
+                        if out and out[0].role == "system":
+                            out[0] = sys_msg
+                        else:
+                            out.insert(0, sys_msg)
+                        return out
+
+                    llm_context = _with_provider_system_prompt(llm_context)
 
                     # Pre-injection char count for CPT calibration
                     _pre_inject_chars = self._estimate_tokens(
@@ -955,26 +980,26 @@ class AgentCoreMixin:
                             conversation_id=conversation_id,
                         ))
                         _irpt_resp = client.complete_stream(
-                            messages=self._compact(
+                            messages=_with_provider_system_prompt(self._compact(
                                 copy.deepcopy(messages), compact_client,
                                 ctx.get("max_context_size", 64000),
                                 target_fraction=0.25,
                                 conversation_id=conversation_id,
                                 agent_name=ctx.get("active_agent_name") or "",
-                                user_id=user_id),
+                                user_id=user_id)),
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],
                             tools=None,
                             callback=emitter.get_token_callback(False),
                         ) if emitter.is_streaming else client.complete(
-                            messages=self._compact(
+                            messages=_with_provider_system_prompt(self._compact(
                                 copy.deepcopy(messages), compact_client,
                                 ctx.get("max_context_size", 64000),
                                 target_fraction=0.25,
                                 conversation_id=conversation_id,
                                 agent_name=ctx.get("active_agent_name") or "",
-                                user_id=user_id),
+                                user_id=user_id)),
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],

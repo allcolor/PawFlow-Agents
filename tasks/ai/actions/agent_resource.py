@@ -283,7 +283,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
-        agent_def = rs.get_any("agent", agent_name, uid)
+        conv_id = body.get("conversation_id", "")
+        _def_name = agent_name
+        if conv_id:
+            try:
+                from core.conv_agent_config import get_agent_config
+                _def_name = get_agent_config(conv_id, agent_name).get("definition") or agent_name
+            except Exception:
+                _def_name = agent_name
+        agent_def = rs.get_any("agent", _def_name, uid)
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
@@ -297,9 +305,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         # Update agent in the correct scope
         _scope = agent_def.get("_scope", "user")
         _uid = uid if _scope == "user" else "__global__"
-        rs.update("agent", agent_name, _uid, {"assigned_skills": assigned})
+        rs.update("agent", _def_name, _uid, {"assigned_skills": assigned})
         # Invalidate this agent's CLI session so the new skill is injected.
-        conv_id = body.get("conversation_id", "")
         if conv_id:
             store.invalidate_claude_session_for_agent(conv_id, agent_name)
         flowfile.set_content(json.dumps({
@@ -317,7 +324,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
-        agent_def = rs.get_any("agent", agent_name, uid)
+        conv_id = body.get("conversation_id", "")
+        _def_name = agent_name
+        if conv_id:
+            try:
+                from core.conv_agent_config import get_agent_config
+                _def_name = get_agent_config(conv_id, agent_name).get("definition") or agent_name
+            except Exception:
+                _def_name = agent_name
+        agent_def = rs.get_any("agent", _def_name, uid)
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
@@ -326,9 +341,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             assigned.remove(skill_name)
         _scope = agent_def.get("_scope", "user")
         _uid = uid if _scope == "user" else "__global__"
-        rs.update("agent", agent_name, _uid, {"assigned_skills": assigned})
+        rs.update("agent", _def_name, _uid, {"assigned_skills": assigned})
         # Invalidate this agent's CLI session so the removed skill takes effect.
-        conv_id = body.get("conversation_id", "")
         if conv_id:
             store.invalidate_claude_session_for_agent(conv_id, agent_name)
         flowfile.set_content(json.dumps({
@@ -345,7 +359,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
-        agent_def = rs.get_any("agent", agent_name, uid)
+        conv_id = body.get("conversation_id", "")
+        _def_name = agent_name
+        if conv_id:
+            try:
+                from core.conv_agent_config import get_agent_config
+                _def_name = get_agent_config(conv_id, agent_name).get("definition") or agent_name
+            except Exception:
+                _def_name = agent_name
+        agent_def = rs.get_any("agent", _def_name, uid)
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
             return [flowfile]
@@ -484,17 +506,18 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
         agents_out = []
         for aname in conv_agent_names:
-            a = rs.get_any("agent", aname, uid)
+            acfg = conv_agent_cfgs.get(aname, {})
+            _def_name = acfg.get("definition") or aname
+            a = rs.get_any("agent", _def_name, uid)
             if not a:
                 a = {"name": aname, "description": "", "_scope": ""}
-            acfg = conv_agent_cfgs.get(aname, {})
             entry = {
                 "name": aname,
                 "description": a.get("description", ""),
                 "scope": a.get("_scope", ""),
                 "active": active.get("agent") == aname,
                 "llm_service": acfg.get("llm_service", ""),
-                "assigned_skills": acfg.get("skills") or [],
+                "assigned_skills": a.get("assigned_skills") or [],
             }
             _cu = _stored_context_usage(aname, acfg)
             if _cu:
@@ -526,8 +549,12 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         skills_out = []
         for s in all_skills:
             sname = s["name"]
-            assigned_to = [aname for aname, acfg in conv_agent_cfgs.items()
-                           if sname in (acfg.get("skills") or [])]
+            assigned_to = []
+            for aname, acfg in conv_agent_cfgs.items():
+                _def_name = acfg.get("definition") or aname
+                _agent_def = rs.get_any("agent", _def_name, uid) or {}
+                if sname in (_agent_def.get("assigned_skills") or []):
+                    assigned_to.append(aname)
             skills_out.append({
                 "name": sname,
                 "description": s.get("description", ""),
@@ -1193,13 +1220,25 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not in conversation"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        # Merge — only update known fields
-        _allowed = {"llm_service", "model", "tools", "max_depth", "skills", "params"}
+        # Merge — only update known runtime fields. Skills live on the agent
+        # definition (`assigned_skills`), not in conv_agent_config.
+        _allowed = {"llm_service", "model", "tools", "max_depth", "params"}
         merged = dict(configs[aname])
         for k, v in cfg.items():
             if k in _allowed:
                 merged[k] = v
         set_agent_config(conv_id, aname, merged)
+        if "skills" in cfg:
+            from core.resource_store import ResourceStore
+            _def_name = merged.get("definition", aname)
+            _skills = cfg.get("skills") or []
+            _agent_def = ResourceStore.instance().get_any("agent", _def_name, user_id)
+            if _agent_def is not None:
+                _scope = _agent_def.get("_scope", "user")
+                _uid = user_id if _scope == "user" else "__global__"
+                ResourceStore.instance().update(
+                    "agent", _def_name, _uid, {"assigned_skills": list(_skills)})
+            store.invalidate_claude_session_for_agent(conv_id, aname)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
 
@@ -1294,6 +1333,14 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         active_res = {"agents": _instance_names, "agent": _instance_names[0]}
         store.set_extra(new_id, "active_resources", active_res)
         for entry in valid_entries:
+            if entry.get("skills") is not None:
+                _agent_def = rs.get_any("agent", entry["definition"], uid)
+                if _agent_def is not None:
+                    _scope = _agent_def.get("_scope", "user")
+                    _uid = uid if _scope == "user" else "__global__"
+                    rs.update("agent", entry["definition"], _uid, {
+                        "assigned_skills": list(entry.get("skills") or [])
+                    })
             add_agent_to_conv(
                 new_id, entry["instance_name"],
                 llm_service=entry["llm_service"],

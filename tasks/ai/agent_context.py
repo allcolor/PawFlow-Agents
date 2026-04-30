@@ -481,9 +481,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         elif use_conv_store and conversation_id:
             if _claude_has_session:
                 # CC has an active session — it already has the context.
-                # Just need a system prompt placeholder; user message appended later.
-                messages = [LLMMessage(role="system", content=system_prompt,
-                                        conversation_id=conversation_id)]
+                # User message is appended later; provider-only prompt state
+                # is reconstructed per call and must not enter stored context.
+                messages = []
                 base_message_count = 0
                 _context_diverged = True  # skip compact
                 logger.info(f"[context:{conversation_id[:8]}] CC session active — skipping context load")
@@ -565,10 +565,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 except (json.JSONDecodeError, KeyError):
                     pass
 
+        if messages and messages[0].role == "system":
+            # Persisted agent context must contain only compact summary +
+            # current messages. System/memory/skills are provider-only and
+            # rebuilt below on every call.
+            messages = messages[1:]
         if not messages:
-            messages = [LLMMessage(role="system", content=system_prompt,
-                                    conversation_id=conversation_id)]
-            # Fresh conversation — everything is new (including system prompt)
             base_message_count = 0
         else:
             # Loaded from store — these messages are already persisted
@@ -586,23 +588,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     _agent_md = _find_agent_md(_def_n, _user_id_for_svc)
             if _agent_md:
                 _agent_md_content = _agent_md[1]
-                # Insert after system prompt (index 1 or after summary)
-                _inject_idx = 1  # after system prompt
-                for i, m in enumerate(messages):
-                    if isinstance(m.content, str) and "[Conversation summary" in m.content:
-                        _inject_idx = i + 2  # after summary + "understood"
-                        break
-                messages.insert(_inject_idx, LLMMessage(
-                    role="user",
-                    content=f"[System: Project instructions from {_agent_md[0]}]\n\n{_agent_md[1]}",
-                    source={"type": "context"},
-                    conversation_id=conversation_id,
-                ))
-                messages.insert(_inject_idx + 1, LLMMessage(
-                    role="assistant", content="Understood.",
-                    source={"type": "context"},
-                    conversation_id=conversation_id,
-                ))
+                _agent_md_content = (
+                    f"\n\n## Project instructions from {_agent_md[0]}\n\n"
+                    f"{_agent_md[1]}"
+                )
 
         # cid was generated early (above) so any downstream
         # LLMMessage already has it. Defensive check only.
@@ -666,6 +655,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
                 # Active agent overrides system prompt (target_agent takes priority)
                 selected = _target_agent or active_res.get("agent", "")
+                agent_def = None
                 if selected:
                     # Resolve definition name from conv_agents config
                     from core.conv_agent_config import (
@@ -707,19 +697,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 f"manage_resource to work with them."
                             )
 
-                # Inject skills into system prompt.
-                # Main conv: from conv_agents runtime config.
-                # Task sub-conv: task_def skills only.
-                if "::task::" in conversation_id:
-                    _task_id = conversation_id.split("::task::")[1].split("::")[0]
-                    _parent_cid = conversation_id.split("::task::")[0]
-                    _all_tasks = cstore.get_extra(_parent_cid, "agent_tasks") or {}
-                    _task_data = _all_tasks.get(_task_id, {})
-                    _agent_skills = _task_data.get("skills") or []
-                else:
-                    from core.conv_agent_config import get_agent_config
-                    _acfg = get_agent_config(conversation_id, selected)
-                    _agent_skills = _acfg.get("skills") or []
+                if _agent_md_content:
+                    system_prompt += _agent_md_content
+
+                # Inject skills into system prompt. The agent definition's
+                # assigned_skills is the single source of truth; per-conv
+                # runtime config must not carry a parallel skills list.
+                _agent_skills = (agent_def or {}).get("assigned_skills") or []
                 if _agent_skills:
                     from core.skill_resolver import inject_skills_into_prompt
                     system_prompt = inject_skills_into_prompt(
@@ -845,9 +829,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 elif _deny:
                     tool_defs = [td for td in tool_defs if td.name not in _deny]
 
-        # NOTE: messages[0] is updated with the final system_prompt
-        # at the end of this method, after all prompt modifications
-        # (resilience, FS context, identity, lazy tools).
+        # NOTE: the fully-built system_prompt is stored separately below as
+        # provider-only state. It must not be inserted into messages, because
+        # messages are the persisted agent context.
 
         model_name = self.config.get("model", "")
         user_id = flowfile.get_attribute("http.auth.principal")
@@ -1348,18 +1332,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "panel. One source of truth."
         )
 
-        # Final update: inject the fully-built system_prompt into messages[0]
-        # (must happen AFTER all modifications: resilience, FS context, memory digest).
-        # Compacted contexts can start with a user summary instead of a system
-        # message; insert the system prompt instead of silently dropping it.
-        if messages and messages[0].role == "system":
-            messages[0] = LLMMessage(role="system", content=system_prompt,
-                                      conversation_id=conversation_id)
-        else:
-            messages.insert(0, LLMMessage(role="system", content=system_prompt,
-                                          conversation_id=conversation_id))
-            base_message_count += 1
-
         # Resolve thinking_budget auto-detect (-1)
         if thinking_budget < 0:
             _m = (_client_model_name or model_name or "").lower()
@@ -1400,9 +1372,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         "Wait for the user to approve_plan() before executing. "
                         "Do NOT call any other tools until the plan is approved."
                     )
-                    if messages and messages[0].role == "system":
-                        messages[0] = LLMMessage(role="system", content=system_prompt,
-                                      conversation_id=conversation_id)
             except Exception:
                 pass
 
@@ -1447,13 +1416,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             "only if you need to ASK a DIFFERENT agent before "
                             "answering '" + _caller + "'."
                         )
-                        if messages and messages[0].role == "system":
-                            messages[0] = LLMMessage(
-                                role="system",
-                                content=messages[0].content + _delegate_hint,
-                                conversation_id=conversation_id)
+                        system_prompt += _delegate_hint
         except Exception:
             pass
+
+        # Provider-only prompt. Do not insert into messages: agent context
+        # persisted to PawFlow must remain compact summary + current messages.
+        _provider_system_prompt = system_prompt
 
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
@@ -1491,9 +1460,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "_materialize_pawflow_initial_context": bool(_uses_pawflow_initial),
             "_pawflow_initial_context_source": _cold_cli_initial_source,
             "_nicknames": _nicknames if conversation_id else {},
+            "_is_cli_provider": _is_cli_provider,
             "_is_claude_code": _is_claude_code,
             "_claude_has_session": _claude_has_session,
             "_agent_md_content": _agent_md_content,
+            "_provider_system_prompt": _provider_system_prompt,
             "_datetime_str": _datetime_str,
         }
 

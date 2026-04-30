@@ -4,7 +4,7 @@ An agent *instance* lives in a conversation. It has:
     - instance_name: the key in conv_agents (unique per conv, chosen by user)
     - definition: the name of the .md template in the repository
     - params: dict of values resolved into the definition prompt via ${agent.key}
-    - llm_service, model, tools, max_depth, timeout, skills: runtime config
+    - llm_service, model, tools, max_depth, timeout: runtime config
 
 The same definition can be instantiated multiple times with different
 names and params (e.g. two "researcher" agents: Alice and Bob).
@@ -33,7 +33,6 @@ AGENT_CONFIG_DEFAULTS = {
     "model": "",
     "tools": [],
     "max_depth": 1000,
-    "skills": [],
 }
 
 
@@ -114,7 +113,6 @@ def add_agent_to_conv(conv_id: str, instance_name: str,
         "model": model,
         "tools": tools or [],
         "max_depth": max_depth,
-        "skills": skills or [],
     }
     set_agent_config(conv_id, instance_name, config)
     return config

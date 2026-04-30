@@ -1349,9 +1349,11 @@ def resolve_agent_task(
     else:
         _sys_prompt = _raw_prompt
 
-    # 4) Inject skills
-    _conv_skills = acfg.get("skills") or []
-    _all_skills = list(_conv_skills) + list(extra_skills or [])
+    # 4) Inject skills. The agent definition's assigned_skills is the
+    # single persistent source of truth. Delegate extra_skills are an
+    # explicit per-task addition, not a second stored assignment path.
+    _assigned_skills = agent_def.get("assigned_skills") or []
+    _all_skills = list(_assigned_skills) + list(extra_skills or [])
     if _all_skills:
         from core.skill_resolver import inject_skills_into_prompt
         _sys_prompt = inject_skills_into_prompt(_sys_prompt, _all_skills, user_id)

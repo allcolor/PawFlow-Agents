@@ -42,12 +42,14 @@ def test_gemini_acp_preempt_is_live_prompt_reuse_not_reloop():
 
 
 def test_gemini_system_prompt_prefers_pawflow_mcp_over_builtins():
-    ctx_src = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
-    assert "GEMINI ACP TOOL ROUTING" in ctx_src
-    assert "Do not use" in ctx_src and "Gemini built-in" in ctx_src
-    assert "mcp_pawflow_get_tool_schema" in ctx_src
-    assert "mcp_pawflow_use_tool" in ctx_src
-    assert "PawFlow MCP virtual" in ctx_src
+    from core.agent_prompt_policy import CLI_MCP_SYSTEM_PROMPT
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    assert LLMGeminiMixin._GEMINI_PAWFLOW_PREAMBLE == CLI_MCP_SYSTEM_PROMPT
+    assert "Do not call native/internal provider tools" in CLI_MCP_SYSTEM_PROMPT
+    assert "list schemas first" in CLI_MCP_SYSTEM_PROMPT
+    assert "use_tool" in CLI_MCP_SYSTEM_PROMPT
+    assert "`/workspace`" in CLI_MCP_SYSTEM_PROMPT
 
 
 def test_agent_core_rechecks_compact_threshold_after_context_injections():

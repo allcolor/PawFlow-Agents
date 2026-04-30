@@ -11,6 +11,19 @@ from core.tool_handler import ToolHandler
 logger = logging.getLogger(__name__)
 
 
+def _resolve_explicit_media_service(service_id: str, user_id: str = "", conversation_id: str = ""):
+    if not service_id:
+        return None, ""
+    try:
+        from core.service_registry import ServiceRegistry
+        svc = ServiceRegistry.get_instance().resolve(
+            service_id, user_id=user_id, conv_id=conversation_id)
+    except Exception as exc:
+        return None, f"media service '{service_id}' failed to resolve: {exc}"
+    if not svc:
+        return None, f"media service '{service_id}' not found or not connected"
+    return svc, ""
+
 
 class ImageGenerationHandler(ToolHandler):
     """Generate images via a dynamically resolved image generation service.
@@ -51,6 +64,14 @@ class ImageGenerationHandler(ToolHandler):
                 "prompt": {
                     "type": "string",
                     "description": "Detailed description of the image to generate",
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Optional image service id override for this call (e.g. codex_image_service).",
+                },
+                "image_service": {
+                    "type": "string",
+                    "description": "Alias for service; optional image service id override.",
                 },
                 "negative_prompt": {
                     "type": "string",
@@ -116,9 +137,19 @@ class ImageGenerationHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
-        if not self._service_resolver:
-            return "Error: no image service resolver configured"
-        service, error = self._service_resolver()
+        service_name = (arguments.get("service")
+                        or arguments.get("image_service")
+                        or "")
+        if service_name:
+            service, error = _resolve_explicit_media_service(
+                service_name,
+                user_id=self._user_id,
+                conversation_id=getattr(self, "_conversation_id", "") or "",
+            )
+        else:
+            if not self._service_resolver:
+                return "Error: no image service resolver configured"
+            service, error = self._service_resolver()
         if not service:
             return f"Error: {error or 'no image generation service available'}"
 
@@ -135,7 +166,7 @@ class ImageGenerationHandler(ToolHandler):
                     conversation_id=getattr(self, "_conversation_id", "") or "",
                 )
             gen_args = {k: v for k, v in arguments.items()
-                        if k not in ("destination", "path")}
+                        if k not in ("destination", "path", "service", "image_service")}
             result = service.generate(**gen_args)
 
             ct = result["content_type"]
@@ -204,6 +235,14 @@ class EditImageHandler(ToolHandler):
                         "are accepted. Most edit-capable models take 1 source; some "
                         "support multi-image fusion."),
                 },
+                "service": {
+                    "type": "string",
+                    "description": "Optional image service id override for this call (e.g. codex_image_service).",
+                },
+                "image_service": {
+                    "type": "string",
+                    "description": "Alias for service; optional image service id override.",
+                },
                 "destination": {
                     "type": "string",
                     "description": "Where to save the result: 'filestore' (default) or a filesystem service name (with `path`).",
@@ -259,9 +298,19 @@ class EditImageHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
-        if not self._service_resolver:
-            return "Error: no image service resolver configured"
-        service, error = self._service_resolver()
+        service_name = (arguments.get("service")
+                        or arguments.get("image_service")
+                        or "")
+        if service_name:
+            service, error = _resolve_explicit_media_service(
+                service_name,
+                user_id=self._user_id,
+                conversation_id=getattr(self, "_conversation_id", "") or "",
+            )
+        else:
+            if not self._service_resolver:
+                return "Error: no image service resolver configured"
+            service, error = self._service_resolver()
         if not service:
             return f"Error: {error or 'no image generation service available'}"
 
@@ -289,7 +338,7 @@ class EditImageHandler(ToolHandler):
                     conversation_id=getattr(self, "_conversation_id", "") or "",
                 )
             edit_kwargs = {k: v for k, v in arguments.items()
-                           if k not in ("destination", "path", "image_urls")}
+                           if k not in ("destination", "path", "image_urls", "service", "image_service")}
             edit_kwargs["image_urls"] = image_urls
             result = service.edit_image(**edit_kwargs)
 
@@ -359,6 +408,14 @@ class VideoGenerationHandler(ToolHandler):
                 "prompt": {
                     "type": "string",
                     "description": "Detailed description of the video to generate",
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Optional video service id override for this call.",
+                },
+                "video_service": {
+                    "type": "string",
+                    "description": "Alias for service; optional video service id override.",
                 },
                 "image_url": {
                     "type": "string",
@@ -449,9 +506,19 @@ class VideoGenerationHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
-        if not self._service_resolver:
-            return "Error: no video service resolver configured"
-        service, error = self._service_resolver()
+        service_name = (arguments.get("service")
+                        or arguments.get("video_service")
+                        or "")
+        if service_name:
+            service, error = _resolve_explicit_media_service(
+                service_name,
+                user_id=self._user_id,
+                conversation_id=getattr(self, "_conversation_id", "") or "",
+            )
+        else:
+            if not self._service_resolver:
+                return "Error: no video service resolver configured"
+            service, error = self._service_resolver()
         if not service:
             return f"Error: {error or 'no video generation service available'}"
 
@@ -465,9 +532,14 @@ class VideoGenerationHandler(ToolHandler):
         destination = arguments.get("destination", "filestore")
 
         try:
+            if hasattr(service, "set_runtime_context"):
+                service.set_runtime_context(
+                    user_id=self._user_id,
+                    conversation_id=getattr(self, "_conversation_id", "") or "",
+                )
             gen_args = {k: v for k, v in arguments.items()
                         if k not in ("destination", "path", "image_url",
-                                     "video_url", "end_image_url")}
+                                     "video_url", "end_image_url", "service", "video_service")}
 
             if image_url and end_image_url:
                 # Frame-to-video mode (start + end frame)
@@ -560,6 +632,14 @@ class AudioGenerationHandler(ToolHandler):
                     "type": "string",
                     "description": "Description of the audio to generate (style, mood, instruments, genre)",
                 },
+                "service": {
+                    "type": "string",
+                    "description": "Optional audio service id override for this call.",
+                },
+                "audio_service": {
+                    "type": "string",
+                    "description": "Alias for service; optional audio service id override.",
+                },
                 "lyrics": {
                     "type": "string",
                     "description": "Song lyrics (optional — omit for instrumental)",
@@ -608,9 +688,19 @@ class AudioGenerationHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
-        if not self._service_resolver:
-            return "Error: no audio service resolver configured"
-        service, error = self._service_resolver()
+        service_name = (arguments.get("service")
+                        or arguments.get("audio_service")
+                        or "")
+        if service_name:
+            service, error = _resolve_explicit_media_service(
+                service_name,
+                user_id=self._user_id,
+                conversation_id=getattr(self, "_conversation_id", "") or "",
+            )
+        else:
+            if not self._service_resolver:
+                return "Error: no audio service resolver configured"
+            service, error = self._service_resolver()
         if not service:
             return f"Error: {error or 'no audio generation service available'}"
 
@@ -621,8 +711,13 @@ class AudioGenerationHandler(ToolHandler):
         destination = arguments.get("destination", "filestore")
 
         try:
+            if hasattr(service, "set_runtime_context"):
+                service.set_runtime_context(
+                    user_id=self._user_id,
+                    conversation_id=getattr(self, "_conversation_id", "") or "",
+                )
             gen_args = {k: v for k, v in arguments.items()
-                        if k not in ("destination", "path", "_service")}
+                        if k not in ("destination", "path", "_service", "service", "audio_service")}
             result = service.generate(**gen_args)
 
             ct = result.get("content_type", "audio/mpeg")
@@ -673,6 +768,8 @@ class ImageModelInfoHandler(ToolHandler):
     """Return info about the active image generation model and its parameters."""
 
     _service_resolver = None
+    _user_id: str = ""
+    _conversation_id: str = ""
 
     @property
     def name(self) -> str:
@@ -689,17 +786,50 @@ class ImageModelInfoHandler(ToolHandler):
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
-        return {"type": "object", "properties": {}}
+        return {
+            "type": "object",
+            "properties": {
+                "service": {
+                    "type": "string",
+                    "description": "Optional image service id override for this call.",
+                },
+                "image_service": {
+                    "type": "string",
+                    "description": "Alias for service; optional image service id override.",
+                },
+            },
+        }
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id
 
     def set_service_resolver(self, resolver):
         self._service_resolver = resolver
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        if not self._service_resolver:
-            return "Error: no image service resolver configured"
-        service, error = self._service_resolver()
+        service_name = (arguments.get("service")
+                        or arguments.get("image_service")
+                        or "")
+        if service_name:
+            service, error = _resolve_explicit_media_service(
+                service_name,
+                user_id=self._user_id,
+                conversation_id=getattr(self, "_conversation_id", "") or "",
+            )
+        else:
+            if not self._service_resolver:
+                return "Error: no image service resolver configured"
+            service, error = self._service_resolver()
         if not service:
             return f"Error: {error or 'no image generation service available'}"
+        if hasattr(service, "set_runtime_context"):
+            service.set_runtime_context(
+                user_id=self._user_id,
+                conversation_id=getattr(self, "_conversation_id", "") or "",
+            )
         if hasattr(service, 'get_model_info'):
             info = service.get_model_info()
             return json.dumps(info, indent=2)

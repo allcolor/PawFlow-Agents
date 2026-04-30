@@ -327,14 +327,12 @@ class AgentUtilsMixin:
 
     @staticmethod
     def _resolve_media_service_by_id(service_id: str, user_id: str):
-        """Resolve a media service by ID. Returns instance or None."""
+        """Resolve a media/capability service by ID. Returns instance or None."""
         if not service_id:
             return None
         try:
             from core.service_registry import ServiceRegistry
-            svc = ServiceRegistry.get_instance().resolve(service_id, user_id=user_id)
-            if svc and hasattr(svc, 'generate'):
-                return svc
+            return ServiceRegistry.get_instance().resolve(service_id, user_id=user_id)
         except Exception:
             pass
         return None
@@ -354,7 +352,9 @@ class AgentUtilsMixin:
                 if svc:
                     return svc, None
                 return None, f"{label.title()} service '{available[0][0]}' failed to connect"
-            # Multiple → check per-agent preference, then wildcard
+            # Multiple → check per-agent preference, then wildcard, then
+            # deterministic first available service. A tool call can still
+            # override per-call with service=<name>.
             if conversation_id:
                 from core.conversation_store import ConversationStore
                 prefs = _resolve_extra_dict(
@@ -365,13 +365,10 @@ class AgentUtilsMixin:
                     svc = _self._resolve_media_service_by_id(preferred, user_id)
                     if svc:
                         return svc, None
-            names = [s[0] for s in available]
-            return None, (
-                f"Multiple {label} services available: {', '.join(names)}. "
-                f"Use {command} select <name> to choose one for this "
-                f"conversation, or {command} select <name> <agent> for "
-                f"a specific agent."
-            )
+            svc = _self._resolve_media_service_by_id(available[0][0], user_id)
+            if svc:
+                return svc, None
+            return None, f"{label.title()} service '{available[0][0]}' failed to connect"
         return resolver
 
 

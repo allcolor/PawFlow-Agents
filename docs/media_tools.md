@@ -71,7 +71,16 @@ Only clone voices when the user has explicit rights to use the speaker's voice.
 
 ## Provider Services
 
-Media tools are provider-agnostic. They resolve the active service at runtime. Supported service families include:
+Media tools are provider-agnostic. They resolve the active service at runtime. Every media and capability tool accepts an optional `service` parameter to force a specific service id for that call. Type-specific aliases are also accepted where relevant, such as `image_service`, `video_service`, `audio_service`, and `voice_service`.
+
+When `service` is omitted, selection is deterministic:
+
+1. if exactly one compatible service is deployed, use it;
+2. otherwise use the per-agent or wildcard default stored for that media family;
+3. otherwise use the first compatible service returned by the registry;
+4. if no compatible service exists, return an error.
+
+Supported service families include:
 
 - `openaiImageGeneration`
 - `codexImageGeneration`

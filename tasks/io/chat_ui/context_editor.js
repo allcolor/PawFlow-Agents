@@ -45,8 +45,15 @@ function _ctxToolCallsText(m) {
   const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
   if (!calls.length) return '';
   return calls.map(tc => {
-    const name = tc.name || tc.tool || (tc.function && tc.function.name) || 'tool';
-    const args = tc.arguments !== undefined ? tc.arguments : (tc.args !== undefined ? tc.args : (tc.function && tc.function.arguments));
+    let name = tc.name || tc.tool || (tc.function && tc.function.name) || 'tool';
+    let args = tc.arguments !== undefined ? tc.arguments : (tc.args !== undefined ? tc.args : (tc.function && tc.function.arguments));
+    if ((name === 'use_tool' || name === 'mcp_pawflow_use_tool' || name === 'mcp__pawflow__use_tool') && args) {
+      const parsed = typeof args === 'string' ? (() => { try { return JSON.parse(args); } catch (_) { return null; } })() : args;
+      if (parsed && parsed.tool_name) {
+        name = parsed.tool_name;
+        args = parsed.arguments || {};
+      }
+    }
     let argsText = '';
     if (args !== undefined) {
       argsText = typeof args === 'string' ? args : JSON.stringify(args);
@@ -55,11 +62,22 @@ function _ctxToolCallsText(m) {
   }).join('\n');
 }
 
+function _ctxStripToolOutputEnvelope(content) {
+  let text = String(content || '');
+  if (!text.startsWith('<tool_output tool="')) return text;
+  const firstNl = text.indexOf('\n');
+  if (firstNl >= 0) text = text.slice(firstNl + 1);
+  const close = text.lastIndexOf('</tool_output>');
+  if (close >= 0) text = text.slice(0, close).replace(/\n$/, '');
+  return text;
+}
+
 function _ctxDisplayContent(m) {
   let content = m.content || '';
   if (!String(content).trim() && m.has_tool_calls) {
     content = _ctxToolCallsText(m);
   }
+  content = _ctxStripToolOutputEnvelope(content);
   return _ctxEscape(content);
 }
 

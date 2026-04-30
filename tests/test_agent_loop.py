@@ -1442,6 +1442,37 @@ class TestImageServiceResolution(unittest.TestCase):
         assert "file123" in result
         assert "Image generated" in result
 
+    def test_image_handler_service_arg_overrides_resolver(self):
+        """Explicit service=<id> resolves that media service for this call."""
+        from core.tool_registry import ImageGenerationHandler
+
+        handler = ImageGenerationHandler()
+        fallback_resolver = MagicMock(return_value=(None, "fallback should not run"))
+        handler.set_service_resolver(fallback_resolver)
+        handler.set_user_id("user1")
+        handler.set_conversation_id("conv1")
+        mock_service = MagicMock()
+        mock_service.generate.return_value = {
+            "image_bytes": b"\x89PNG explicit",
+            "content_type": "image/png",
+        }
+
+        with patch("core.service_registry.ServiceRegistry") as mock_registry:
+            mock_registry.get_instance.return_value.resolve.return_value = mock_service
+            with patch("core.storage_resolver.StorageResolver") as mock_storage:
+                mock_storage.return_value.write.return_value = {"file_id": "file-explicit"}
+                result = handler.execute({
+                    "prompt": "a cat",
+                    "service": "codex_image_service",
+                    "width": 512,
+                })
+
+        fallback_resolver.assert_not_called()
+        mock_registry.get_instance.return_value.resolve.assert_called_once_with(
+            "codex_image_service", user_id="user1", conv_id="conv1")
+        mock_service.generate.assert_called_once_with(prompt="a cat", width=512)
+        assert "file-explicit" in result
+
     def test_image_handler_no_resolver_returns_error(self):
         """Without a resolver, handler returns a clear error message."""
         from core.tool_registry import ImageGenerationHandler
@@ -1505,10 +1536,11 @@ class TestImageServiceResolution(unittest.TestCase):
         assert svc is mock_svc
         assert err is None
 
-    def test_make_image_resolver_multiple_no_pref(self):
-        """With multiple services and no preference, resolver returns error listing."""
+    def test_make_image_resolver_multiple_no_pref_selects_first(self):
+        """With multiple services and no preference, resolver selects the first service."""
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask.__new__(AgentLoopTask)
+        mock_svc = MagicMock()
 
         with patch.object(task, '_discover_media_services', return_value=[
             ("pixazo", "pixazoImageGeneration", "global"),
@@ -1516,12 +1548,13 @@ class TestImageServiceResolution(unittest.TestCase):
         ]):
             with patch("core.conversation_store.ConversationStore") as mock_cs:
                 mock_cs.instance.return_value.get_extra.return_value = {}
-                resolver = task._make_image_resolver("user1", "conv1", "assistant")
-                svc, err = resolver()
+                with patch.object(task, '_resolve_media_service_by_id', return_value=mock_svc) as resolve:
+                    resolver = task._make_image_resolver("user1", "conv1", "assistant")
+                    svc, err = resolver()
 
-        assert svc is None
-        assert "pixazo" in err and "dalle3" in err
-        assert "/imgservice" in err
+        assert svc is mock_svc
+        assert err is None
+        resolve.assert_called_once_with("pixazo", "user1")
 
     def test_make_image_resolver_with_agent_pref(self):
         """Per-agent preference selects the right service."""

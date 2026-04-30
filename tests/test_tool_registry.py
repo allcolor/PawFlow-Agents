@@ -417,6 +417,25 @@ class TestMetaToolAliases(unittest.TestCase):
             assert "relay" in props, handler.name
             assert "local" in props, handler.name
 
+    def test_all_media_handlers_expose_service_override(self):
+        from core.handlers.meta_tools import _schema_with_local
+        from core.tool_registry import create_default_registry
+
+        registry = create_default_registry()
+        media_handlers = [h for h in registry.list_tools()
+                          if hasattr(h, "set_service_resolver")]
+
+        assert media_handlers
+        for handler in media_handlers:
+            props = (_schema_with_local(handler).get("properties") or {})
+            assert "service" in props, handler.name
+        assert "image_service" in _schema_with_local(
+            registry.get("generate_image"))["properties"]
+        assert "video_service" in _schema_with_local(
+            registry.get("generate_video"))["properties"]
+        assert "audio_service" in _schema_with_local(
+            registry.get("generate_audio"))["properties"]
+
     def test_relay_alias_maps_to_native_selector_names(self):
         from core.handlers.meta_tools import _normalize_tool_args
 

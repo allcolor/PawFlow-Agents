@@ -90,6 +90,30 @@ def _schema_with_local(handler: Any) -> Dict[str, Any]:
             "description": "Alias for limit; maximum number of characters to return.",
         })
         return schema
+    if hasattr(handler, "set_service_resolver"):
+        schema = json.loads(json.dumps(schema))
+        props = schema.setdefault("properties", {})
+        props.setdefault("service", {
+            "type": "string",
+            "description": "Optional media service id override for this call.",
+        })
+        hname = getattr(handler, "name", "") or ""
+        if hname.startswith("generate_image") or hname in ("edit_image", "get_image_model_info"):
+            props.setdefault("image_service", {
+                "type": "string",
+                "description": "Alias for service; optional image service id override.",
+            })
+        elif hname.startswith("generate_video"):
+            props.setdefault("video_service", {
+                "type": "string",
+                "description": "Alias for service; optional video service id override.",
+            })
+        elif hname.startswith("generate_audio"):
+            props.setdefault("audio_service", {
+                "type": "string",
+                "description": "Alias for service; optional audio service id override.",
+            })
+        return schema
     if not _is_fs_handler(handler):
         return schema
     schema = json.loads(json.dumps(schema))

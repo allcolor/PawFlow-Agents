@@ -15,6 +15,9 @@ from core.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
 
+_SERVICE_ARG_NAMES = (
+    "service", "image_service", "video_service", "audio_service", "voice_service")
+
 
 def _resolve_filestore_url(url: str, base_url: str) -> str:
     """Convert fs://filestore/<id>/<name> to an absolute /files/<id> URL.
@@ -62,10 +65,41 @@ class _CapabilityHandlerBase(ToolHandler):
     def set_service_resolver(self, resolver):
         self._service_resolver = resolver
 
-    def _get_service(self):
+    def _get_service(self, arguments: Dict[str, Any] = None):
+        arguments = arguments or {}
+        service_name = (arguments.get("service")
+                        or arguments.get("image_service")
+                        or arguments.get("video_service")
+                        or arguments.get("audio_service")
+                        or arguments.get("voice_service")
+                        or "")
+        if service_name:
+            try:
+                from core.service_registry import ServiceRegistry
+                svc = ServiceRegistry.get_instance().resolve(
+                    service_name,
+                    user_id=self._user_id,
+                    conv_id=self._conversation_id,
+                )
+            except Exception as exc:
+                return None, f"media service '{service_name}' failed to resolve: {exc}"
+            if not svc:
+                return None, f"media service '{service_name}' not found or not connected"
+            if hasattr(svc, "set_runtime_context"):
+                svc.set_runtime_context(
+                    user_id=self._user_id,
+                    conversation_id=self._conversation_id,
+                )
+            return svc, ""
         if not self._service_resolver:
             return None, "no service resolver configured"
-        return self._service_resolver()
+        svc, err = self._service_resolver()
+        if svc and hasattr(svc, "set_runtime_context"):
+            svc.set_runtime_context(
+                user_id=self._user_id,
+                conversation_id=self._conversation_id,
+            )
+        return svc, err
 
     def _rewrite(self, url: str) -> str:
         return _resolve_filestore_url(url, self._base_url)
@@ -122,7 +156,7 @@ class Generate3DHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no 3D generation service available'}"
         prompt = arguments.get("prompt", "") or ""
@@ -131,7 +165,7 @@ class Generate3DHandler(_CapabilityHandlerBase):
             return "Error: provide `prompt` or `image_url`"
         try:
             kwargs = {k: v for k, v in arguments.items()
-                      if k not in ("destination", "path", "prompt", "image_url")}
+                      if k not in ("destination", "path", "prompt", "image_url", *_SERVICE_ARG_NAMES)}
             r = svc.generate_3d(prompt=prompt, image_url=image_url, **kwargs)
             ext = {"model/gltf-binary": "glb", "model/gltf+json": "gltf",
                    "model/obj": "obj", "model/vnd.usdz+zip": "usdz"}.get(
@@ -176,7 +210,7 @@ class UpscaleImageHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no upscale service available'}"
         image_url = self._rewrite(arguments.get("image_url", "") or "")
@@ -185,7 +219,7 @@ class UpscaleImageHandler(_CapabilityHandlerBase):
         scale = int(arguments.get("scale", 2))
         try:
             kwargs = {k: v for k, v in arguments.items()
-                      if k not in ("destination", "path", "image_url", "scale")}
+                      if k not in ("destination", "path", "image_url", "scale", *_SERVICE_ARG_NAMES)}
             r = svc.upscale(image_url=image_url, scale=scale, **kwargs)
             ct = r.get("content_type", "image/png").split(";")[0].strip()
             ext = {"image/png": "png", "image/jpeg": "jpg",
@@ -230,7 +264,7 @@ class UpscaleVideoHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no upscale service available'}"
         video_url = self._rewrite(arguments.get("video_url", "") or "")
@@ -241,7 +275,7 @@ class UpscaleVideoHandler(_CapabilityHandlerBase):
         scale = int(arguments.get("scale", 2))
         try:
             kwargs = {k: v for k, v in arguments.items()
-                      if k not in ("destination", "path", "video_url", "scale")}
+                      if k not in ("destination", "path", "video_url", "scale", *_SERVICE_ARG_NAMES)}
             r = svc.upscale_video(video_url=video_url, scale=scale, **kwargs)
             filename = arguments.get("path") or (
                 f"upscaled_{int(time.time())}.mp4")
@@ -280,7 +314,7 @@ class DescribeImageHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no image service available'}"
         image_url = self._rewrite(arguments.get("image_url", "") or "")
@@ -290,7 +324,7 @@ class DescribeImageHandler(_CapabilityHandlerBase):
             return "Error: the active image service does not support describe_image"
         try:
             kwargs = {k: v for k, v in arguments.items()
-                      if k not in ("image_url",)}
+                      if k not in ("image_url", *_SERVICE_ARG_NAMES)}
             r = svc.describe_image(image_url=image_url, **kwargs)
             return f"Image description: {r.get('description', '(no description)')}"
         except Exception as e:
@@ -329,7 +363,7 @@ class RemixImageHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no image service available'}"
         image_url = self._rewrite(arguments.get("image_url", "") or "")
@@ -340,7 +374,7 @@ class RemixImageHandler(_CapabilityHandlerBase):
             return "Error: the active image service does not support remix_image"
         try:
             kwargs = {k: v for k, v in arguments.items()
-                      if k not in ("destination", "path", "image_url", "prompt")}
+                      if k not in ("destination", "path", "image_url", "prompt", *_SERVICE_ARG_NAMES)}
             r = svc.remix_image(prompt=prompt, image_url=image_url, **kwargs)
             ct = r.get("content_type", "image/png").split(";")[0].strip()
             ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(ct, "png")
@@ -382,7 +416,7 @@ class RemoveBackgroundHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no upscale/background service available'}"
         image_url = self._rewrite(arguments.get("image_url", "") or "")
@@ -392,7 +426,7 @@ class RemoveBackgroundHandler(_CapabilityHandlerBase):
             return "Error: the active service does not support remove_background"
         try:
             kwargs = {k: v for k, v in arguments.items()
-                      if k not in ("destination", "path", "image_url")}
+                      if k not in ("destination", "path", "image_url", *_SERVICE_ARG_NAMES)}
             r = svc.remove_background(image_url=image_url, **kwargs)
             filename = arguments.get("path") or (
                 f"nobg_{int(time.time())}.png")
@@ -434,7 +468,7 @@ class TryOnHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no try-on service available'}"
         person = self._rewrite(arguments.get("person_image", "") or "")
@@ -444,7 +478,7 @@ class TryOnHandler(_CapabilityHandlerBase):
         try:
             kwargs = {k: v for k, v in arguments.items()
                       if k not in ("destination", "path",
-                                   "person_image", "garment_image")}
+                                   "person_image", "garment_image", *_SERVICE_ARG_NAMES)}
             r = svc.try_on(person_image=person, garment_image=garment,
                            **kwargs)
             ct = r.get("content_type", "image/png").split(";")[0].strip()
@@ -490,7 +524,7 @@ class LipsyncHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no lipsync service available'}"
         video = self._rewrite(arguments.get("video_url", "") or "")
@@ -502,7 +536,7 @@ class LipsyncHandler(_CapabilityHandlerBase):
         try:
             kwargs = {k: v for k, v in arguments.items()
                       if k not in ("destination", "path",
-                                   "video_url", "image_url", "audio_url")}
+                                   "video_url", "image_url", "audio_url", *_SERVICE_ARG_NAMES)}
             r = svc.lipsync(video_url=video, image_url=image,
                             audio_url=audio, **kwargs)
             filename = arguments.get("path") or f"lipsync_{int(time.time())}.mp4"
@@ -547,7 +581,7 @@ class TrainImageModelHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no trainer service available'}"
         dataset = self._rewrite(arguments.get("dataset_url", "") or "")
@@ -556,7 +590,7 @@ class TrainImageModelHandler(_CapabilityHandlerBase):
             return "Error: `dataset_url` is required"
         try:
             kwargs = {k: v for k, v in arguments.items()
-                      if k not in ("dataset_url", "base_model")}
+                      if k not in ("dataset_url", "base_model", *_SERVICE_ARG_NAMES)}
             r = svc.train(dataset_url=dataset, base_model=base_model,
                           **kwargs)
             lora = r.get("lora_url") or r.get("source_url") or ""
@@ -601,7 +635,7 @@ class SpeechToVideoHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no video service available'}"
         image_url = self._rewrite(arguments.get("image_url", "") or "")
@@ -612,7 +646,7 @@ class SpeechToVideoHandler(_CapabilityHandlerBase):
             return "Error: the active video service does not support speech_to_video"
         try:
             kwargs = {k: v for k, v in arguments.items()
-                      if k not in ("destination", "path", "image_url", "audio_url")}
+                      if k not in ("destination", "path", "image_url", "audio_url", *_SERVICE_ARG_NAMES)}
             r = svc.speech_to_video(image_url=image_url, audio_url=audio_url, **kwargs)
             filename = arguments.get("path") or f"s2v_{int(time.time())}.mp4"
             destination = arguments.get("destination", "filestore")
@@ -668,7 +702,7 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no voice-clone service available'}"
 
@@ -814,7 +848,7 @@ class SpeakHandler(_CapabilityHandlerBase):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        svc, err = self._get_service()
+        svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no voice-clone service available'}"
 
@@ -981,7 +1015,7 @@ class DeleteVoiceHandler(_CapabilityHandlerBase):
         from core import voice_clone_cache as _cache
         # The service may not be configured anymore — we still delete
         # local state, only the provider cleanup step is skipped.
-        svc, _ = self._get_service()
+        svc, _ = self._get_service(arguments)
         entry = _cache.get_by_name(self._user_id, voice)
         if entry is None:
             return f"Error: unknown voice clone {voice!r}"

@@ -84,12 +84,13 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 "Codex app-server LLM service is missing required max_context_size")
         return value
 
-    def _codex_pool_popen(self, workdir: str, cmd: list, **popen_kwargs) -> tuple:
+    def _codex_pool_popen(self, workdir: str, cmd: list,
+                          container_name: str = "", **popen_kwargs) -> tuple:
         """Launch codex inside a pool container via docker exec."""
         _env = self._codex_env(workdir)
         from core.codex_pool import CodexPool
         pool = CodexPool.instance()
-        container = pool.acquire()
+        container = container_name or pool.acquire()
         _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         _session_dir = f"/cc_sessions/{_rel}"
         _extra = {}
@@ -471,6 +472,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         live_session = None
         owns_live_lock = False
         is_reuse = False
+        reuse_container = ""
         internal_token = ""
         proc = None
         container = None
@@ -490,13 +492,13 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         "[codex-app-live] cold-start conv=%s agent=%s service=%s pool_idx=%s thread=%s",
                         conv_id[:8] or "?", agent_name or "default", svc_id or "default",
                         int(resume_pool_idx), thread_id[:12] or "new")
-                if live_session is not None and not live_session.is_alive():
-                    live_reg.evict(live_key, "dead_app_server")
+                if live_session is not None and not live_session.is_container_alive():
+                    live_reg.evict(live_key, "dead_container")
                     live_session = None
                 if live_session is not None:
                     live_session.turn_lock.acquire()
                     owns_live_lock = True
-                    if live_session.is_alive():
+                    if live_session.is_process_alive():
                         live_reg.touch(live_key)
                         is_reuse = True
                         proc = live_session.proc
@@ -512,10 +514,19 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             conv_id[:8] or "?", agent_name, thread_id[:12],
                             live_session.reuse_count)
                     else:
-                        live_reg.evict(live_key, "dead_after_lock")
-                        live_session.turn_lock.release()
-                        owns_live_lock = False
-                        live_session = None
+                        reuse_container = live_session.container_name or ""
+                        container = reuse_container
+                        thread_id = live_session.session_id or thread_id
+                        internal_token = live_session.mcp_internal_token or ""
+                        if getattr(live_session, "event_q", None) is not None:
+                            stderr_lines = live_session.event_q
+                        if resume_pool_idx >= 0:
+                            self._current_pool_index = resume_pool_idx
+                        logger.warning(
+                            "[codex-app-live] process dead but container alive; "
+                            "restarting app-server in container=%s conv=%s agent=%s session=%s",
+                            reuse_container, conv_id[:8] or "?", agent_name,
+                            thread_id[:12] or "new")
             except Exception:
                 logger.debug("[codex-app-live] lookup failed", exc_info=True)
                 live_reg = None
@@ -581,6 +592,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                 proc, container = self._codex_pool_popen(
                     workdir,
                     ["app-server"],
+                    container_name=reuse_container,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,

@@ -548,12 +548,13 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 return content or ""
         return ""
 
-    def _gemini_pool_popen(self, workdir: str, cmd: list, **popen_kwargs) -> tuple:
+    def _gemini_pool_popen(self, workdir: str, cmd: list,
+                           container_name: str = "", **popen_kwargs) -> tuple:
         """Launch gemini inside a pool container via docker exec."""
         env = self._gemini_env(workdir)
         from core.gemini_pool import GeminiPool
         pool = GeminiPool.instance()
-        container = pool.acquire()
+        container = container_name or pool.acquire()
         rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         session_dir = f"/cc_sessions/{rel}"
         extra = {}
@@ -747,6 +748,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
         internal_token = ""
         proc = None
         container = None
+        reuse_container = ""
         stderr_lines: queue.Queue[str] = queue.Queue(maxsize=200)
 
         if conv_id and not is_ephemeral:
@@ -760,13 +762,13 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 if live_session is not None and legacy_session_cleared:
                     live_reg.evict(live_key, "legacy_session")
                     live_session = None
-                if live_session is not None and not live_session.is_alive():
-                    live_reg.evict(live_key, "dead_acp")
+                if live_session is not None and not live_session.is_container_alive():
+                    live_reg.evict(live_key, "dead_container")
                     live_session = None
                 if live_session is not None:
                     live_session.turn_lock.acquire()
                     owns_live_lock = True
-                    if live_session.is_alive():
+                    if live_session.is_process_alive():
                         live_reg.touch(live_key)
                         is_reuse = True
                         proc = live_session.proc
@@ -784,10 +786,17 @@ class LLMGeminiMixin(GeminiSessionMixin):
                             conv_id[:8] or "?", agent_name, session_id[:12],
                             live_session.reuse_count)
                     else:
-                        live_reg.evict(live_key, "dead_after_lock")
-                        live_session.turn_lock.release()
-                        owns_live_lock = False
-                        live_session = None
+                        reuse_container = live_session.container_name
+                        container = reuse_container
+                        internal_token = live_session.mcp_internal_token or ""
+                        session_id = live_session.session_id or session_id
+                        if getattr(live_session, "event_q", None) is not None:
+                            stderr_lines = live_session.event_q
+                        if resume_pool_idx >= 0:
+                            self._current_pool_index = resume_pool_idx
+                        logger.warning(
+                            "[gemini-acp-live] process dead but container alive; restarting ACP in container=%s",
+                            reuse_container)
             except Exception:
                 logger.debug("[gemini-acp-live] lookup failed", exc_info=True)
                 live_reg = None
@@ -844,7 +853,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
         opened_session_this_call = False
         try:
             if not is_reuse:
-                proc, container = self._gemini_acp_start_process(workdir, model)
+                proc, container = self._gemini_acp_start_process(
+                    workdir, model, container_name=reuse_container)
                 self._gemini_acp_start_stderr_drain(proc, stderr_lines)
                 logger.info("[gemini-acp] started ACP conv=%s agent=%s session=%s",
                             conv_id[:8] or "?", agent_name, session_id[:12] or "new")
@@ -1269,7 +1279,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 except Exception:
                     logger.debug("[gemini-acp-live] turn lock release failed", exc_info=True)
 
-    def _gemini_acp_start_process(self, workdir: str, model: str):
+    def _gemini_acp_start_process(self, workdir: str, model: str,
+                                  container_name: str = ""):
         args = ["--debug", "--acp"]
         if model:
             args = ["--model", model, *args]
@@ -1277,6 +1288,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
             return self._gemini_pool_popen(
                 workdir,
                 args,
+                container_name=container_name,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

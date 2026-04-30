@@ -128,6 +128,9 @@ def test_codex_app_server_registers_live_app_server_session():
     assert "is_reuse" in src
     assert "not turn_failed" in src
     assert "proc_alive" in src
+    assert "is_process_alive" in src
+    assert "is_container_alive" in src
+    assert "process dead but container alive" in src
     assert "live_session.turn_lock.acquire()" in src
     assert "live_session.turn_lock.release()" in src
     assert "live_reg.ensure_sweeper" in src
@@ -164,3 +167,34 @@ def test_codex_live_sweeper_does_not_evict_active_turn():
     reg._sweeper_stop.set()
     with reg._lock:
         reg._containers.clear()
+
+
+def test_codex_live_session_tracks_process_and_container_separately(monkeypatch):
+    from core.codex_live_registry import CodexLiveSession
+    from core.codex_pool import CodexPool
+
+    class DeadProc:
+        def poll(self):
+            return 0
+
+    class LiveProc:
+        def poll(self):
+            return None
+
+    class Pool:
+        def _is_container_alive(self, name):
+            return name == "container"
+
+    monkeypatch.setattr(CodexPool, "instance", classmethod(lambda cls: Pool()))
+
+    session = CodexLiveSession(
+        container_name="container", workdir="/tmp", service_id="svc",
+        proc=DeadProc())
+    assert not session.is_process_alive()
+    assert session.is_container_alive()
+    assert not session.is_alive()
+
+    session.proc = LiveProc()
+    assert session.is_process_alive()
+    assert session.is_container_alive()
+    assert session.is_alive()

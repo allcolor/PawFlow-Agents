@@ -30,6 +30,7 @@ _ACTIVE_AGENTS_JS = Path(
 _SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
 _RESOURCES_JS = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
 _AGENT_CONTEXT_PY = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
+_AGENT_CORE_PY = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 _CONTEXT_OPS_PY = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
 _CONTEXT_EDITOR_JS = Path(
     "tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
@@ -79,6 +80,11 @@ def test_compact_progress_done_applies_gauge_immediately():
     assert "setContextUsage(agent" in done_branch
     assert "data.context_used" in done_branch
     assert "data.context_max" in done_branch
+
+
+def test_context_shrinks_only_through_threshold_compact():
+    assert "_clear_seen_tool_results(" not in _AGENT_CORE_PY
+    assert "mid-turn compact" not in _AGENT_CORE_PY
 
 
 def test_no_direct_active_interactions_mutation_for_context():

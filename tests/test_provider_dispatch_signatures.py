@@ -126,6 +126,9 @@ def test_gemini_provider_uses_acp_runtime_contracts():
     assert "[gemini-acp-live] REUSE" in stream_src
     assert "[gemini-acp-live] active" in stream_src
     assert "[gemini-acp-live] keep-alive" in stream_src
+    assert "is_process_alive" in stream_src
+    assert "is_container_alive" in stream_src
+    assert "process dead but container alive" in stream_src
     assert "live_session.turn_lock.acquire()" in stream_src
     assert "live_session.turn_lock.release()" in stream_src
     assert "store.get_extra(conv_id, session_key) or" in stream_src

@@ -39,11 +39,25 @@ class GeminiLiveContainer:
     turn_lock: object = field(default_factory=threading.RLock)
     active_turn: bool = False
 
-    def is_alive(self) -> bool:
+    def is_process_alive(self) -> bool:
+        """Return True when the long-lived ACP process can be reused."""
         try:
-            return self.proc is None or self.proc.poll() is None
+            return self.proc is not None and self.proc.poll() is None
         except Exception:
             return False
+
+    def is_container_alive(self) -> bool:
+        """Return True when the backing Docker container is still running."""
+        if self.container_name:
+            try:
+                from core.gemini_pool import GeminiPool
+                return GeminiPool.instance()._is_container_alive(self.container_name)
+            except Exception:
+                logger.debug("[gemini-live] container liveness check failed", exc_info=True)
+        return False
+
+    def is_alive(self) -> bool:
+        return self.is_process_alive()
 
     def idle_seconds(self) -> float:
         return time.monotonic() - self.last_used
@@ -229,7 +243,8 @@ class GeminiLiveRegistry:
         with self._lock:
             victims = [
                 k for k, e in self._containers.items()
-                if (not e.active_turn or not e.is_alive()) and e.last_used < cutoff
+                if not e.active_turn
+                and (e.last_used < cutoff or not e.is_container_alive())
             ]
         for k in victims:
             self.kill_and_evict(k, f"idle>{int(ttl)}s")

@@ -279,6 +279,8 @@ function addMsg(role, text, extra) {
       const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="Kill">\u2718</button>' : '';
       if (toolName === 'edit' && args && args.path) {
         _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
+      } else if (toolName === 'apply_patch' && args && args.path) {
+        _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallPatch('', args) + bgBtn + klBtn;
       } else {
         _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
       }
@@ -343,6 +345,8 @@ function addMsg(role, text, extra) {
     const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="Kill">\u2718</button>' : '';
     if (toolName === 'edit' && args && args.path) {
       el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
+    } else if (toolName === 'apply_patch' && args && args.path) {
+      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallPatch('', args) + bgBtn + klBtn;
     } else {
       el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
     }
@@ -724,6 +728,30 @@ function _renderToolCallEdit(srcLabel, args) {
     editHtml += '<pre class="diff-output' + (_lang ? ' language-' + _lang : '') + '" style="margin:2px 0 0 0;font-size:11px">' + diffLines.join('') + '</pre>';
   }
   return editHtml;
+}
+
+function _renderToolCallPatch(srcLabel, args) {
+  const fpath = args.path || '?';
+  const patch = args.patch || '';
+  let patchHtml = '<span style="color:#4ecdc4;font-size:11px">\u270E [' + escapeHtml(srcLabel) + '] ApplyPatch(' + escapeHtml(fpath) + ')</span>';
+  if (!patch) return patchHtml;
+  const lines = patch.split('\n');
+  let added = 0, removed = 0;
+  lines.forEach(function(line) {
+    if (line.startsWith('+') && !line.startsWith('+++')) added++;
+    else if (line.startsWith('-') && !line.startsWith('---')) removed++;
+  });
+  const parts = [];
+  if (added) parts.push(added + ' added');
+  if (removed) parts.push(removed + ' removed');
+  if (parts.length) patchHtml += '<span style="color:#8b949e;font-size:10px;margin-left:8px">(' + parts.join(', ') + ')</span>';
+  patchHtml += '<pre class="diff-output" style="margin:2px 0 0 0;font-size:11px"><code class="language-diff hljs">' + lines.map(function(line) {
+    if (line.startsWith('+') && !line.startsWith('+++')) return '<span class="hljs-addition">' + escapeHtml(line) + '</span>';
+    if (line.startsWith('-') && !line.startsWith('---')) return '<span class="hljs-deletion">' + escapeHtml(line) + '</span>';
+    if (line.startsWith('@@') || line.startsWith('***')) return '<span class="hljs-meta">' + escapeHtml(line) + '</span>';
+    return escapeHtml(line);
+  }).join('\n') + '</code></pre>';
+  return patchHtml;
 }
 
 function _renderDiff(text, filePath) {

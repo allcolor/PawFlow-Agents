@@ -1796,13 +1796,6 @@ class AgentCoreMixin:
 
                     self._deflate_image_messages(
                         messages, user_id=user_id, conversation_id=conversation_id)
-                    # Clear old tool results — keep last 3 (2 was too aggressive, caused repeats)
-                    _keep = 3
-                    self._clear_seen_tool_results(
-                        messages, keep_recent=_keep,
-                        conversation_id=conversation_id, user_id=user_id,
-                        agent_name=ctx.get("active_agent_name", ""))
-
                     # Apply pending background tool results to in-memory messages
                     import core.background_tool as _bg_mod
                     _apply_bg_results(messages, conversation_id)
@@ -1972,20 +1965,6 @@ class AgentCoreMixin:
                         max_rounds, tools_called)
                     emitter.drain_pending(messages, _append, iteration)
                     emitter.check_cancelled()
-
-                    # Mid-turn compaction: every 5 iterations, progressively clear
-                    # old tool results on the canonical messages to stop context growth
-                    # (skip for claude-code — manages its own context)
-                    if not ctx.get("_is_claude_code") and iteration % 5 == 0 and len(messages) > 20:
-                        _cpt = ctx.get("chars_per_token", 0) or 3.5
-                        _mid_est = self._estimate_tokens(messages, chars_per_token=_cpt)
-                        _mid_target = int(ctx.get("max_context_size", 200000) * 0.5)
-                        if _mid_est > _mid_target:
-                            logger.info(f"[agent:{conversation_id[:8]}] mid-turn compact: "
-                                        f"{_mid_est} tokens > {_mid_target} target")
-                            self._progressive_clear_tool_results(
-                                messages, _mid_target, _mid_est,
-                                keep_recent=4, chars_per_token=_cpt)
 
                 else:
                     # Max iterations reached

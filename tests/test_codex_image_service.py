@@ -159,6 +159,26 @@ def test_codex_image_generate_runs_through_codex_pool_and_llm_service(tmp_path, 
     assert "1280x512" in pool.stdin_text
 
 
+def test_codex_image_service_reads_filestore_references_locally(monkeypatch):
+    svc = CodexImageService({"llm_service": "codex_llm"})
+    svc.set_runtime_context(user_id="alice", conversation_id="conv1")
+
+    class Store:
+        def get_required(self, file_id, user_id, conversation_id):
+            assert file_id == "fid123"
+            assert user_id == "alice"
+            assert conversation_id == "conv1"
+            return ("logo.webp", b"webp-bytes", "image/webp")
+
+    from core.file_store import FileStore
+    monkeypatch.setattr(FileStore, "instance", staticmethod(lambda: Store()))
+
+    name, data = svc._load_image_reference("fs://filestore/fid123/logo.webp", 0)
+
+    assert name == "reference_0.webp"
+    assert data == b"webp-bytes"
+
+
 def test_codex_image_edit_writes_references_and_passes_image_flags(tmp_path, monkeypatch):
     svc, _client, pool = _service(tmp_path, monkeypatch)
 

@@ -1473,6 +1473,32 @@ class TestImageServiceResolution(unittest.TestCase):
         mock_service.generate.assert_called_once_with(prompt="a cat", width=512)
         assert "file-explicit" in result
 
+    def test_edit_image_keeps_filestore_urls_for_local_capable_service(self):
+        """Services that read FileStore locally receive fs:// URLs unchanged."""
+        from core.tool_registry import EditImageHandler
+
+        handler = EditImageHandler()
+        handler.set_base_url("https://localhost:9090")
+        mock_service = MagicMock()
+        mock_service.ACCEPTS_FILESTORE_URLS = True
+        mock_service.edit_image.return_value = {
+            "image_bytes": b"\x89PNG edited",
+            "content_type": "image/png",
+        }
+        handler.set_service_resolver(lambda: (mock_service, None))
+
+        with patch("core.storage_resolver.StorageResolver") as mock_storage:
+            mock_storage.return_value.write.return_value = {"file_id": "edited-file"}
+            result = handler.execute({
+                "prompt": "add beach background",
+                "image_urls": ["fs://filestore/src123/logo.png"],
+            })
+
+        mock_service.edit_image.assert_called_once()
+        assert mock_service.edit_image.call_args.kwargs["image_urls"] == [
+            "fs://filestore/src123/logo.png"]
+        assert "edited-file" in result
+
     def test_image_handler_no_resolver_returns_error(self):
         """Without a resolver, handler returns a clear error message."""
         from core.tool_registry import ImageGenerationHandler

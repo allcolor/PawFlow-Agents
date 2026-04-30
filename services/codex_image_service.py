@@ -38,6 +38,7 @@ class CodexImageService(BaseImageGenerationService):
     VERSION = "1.0.0"
     NAME = "Codex CLI Image Generation"
     DESCRIPTION = "Generate and edit images through a Codex app-server LLM service"
+    ACCEPTS_FILESTORE_URLS = True
 
     def get_parameter_schema(self) -> dict:
         return {
@@ -170,10 +171,11 @@ class CodexImageService(BaseImageGenerationService):
             from core.file_store import FileStore
             rest = url[len("fs://filestore/"):]
             fid = rest.split("/", 1)[0]
-            entry = FileStore.instance().get(fid)
-            if not entry:
-                raise ServiceError(f"FileStore image '{fid}' not found")
-            fname, data, _ct = entry
+            try:
+                fname, data, _ct = FileStore.instance().get_required(
+                    fid, self._runtime_user_id, self._runtime_conversation_id)
+            except Exception as exc:
+                raise ServiceError(f"FileStore image '{fid}' not found or not accessible: {exc}") from exc
             if fname and "." in fname:
                 ext = fname.rsplit(".", 1)[-1].lower()
                 if ext in _IMAGE_EXTS:

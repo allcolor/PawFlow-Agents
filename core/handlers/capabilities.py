@@ -19,14 +19,11 @@ _SERVICE_ARG_NAMES = (
     "service", "image_service", "video_service", "audio_service", "voice_service")
 
 
-def _resolve_filestore_url(url: str, base_url: str) -> str:
-    """Convert fs://filestore/<id>/<name> to an absolute /files/<id> URL.
-
-    Pixazo (and most providers) fetch user-supplied input URLs directly
-    over HTTP. FileStore-resident URLs must be rewritten to an absolute
-    same-origin path so the gateway can download them.
-    """
+def _resolve_filestore_url(url: str, base_url: str, service=None) -> str:
+    """Convert fs://filestore/<id>/<name> to HTTP unless service reads it locally."""
     if not url or not url.startswith("fs://filestore/"):
+        return url
+    if service is not None and getattr(service, "ACCEPTS_FILESTORE_URLS", False):
         return url
     rest = url[len("fs://filestore/"):]
     fid = rest.split("/", 1)[0]
@@ -101,8 +98,8 @@ class _CapabilityHandlerBase(ToolHandler):
             )
         return svc, err
 
-    def _rewrite(self, url: str) -> str:
-        return _resolve_filestore_url(url, self._base_url)
+    def _rewrite(self, url: str, service=None) -> str:
+        return _resolve_filestore_url(url, self._base_url, service=service)
 
     def _persist(self, destination: str, filename: str, result: Dict[str, Any],
                  label: str) -> str:
@@ -160,7 +157,7 @@ class Generate3DHandler(_CapabilityHandlerBase):
         if not svc:
             return f"Error: {err or 'no 3D generation service available'}"
         prompt = arguments.get("prompt", "") or ""
-        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        image_url = self._rewrite(arguments.get("image_url", "") or "", service=svc)
         if not prompt and not image_url:
             return "Error: provide `prompt` or `image_url`"
         try:
@@ -213,7 +210,7 @@ class UpscaleImageHandler(_CapabilityHandlerBase):
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no upscale service available'}"
-        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        image_url = self._rewrite(arguments.get("image_url", "") or "", service=svc)
         if not image_url:
             return "Error: `image_url` is required"
         scale = int(arguments.get("scale", 2))
@@ -267,7 +264,7 @@ class UpscaleVideoHandler(_CapabilityHandlerBase):
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no upscale service available'}"
-        video_url = self._rewrite(arguments.get("video_url", "") or "")
+        video_url = self._rewrite(arguments.get("video_url", "") or "", service=svc)
         if not video_url:
             return "Error: `video_url` is required"
         if not hasattr(svc, 'upscale_video'):
@@ -317,7 +314,7 @@ class DescribeImageHandler(_CapabilityHandlerBase):
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no image service available'}"
-        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        image_url = self._rewrite(arguments.get("image_url", "") or "", service=svc)
         if not image_url:
             return "Error: `image_url` is required"
         if not hasattr(svc, 'describe_image'):
@@ -366,7 +363,7 @@ class RemixImageHandler(_CapabilityHandlerBase):
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no image service available'}"
-        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        image_url = self._rewrite(arguments.get("image_url", "") or "", service=svc)
         prompt = arguments.get("prompt", "")
         if not image_url or not prompt:
             return "Error: `prompt` and `image_url` are required"
@@ -419,7 +416,7 @@ class RemoveBackgroundHandler(_CapabilityHandlerBase):
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no upscale/background service available'}"
-        image_url = self._rewrite(arguments.get("image_url", "") or "")
+        image_url = self._rewrite(arguments.get("image_url", "") or "", service=svc)
         if not image_url:
             return "Error: `image_url` is required"
         if not hasattr(svc, 'remove_background'):
@@ -471,8 +468,8 @@ class TryOnHandler(_CapabilityHandlerBase):
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no try-on service available'}"
-        person = self._rewrite(arguments.get("person_image", "") or "")
-        garment = self._rewrite(arguments.get("garment_image", "") or "")
+        person = self._rewrite(arguments.get("person_image", "") or "", service=svc)
+        garment = self._rewrite(arguments.get("garment_image", "") or "", service=svc)
         if not person or not garment:
             return "Error: `person_image` and `garment_image` are required"
         try:
@@ -527,9 +524,9 @@ class LipsyncHandler(_CapabilityHandlerBase):
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no lipsync service available'}"
-        video = self._rewrite(arguments.get("video_url", "") or "")
-        image = self._rewrite(arguments.get("image_url", "") or "")
-        audio = self._rewrite(arguments.get("audio_url", "") or "")
+        video = self._rewrite(arguments.get("video_url", "") or "", service=svc)
+        image = self._rewrite(arguments.get("image_url", "") or "", service=svc)
+        audio = self._rewrite(arguments.get("audio_url", "") or "", service=svc)
         if not audio or not (video or image):
             return ("Error: `audio_url` is required plus either `video_url` "
                     "or `image_url`")
@@ -584,7 +581,7 @@ class TrainImageModelHandler(_CapabilityHandlerBase):
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no trainer service available'}"
-        dataset = self._rewrite(arguments.get("dataset_url", "") or "")
+        dataset = self._rewrite(arguments.get("dataset_url", "") or "", service=svc)
         base_model = arguments.get("base_model", "") or ""
         if not dataset:
             return "Error: `dataset_url` is required"
@@ -638,8 +635,8 @@ class SpeechToVideoHandler(_CapabilityHandlerBase):
         svc, err = self._get_service(arguments)
         if not svc:
             return f"Error: {err or 'no video service available'}"
-        image_url = self._rewrite(arguments.get("image_url", "") or "")
-        audio_url = self._rewrite(arguments.get("audio_url", "") or "")
+        image_url = self._rewrite(arguments.get("image_url", "") or "", service=svc)
+        audio_url = self._rewrite(arguments.get("audio_url", "") or "", service=svc)
         if not image_url or not audio_url:
             return "Error: `image_url` and `audio_url` are required"
         if not hasattr(svc, 'speech_to_video'):
@@ -708,7 +705,7 @@ class CloneVoiceHandler(_CapabilityHandlerBase):
 
         name = (arguments.get("name") or "").strip()
         ref_url_raw = arguments.get("reference_audio_url") or ""
-        ref_url = self._rewrite(ref_url_raw)
+        ref_url = self._rewrite(ref_url_raw, service=svc)
         if not name or not ref_url:
             return ("Error: `name` and `reference_audio_url` are required")
 

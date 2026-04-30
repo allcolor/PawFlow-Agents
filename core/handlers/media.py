@@ -280,14 +280,11 @@ class EditImageHandler(ToolHandler):
         """Set a resolver: () -> (service, error_msg). Same shape as ImageGenerationHandler."""
         self._service_resolver = resolver
 
-    def _resolve_filestore_url(self, url: str) -> str:
-        """Convert fs://filestore/<id>/<name> to an absolute /files/<id> URL.
-
-        Pixazo fetches the source image directly from the URL, so it
-        needs an HTTP one. FileStore-resident URLs become same-origin
-        absolute paths against the configured base_url.
-        """
+    def _resolve_filestore_url(self, url: str, service=None) -> str:
+        """Convert fs://filestore/<id>/<name> to HTTP unless service reads it locally."""
         if not url.startswith("fs://filestore/"):
+            return url
+        if service is not None and getattr(service, "ACCEPTS_FILESTORE_URLS", False):
             return url
         rest = url[len("fs://filestore/"):]
         fid = rest.split("/", 1)[0]
@@ -322,8 +319,8 @@ class EditImageHandler(ToolHandler):
             image_urls = [image_urls]
         if not image_urls:
             return "Error: image_urls is required (at least one source URL)"
-        # Resolve fs://filestore/... → absolute HTTP so Pixazo can fetch it
-        image_urls = [self._resolve_filestore_url(u) for u in image_urls]
+        # Resolve fs://filestore/... to HTTP only for providers that cannot read FileStore locally.
+        image_urls = [self._resolve_filestore_url(u, service=service) for u in image_urls]
 
         destination = arguments.get("destination", "filestore")
         if not hasattr(service, "edit_image"):
@@ -493,9 +490,11 @@ class VideoGenerationHandler(ToolHandler):
         """Set a resolver function: () -> (service, error_msg)."""
         self._service_resolver = resolver
 
-    def _rewrite(self, url: str) -> str:
-        """Convert fs://filestore/<id>/<name> to an absolute /files/<id> URL."""
+    def _rewrite(self, url: str, service=None) -> str:
+        """Convert fs://filestore/<id>/<name> to HTTP unless service reads it locally."""
         if not url or not url.startswith("fs://filestore/"):
+            return url
+        if service is not None and getattr(service, "ACCEPTS_FILESTORE_URLS", False):
             return url
         rest = url[len("fs://filestore/"):]
         fid = rest.split("/", 1)[0]
@@ -526,9 +525,9 @@ class VideoGenerationHandler(ToolHandler):
         if not prompt:
             return "Error: no prompt provided"
 
-        image_url = self._rewrite(arguments.get("image_url", "") or "")
-        video_url = self._rewrite(arguments.get("video_url", "") or "")
-        end_image_url = self._rewrite(arguments.get("end_image_url", "") or "")
+        image_url = self._rewrite(arguments.get("image_url", "") or "", service=service)
+        video_url = self._rewrite(arguments.get("video_url", "") or "", service=service)
+        end_image_url = self._rewrite(arguments.get("end_image_url", "") or "", service=service)
         destination = arguments.get("destination", "filestore")
 
         try:

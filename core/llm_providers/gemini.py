@@ -549,12 +549,17 @@ class LLMGeminiMixin(GeminiSessionMixin):
         return ""
 
     def _gemini_pool_popen(self, workdir: str, cmd: list,
-                           container_name: str = "", **popen_kwargs) -> tuple:
+                           container_name: str = "", user_id: str = "",
+                           conversation_id: str = "", agent_name: str = "",
+                           **popen_kwargs) -> tuple:
         """Launch gemini inside a pool container via docker exec."""
         env = self._gemini_env(workdir)
         from core.gemini_pool import GeminiPool
+        from core.cli_workspace_mounts import build_cli_workspace_mount_args
         pool = GeminiPool.instance()
-        container = container_name or pool.acquire()
+        workspace_mounts = [] if container_name else build_cli_workspace_mount_args(
+            conversation_id, agent_name, user_id=user_id)
+        container = container_name or pool.acquire(workspace_mount_args=workspace_mounts)
         rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         session_dir = f"/cc_sessions/{rel}"
         extra = {}
@@ -853,7 +858,9 @@ class LLMGeminiMixin(GeminiSessionMixin):
         try:
             if not is_reuse:
                 proc, container = self._gemini_acp_start_process(
-                    workdir, model, container_name=reuse_container)
+                    workdir, model, container_name=reuse_container,
+                    user_id=user_id, conversation_id=conv_id,
+                    agent_name=agent_name)
                 self._gemini_acp_start_stderr_drain(proc, stderr_lines)
                 logger.info("[gemini-acp] started ACP conv=%s agent=%s session=%s",
                             conv_id[:8] or "?", agent_name, session_id[:12] or "new")
@@ -1279,7 +1286,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     logger.debug("[gemini-acp-live] turn lock release failed", exc_info=True)
 
     def _gemini_acp_start_process(self, workdir: str, model: str,
-                                  container_name: str = ""):
+                                  container_name: str = "", user_id: str = "",
+                                  conversation_id: str = "", agent_name: str = ""):
         args = ["--debug", "--acp"]
         if model:
             args = ["--model", model, *args]
@@ -1288,6 +1296,9 @@ class LLMGeminiMixin(GeminiSessionMixin):
                 workdir,
                 args,
                 container_name=container_name,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                agent_name=agent_name,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

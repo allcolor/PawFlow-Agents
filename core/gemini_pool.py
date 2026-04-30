@@ -171,7 +171,7 @@ class GeminiPool:
 
     # ── Public API ─────────────────────────────────────────────────
 
-    def acquire(self) -> str:
+    def acquire(self, workspace_mount_args: Optional[List[str]] = None) -> str:
         """Acquire a container for a new CC exec. Returns container name.
 
         Prefers a pre-warmed container from `_ready`. Falls back to a
@@ -182,12 +182,13 @@ class GeminiPool:
         Raises RuntimeError if the pool is at its hard cap
         (`PAWFLOW_GEMINI_POOL_MAX`).
         """
+        workspace_mount_args = list(workspace_mount_args or [])
         spawn_needed = False
         name = None
         with self._lock:
             self._ensure_reaper()
 
-            if self._ready:
+            if not workspace_mount_args and self._ready:
                 # FIFO: take the oldest ready container.
                 name, info = next(iter(self._ready.items()))
                 del self._ready[name]
@@ -208,7 +209,7 @@ class GeminiPool:
         if spawn_needed:
             # Spawn OUTSIDE the lock — docker run takes ~1-3s and must
             # not block concurrent acquires/releases.
-            fresh = self._spawn_container()
+            fresh = self._spawn_container(workspace_mount_args=workspace_mount_args)
             with self._lock:
                 # Re-check cap: a concurrent acquire may have bumped us.
                 if (len(self._active) + len(self._ready)
@@ -512,7 +513,7 @@ class GeminiPool:
 
     # ── Internal ───────────────────────────────────────────────────
 
-    def _spawn_container(self) -> str:
+    def _spawn_container(self, workspace_mount_args: Optional[List[str]] = None) -> str:
         """Spawn a new warm container and return its name.
 
         Pure spawn: caller owns the bookkeeping (`_active` / `_ready`).
@@ -521,6 +522,7 @@ class GeminiPool:
         """
         import uuid
         name = f"pf-gemini-pool-{uuid.uuid4().hex[:8]}"
+        workspace_mount_args = list(workspace_mount_args or [])
 
         # Ensure sessions dir exists on host (Docker -v does NOT create
         # missing host-side dirs — the bind would fail or create owned-by-
@@ -606,6 +608,7 @@ class GeminiPool:
             "--name", name,
             "--cpus", self.cpu_limit,
             "--memory", self.memory_limit,
+            *workspace_mount_args,
             # Mount sessions volume (all sessions, shared across all execs)
             "-v", f"{self._sessions_host_path}:/cc_sessions",
             *_bridge_mounts,

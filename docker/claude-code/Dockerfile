@@ -55,7 +55,8 @@ RUN pip3 install --break-system-packages --no-cache-dir json-repair
 # core/claude_code_pool.py dev-mounts them onto /opt/pawflow/*.py from
 # the host tree, so iterating on the bridge is rebuild-free. We just
 # pre-create the directory so the binds have a target.
-RUN mkdir -p /opt/pawflow
+RUN mkdir -p /opt/pawflow /workspace /relay /cc_sessions \
+    && chown pawflow:pawflow /opt/pawflow /workspace /relay /cc_sessions
 ENV PYTHONPATH="/opt/pawflow"
 
 USER pawflow

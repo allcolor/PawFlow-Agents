@@ -508,7 +508,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             "\\", "/").split("/", 1)[-1]
         return "-cc-sessions-" + rel.replace("/", "-").replace("_", "-")
 
-    def _pool_popen(self, workdir: str, cmd: list, **popen_kwargs) -> tuple:
+    def _pool_popen(self, workdir: str, cmd: list, user_id: str = "",
+                    conversation_id: str = "", agent_name: str = "",
+                    **popen_kwargs) -> tuple:
         """Launch claude inside a pool container via docker exec.
 
         Returns (proc, pool_container_name). Caller must release
@@ -517,8 +519,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         """
         _env = self._claude_code_env(workdir)
         from core.claude_code_pool import ClaudeCodePool
+        from core.cli_workspace_mounts import build_cli_workspace_mount_args
         pool = ClaudeCodePool.instance()
-        container = pool.acquire()
+        workspace_mounts = build_cli_workspace_mount_args(
+            conversation_id, agent_name, user_id=user_id)
+        container = pool.acquire(workspace_mount_args=workspace_mounts)
         _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         _session_dir = f"/cc_sessions/{_rel}"
         # Pass API key / base URL / TLS skip to container if configured
@@ -876,7 +881,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
         try:
             proc, self._pool_container_name = self._pool_popen(
-                workdir, cmd,
+                workdir, cmd, user_id=user_id,
+                conversation_id=conv_id, agent_name=agent_name,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

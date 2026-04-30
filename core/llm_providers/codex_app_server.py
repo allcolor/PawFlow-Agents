@@ -85,12 +85,17 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         return value
 
     def _codex_pool_popen(self, workdir: str, cmd: list,
-                          container_name: str = "", **popen_kwargs) -> tuple:
+                          container_name: str = "", user_id: str = "",
+                          conversation_id: str = "", agent_name: str = "",
+                          **popen_kwargs) -> tuple:
         """Launch codex inside a pool container via docker exec."""
         _env = self._codex_env(workdir)
         from core.codex_pool import CodexPool
+        from core.cli_workspace_mounts import build_cli_workspace_mount_args
         pool = CodexPool.instance()
-        container = container_name or pool.acquire()
+        workspace_mounts = [] if container_name else build_cli_workspace_mount_args(
+            conversation_id, agent_name, user_id=user_id)
+        container = container_name or pool.acquire(workspace_mount_args=workspace_mounts)
         _rel = os.path.relpath(workdir, _get_sessions_base()).replace("\\", "/")
         _session_dir = f"/cc_sessions/{_rel}"
         _extra = {}
@@ -621,6 +626,9 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     workdir,
                     ["app-server"],
                     container_name=reuse_container,
+                    user_id=user_id,
+                    conversation_id=conv_id,
+                    agent_name=agent_name,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,

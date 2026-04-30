@@ -31,6 +31,21 @@ def _get_store():
     return ConversationStore.instance()
 
 
+def _invalidate_cli_after_mount_change(cid: str, agent: str = "") -> None:
+    """Invalidate CLI sessions whose workspace mounts may have changed."""
+    try:
+        from core.cli_workspace_mounts import cli_workspace_mount_enabled
+        if not cli_workspace_mount_enabled():
+            return
+        store = _get_store()
+        if agent:
+            store.invalidate_claude_session_for_agent(cid, agent)
+        else:
+            store.invalidate_claude_sessions(cid)
+    except Exception:
+        logger.debug("CLI workspace mount invalidation failed", exc_info=True)
+
+
 def get_bindings(cid: str) -> Dict[str, Any]:
     """Get relay bindings for a conversation."""
     raw = _get_store().get_extra_cached(cid, _EXTRA_KEY, default=None)
@@ -84,6 +99,7 @@ def link_relay(cid: str, relay_id: str, agent: str = "") -> bool:
     if scope not in defaults:
         defaults[scope] = relay_id
     _get_store().set_extra(cid, _EXTRA_KEY, b)
+    _invalidate_cli_after_mount_change(cid, agent)
     scope_label = f"agent '{scope}'" if scope != _CONV else "conversation"
     logger.info("Relay '%s' linked to %s in %s", relay_id, scope_label, cid[:8])
     return True
@@ -106,6 +122,7 @@ def unlink_relay(cid: str, relay_id: str, agent: str = "") -> bool:
         if defaults[scope] is None:
             defaults.pop(scope, None)
     _get_store().set_extra(cid, _EXTRA_KEY, b)
+    _invalidate_cli_after_mount_change(cid, agent)
     scope_label = f"agent '{scope}'" if scope != _CONV else "conversation"
     logger.info("Relay '%s' unlinked from %s in %s", relay_id, scope_label, cid[:8])
     return True
@@ -125,6 +142,7 @@ def set_default_relay(cid: str, relay_id: str, agent: str = "") -> bool:
     defaults = b.setdefault("default", {})
     defaults[scope] = relay_id
     _get_store().set_extra(cid, _EXTRA_KEY, b)
+    _invalidate_cli_after_mount_change(cid, agent)
     scope_label = f"agent '{scope}'" if scope != _CONV else "conversation"
     logger.info("Relay '%s' set as default for %s in %s", relay_id, scope_label, cid[:8])
     return True

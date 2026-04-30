@@ -239,6 +239,15 @@ def cmd_start(args):
     )
     logger = logging.getLogger("pawflow")
 
+    try:
+        from core.cli_workspace_mounts import set_workspace_mount_mode
+        _mount_arg = getattr(args, "workspace_mount", None)
+        if _mount_arg is not None:
+            _mount_mode = set_workspace_mount_mode(_mount_arg)
+            logger.info("CLI workspace fallback mount mode: %s", _mount_mode)
+    except Exception as _wm_err:
+        logger.warning("CLI workspace mount mode setup failed: %s", _wm_err)
+
     # 1. Register tasks and restore flows in the main process
     # Cleanup orphan Docker containers from previous server run
     from core.docker_utils import get_server_id, kill_containers
@@ -673,6 +682,8 @@ def main():
     start_parser = subparsers.add_parser('start', help='Start PawFlow server')
     start_parser.add_argument('--host', default='localhost', help='Host (default: localhost)')
     start_parser.add_argument('--port', type=int, default=9090, help='Port (default: 9090)')
+    start_parser.add_argument('--workspace-mount', choices=['off', 'ro', 'rw'], default=None,
+                              help='Mount linked relay workspaces into CLI provider containers: off, ro, or rw. Overrides PAWFLOW_CLI_WORKSPACE_MOUNT.')
 
 
 

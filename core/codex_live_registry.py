@@ -134,6 +134,30 @@ class CodexLiveRegistry:
         with self._lock:
             return self._containers.get(key)
 
+    def get_compatible(self, user_id: str, conv_id: str, agent_name: str,
+                       service_id: str) -> Optional[Tuple[CodexLiveKey, CodexLiveContainer]]:
+        """Return the most recent live session for the base identity.
+
+        The exact key includes svc_pool_idx. If that extra is missing after a
+        restart or compact, an exact lookup with -1 misses even though the
+        warm app-server is still usable. Reuse the registered entry and carry
+        its pool index forward instead of spawning a replacement container.
+        """
+        agent_name = agent_name or "default"
+        service_id = service_id or ""
+        with self._lock:
+            candidates = [
+                (k, e) for k, e in self._containers.items()
+                if k[0] == user_id
+                and k[1] == conv_id
+                and k[2] == agent_name
+                and (k[3] or "") == service_id
+            ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[1].last_used, reverse=True)
+        return candidates[0]
+
     def register(self, key: CodexLiveKey,
                  container_name: str, workdir: str,
                  service_id: str = "",

@@ -1349,10 +1349,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         )
 
         # Final update: inject the fully-built system_prompt into messages[0]
-        # (must happen AFTER all modifications: resilience, FS context, memory digest)
+        # (must happen AFTER all modifications: resilience, FS context, memory digest).
+        # Compacted contexts can start with a user summary instead of a system
+        # message; insert the system prompt instead of silently dropping it.
         if messages and messages[0].role == "system":
             messages[0] = LLMMessage(role="system", content=system_prompt,
                                       conversation_id=conversation_id)
+        else:
+            messages.insert(0, LLMMessage(role="system", content=system_prompt,
+                                          conversation_id=conversation_id))
+            base_message_count += 1
 
         # Resolve thinking_budget auto-detect (-1)
         if thinking_budget < 0:

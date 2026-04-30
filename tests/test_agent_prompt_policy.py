@@ -50,6 +50,9 @@ def test_agent_builders_inject_common_prompt_and_cli_mcp_separately():
 
     assert "inject_common_agent_system_prompt" in inspect.getsource(
         AgentContextMixin)
+    agent_context_src = inspect.getsource(AgentContextMixin)
+    assert "messages.insert(0, LLMMessage(role=\"system\"" in agent_context_src
+    assert "base_message_count += 1" in agent_context_src
     assert "inject_common_agent_system_prompt" in inspect.getsource(
         resolve_agent_task)
     assert "append_cli_mcp_system_prompt" in inspect.getsource(

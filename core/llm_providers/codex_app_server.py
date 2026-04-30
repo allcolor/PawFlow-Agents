@@ -503,6 +503,19 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                             int(resume_pool_idx))
                 live_session = live_reg.get(live_key)
                 if live_session is None:
+                    compatible = live_reg.get_compatible(
+                        user_id, conv_id, agent_name or "default", svc_id)
+                    if compatible is not None:
+                        live_key, live_session = compatible
+                        try:
+                            resume_pool_idx = int(live_key[4])
+                        except Exception:
+                            resume_pool_idx = -1
+                        logger.info(
+                            "[codex-app-live] restored live key conv=%s agent=%s service=%s pool_idx=%s thread=%s",
+                            conv_id[:8] or "?", agent_name or "default", svc_id or "default",
+                            int(resume_pool_idx), (live_session.session_id or thread_id)[:12] or "new")
+                if live_session is None:
                     logger.info(
                         "[codex-app-live] cold-start conv=%s agent=%s service=%s pool_idx=%s thread=%s",
                         conv_id[:8] or "?", agent_name or "default", svc_id or "default",

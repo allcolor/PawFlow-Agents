@@ -131,6 +131,7 @@ def test_codex_app_server_registers_live_app_server_session():
     assert "is_process_alive" in src
     assert "is_container_alive" in src
     assert "process dead but container alive" in src
+    assert "get_compatible" in src
     assert "live_session.turn_lock.acquire()" in src
     assert "live_session.turn_lock.release()" in src
     assert "live_reg.ensure_sweeper" in src
@@ -167,6 +168,21 @@ def test_codex_live_sweeper_does_not_evict_active_turn():
     reg._sweeper_stop.set()
     with reg._lock:
         reg._containers.clear()
+
+
+def test_codex_live_lookup_falls_back_when_pool_idx_extra_is_missing():
+    from core.codex_live_registry import CodexLiveRegistry
+
+    reg = CodexLiveRegistry()
+    key = ("user", "conv", "assistant", "svc", 0)
+    session = reg.register(
+        key, "container", "/tmp/work", service_id="svc",
+        session_id="thread")
+    session.last_used = time.monotonic()
+
+    assert reg.get(("user", "conv", "assistant", "svc", -1)) is None
+    compatible = reg.get_compatible("user", "conv", "assistant", "svc")
+    assert compatible == (key, session)
 
 
 def test_codex_live_session_tracks_process_and_container_separately(monkeypatch):

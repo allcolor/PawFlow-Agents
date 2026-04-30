@@ -109,6 +109,16 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "RoyBetty" in prompt
 
 
+def test_docker_docs_explain_wsl_vhdx_compaction():
+    doc = Path("docs/docker.md").read_text(encoding="utf-8")
+
+    assert "WSL2: Reclaim Docker Build Cache Space" in doc
+    assert "docker builder prune -a" in doc
+    assert "ext4.vhdx" in doc
+    assert "compact vdisk" in doc
+    assert "Do not use Windows Settings **Reset**" in doc
+
+
 def test_cli_bootstrap_failure_is_not_silently_ignored():
     src = Path("cli.py").read_text(encoding="utf-8")
     block = src[src.index("from core.install_bootstrap import ensure_install_bootstrap"):

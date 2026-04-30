@@ -201,6 +201,47 @@ After fixing, `curStep` in the browser console audio stats will converge to `1.0
 
 > Native Linux hosts and macOS (Docker Desktop) are not affected — their clocks are hardware-synced.
 
+## WSL2: Reclaim Docker Build Cache Space
+
+Docker build cache inside WSL2 can grow very large while building PawFlow relay or CLI images. `docker builder prune` frees the space inside the Linux filesystem, but Windows does not automatically shrink the WSL `ext4.vhdx` file. Windows Settings may still show the Ubuntu app using hundreds of GB until the VHDX is compacted.
+
+First clean Docker from inside the WSL distro:
+
+```bash
+docker builder prune -a
+docker system df
+```
+
+Then stop WSL from PowerShell:
+
+```powershell
+wsl --shutdown
+```
+
+Find the Ubuntu VHDX:
+
+```powershell
+Get-ChildItem "$env:LOCALAPPDATA\Packages\CanonicalGroupLimited.Ubuntu24.04LTS_*\LocalState\ext4.vhdx"
+```
+
+Compact it with `diskpart`:
+
+```powershell
+diskpart
+```
+
+Inside `diskpart`:
+
+```text
+select vdisk file="C:\Users\<user>\AppData\Local\Packages\CanonicalGroupLimited.Ubuntu24.04LTS_<suffix>\LocalState\ext4.vhdx"
+attach vdisk readonly
+compact vdisk
+detach vdisk
+exit
+```
+
+Do not use Windows Settings **Reset** for the Ubuntu app: it deletes the distro data. If `attach vdisk readonly` fails, ensure Docker Desktop and all WSL terminals are closed, then run `wsl --shutdown` again.
+
 ## WSL2: Launching PawCode with a WSL-Resident Project
 
 When PawCode runs on Windows (`python -m pawflow_cli ...`) but the project lives inside a WSL distro, you may pass the path in any of these forms:

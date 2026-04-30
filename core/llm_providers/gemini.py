@@ -22,6 +22,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
+from core.agent_prompt_policy import CLI_MCP_SYSTEM_PROMPT
 from core.llm_providers.gemini_session import GeminiSessionMixin, _get_sessions_base
 
 logger = logging.getLogger(__name__)
@@ -44,24 +45,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
     """
 
     _GEMINI_PROVIDER = "gemini"
-    _GEMINI_PAWFLOW_PREAMBLE = (
-        "## PawFlow runtime - MCP-only (mandatory)\n"
-        "You are running inside a PawFlow sandboxed Gemini CLI container. "
-        "The user's project lives at `/workspace`, but that path is VIRTUAL "
-        "and reachable ONLY through the PawFlow MCP server. Your local cwd, "
-        "`/`, `/tmp`, and `/cc_sessions/...` are Gemini runtime state, not the "
-        "user's project.\n\n"
-        "For every action against the project or user environment - file "
-        "read/write/edit, shell command, grep/search/glob, directory listing, "
-        "screen/browser/web operations - use the PawFlow MCP server only: "
-        "first `mcp_pawflow_get_tool_schema` if needed, then "
-        "`mcp_pawflow_use_tool` with `tool_name` and `arguments`.\n\n"
-        "Do not use Gemini built-in tools such as list_directory, read_file, "
-        "read_many_files, glob/search_file_content, run_shell_command, "
-        "web_fetch, or google_web_search for PawFlow work. Those tools inspect "
-        "the Gemini container instead of PawFlow's relay-backed workspace and "
-        "cause slow or wrong results."
-    )
+    _GEMINI_PAWFLOW_PREAMBLE = CLI_MCP_SYSTEM_PROMPT
 
     def _gemini_context_window(self, model: str) -> int:
         """Return Gemini's effective context window for ``model``."""
@@ -538,6 +522,22 @@ class LLMGeminiMixin(GeminiSessionMixin):
         return self._gemini_acp_build_stdin_with_system(
             self._GEMINI_PAWFLOW_PREAMBLE, user_text or "")
 
+    def _gemini_acp_resume_text(self, messages) -> str:
+        system_prompt = ""
+        for msg in messages:
+            if getattr(msg, "role", "") == "system":
+                content = getattr(msg, "content", "")
+                system_prompt = (
+                    getattr(msg, "text_content", "")
+                    if isinstance(content, list) else (content or ""))
+                break
+        system_prompt = (
+            self._GEMINI_PAWFLOW_PREAMBLE
+            + ("\n\n" + system_prompt if system_prompt else "")
+        )
+        return self._gemini_acp_build_stdin_with_system(
+            system_prompt, self._gemini_acp_last_user_text(messages))
+
     @staticmethod
     def _gemini_acp_last_user_text(messages) -> str:
         for msg in reversed(messages):
@@ -697,8 +697,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
 
         def _prompt_text_for_mode(mode: str) -> str:
             if str(mode or "").startswith("resume"):
-                return self._gemini_acp_live_text(
-                    self._gemini_acp_last_user_text(messages))
+                return self._gemini_acp_resume_text(messages)
             return self._gemini_acp_full_initial_text(messages)
 
         store = None

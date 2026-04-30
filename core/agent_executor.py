@@ -1366,6 +1366,8 @@ def resolve_agent_task(
         _nick = next((v for k, v in _nicks.items() if k.lower() == _nk), None)
     except Exception:
         logger.debug("exception suppressed", exc_info=True)
+    from core.agent_prompt_policy import inject_common_agent_system_prompt
+    _sys_prompt = inject_common_agent_system_prompt(_sys_prompt)
     if _nick:
         _sys_prompt = (
             f"[IDENTITY] Your real agent id is \"{agent_name}\". "

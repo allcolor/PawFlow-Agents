@@ -19,6 +19,8 @@ import os
 import time
 from typing import Optional
 
+from core.agent_prompt_policy import CLI_MCP_SYSTEM_PROMPT
+
 logger = logging.getLogger(__name__)
 
 # Auth0 endpoint used by the Codex CLI for the OAuth PKCE refresh flow.
@@ -797,42 +799,4 @@ class CodexSessionMixin:
     # session. Resume turns rely on the rollout for prior instructions
     # so this is one-shot per rollout. Stay short — codex weights system
     # context heavily and over-instruction degrades reasoning quality.
-    _CODEX_PAWFLOW_PREAMBLE = (
-        "## PawFlow runtime — MCP-only (mandatory)\n"
-        "You are running inside a PawFlow sandboxed container. The user's\n"
-        "project lives at `/workspace` — a VIRTUAL path reachable ONLY "
-        "through the PawFlow MCP server (`pawflow.use_tool`). Your container's "
-        "local filesystem (cwd, `/`, `/tmp`, `/home`, ...) is empty / disposable "
-        "and is NOT the user's project.\n\n"
-        "### Mandatory rule — zero exceptions\n"
-        "For EVERY action against the user's project or environment — file "
-        "read/write/edit, shell command, search/glob/grep, listing a "
-        "directory, screen capture, web fetch, image view, web search, etc. "
-        "— you MUST call `pawflow.use_tool(<tool_name>, {...})`. Native "
-        "codex tools (shell, browser, web_search, image_generation, "
-        "computer_use, view_image, ...) are DISABLED at the runtime layer; "
-        "any attempt to invoke them will fail or be silently dropped.\n\n"
-        "### How to use the MCP bridge\n"
-        "1. List available tools first if unsure: `pawflow.get_tool_schema()`. "
-        "Common tools: `read`, `write`, `edit`, `bash`, `glob`, `grep`, "
-        "`list_dir`, `screen`, `web_fetch`.\n"
-        "2. Pass tool args inside the `arguments` object, e.g. "
-        "`pawflow.use_tool(\"read\", {\"path\": \"/workspace/README.md\"})`.\n"
-        "3. Paths starting with `/workspace/...` are translated by the relay "
-        "to the host's project root. Never `cd /workspace` — it does not "
-        "exist on the container filesystem; the path only resolves via MCP.\n\n"
-        "### What NOT to do\n"
-        "- Do NOT call `bash`/`sh`/`run` directly, do NOT issue `cd`, `ls`, "
-        "`cat`, `grep`, `find`, etc. as native shell commands. Even if codex "
-        "surfaces a `shell`/`exec`/`browser` tool option, it is NOT functional "
-        "here — PawFlow disables them.\n"
-        "- Do NOT call native/internal tools named `ApplyPatch`, `apply_patch`, "
-        "`exec_command`, `Read`, `Write`, `Edit`, `Grep`, `Glob`, or `Bash`. "
-        "Use only PawFlow MCP tools, e.g. `pawflow.use_tool(\"edit\", ...)` "
-        "or `pawflow.use_tool(\"apply_patch\", ...)`.\n"
-        "- Do NOT try to access files via the responses-API hosted tools "
-        "(`web_search`, `image_generation`, `view_image`); they are off and "
-        "would not see the user's project anyway.\n"
-        "- If a request is ambiguous, ASK the user instead of falling back to "
-        "a native tool. There is no \"native fallback\" path.\n"
-    )
+    _CODEX_PAWFLOW_PREAMBLE = CLI_MCP_SYSTEM_PROMPT

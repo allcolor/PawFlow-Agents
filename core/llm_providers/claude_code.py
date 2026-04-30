@@ -17,6 +17,7 @@ import threading
 import time
 from typing import Dict, List, Optional
 
+from core.agent_prompt_policy import append_cli_mcp_system_prompt
 from core.cc_live_registry import CCLiveSession, LiveSessionRegistry
 from core.interrupt_policy import SOFT_INTERRUPT_USER_COMMAND
 
@@ -1035,6 +1036,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         #   anything that arrived from other agents since last turn.
         if session_id:
             system_prompt = ""
+            for _m in messages:
+                if _m.role == "system":
+                    _c = _m.content
+                    system_prompt = _m.text_content if isinstance(_c, list) else (_c or "")
+                    break
+            system_prompt = append_cli_mcp_system_prompt(system_prompt)
             last_user = ""
             for _m in reversed(messages):
                 if _m.role == "user":
@@ -1047,6 +1054,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             user_text = last_user
         else:
             system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
+            system_prompt = append_cli_mcp_system_prompt(system_prompt)
 
         initial_text = self._build_stdin_with_system(system_prompt, user_text)
         logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d session=%s",

@@ -209,7 +209,7 @@ def test_gemini_provider_uses_acp_runtime_contracts():
     assert "_GEMINI_PAWFLOW_PREAMBLE" in provider_src
     assert "_gemini_acp_live_text" in provider_src
     assert "self._gemini_acp_live_text(text or \"\")" in send_src
-    assert "self._gemini_acp_live_text(" in stream_src
+    assert "self._gemini_acp_resume_text(messages)" in stream_src
 
 
 def test_cli_providers_do_not_force_default_model_flags():

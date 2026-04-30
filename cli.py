@@ -268,6 +268,12 @@ def cmd_start(args):
     from tasks import register_all_tasks
     register_all_tasks()
 
+    try:
+        from core.install_bootstrap import ensure_install_bootstrap
+        ensure_install_bootstrap(port=int(args.port))
+    except Exception as _ib_err:
+        logger.warning("Install bootstrap setup failed: %s", _ib_err, exc_info=True)
+
     logger.info("Restoring deployed flows...")
     from core.executor_registry import ExecutorRegistry
     er = ExecutorRegistry.get_instance()

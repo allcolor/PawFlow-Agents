@@ -330,12 +330,19 @@ def action_exists(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 def action_search(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     pattern = req.get("pattern", "*")
     recursive = req.get("recursive", True)
+    try:
+        limit = int(req.get("limit", 500) or 500)
+    except (TypeError, ValueError):
+        limit = 500
+    if limit <= 0:
+        limit = 500
+    limit = min(limit, 5000)
     p = Path(path)
     if recursive:
         matches = [str(m.relative_to(p)).replace("\\", "/") for m in p.rglob(pattern)]
     else:
         matches = [str(m.relative_to(p)).replace("\\", "/") for m in p.glob(pattern)]
-    return matches[:500]
+    return matches[:limit]
 
 
 _GREP_SKIP_DIRS = {

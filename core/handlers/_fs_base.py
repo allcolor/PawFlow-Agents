@@ -425,7 +425,7 @@ class BaseFsHandler(ToolHandler):
         os.makedirs(full, exist_ok=True)
         return f"Created directory: {path}"
 
-    def _workdir_glob(self, pattern: str, path: str = ".") -> str:
+    def _workdir_glob(self, pattern: str, path: str = ".", limit: int = 500) -> str:
         import fnmatch
         full = self._sandbox_path(path, self._workdir)
         matches = []
@@ -434,6 +434,8 @@ class BaseFsHandler(ToolHandler):
                 if fnmatch.fnmatch(f, pattern):
                     rel = os.path.relpath(os.path.join(root, f), self._workdir)
                     matches.append(rel.replace("\\", "/"))
+                    if len(matches) >= limit:
+                        return "\n".join(matches)
         return "\n".join(matches) if matches else "(no matches)"
 
     def _workdir_grep(self, pattern: str, path: str = ".",

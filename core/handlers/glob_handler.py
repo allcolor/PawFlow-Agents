@@ -31,6 +31,7 @@ class GlobHandler(BaseFsHandler):
                 "pattern": {"type": "string", "description": "Glob pattern (e.g. *.py, src/**/*.ts)"},
                 "path": {"type": "string", "description": "Directory to search in (default: root)"},
                 "recursive": {"type": "boolean", "description": "Search recursively (default: true)"},
+                "limit": {"type": "integer", "description": "Maximum number of results to return (default: 500)"},
                 "source": {"type": "string", "description": "Filesystem service name. Omit for default."},
             },
             "required": ["pattern"],
@@ -42,6 +43,7 @@ class GlobHandler(BaseFsHandler):
         pattern = arguments.get("pattern", "*")
         path = arguments.get("path", ".")
         recursive = arguments.get("recursive", True)
+        limit = self._parse_limit(arguments.get("limit", 500))
         source = arguments.get("source", "")
 
         _svc_name, path = self._parse_fs_url(path)
@@ -54,14 +56,30 @@ class GlobHandler(BaseFsHandler):
             return self._filestore_list()
 
         if workdir:
-            return self._workdir_glob(pattern, path)
+            return self._workdir_glob(pattern, path, limit=limit)
 
         if svc is None:
             return self._no_target_error(source)
 
         try:
-            results = svc.search(path, pattern, recursive,
-                                 local=bool(arguments.get("local", False)))
+            try:
+                results = svc.search(path, pattern, recursive,
+                                     local=bool(arguments.get("local", False)),
+                                     limit=limit)
+            except TypeError:
+                results = svc.search(path, pattern, recursive,
+                                     local=bool(arguments.get("local", False)))
+            results = results[:limit]
             return "\n".join(results) if results else "(no matches)"
         except Exception as e:
             return f"Error: {e}"
+
+    @staticmethod
+    def _parse_limit(value: Any) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 500
+        if parsed <= 0:
+            return 500
+        return min(parsed, 5000)

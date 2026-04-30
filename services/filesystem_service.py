@@ -1082,9 +1082,9 @@ class RelayService(BaseService):
         return data.get("exists", False) if isinstance(data, dict) else bool(data)
 
     def search(self, path: str, pattern: str, recursive: bool = True,
-               local: bool = False):
+               local: bool = False, limit: int = 500):
         return self._request("search", path, pattern=pattern,
-                             recursive=recursive, local=local)
+                             recursive=recursive, local=local, limit=limit)
 
     def grep(self, path: str, regex: str, recursive: bool = True, **kwargs):
         return self._request("grep", path, regex=regex, recursive=recursive, **kwargs)

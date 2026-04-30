@@ -1,0 +1,201 @@
+# PawFlow Installation Bootstrap
+
+This document defines the intended first-run installation flow for a self-hosted
+PawFlow server.
+
+## Goals
+
+- PawFlow runs as a Dockerized server application.
+- A first-run installer configures the server safely before normal use.
+- No user relay is created implicitly during server installation.
+- Users add server or client relays later from the webchat.
+- The installer is transactional and recoverable across restarts.
+
+## Server Installation Paths
+
+### Published image
+
+The default path is to run a published Docker image:
+
+```bash
+bash scripts/install-pawflow.sh
+```
+
+By default this pulls `ghcr.io/allcolor/pawflow:latest`, creates persistent
+volumes under `~/pawflow`, starts `pawflow-server`, and exposes port `9090`.
+
+Override values with flags or environment variables:
+
+```bash
+bash scripts/install-pawflow.sh --image ghcr.io/allcolor/pawflow:latest --port 9090
+PAWFLOW_HOME=/srv/pawflow PAWFLOW_PORT=9443 bash scripts/run-pawflow-docker.sh
+```
+
+### Build from source
+
+Advanced users can build locally from GitHub:
+
+```bash
+bash scripts/install-pawflow.sh --source
+```
+
+This checks out `https://github.com/allcolor/PawFlow-Agents.git`, builds the
+server image, then starts it with the same persistent volume layout.
+
+## First Run Contract
+
+On a fresh server data volume, PawFlow should start in bootstrap mode:
+
+1. Build or verify required runtime images:
+   - `pawflow-claude-code:latest`
+   - `pawflow-relay-dev:latest`
+2. Deploy only the `PawFlow Installer` flow.
+3. Protect the installer with Private Gateway key `RoyBetty`.
+4. Persist installer progress in a server-side install state file.
+5. Never create a default user relay during bootstrap.
+
+The server container receives the host Docker socket when available so the
+bootstrap can build those runtime images from inside the PawFlow container. The
+install script mounts `/var/run/docker.sock` and adds the socket group ID as a
+supplemental group. If the socket is unavailable, bootstrap must surface a
+clear blocking error and instruct the user to mount Docker or build the images
+manually.
+
+`RoyBetty` is a temporary bootstrap key. The installer must force a replacement
+before finalization.
+
+The installer template is stored at
+`data/repository/flows/global/default/pawflow_installer/versions/1.0.0.json`.
+It currently defines the first-run routes `/install` and `/install/api` and the
+bootstrap checklist. The transactional API that writes final server config is a
+separate implementation step.
+
+## Wizard Steps
+
+1. Server endpoint
+   - public base URL
+   - HTTP/HTTPS port
+   - certificate upload, generated certificate, or mounted cert path
+   - bind and certificate validation
+
+2. Private Gateway
+   - configure final gateway key
+   - reject `RoyBetty` as a final key
+   - validate access through the final gateway
+
+3. Authentication
+   - internal auth
+   - Google OAuth
+   - OAuth secrets stored through the secret store
+   - redirect URI validation
+
+4. Admin user
+   - create local admin
+   - optionally link the admin to Google OAuth
+   - validate login
+
+5. LLM services
+   - create one or more LLM services
+   - store provider secrets through the secret store
+   - test each service
+   - select the default service for the PawFlow Agent
+
+6. Summarizer service
+   - choose the service used by compaction/background summaries
+   - restrict choices to configured LLM services that can handle summarization
+   - validate the summarizer with a short smoke summary
+   - persist the selected service in server/flow parameters
+
+7. Variables and secrets
+   - create server/global variables used by deployed flows
+   - create required secrets through the secret store
+   - support OAuth client secrets, provider API keys, gateway material, and flow-specific secrets
+   - store only secret IDs/references in installer state
+   - validate references resolve without exposing secret values
+
+8. CLI credential pools
+   - Claude Code, Codex, and Gemini login workflows
+   - run login inside the CLI container image
+   - verify provider auth status
+   - store credentials only in the intended runtime/session directories
+
+9. Final review and smoke tests
+   - gateway final key works
+   - login works
+   - `/chat` responds
+   - `/api/agent` responds
+   - SSE responds
+   - default LLM service responds
+   - summarizer service responds
+   - configured variables resolve
+   - configured secret references resolve without leaking values
+
+10. Finalize
+   - write final config
+   - deploy `http_listener`
+   - deploy `PawFlow Agent`
+   - start both flows
+   - mark `install_complete=true`
+   - disable the installer flow
+   - redirect to gateway -> login -> empty webchat
+
+## Install State
+
+The installer state should be persisted outside the flow runtime so restart and
+rollback are possible:
+
+```json
+{
+  "version": 1,
+  "install_complete": false,
+  "current_step": "llm_services",
+  "completed_steps": ["server", "gateway", "auth"],
+  "draft": {
+    "server": {},
+    "gateway": {},
+    "auth": {},
+    "admin": {},
+    "llm_services": [],
+    "summarizer_service": "claude_code_llm_service",
+    "variables": {},
+    "secrets": [],
+    "cli_credentials": []
+  },
+  "checks": {
+    "docker_images_built": true,
+    "gateway_tested": true,
+    "oauth_tested": false
+  }
+}
+```
+
+Secrets must not be stored in install state. Store only secret IDs.
+
+## Relay Onboarding After Install
+
+The initial server install does not create relays. After the user reaches the
+webchat, the Relays panel should offer:
+
+- Install relay client
+  - generate a short-lived provisioning token
+  - download an installer script/package
+  - check Docker and permissions on the client machine
+  - optionally check VNC/noVNC prerequisites for local desktop control
+  - build or pull the relay image
+  - register and start the relay
+
+- Install relay server
+  - configure and launch a relay on the server host when explicitly requested
+
+This keeps PawFlow server bootstrap separate from user workspace onboarding.
+
+## Recovery
+
+Do not permanently delete the installer flow. Finalization should disable and
+hide it. Recovery should be possible through a local-only mechanism such as:
+
+```bash
+PAWFLOW_BOOTSTRAP_RESET=1 docker restart pawflow-server
+```
+
+or a future local admin command.

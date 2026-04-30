@@ -1,5 +1,6 @@
 from core.handlers.grep_handler import GrepHandler
-from tools.fs_actions import action_grep
+from core.handlers.glob_handler import GlobHandler
+from tools.fs_actions import action_grep, action_search
 
 
 def test_grep_handler_accepts_glob_in_path(tmp_path):
@@ -89,3 +90,33 @@ def test_grep_handler_accepts_include_alias(tmp_path):
 
     assert "pkg/mod.py" in result
     assert "skip.txt" not in result
+
+
+def test_glob_handler_accepts_limit(tmp_path):
+    for idx in range(5):
+        (tmp_path / f"file_{idx}.py").write_text("x", encoding="utf-8")
+
+    handler = GlobHandler()
+    handler.set_workdir(str(tmp_path))
+    handler.set_is_claude_code(True)
+
+    schema = handler.parameters_schema["properties"]
+    assert "limit" in schema
+
+    result = handler.execute({"pattern": "*.py", "path": str(tmp_path), "limit": 2})
+
+    lines = [line for line in result.splitlines() if line.strip()]
+    assert len(lines) == 2
+
+
+def test_relay_action_search_accepts_limit(tmp_path):
+    for idx in range(5):
+        (tmp_path / f"file_{idx}.py").write_text("x", encoding="utf-8")
+
+    results = action_search(str(tmp_path), str(tmp_path), {
+        "pattern": "*.py",
+        "recursive": True,
+        "limit": 3,
+    })
+
+    assert len(results) == 3

@@ -2,8 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+# System deps. docker.io provides the Docker CLI used by the first-run
+# bootstrap to build PawFlow's CLI and relay runtime images via the mounted
+# host Docker socket.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git docker.io \
+    && rm -rf /var/lib/apt/lists/*
 
 # Python deps
 COPY requirements.txt .
@@ -14,7 +18,7 @@ COPY . .
 
 # Create non-root user and set ownership
 RUN groupadd -r pawflow && useradd -r -g pawflow -d /app -s /sbin/nologin pawflow \
-    && mkdir -p /app/flows /app/config /app/plugins /app/logs \
+    && mkdir -p /app/flows /app/config /app/plugins /app/logs /app/data /app/certs \
     && chown -R pawflow:pawflow /app
 
 USER pawflow

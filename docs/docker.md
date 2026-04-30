@@ -8,6 +8,53 @@ PawFlow supports running agent code in Docker containers for isolation and secur
 - User in the `docker` group (Linux/WSL): `sudo usermod -aG docker $USER && newgrp docker`
 - Docker Desktop (Windows/macOS) or Docker Engine (Linux)
 
+## 0. PawFlow Server in Docker
+
+The recommended first install path is to run the PawFlow server from a Docker
+image, then complete the bootstrap wizard in the browser.
+
+### Pull and run the published image
+
+```bash
+bash scripts/install-pawflow.sh
+```
+
+This pulls `ghcr.io/allcolor/pawflow:latest`, creates persistent directories
+under `~/pawflow`, starts `pawflow-server`, and exposes `http://localhost:9090`.
+When `/var/run/docker.sock` is available on the host, the run script mounts it
+into the PawFlow container so first-run bootstrap can build the Claude/Codex/
+Gemini CLI image and relay image.
+
+The initial Private Gateway bootstrap key is:
+
+```text
+RoyBetty
+```
+
+The installer wizard must force the user to replace this key before finalizing
+the installation.
+
+### Build from source
+
+```bash
+bash scripts/install-pawflow.sh --source
+```
+
+This checks out the PawFlow repository, builds the server image locally, and
+starts the same persistent container layout.
+
+### Agent-assisted install prompt
+
+If the target machine already has Codex, Claude Code, Gemini CLI, or another
+local coding agent, give it the prompt in:
+
+```text
+docs/prompts/install_with_agent.md
+```
+
+That prompt gets the machine to a running PawFlow bootstrap wizard. It does not
+configure relays; relay onboarding happens later from the webchat.
+
 ## 1. Claude Code in Docker
 
 Run Claude Code CLI inside a container instead of directly on the host.

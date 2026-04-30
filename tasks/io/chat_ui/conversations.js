@@ -2,11 +2,45 @@
 // ── Conversation sidebar & history ──────────────────────────────
 // All server calls use action$() from rxbus.js (fire-and-forget + SSE result).
 
+window._convActiveOverride = window._convActiveOverride || {};
+
 function loadConversations() {
   action$('list_conversations', {}).subscribe(data => {
     const convs = data.conversations || [];
     renderConvList(convs);
   });
+}
+
+function _convRuntimeStatus(cid, serverStatus) {
+  if (cid === conversationId
+      && window._convActiveOverride
+      && Object.prototype.hasOwnProperty.call(window._convActiveOverride, cid)) {
+    return window._convActiveOverride[cid] ? 'active' : 'idle';
+  }
+  return serverStatus || 'idle';
+}
+
+function setConversationWorking(cid, isWorking) {
+  if (!cid) return;
+  window._convActiveOverride[cid] = !!isWorking;
+  const el = document.querySelector('.conv-item[data-cid="' + CSS.escape(cid) + '"]');
+  if (!el) return;
+  const preview = el.querySelector('.conv-preview');
+  if (!preview) return;
+  let dot = preview.querySelector('.conv-status');
+  if (isWorking) {
+    if (!dot) {
+      dot = document.createElement('span');
+      dot.className = 'conv-status active';
+      dot.title = 'Working';
+      preview.insertBefore(dot, preview.firstChild);
+    } else {
+      dot.className = 'conv-status active';
+      dot.title = 'Working';
+    }
+  } else if (dot) {
+    dot.remove();
+  }
 }
 
 function renderConvList(convs) {
@@ -23,15 +57,16 @@ function renderConvList(convs) {
     const title = c.title || c.preview || 'New conversation';
     const date = new Date(c.updated_at * 1000);
     const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    const statusDot = c.status === 'active' ? '<span class="conv-status active" title="Working"></span>'
-      : c.status === 'blocked' ? '<span class="conv-status blocked" title="Blocked"></span>' : '';
+    const runtimeStatus = _convRuntimeStatus(c.conversation_id, c.status);
+    const statusDot = runtimeStatus === 'active' ? '<span class="conv-status active" title="Working"></span>'
+      : runtimeStatus === 'blocked' ? '<span class="conv-status blocked" title="Blocked"></span>' : '';
     const branchBadge = c.branch ? '<span class="conv-branch" title="Branch: ' + escapeHtml(c.branch) + '">\u{1F33F} ' + escapeHtml(c.branch) + '</span>' : '';
     el.innerHTML = '<div class="conv-preview" ondblclick="renameConvInline(event,\'' + c.conversation_id + '\')">' 
       + statusDot + '<span class="conv-title">' + escapeHtml(title) + '</span>' + branchBadge + '</div>'
       + '<div class="conv-meta">' + c.message_count + ' messages \u00b7 ' + timeStr + '</div>'
       + '<button class="conv-delete" title="Delete" onclick="deleteConv(event,\'' + c.conversation_id + '\')">\u00d7</button>';
     el.onclick = () => resumeConv(c.conversation_id);
-    el.oncontextmenu = (function(cid, status) { return function(ev) { ev.preventDefault(); showConvMenu(ev, cid, status); }; })(c.conversation_id, c.status);
+    el.oncontextmenu = (function(cid, status) { return function(ev) { ev.preventDefault(); showConvMenu(ev, cid, status); }; })(c.conversation_id, runtimeStatus);
     list.appendChild(el);
   }
 }

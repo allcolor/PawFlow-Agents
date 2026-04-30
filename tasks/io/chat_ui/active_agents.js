@@ -168,6 +168,10 @@ function trackAgentDone(agentName) {
   if (!key) return;
   delete activeInteractions[key];
   updateActivePanel();
+  if (Object.keys(activeInteractions).length === 0
+      && typeof setConversationWorking === 'function') {
+    setConversationWorking(conversationId, false);
+  }
 }
 
 function updateActivePanel() {
@@ -307,6 +311,10 @@ function syncActiveFromServer() {
   action$('list_active').subscribe(data => {
     if (data.error) return;  // silent — network may be down
     const serverActive = data.active || [];
+    const hasActiveForCurrentConv = serverActive.length > 0;
+    if (typeof setConversationWorking === 'function') {
+      setConversationWorking(conversationId, hasActiveForCurrentConv);
+    }
     const serverKeys = new Set(serverActive.map(a => a.task_id ? agentKey(a.agent_name + '::' + a.task_id) : agentKey(a.agent_name)));
 
     // Server is the truth — remove anything server doesn't know about

@@ -170,17 +170,36 @@ class LLMGeminiMixin(GeminiSessionMixin):
     @staticmethod
     def _gemini_acp_display_tool_name(raw_name: str, result_text: str = "") -> str:
         """Prefer the inner PawFlow tool over Gemini's MCP wrapper name."""
-        if raw_name not in ("use_tool", "mcp__pawflow__use_tool"):
+        wrapper_names = ("use_tool", "mcp__pawflow__use_tool", "mcp_pawflow_use_tool")
+        if raw_name not in wrapper_names:
             return raw_name
-        patterns = (
-            r'<tool_output\s+tool="([^"]+)"',
-            r"tool_name['\"]?\s*[:=]\s*['\"]([^'\"}\s,]+)",
-        )
-        for pattern in patterns:
-            match = re.search(pattern, result_text or "")
-            if match:
-                return match.group(1)
+        for match in re.finditer(r'<tool_output\s+tool="([^"]+)"', result_text or ""):
+            candidate = match.group(1)
+            if candidate not in wrapper_names:
+                return candidate
+        match = re.search(
+            r"tool_name['\"]?\s*[:=]\s*['\"]([^'\"}\s,]+)", result_text or "")
+        if match:
+            candidate = match.group(1)
+            if candidate not in wrapper_names:
+                return candidate
         return raw_name
+
+    @staticmethod
+    def _gemini_acp_clean_tool_result_text(result_text: str) -> str:
+        """Drop Gemini/PawFlow wrapper tags from persisted tool results."""
+        text = str(result_text or "")
+        wrapper_names = ("use_tool", "mcp__pawflow__use_tool", "mcp_pawflow_use_tool")
+        for _ in range(3):
+            match = re.match(
+                r'\s*<tool_output\s+tool="([^"]+)">\n?(.*?)\n?</tool_output>',
+                text,
+                flags=re.DOTALL,
+            )
+            if not match or match.group(1) not in wrapper_names:
+                break
+            text = match.group(2).strip()
+        return text
 
     @staticmethod
     def _gemini_acp_display_tool_call(raw_name: str, raw_args: Any,
@@ -191,7 +210,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
             name, args = unwrap_mcp_tool(raw_name, raw_args or {})
         except Exception:
             name, args = raw_name, raw_args or {}
-        if name in ("use_tool", "mcp__pawflow__use_tool"):
+        if name in ("use_tool", "mcp__pawflow__use_tool", "mcp_pawflow_use_tool"):
             display = LLMGeminiMixin._gemini_acp_display_tool_name(name, result_text)
             if display != name:
                 return display, args
@@ -814,6 +833,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
         thinking_parts: List[str] = []
         stream_uniq = f"geminiacp-{uuid.uuid4().hex[:8]}"
         stream_tc_names: Dict[str, str] = {}
+        stream_tc_display_names: Dict[str, str] = {}
+        stream_tc_display_args: Dict[str, Any] = {}
         completed_tool_ids = set()
         started_tool_ids = set()
         deferred_tool_ids = set()
@@ -1096,6 +1117,8 @@ class LLMGeminiMixin(GeminiSessionMixin):
                             conv_id, agent_name, tc_id, raw_name, raw_input, update)
                     display_name, display_args = self._gemini_acp_display_tool_call(
                         raw_name, raw_input, result_text)
+                    stream_tc_display_names[tc_id] = display_name
+                    stream_tc_display_args[tc_id] = display_args
                     defer_wrapper = raw_name == "use_tool" and not raw_input and not result_text
                     if block_callback and not defer_wrapper:
                         block_callback("tool_use", {
@@ -1115,9 +1138,13 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     raw_name: str,
                     raw_input: dict,
                 ) -> None:
-                    result_text = self._gemini_acp_tool_result_text(update)
+                    result_text = self._gemini_acp_clean_tool_result_text(
+                        self._gemini_acp_tool_result_text(update))
                     display_name, display_args = self._gemini_acp_display_tool_call(
                         stream_tc_names.get(tc_id) or raw_name, raw_input, result_text)
+                    if display_name in ("use_tool", "mcp__pawflow__use_tool", "mcp_pawflow_use_tool"):
+                        display_name = stream_tc_display_names.get(tc_id) or display_name
+                        display_args = stream_tc_display_args.get(tc_id, display_args)
                     if tc_id not in started_tool_ids:
                         _emit_started_tool(
                             tc_id, raw_name, raw_input, update, result_text,

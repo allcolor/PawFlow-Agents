@@ -337,6 +337,9 @@ def test_gemini_acp_displays_inner_pawflow_tool_name_from_result():
     result = '<tool_output tool="read">\nhello\n</tool_output>'
     assert LLMGeminiMixin._gemini_acp_display_tool_name("use_tool", result) == "read"
 
+    wrapper = '<tool_output tool="mcp_pawflow_use_tool">\nhello\n</tool_output>'
+    assert LLMGeminiMixin._gemini_acp_display_tool_name("use_tool", wrapper) == "use_tool"
+
     error = "MCP tool 'use_tool' reported tool error for function call: {'tool_name': 'list_dir'}"
     assert LLMGeminiMixin._gemini_acp_display_tool_name("use_tool", error) == "list_dir"
 
@@ -348,6 +351,16 @@ def test_gemini_acp_displays_inner_pawflow_tool_args():
         "use_tool", {"tool_name": "list_dir", "arguments": {"path": "/workspace"}})
     assert name == "list_dir"
     assert args == {"path": "/workspace"}
+
+
+def test_gemini_acp_strips_pawflow_wrapper_from_tool_result_text():
+    from core.llm_providers.gemini import LLMGeminiMixin
+
+    wrapped = '<tool_output tool="mcp_pawflow_use_tool">\ncommit 551e9182\n</tool_output>'
+    assert LLMGeminiMixin._gemini_acp_clean_tool_result_text(wrapped) == "commit 551e9182"
+
+    real_tool = '<tool_output tool="bash">\ncommit 551e9182\n</tool_output>'
+    assert LLMGeminiMixin._gemini_acp_clean_tool_result_text(real_tool) == real_tool
 
 
 def test_gemini_acp_drops_serialized_tool_calls_from_thinking():

@@ -68,7 +68,13 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "Linux containers" in doctor_ps1_src
     assert "docker info >/dev/null 2>&1" in doctor_ps1_src
     assert "Docker daemon reachable from WSL" in doctor_ps1_src
+    assert "Windows docker CLI exists but daemon is not reachable" not in doctor_ps1_src
     assert "test -S /var/run/docker.sock" in doctor_ps1_src
+    assert "Get-NetTCPConnection" in doctor_ps1_src
+    assert "PortInUseFromWindows" in doctor_ps1_src
+    assert "PortInUseFromWsl" in doctor_ps1_src
+    assert "already in use on Windows" in doctor_ps1_src
+    assert "already in use inside WSL" in doctor_ps1_src
     assert "Port $Port" in doctor_ps1_src
 
 

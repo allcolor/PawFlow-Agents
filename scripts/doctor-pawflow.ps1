@@ -71,7 +71,11 @@ if (Has-Command "wsl.exe") {
 
 $DockerReachable = $false
 $DockerReachableFromWsl = $false
-if (Has-Command "docker") {
+if (Wsl-Command-Ok "docker info >/dev/null 2>&1") {
+    $DockerReachable = $true
+    $DockerReachableFromWsl = $true
+    Ok "Docker daemon reachable from WSL"
+} elseif (Has-Command "docker") {
     Ok "docker command found"
     try {
         $dockerInfo = & docker info 2>&1 | Out-String
@@ -84,19 +88,13 @@ if (Has-Command "docker") {
                 Warn "Docker may not be using Linux containers. Switch Docker Desktop to Linux containers."
             }
         } else {
-            Warn "Windows docker CLI exists but daemon is not reachable from native PowerShell; checking WSL Docker integration."
+            Fail "Docker command exists but daemon is not reachable from Windows or WSL. Start Docker Desktop and enable WSL integration for your distro."
         }
     } catch {
-        Warn "Windows docker CLI exists but 'docker info' failed; checking WSL Docker integration."
+        Fail "Docker command exists but 'docker info' failed and WSL Docker is not reachable. Start Docker Desktop and verify WSL integration."
     }
 } else {
-    Warn "Docker CLI not found in native PowerShell; checking WSL Docker integration."
-}
-
-if (-not $DockerReachable -and (Wsl-Command-Ok "docker info >/dev/null 2>&1")) {
-    $DockerReachable = $true
-    $DockerReachableFromWsl = $true
-    Ok "Docker daemon reachable from WSL"
+    Fail "Docker CLI not found in native PowerShell or WSL. Install Docker Desktop for Windows and enable WSL integration."
 }
 
 if (-not $DockerReachable) {
@@ -122,13 +120,47 @@ if ($Source) {
     Warn "git not found. Image install can continue, but source install will not work."
 }
 
-try {
-    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse("127.0.0.1"), $Port)
-    $listener.Start()
-    $listener.Stop()
-    Ok "Port $Port appears available"
-} catch {
-    Fail "Port $Port is already in use on 127.0.0.1. Choose another port or stop the conflicting service."
+$PortInUseFromWindows = $false
+if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+    try {
+        $tcpListeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+        if ($tcpListeners.Count -gt 0) { $PortInUseFromWindows = $true }
+    } catch {
+        Warn "Could not inspect Windows TCP listeners with Get-NetTCPConnection; falling back to bind probe."
+    }
+}
+
+$PortInUseFromWsl = $false
+if (Has-Command "wsl.exe") {
+    $PortInUseFromWsl = Wsl-Command-Ok "python3 - <<'PY'
+import socket, sys
+port = int('$Port')
+for host in ('127.0.0.1', '0.0.0.0'):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind((host, port))
+    except OSError:
+        sys.exit(0)
+    finally:
+        s.close()
+sys.exit(1)
+PY"
+}
+
+if ($PortInUseFromWindows) {
+    Fail "Port $Port is already in use on Windows. Choose another port or stop the conflicting PawFlow/Docker service."
+} elseif ($PortInUseFromWsl) {
+    Fail "Port $Port is already in use inside WSL. Choose another port or stop the conflicting PawFlow/Docker service."
+} else {
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse("0.0.0.0"), $Port)
+        $listener.Server.ExclusiveAddressUse = $true
+        $listener.Start()
+        $listener.Stop()
+        Ok "Port $Port appears available"
+    } catch {
+        Fail "Port $Port is already in use or unavailable on Windows. Choose another port or stop the conflicting service."
+    }
 }
 
 if ($DockerReachable) {

@@ -1,0 +1,254 @@
+{
+  "version": 1,
+  "required_features": ["relay.base"],
+  "server_profile": "server-full",
+  "default_client_profile": "client-minimal",
+  "features": {
+    "relay.base": {
+      "label": "PawFlow relay base",
+      "category": "required",
+      "required": true,
+      "description": "Minimum runtime needed by a PawFlow Docker relay: Python launcher, FUSE server mounts, FileStore mount, and core shell tools.",
+      "apt": [
+        "sudo", "python3", "python3-pip", "python3-venv", "ca-certificates",
+        "git", "curl", "wget", "gnupg2", "software-properties-common", "jq", "sqlite3", "openssh-client", "unzip", "zip",
+        "file", "less", "fuse3", "libfuse3-dev", "chrony"
+      ],
+      "pip": ["pyfuse3", "trio", "websockets", "requests", "certifi"],
+      "env": {
+        "PYTHONPATH": "/opt/pawflow:/workspace/.pylib"
+      },
+      "post_install": [
+        "ln -sf /usr/bin/python3 /usr/bin/python",
+        "mkdir -p /workspace /cc_sessions /filestore /opt/pawflow",
+        "chown pawflow:pawflow /workspace /cc_sessions /filestore /opt/pawflow",
+        "groupadd -f docker && usermod -aG docker pawflow || true",
+        "printf '#!/bin/bash\\nsudo chronyd 2>/dev/null || true\\nexec \"$@\"\\n' > /usr/local/bin/init.sh",
+        "chmod +x /usr/local/bin/init.sh"
+      ],
+      "runtime": {
+        "requires_fuse": true,
+        "docker_args": ["--cap-add", "SYS_ADMIN", "--device", "/dev/fuse", "--security-opt", "apparmor:unconfined"]
+      },
+      "estimated_size_mb": 650
+    },
+    "dev.build-essential": {
+      "label": "Build essentials",
+      "category": "developer_tools",
+      "description": "C/C++ compiler and common build tooling used by many language ecosystems.",
+      "apt": ["build-essential", "make", "cmake", "pkg-config", "autoconf", "automake", "libtool", "libffi-dev", "libssl-dev", "zlib1g-dev", "libbz2-dev", "libreadline-dev", "libncurses-dev", "libgdbm-dev", "liblzma-dev", "tk-dev", "uuid-dev"],
+      "estimated_size_mb": 420
+    },
+    "dev.shell-tools": {
+      "label": "Advanced shell tools",
+      "category": "developer_tools",
+      "description": "Search, diagnostics, terminal and archive helpers.",
+      "apt": ["ripgrep", "fd-find", "bat", "tree", "htop", "strace", "ltrace", "tmux", "ncdu"],
+      "estimated_size_mb": 95
+    },
+    "lang.python-dev": {
+      "label": "Python dev",
+      "category": "languages",
+      "description": "Python development tooling. The relay base already includes Python runtime; this adds test, lint, web and data-science packages.",
+      "apt": ["python3-dev"],
+      "pip": ["pip", "setuptools", "wheel", "pipx", "poetry", "pytest", "pytest-cov", "pytest-asyncio", "pytest-mock", "pytest-xdist", "hypothesis", "tox", "nox", "mypy", "ruff", "black", "isort", "bandit", "pylint", "flake8", "pyright", "types-requests", "types-pyyaml", "httpx", "aiohttp", "grpcio", "grpcio-tools", "pydantic", "fastapi", "uvicorn", "flask", "django", "starlette", "sqlalchemy", "alembic", "psycopg2-binary", "pymongo", "redis", "asyncpg", "pillow", "numpy", "pandas", "matplotlib", "scipy", "scikit-learn", "pyyaml", "toml", "python-dotenv", "msgpack", "orjson", "beautifulsoup4", "lxml", "html5lib", "cssselect", "cryptography", "paramiko", "bcrypt", "pyjwt", "click", "typer", "rich", "textual", "prompt-toolkit", "celery", "dramatiq", "docker", "boto3", "google-cloud-storage", "azure-storage-blob", "jinja2", "mako", "python-dateutil", "arrow", "pendulum", "pydantic-settings", "loguru", "structlog", "tenacity", "backoff", "tqdm", "tabulate", "colorama", "python-docx", "openpyxl", "python-pptx", "striprtf", "PyPDF2", "ebooklib", "networkx", "graphifyy", "tree-sitter"],
+      "estimated_size_mb": 1450
+    },
+    "lang.tree-sitter": {
+      "label": "Tree-sitter language parsers",
+      "category": "languages",
+      "description": "AST parsers used for project graph/code intelligence across many languages.",
+      "pip": ["tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-go", "tree-sitter-rust", "tree-sitter-java", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-ruby", "tree-sitter-c-sharp", "tree-sitter-kotlin", "tree-sitter-scala", "tree-sitter-php", "tree-sitter-swift", "tree-sitter-lua", "tree-sitter-zig", "tree-sitter-powershell", "tree-sitter-elixir"],
+      "implies": ["lang.python-dev"],
+      "estimated_size_mb": 180
+    },
+    "lang.node": {
+      "label": "Node.js / TypeScript",
+      "category": "languages",
+      "description": "Node.js 22, TypeScript, package managers, test/lint/build tools and common frontend/backend tooling.",
+      "pre_apt": ["curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"],
+      "apt": ["nodejs"],
+      "npm": ["typescript", "ts-node", "tsx", "pnpm", "yarn", "jest", "vitest", "mocha", "chai", "@types/jest", "@types/mocha", "eslint", "prettier", "@typescript-eslint/parser", "@typescript-eslint/eslint-plugin", "esbuild", "rollup", "webpack", "webpack-cli", "vite", "express", "@nestjs/cli", "next", "create-react-app", "nodemon", "concurrently", "pm2", "http-server", "zod", "ajv", "@openai/codex", "prisma", "drizzle-kit", "knex", "typeorm"],
+      "estimated_size_mb": 900
+    },
+    "lang.rust": {
+      "label": "Rust",
+      "category": "languages",
+      "description": "Rustup stable toolchain and common cargo developer tools.",
+      "user_install": ["curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile default", "cargo install cargo-watch cargo-edit cargo-expand", "rustup component add clippy rustfmt rust-analyzer"],
+      "env": {"PATH_PREFIX": "/home/pawflow/.cargo/bin"},
+      "implies": ["dev.build-essential"],
+      "estimated_size_mb": 1900
+    },
+    "lang.go": {
+      "label": "Go",
+      "category": "languages",
+      "description": "Go toolchain and common Go developer tools.",
+      "setup": ["curl -fsSL https://go.dev/dl/go1.23.6.linux-amd64.tar.gz | tar -C /usr/local -xzf -"],
+      "user_install": ["go install golang.org/x/tools/gopls@latest", "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest", "go install gotest.tools/gotestsum@latest", "go install github.com/air-verse/air@latest"],
+      "env": {"PATH_PREFIX": "/usr/local/go/bin:/home/pawflow/go/bin", "GOPATH": "/home/pawflow/go"},
+      "estimated_size_mb": 1300
+    },
+    "lang.java-kotlin": {
+      "label": "Java / Kotlin",
+      "category": "languages",
+      "description": "OpenJDK, Maven, Gradle and Kotlin compiler.",
+      "apt": ["openjdk-21-jdk-headless", "maven", "gradle"],
+      "setup": ["curl -fsSL https://github.com/JetBrains/kotlin/releases/download/v2.1.10/kotlin-compiler-2.1.10.zip -o /tmp/kotlin.zip && unzip -q /tmp/kotlin.zip -d /opt && rm /tmp/kotlin.zip"],
+      "env": {"PATH_PREFIX": "/opt/kotlinc/bin"},
+      "estimated_size_mb": 1700
+    },
+    "lang.dotnet": {
+      "label": ".NET / C#",
+      "category": "languages",
+      "description": ".NET SDK 9.",
+      "setup": ["curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 9.0 --install-dir /usr/share/dotnet", "ln -sf /usr/share/dotnet/dotnet /usr/bin/dotnet"],
+      "env": {"DOTNET_ROOT": "/usr/share/dotnet"},
+      "estimated_size_mb": 1200
+    },
+    "lang.ruby": {
+      "label": "Ruby",
+      "category": "languages",
+      "apt": ["ruby", "ruby-dev", "ruby-bundler"],
+      "gem": ["rspec", "rubocop", "solargraph", "rake"],
+      "estimated_size_mb": 260
+    },
+    "lang.php": {
+      "label": "PHP",
+      "category": "languages",
+      "apt": ["php-cli", "php-mbstring", "php-xml", "php-curl", "php-zip", "php-sqlite3", "php-mysql", "php-pgsql"],
+      "setup": ["curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer"],
+      "estimated_size_mb": 220
+    },
+    "lang.perl": {
+      "label": "Perl",
+      "category": "languages",
+      "apt": ["perl", "cpanminus", "libtest-simple-perl"],
+      "estimated_size_mb": 120
+    },
+    "lang.lua": {
+      "label": "Lua",
+      "category": "languages",
+      "apt": ["lua5.4", "liblua5.4-dev", "luarocks"],
+      "setup": ["luarocks install busted"],
+      "estimated_size_mb": 80
+    },
+    "lang.zig": {
+      "label": "Zig",
+      "category": "languages",
+      "setup": ["curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz | tar -C /opt -xJf - && ln -sf /opt/zig-linux-x86_64-0.13.0/zig /usr/local/bin/zig"],
+      "estimated_size_mb": 250
+    },
+    "db.clients": {
+      "label": "Database CLIs",
+      "category": "tools",
+      "apt": ["postgresql-client", "mysql-client", "redis-tools"],
+      "estimated_size_mb": 260
+    },
+    "browser.chrome": {
+      "label": "Google Chrome",
+      "category": "browser",
+      "description": "Chrome browser for browser automation or desktop use.",
+      "apt": ["libgtk-3-0", "libnotify4", "fonts-dejavu", "fonts-liberation", "fonts-noto-color-emoji"],
+      "setup": ["curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb && apt-get update && apt-get install -y /tmp/chrome.deb && rm /tmp/chrome.deb", "mv /opt/google/chrome/google-chrome /opt/google/chrome/google-chrome-real", "printf '#!/bin/bash\\nrm -f \"$HOME/.chrome-profile/SingletonLock\" \"$HOME/.chrome-profile/SingletonCookie\" \"$HOME/.chrome-profile/SingletonSocket\" 2>/dev/null\\nexec /opt/google/chrome/google-chrome-real --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=$HOME/.chrome-profile \"$@\"\\n' > /opt/google/chrome/google-chrome", "chmod +x /opt/google/chrome/google-chrome", "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium-browser"],
+      "estimated_size_mb": 650
+    },
+    "desktop.runtime": {
+      "label": "Desktop / VNC runtime",
+      "category": "desktop",
+      "description": "Minimum virtual desktop needed for screen automation and noVNC.",
+      "apt": ["xvfb", "xfce4", "xfce4-goodies", "dbus-x11", "x11vnc", "novnc", "websockify", "xdotool", "xclip", "xsel", "scrot", "wmctrl", "fonts-dejavu", "fonts-liberation", "fonts-noto-color-emoji"],
+      "pip": ["mss", "pyautogui"],
+      "estimated_size_mb": 1650
+    },
+    "desktop.audio": {
+      "label": "Desktop audio",
+      "category": "desktop",
+      "apt": ["pulseaudio", "pulseaudio-utils"],
+      "implies": ["desktop.runtime"],
+      "estimated_size_mb": 160
+    },
+    "desktop.ocr": {
+      "label": "OCR support",
+      "category": "desktop",
+      "apt": ["tesseract-ocr", "tesseract-ocr-fra"],
+      "pip": ["pytesseract", "opencv-python-headless"],
+      "estimated_size_mb": 340
+    },
+    "gui.gimp": {
+      "label": "GIMP",
+      "category": "gui_apps",
+      "apt": ["gimp", "gimp-plugin-registry"],
+      "implies": ["desktop.runtime"],
+      "estimated_size_mb": 520
+    },
+    "gui.inkscape": {
+      "label": "Inkscape",
+      "category": "gui_apps",
+      "apt": ["inkscape"],
+      "implies": ["desktop.runtime"],
+      "estimated_size_mb": 430
+    },
+    "gui.vscode": {
+      "label": "VS Code desktop",
+      "category": "gui_apps",
+      "setup": ["curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg", "echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main' > /etc/apt/sources.list.d/vscode.list", "apt-get update && apt-get install -y --no-install-recommends code", "mv /usr/share/code/code /usr/share/code/code-real", "printf '#!/bin/bash\\nexec /usr/share/code/code-real --no-sandbox \"$@\"\\n' > /usr/share/code/code", "chmod +x /usr/share/code/code"],
+      "implies": ["desktop.runtime"],
+      "estimated_size_mb": 620
+    },
+    "gui.libreoffice-writer": {"label": "LibreOffice Writer", "category": "gui_apps", "apt": ["libreoffice-writer"], "implies": ["desktop.runtime"], "estimated_size_mb": 300},
+    "gui.libreoffice-calc": {"label": "LibreOffice Calc", "category": "gui_apps", "apt": ["libreoffice-calc"], "implies": ["desktop.runtime"], "estimated_size_mb": 300},
+    "gui.libreoffice-impress": {"label": "LibreOffice Impress", "category": "gui_apps", "apt": ["libreoffice-impress"], "implies": ["desktop.runtime"], "estimated_size_mb": 300},
+    "gui.libreoffice-draw": {"label": "LibreOffice Draw", "category": "gui_apps", "apt": ["libreoffice-draw"], "implies": ["desktop.runtime"], "estimated_size_mb": 300},
+    "gui.vlc": {"label": "VLC", "category": "gui_apps", "apt": ["vlc"], "implies": ["desktop.runtime", "desktop.audio"], "estimated_size_mb": 360},
+    "gui.audacity": {"label": "Audacity", "category": "gui_apps", "apt": ["audacity"], "implies": ["desktop.runtime", "desktop.audio"], "estimated_size_mb": 210},
+    "gui.pdf-viewer": {"label": "PDF viewer", "category": "gui_apps", "apt": ["evince"], "implies": ["desktop.runtime"], "estimated_size_mb": 140},
+    "gui.image-viewer": {"label": "Image viewer", "category": "gui_apps", "apt": ["feh", "eog"], "implies": ["desktop.runtime"], "estimated_size_mb": 100},
+    "gui.archive-manager": {"label": "Archive manager", "category": "gui_apps", "apt": ["file-roller"], "implies": ["desktop.runtime"], "estimated_size_mb": 100},
+    "gui.meld": {"label": "Meld", "category": "gui_apps", "apt": ["meld"], "implies": ["desktop.runtime"], "estimated_size_mb": 90},
+    "gui.mousepad": {"label": "Mousepad text editor", "category": "gui_apps", "apt": ["mousepad"], "implies": ["desktop.runtime"], "estimated_size_mb": 45},
+    "gui.calculator": {"label": "Calculator", "category": "gui_apps", "apt": ["galculator"], "implies": ["desktop.runtime"], "estimated_size_mb": 25},
+    "media.cli": {
+      "label": "CLI media tools",
+      "category": "media",
+      "apt": ["ffmpeg", "imagemagick"],
+      "estimated_size_mb": 360
+    },
+    "network.tools": {
+      "label": "Network diagnostics",
+      "category": "tools",
+      "apt": ["nmap", "net-tools", "iproute2", "dnsutils", "tcpdump", "iputils-ping", "httpie"],
+      "estimated_size_mb": 260
+    },
+    "code-server": {
+      "label": "code-server",
+      "category": "developer_tools",
+      "setup": ["curl -fsSL https://code-server.dev/install.sh | sh"],
+      "estimated_size_mb": 420
+    }
+  },
+  "profiles": {
+    "client-minimal": {
+      "label": "Client minimal relay",
+      "description": "Smallest client relay with required PawFlow relay runtime, FUSE mounts, git and shell basics.",
+      "features": ["relay.base"]
+    },
+    "client-python": {
+      "label": "Client Python relay",
+      "features": ["relay.base", "dev.build-essential", "dev.shell-tools", "lang.python-dev", "lang.tree-sitter"]
+    },
+    "client-frontend": {
+      "label": "Client frontend relay",
+      "features": ["relay.base", "dev.shell-tools", "lang.node", "browser.chrome"]
+    },
+    "client-desktop": {
+      "label": "Client desktop automation relay",
+      "features": ["relay.base", "desktop.runtime", "desktop.audio", "desktop.ocr", "browser.chrome", "media.cli"]
+    },
+    "server-full": {
+      "label": "Server full relay",
+      "description": "Official full-capability server relay matching the current pawflow-relay-dev image.",
+      "features": ["relay.base", "dev.build-essential", "dev.shell-tools", "lang.python-dev", "lang.tree-sitter", "lang.node", "lang.rust", "lang.go", "lang.java-kotlin", "lang.dotnet", "lang.ruby", "lang.php", "lang.perl", "lang.lua", "lang.zig", "db.clients", "code-server", "desktop.runtime", "desktop.audio", "desktop.ocr", "browser.chrome", "gui.gimp", "gui.inkscape", "gui.vscode", "gui.libreoffice-writer", "gui.libreoffice-calc", "gui.libreoffice-impress", "gui.libreoffice-draw", "gui.vlc", "gui.audacity", "gui.pdf-viewer", "gui.image-viewer", "gui.archive-manager", "gui.meld", "gui.mousepad", "gui.calculator", "media.cli", "network.tools"]
+    }
+  }
+}

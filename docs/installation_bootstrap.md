@@ -148,7 +148,14 @@ separate implementation step.
    - verify provider auth status
    - store credentials only in the intended runtime/session directories
 
-9. Final review and smoke tests
+9. Relay image profiles
+   - server relays use the official `server-full` relay image profile
+   - client relays are configured later by the user from selectable capabilities
+   - expose `client-minimal`, language presets, desktop/browser presets, and advanced per-feature checkboxes
+   - always include the required PawFlow relay base with Python runtime, FUSE mounts, and `/workspace`/`/cc_sessions`/`/filestore` mountpoints
+   - generate a Dockerfile, build script, run/register script, and manifest from `config/relay_image_catalog.json`
+
+10. Final review and smoke tests
    - gateway final key works
    - login works
    - `/chat` responds
@@ -159,7 +166,7 @@ separate implementation step.
    - configured variables resolve
    - configured secret references resolve without leaking values
 
-10. Finalize
+11. Finalize
    - write final config
    - deploy `http_listener`
    - deploy `PawFlow Agent`

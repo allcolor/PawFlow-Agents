@@ -1,0 +1,142 @@
+# Relay Image Profiles
+
+PawFlow supports two relay image strategies:
+
+- **Server relays** use the official full image. Server relays are centralized,
+  controlled by the PawFlow administrator, and should expose the broadest stable
+  capability set.
+- **Client relays** are generated from a configurable profile. The user decides
+  which languages, desktop tools, browser support, media tools, and GUI apps are
+  installed on their machine.
+
+The profile catalog lives in `config/relay_image_catalog.json`. It is designed
+for both the installer wizard and command-line generation.
+
+## Required Base
+
+Every Docker relay image includes the non-optional `relay.base` feature. This is
+not a development language preset; it is the minimum runtime PawFlow needs:
+
+- `pawflow` user at UID/GID 1000 for bind-mounted workspace ownership
+- Python runtime for `pawflow_relay_launcher.py` and relay workers
+- FUSE support for server session and FileStore mounts
+- `pyfuse3` and `trio`
+- `/workspace`, `/cc_sessions`, `/filestore`, and `/opt/pawflow` mountpoints
+- basic network/TLS and shell tools
+- Docker runtime requirements: `SYS_ADMIN`, `/dev/fuse`, and
+  `apparmor:unconfined`
+
+The base must stay small, but it cannot drop Python or FUSE without breaking
+relay functionality.
+
+## Optional Features
+
+Optional features are individually selectable. The wizard should expose presets
+for common cases and an advanced section with granular checkboxes.
+
+Language features:
+
+- `lang.python-dev`
+- `lang.node`
+- `lang.rust`
+- `lang.go`
+- `lang.java-kotlin`
+- `lang.dotnet`
+- `lang.ruby`
+- `lang.php`
+- `lang.perl`
+- `lang.lua`
+- `lang.zig`
+- `lang.tree-sitter`
+
+Desktop and browser features:
+
+- `desktop.runtime`
+- `desktop.audio`
+- `desktop.ocr`
+- `browser.chrome`
+
+GUI applications are also individually selectable:
+
+- `gui.gimp`
+- `gui.inkscape`
+- `gui.vscode`
+- `gui.libreoffice-writer`
+- `gui.libreoffice-calc`
+- `gui.libreoffice-impress`
+- `gui.libreoffice-draw`
+- `gui.vlc`
+- `gui.audacity`
+- `gui.pdf-viewer`
+- `gui.image-viewer`
+- `gui.archive-manager`
+- `gui.meld`
+- `gui.mousepad`
+- `gui.calculator`
+
+Tool/media features:
+
+- `dev.build-essential`
+- `dev.shell-tools`
+- `db.clients`
+- `media.cli`
+- `network.tools`
+- `code-server`
+
+Features may declare `implies`. For example, GUI apps imply
+`desktop.runtime`, and audio/video GUI apps may also imply `desktop.audio`.
+The wizard should show implied features as locked dependencies rather than
+silently hiding them.
+
+## Presets
+
+The initial catalog ships these presets:
+
+- `client-minimal` — relay base only
+- `client-python` — Python development and AST tooling
+- `client-frontend` — Node/frontend and Chrome
+- `client-desktop` — desktop automation, audio, OCR, Chrome, media CLI
+- `server-full` — official full server relay capability set
+
+Server relay creation should default to `server-full`. Client relay creation
+should default to `client-minimal` and let the user add capabilities.
+
+## Generate a Client Relay Image
+
+List available presets and features:
+
+```bash
+python scripts/generate-relay-image.py --list
+```
+
+Generate a preset:
+
+```bash
+python scripts/generate-relay-image.py \
+  --profile client-frontend \
+  --out docker/relay-generated/frontend \
+  --image pawflow-relay:frontend
+```
+
+Add individual features:
+
+```bash
+python scripts/generate-relay-image.py \
+  --profile client-minimal \
+  --feature lang.node \
+  --feature gui.gimp \
+  --out docker/relay-generated/node-gimp \
+  --image pawflow-relay:node-gimp
+```
+
+The generator writes:
+
+- `Dockerfile`
+- `manifest.json`
+- `build.sh`
+- `run-relay.sh`
+- `runtime/` with the PawFlow relay launcher, filesystem actions, SDK shim, and `pawflow_relay` package copied into the Docker build context
+
+`manifest.json` lists resolved features, implied dependencies, estimated size,
+and required Docker runtime args. The installer wizard can use the same catalog
+to generate a downloadable client relay installer.

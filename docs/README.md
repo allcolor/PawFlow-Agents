@@ -35,6 +35,7 @@
 |----------|-------------|
 | [Deployment](deployment.md) | Local, Docker, sidecar, and production deployment |
 | [Docker](docker.md) | Containerization, relay Docker mode, desktop audio notes |
+| [Relay Image Profiles](relay_images.md) | Server full relay image and configurable client relay image profiles |
 | [Security Model](security_model.md) | Trust boundaries, relay risk, desktop/VNC, provider egress, production checklist |
 | [Development](development.md) | Creating custom tasks and services |
 | [Relay Server Filesystem](relay_server_fs.md) | Relay filesystem server details |

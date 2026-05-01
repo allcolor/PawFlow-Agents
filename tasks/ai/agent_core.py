@@ -95,13 +95,26 @@ def _svc_rates(ctx):
     return cost_in, cost_out, cost_cache_read, cost_cache_write
 
 
-def _check_budget(ctx, total_in, total_out):
+def _usage_cost_usd(ctx, total_in, total_out,
+                    total_cache_read=0, total_cache_write=0):
+    """Return cost using the same cache-aware rates as CostTracker."""
+    cost_in, cost_out, cost_cache_read, cost_cache_write = _svc_rates(ctx)
+    return (
+        total_in / 1_000_000 * cost_in
+        + total_out / 1_000_000 * cost_out
+        + total_cache_read / 1_000_000 * cost_cache_read
+        + total_cache_write / 1_000_000 * cost_cache_write
+    )
+
+
+def _check_budget(ctx, total_in, total_out,
+                  total_cache_read=0, total_cache_write=0):
     """Raise RuntimeError if conversation cost exceeds max_budget_usd."""
     budget = ctx.get("max_budget_usd", 0)
     if not budget:
         return  # no cap
-    cost_in, cost_out, _, _ = _svc_rates(ctx)
-    spent = (total_in / 1_000_000 * cost_in) + (total_out / 1_000_000 * cost_out)
+    spent = _usage_cost_usd(
+        ctx, total_in, total_out, total_cache_read, total_cache_write)
     if spent >= budget:
         raise RuntimeError(f"Budget exceeded: ${spent:.4f} >= ${budget:.2f} limit")
 
@@ -1507,7 +1520,9 @@ class AgentCoreMixin:
 
                     _provider_response_completed_at = 0.0
                     try:
-                        _check_budget(ctx, total_tokens_in, total_tokens_out)
+                        _check_budget(
+                            ctx, total_tokens_in, total_tokens_out,
+                            total_cache_read, total_cache_write)
                         response = _llm_call(_call_context)
                         _provider_response_completed_at = time.time()
                     except AgentCancelled:
@@ -1843,7 +1858,9 @@ class AgentCoreMixin:
                                         conversation_id[:8], _sv_err)
                             llm_context = list(messages)
                             try:
-                                _check_budget(ctx, total_tokens_in, total_tokens_out)
+                                _check_budget(
+                                    ctx, total_tokens_in, total_tokens_out,
+                                    total_cache_read, total_cache_write)
                                 response = _llm_call(llm_context)
                             except Exception as retry_err:
                                 try:
@@ -1879,7 +1896,9 @@ class AgentCoreMixin:
                                     llm_context = list(messages)
                                 time.sleep(5)
                                 try:
-                                    _check_budget(ctx, total_tokens_in, total_tokens_out)
+                                    _check_budget(
+                                        ctx, total_tokens_in, total_tokens_out,
+                                        total_cache_read, total_cache_write)
                                     response = _llm_call(llm_context)
                                 except AgentCancelled:
                                     raise
@@ -1919,8 +1938,9 @@ class AgentCoreMixin:
                     # Budget warning at 80%
                     _bud = ctx.get("max_budget_usd", 0)
                     if _bud and not ctx.get("_budget_warning_sent"):
-                        _ci, _co, _, _ = _svc_rates(ctx)
-                        _spent = (total_tokens_in / 1_000_000 * _ci) + (total_tokens_out / 1_000_000 * _co)
+                        _spent = _usage_cost_usd(
+                            ctx, total_tokens_in, total_tokens_out,
+                            total_cache_read, total_cache_write)
                         if _spent >= _bud * 0.8:
                             ctx["_budget_warning_sent"] = True
                             emitter.bus.publish_event(ctx.get("_event_cid", conversation_id), "budget_warning", {
@@ -1987,6 +2007,8 @@ class AgentCoreMixin:
                         if not _resp_text and _has_thinking and not _need_more_retried:
                             logger.warning(f"[agent:{conversation_id[:8]}] thinking-only response (no text/tools), nudging")
                             _append(LLMMessage(role="assistant", content="",
+                                               thinking=response.thinking or "",
+                                               thinking_signature=getattr(response, "thinking_signature", "") or "",
                                                source=_agent_source(response.tokens_in, response.tokens_out,
                                                                     tok_cache_creation=response.cache_creation_tokens,
                                                                     tok_cache_read=response.cache_read_tokens),
@@ -2286,7 +2308,9 @@ class AgentCoreMixin:
                     user_id, total_tokens_in, total_tokens_out,
                     model=final_model or _client_model,
                     agent_name=ctx.get("active_agent_name", "") or "",
-                    llm_service=ctx.get("active_llm_service", ""))
+                    llm_service=ctx.get("active_llm_service", ""),
+                    cache_read=total_cache_read,
+                    cache_write=total_cache_write)
 
                 # Track cost per conversation/model
                 try:

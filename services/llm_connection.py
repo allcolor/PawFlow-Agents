@@ -439,6 +439,20 @@ class LLMConnectionService(BaseService):
                 "type": "string", "default": "0",
                 "description": "Cost per 1M output tokens ($)",
             },
+            "cost_per_1m_cache_read": {
+                "type": "string", "default": "",
+                "description": (
+                    "Cost per 1M cache-hit input tokens ($). Empty uses "
+                    "provider/default cache ratio from cost tracking."
+                ),
+            },
+            "cost_per_1m_cache_write": {
+                "type": "string", "default": "",
+                "description": (
+                    "Cost per 1M cache-creation input tokens ($). Empty uses "
+                    "provider/default cache ratio from cost tracking."
+                ),
+            },
             "tool_result_max_chars": {
                 "type": "integer", "default": 50000,
                 "description": "Max chars for tool results in LLM context (0 = default 50000)",

@@ -1,3 +1,5 @@
+import json
+
 from core.llm_client import LLMClient, LLMMessage, LLMToolCall, LLMToolDefinition
 
 
@@ -76,6 +78,87 @@ def test_anthropic_cache_log_does_not_report_negative_input(caplog):
     assert "1508 input tokens" in logged
     assert "164352 read" in logged
 
+
+
+def test_anthropic_stream_accepts_compatible_text_delta_without_type(monkeypatch):
+    client = LLMClient(provider="anthropic", config={
+        "api_key": "test",
+        "default_model": "deepseek-v4-pro",
+        "base_url": "https://api.deepseek.example/anthropic",
+    })
+    events = [
+        {"type": "message_start", "message": {
+            "model": "deepseek-v4-pro",
+            "usage": {"input_tokens": 10},
+        }},
+        {"type": "content_block_start", "content_block": {"type": "text"}},
+        {"type": "content_block_delta", "delta": {"text": "hello"}},
+        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": " world"}},
+        {"type": "content_block_stop"},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+         "usage": {"output_tokens": 2}},
+        {"type": "message_stop"},
+    ]
+    payload = "".join("data: " + json.dumps(e) + "\n\n" for e in events).encode()
+
+    class _Resp:
+        status = 200
+
+        def __init__(self):
+            self._chunks = [payload, b""]
+
+        def read(self, _n=-1):
+            return self._chunks.pop(0)
+
+    class _Conn:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def request(self, *args, **kwargs):
+            pass
+
+        def getresponse(self):
+            return _Resp()
+
+        def close(self):
+            pass
+
+    import core.llm_providers.anthropic as anthropic_mod
+    monkeypatch.setattr(anthropic_mod.http.client, "HTTPSConnection", _Conn)
+
+    seen = []
+    resp = client.complete_stream(
+        [LLMMessage(role="user", content="hi", conversation_id="conv-a")],
+        callback=seen.append,
+    )
+
+    assert resp.content == "hello world"
+    assert seen == ["hello world"]
+    assert resp.tokens_in == 10
+    assert resp.tokens_out == 2
+
+
+def test_anthropic_response_accepts_compatible_reasoning_content(monkeypatch):
+    client = LLMClient(provider="anthropic", config={"api_key": "test"})
+
+    def fake_post(path, body, headers=None):
+        return {
+            "content": [
+                {"type": "thinking", "reasoning_content": "deepseek reasoning"},
+                {"type": "text", "text": "final"},
+            ],
+            "model": "deepseek-v4-pro",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+
+    monkeypatch.setattr(client, "_http_post", fake_post)
+    resp = client.complete([
+        LLMMessage(role="user", content="summarize", conversation_id="conv-a")
+    ])
+
+    assert resp.content == "final"
+    assert resp.thinking == "deepseek reasoning"
 
 
 def test_anthropic_response_preserves_thinking_signature(monkeypatch):

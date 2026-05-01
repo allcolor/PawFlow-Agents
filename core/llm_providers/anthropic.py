@@ -132,6 +132,19 @@ class LLMAnthropicMixin:
             thinking_text = ""
             thinking_signature = ""
             current_block_type = None
+
+            def _append_text_piece(text: str) -> None:
+                nonlocal _text_block_buf
+                if text:
+                    content_parts.append(text)
+                    _text_block_buf += text
+
+            def _append_thinking_piece(text: str) -> None:
+                nonlocal thinking_text, _thinking_block_buf
+                if text:
+                    thinking_text += text
+                    _thinking_block_buf += text
+
             # Per-block buffers: callbacks fire ONCE per block (CC parity).
             # CC's SDK delivers whole blocks, so its `token`/`thinking_content`
             # SSE events arrive block-granular. Anthropic streams per-delta —
@@ -167,36 +180,45 @@ class LLMAnthropicMixin:
 
                             elif evt_type == "content_block_start":
                                 block = data.get("content_block", {})
-                                if block.get("type") == "thinking":
+                                block_type = block.get("type")
+                                if block_type == "thinking":
                                     current_block_type = "thinking"
-                                elif block.get("type") == "tool_use":
+                                    _append_thinking_piece(
+                                        block.get("thinking", "")
+                                        or block.get("text", "")
+                                        or block.get("reasoning_content", ""))
+                                elif block_type == "tool_use":
                                     current_block_type = "tool_use"
                                     current_tool = {
                                         "id": block.get("id", ""),
                                         "name": block.get("name", ""),
                                     }
-                                    tool_input_str = ""
+                                    tool_input = block.get("input")
+                                    tool_input_str = (
+                                        json.dumps(tool_input, ensure_ascii=False)
+                                        if isinstance(tool_input, dict) else "")
                                 else:
-                                    current_block_type = block.get("type")
+                                    current_block_type = block_type
+                                    if block_type == "text":
+                                        _append_text_piece(block.get("text", ""))
 
                             elif evt_type == "content_block_delta":
                                 delta = data.get("delta", {})
-                                if delta.get("type") == "thinking_delta":
-                                    t_text = delta.get("thinking", "")
-                                    if t_text:
-                                        thinking_text += t_text
-                                        # Buffer — fire on content_block_stop.
-                                        _thinking_block_buf += t_text
-                                elif delta.get("type") == "signature_delta":
+                                delta_type = delta.get("type", "")
+                                if delta_type == "signature_delta":
                                     thinking_signature = delta.get("signature", "") or thinking_signature
-                                elif delta.get("type") == "text_delta":
-                                    text = delta.get("text", "")
-                                    if text:
-                                        content_parts.append(text)
-                                        # Buffer — fire on content_block_stop.
-                                        _text_block_buf += text
-                                elif delta.get("type") == "input_json_delta":
+                                elif delta_type == "input_json_delta":
                                     tool_input_str += delta.get("partial_json", "")
+                                else:
+                                    t_text = (
+                                        delta.get("thinking", "")
+                                        or delta.get("reasoning_content", "")
+                                        or delta.get("reasoning", ""))
+                                    if delta_type == "thinking_delta" or (
+                                            current_block_type == "thinking" and t_text):
+                                        _append_thinking_piece(t_text)
+                                    else:
+                                        _append_text_piece(delta.get("text", ""))
 
                             elif evt_type == "content_block_stop":
                                 if current_tool:
@@ -535,20 +557,27 @@ class LLMAnthropicMixin:
             },
         )
         content_blocks = data.get("content", [])
-        text = "".join(b.get("text", "") for b in content_blocks if b.get("type") == "text")
+        text = "".join(
+            b.get("text", "")
+            for b in content_blocks
+            if isinstance(b, dict) and b.get("type") == "text")
 
-        # Parse thinking blocks
+        # Parse thinking blocks. Anthropic-compatible providers sometimes use
+        # text/reasoning_content instead of Anthropic's `thinking` field.
         thinking_text = ""
         thinking_signature = ""
         for block in content_blocks:
-            if block.get("type") == "thinking":
-                thinking_text += block.get("thinking", "")
+            if isinstance(block, dict) and block.get("type") == "thinking":
+                thinking_text += (
+                    block.get("thinking", "")
+                    or block.get("text", "")
+                    or block.get("reasoning_content", ""))
                 thinking_signature = block.get("signature", "") or thinking_signature
 
         # Parse tool_use blocks
         tool_calls = []
         for block in content_blocks:
-            if block.get("type") == "tool_use":
+            if isinstance(block, dict) and block.get("type") == "tool_use":
                 tool_calls.append(LLMToolCall(
                     id=block.get("id", ""),
                     name=block.get("name", ""),

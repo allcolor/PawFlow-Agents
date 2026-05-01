@@ -343,6 +343,8 @@ class AgentSerializationMixin:
                         "content": m["thinking"],
                         "source": m.get("source"),
                     })
+                if role == "assistant" and not str(content).strip():
+                    continue
                 _type = role
                 if role == "assistant" and (
                     m.get("is_error")

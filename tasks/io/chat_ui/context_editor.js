@@ -188,8 +188,20 @@ function ctxLoadMore() {
       const row = document.createElement('div');
       row.dataset.msgid = mid;
       row.style.cssText = 'padding:6px 8px;border-bottom:1px solid #222;cursor:pointer';
+      row.title = 'Click to expand full message';
+      row.onmousedown = function(event) { if (event.shiftKey || event.ctrlKey) event.preventDefault(); };
+      row.onclick = function(event) {
+        if (event.ctrlKey || event.shiftKey) {
+          event.preventDefault();
+          ctxToggleSelect(row, event);
+          return;
+        }
+        const full = row.querySelector('.ctx-full');
+        if (full) full.style.display = full.style.display === 'block' ? 'none' : 'block';
+      };
       row.innerHTML = '<div style="display:flex;align-items:center">' + badge + tcTag + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
-        + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>';
+        + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>'
+        + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:min(60vh,640px);overflow-y:auto;border:1px solid #222;border-radius:6px;padding:8px;background:#090d14">' + content + '</div>';
       list.appendChild(row);
     });
     // New load-more button
@@ -437,10 +449,10 @@ function showContextOverlay(data) {
       const content = _ctxDisplayContent(m);
       const editBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
       const delBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
-      msgsHtml += '<div data-msgid="' + mid + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
+      msgsHtml += '<div data-msgid="' + mid + '" title="Click to expand full message" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
         + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>'
-        + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto">' + content + '</div>'
+        + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:min(60vh,640px);overflow-y:auto;border:1px solid #222;border-radius:6px;padding:8px;background:#090d14">' + content + '</div>'
         + '</div>';
     });
     // "Load more" button if there are older messages

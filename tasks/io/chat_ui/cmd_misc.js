@@ -162,8 +162,13 @@ function cmdCost(text) {
         const model = s.model || '';
         const tokIn = (s.tokens_in || 0).toLocaleString();
         const tokOut = (s.tokens_out || 0).toLocaleString();
+        const cacheR = s.cache_read || 0;
+        const cacheW = s.cache_write || 0;
         const calls = s.calls || 0;
         let line = '  ' + svc + (model ? ' (' + model + ')' : '') + ': ' + tokIn + ' in / ' + tokOut + ' out (' + calls + ' calls)';
+        if (cacheR || cacheW) {
+          line += ' (cache: ' + cacheR.toLocaleString() + ' read, ' + cacheW.toLocaleString() + ' write)';
+        }
         if (s.cost !== undefined) {
           line += ' — $' + s.cost.toFixed(6);
         } else {
@@ -173,10 +178,15 @@ function cmdCost(text) {
       }
       const totalIn = services.reduce((sum, s) => sum + (s.tokens_in || 0), 0);
       const totalOut = services.reduce((sum, s) => sum + (s.tokens_out || 0), 0);
+      const totalCacheR = services.reduce((sum, s) => sum + (s.cache_read || 0), 0);
+      const totalCacheW = services.reduce((sum, s) => sum + (s.cache_write || 0), 0);
       const totalCost = services.reduce((sum, s) => sum + (s.cost || 0), 0);
       lines.push('---');
-      lines.push('Total: ' + totalIn.toLocaleString() + ' in / ' + totalOut.toLocaleString() + ' out'
-        + (totalCost > 0 ? ' — $' + totalCost.toFixed(6) : ''));
+      let totalLine = 'Total: ' + totalIn.toLocaleString() + ' in / ' + totalOut.toLocaleString() + ' out';
+      if (totalCacheR || totalCacheW) {
+        totalLine += ' (cache: ' + totalCacheR.toLocaleString() + ' read, ' + totalCacheW.toLocaleString() + ' write)';
+      }
+      lines.push(totalLine + (totalCost > 0 ? ' — $' + totalCost.toFixed(6) : ''));
     }
     addMsg('system', lines.join('\n'));
   });

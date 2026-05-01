@@ -434,10 +434,13 @@ class AgentToolExecMixin:
                 ]
                 return "continue", msgs, "", True
 
-        # Final response
+        # Final response. An empty provider response is handled by the caller's
+        # forced-synthesis path; do not persist a blank assistant message first.
         final = self._strip_echo_prefix(response_text)
-        msgs = [LLMMessage(role="assistant", content=final, source=source,
-                            conversation_id=conversation_id)]
+        msgs = []
+        if final.strip():
+            msgs.append(LLMMessage(role="assistant", content=final, source=source,
+                                   conversation_id=conversation_id))
         return "break", msgs, final, need_more_retried
 
 

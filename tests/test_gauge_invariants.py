@@ -368,6 +368,20 @@ def test_context_editor_scopes_mutations_to_visible_context():
     assert "action: 'delete_message', msg_ids: mids" in _CONTEXT_EDITOR_JS
 
 
+def test_context_editor_loaded_rows_show_scrollable_full_message():
+    assert "row.onclick = function(event)" in _CONTEXT_EDITOR_JS
+    assert "row.querySelector('.ctx-full')" in _CONTEXT_EDITOR_JS
+    assert _CONTEXT_EDITOR_JS.count("max-height:min(60vh,640px);overflow-y:auto") >= 2
+
+
+def test_empty_assistant_no_tools_never_persists_blank_message():
+    tool_exec_src = Path("tasks/ai/agent_tool_exec.py").read_text(encoding="utf-8")
+    serialization_src = Path("tasks/ai/agent_serialization.py").read_text(encoding="utf-8")
+    assert "if final.strip():" in tool_exec_src
+    assert "forced-synthesis path" in tool_exec_src
+    assert "role == \"assistant\" and not str(content).strip()" in serialization_src
+
+
 def test_list_active_keeps_idle_live_sessions_out_of_active_payload():
     from core import FlowFile
     from tasks.ai.actions.usage import _handle_usage

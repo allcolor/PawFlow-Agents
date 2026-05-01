@@ -506,14 +506,16 @@ class AgentUtilsMixin:
     @staticmethod
     def _track_tokens(user_id: str, tokens_in: int, tokens_out: int,
                       model: str, agent_name: str = "",
-                      llm_service: str = ""):
+                      llm_service: str = "", cache_read: int = 0,
+                      cache_write: int = 0):
         """Track token usage via TokenTracker (best-effort)."""
         try:
             from core.token_tracker import TokenTracker
             TokenTracker.instance().track(
                 user_id, tokens_in, tokens_out,
                 model=model, agent_name=agent_name,
-                llm_service=llm_service,
+                llm_service=llm_service, cache_read=cache_read,
+                cache_write=cache_write,
             )
             TokenTracker.instance().flush()
         except Exception:

@@ -93,6 +93,14 @@ def test_codex_mcp_config_uses_absolute_python_for_app_server_spawn():
     assert 'python_bin = "/usr/bin/python3"' in src
 
 
+def test_codex_mcp_config_does_not_set_tool_timeout():
+    from core.llm_providers.codex_session import CodexSessionMixin
+
+    src = inspect.getsource(CodexSessionMixin._codex_setup_mcp_config)
+    assert "tool_timeout_sec" not in src
+    assert "startup_timeout_sec = 20" in src
+
+
 def test_codex_preamble_names_disabled_native_tools():
     from core.llm_providers.codex_session import CodexSessionMixin
 

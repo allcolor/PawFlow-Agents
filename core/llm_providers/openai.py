@@ -189,15 +189,19 @@ class LLMOpenaiMixin:
             if not tokens_out:
                 tokens_out = len(content) // 4
 
-            # Cache logging (OpenAI returns cached_tokens in prompt_tokens_details)
+            # Cache logging (OpenAI returns cached_tokens inside the total
+            # prompt_tokens count). Split billable miss tokens from cache-hit
+            # tokens so cost tracking does not charge both rates for hits.
             _ptd = usage_data.get("prompt_tokens_details") or {}
             cached_tokens = _ptd.get("cached_tokens", 0) or 0
+            prompt_tokens_total = tokens_in
+            tokens_in = max(0, prompt_tokens_total - cached_tokens)
             if cached_tokens > 0:
-                _hit_pct = (cached_tokens / tokens_in * 100) if tokens_in else 0
+                _hit_pct = (cached_tokens / prompt_tokens_total * 100) if prompt_tokens_total else 0
                 logger.info("OpenAI prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
-                            cached_tokens, tokens_in, _hit_pct)
-            elif tokens_in > 1024:
-                logger.info("OpenAI prompt cache: MISS — %d prompt tokens, 0 cached", tokens_in)
+                            cached_tokens, prompt_tokens_total, _hit_pct)
+            elif prompt_tokens_total > 1024:
+                logger.info("OpenAI prompt cache: MISS — %d prompt tokens, 0 cached", prompt_tokens_total)
 
             return LLMResponse(
                 content=content,
@@ -429,10 +433,12 @@ class LLMOpenaiMixin:
                 f"message={json.dumps(message, default=str)[:500]}, "
                 f"usage={json.dumps(usage, default=str)}")
 
-        # Cache logging
+        # Cache logging. OpenAI includes cached tokens in prompt_tokens, so
+        # split miss/hit counts before cost tracking sees the response.
         _ptd = usage.get("prompt_tokens_details") or {}
         cached_tokens = _ptd.get("cached_tokens", 0) or 0
         _prompt_tokens = usage.get("prompt_tokens", 0)
+        _input_miss_tokens = max(0, _prompt_tokens - cached_tokens)
         if cached_tokens > 0:
             _hit_pct = (cached_tokens / _prompt_tokens * 100) if _prompt_tokens else 0
             logger.info("OpenAI prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
@@ -443,7 +449,7 @@ class LLMOpenaiMixin:
         return LLMResponse(
             content=_content,
             model=data.get("model", model),
-            tokens_in=_prompt_tokens,
+            tokens_in=_input_miss_tokens,
             tokens_out=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
             finish_reason=choice.get("finish_reason", ""),

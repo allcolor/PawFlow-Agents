@@ -30,9 +30,18 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         svc_costs = {}
         for svc_id, svc_def in greg.get_all("global", "").items():
             if getattr(svc_def, "service_type", "") == "llmConnection":
+                cost_in = safe_float(svc_def.config.get("cost_per_1m_input", 0))
+                cr_cfg = svc_def.config.get("cost_per_1m_cache_read")
+                cw_cfg = svc_def.config.get("cost_per_1m_cache_write")
                 svc_costs[svc_id] = {
-                    "cost_per_1m_input": safe_float(svc_def.config.get("cost_per_1m_input", 0)),
+                    "cost_per_1m_input": cost_in,
                     "cost_per_1m_output": safe_float(svc_def.config.get("cost_per_1m_output", 0)),
+                    "cost_per_1m_cache_read": (
+                        safe_float(cr_cfg, cost_in * 0.1)
+                        if cr_cfg not in (None, "") else cost_in * 0.1),
+                    "cost_per_1m_cache_write": (
+                        safe_float(cw_cfg, cost_in * 1.25)
+                        if cw_cfg not in (None, "") else cost_in * 1.25),
                 }
 
         stats = []
@@ -44,26 +53,37 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                 continue
             tok_in = agent_stats.get("in", 0)
             tok_out = agent_stats.get("out", 0)
+            cache_read = agent_stats.get("cache_read", 0)
+            cache_write = agent_stats.get("cache_write", 0)
             calls = agent_stats.get("calls", 0)
             costs = svc_costs.get(svc_id, {})
             cost_in_1m = costs.get("cost_per_1m_input", 0)
             cost_out_1m = costs.get("cost_per_1m_output", 0)
-            cost = 0.0
-            if cost_in_1m or cost_out_1m:
-                cost = round(tok_in / 1_000_000 * cost_in_1m +
-                             tok_out / 1_000_000 * cost_out_1m, 6)
+            cost_cache_read_1m = costs.get("cost_per_1m_cache_read", 0)
+            cost_cache_write_1m = costs.get("cost_per_1m_cache_write", 0)
+            cost = round(
+                tok_in / 1_000_000 * cost_in_1m
+                + tok_out / 1_000_000 * cost_out_1m
+                + cache_read / 1_000_000 * cost_cache_read_1m
+                + cache_write / 1_000_000 * cost_cache_write_1m,
+                6)
             stats.append({
                 "agent": agent_name, "llm_service": svc_id,
                 "tokens_in": tok_in, "tokens_out": tok_out,
+                "cache_read": cache_read, "cache_write": cache_write,
                 "calls": calls, "cost": cost,
                 "cost_per_1m_input": cost_in_1m,
                 "cost_per_1m_output": cost_out_1m,
+                "cost_per_1m_cache_read": cost_cache_read_1m,
+                "cost_per_1m_cache_write": cost_cache_write_1m,
             })
 
         flowfile.set_content(json.dumps({
             "services": stats,
             "total_in": usage.get("total_in", 0),
             "total_out": usage.get("total_out", 0),
+            "total_cache_read": usage.get("total_cache_read", 0),
+            "total_cache_write": usage.get("total_cache_write", 0),
         }, ensure_ascii=False).encode())
         return [flowfile]
 

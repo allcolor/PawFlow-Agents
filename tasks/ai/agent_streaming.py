@@ -706,7 +706,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             resp.tokens_in, resp.tokens_out,
                             model=resp.model or "",
                             agent_name=ctx.get("active_agent_name", "title"),
-                            llm_service=title_svc_id)
+                            llm_service=title_svc_id,
+                            cache_read=getattr(resp, "cache_read_tokens", 0),
+                            cache_write=getattr(resp, "cache_creation_tokens", 0))
                         TokenTracker.instance().flush()
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)

@@ -92,6 +92,18 @@ class TestTokenTracker(unittest.TestCase):
         self.assertIn("gpt-4", usage["models"])
         self.assertEqual(usage["models"]["gpt-4"]["in"], 10)
 
+    def test_track_cache_tokens(self):
+        self.tracker.track(
+            "alice", 10, 5, model="gpt-4", agent_name="test-agent",
+            llm_service="openai", cache_read=40, cache_write=7)
+        usage = self.tracker.get_usage("alice")
+        self.assertEqual(usage["total_cache_read"], 40)
+        self.assertEqual(usage["total_cache_write"], 7)
+        self.assertEqual(usage["models"]["gpt-4"]["cache_read"], 40)
+        agent = usage["agents"]["test-agent::openai"]
+        self.assertEqual(agent["cache_read"], 40)
+        self.assertEqual(agent["cache_write"], 7)
+
     def test_get_usage_unknown_user(self):
         usage = self.tracker.get_usage("nobody")
         self.assertEqual(usage["total_in"], 0)

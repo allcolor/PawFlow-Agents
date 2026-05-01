@@ -7,6 +7,7 @@ import argparse
 import platform
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -33,6 +34,21 @@ def run(cmd: list[str], cwd: Path) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
+def cargo_command() -> str:
+    cargo = shutil.which("cargo")
+    if cargo:
+        return cargo
+
+    if platform.system().lower() == "windows":
+        raise SystemExit(
+            "cargo was not found in Windows PATH. Install Rust for Windows with "
+            "https://rustup.rs/, then reopen PowerShell. If you want a Linux "
+            "artifact instead, run this packaging command inside WSL."
+        )
+
+    raise SystemExit("cargo was not found in PATH. Install Rust with https://rustup.rs/.")
+
+
 def copy_tree(src: Path, dst: Path) -> None:
     if dst.exists():
         shutil.rmtree(dst)
@@ -43,9 +59,10 @@ def package(repo_root: Path, release: bool) -> Path:
     project_root = repo_root / "pawflow-relay-slint"
     runtime_dir = project_root / "runtime"
     dist_dir = repo_root / "dist" / f"{APP_NAME}-{platform_suffix()}"
+    cargo = cargo_command()
 
     run([
-        "python",
+        sys.executable,
         "scripts/prepare-runtime.py",
         "--repo-root",
         str(repo_root),
@@ -53,7 +70,7 @@ def package(repo_root: Path, release: bool) -> Path:
         str(runtime_dir),
     ], project_root)
 
-    cargo_cmd = ["cargo", "build", "--locked"]
+    cargo_cmd = [cargo, "build", "--locked"]
     profile_dir = "debug"
     if release:
         cargo_cmd.insert(2, "--release")

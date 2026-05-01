@@ -26,13 +26,19 @@ python scripts/prepare-runtime.py --repo-root .. --out runtime
 cargo run
 ```
 
-Set `PAWFLOW_RELAY_PYTHON` to choose the Python executable. If unset, the app uses `py` on Windows and `python3` elsewhere.
+Set `PAWFLOW_RELAY_PYTHON` to choose the Python executable. If unset, the app uses `py` on Windows and `python3` elsewhere. Building from source also requires Rust/Cargo on the same OS where you run the package command. On Windows, install Rust from `https://rustup.rs/`, then reopen PowerShell so `cargo` is in `PATH`.
 
 ## Build a local portable package
 
 ```bash
 cd pawflow-relay-slint
 python scripts/package-local.py --repo-root ..
+```
+
+From the repository root, use the wrapper:
+
+```bash
+python scripts/package-relay-slint.py
 ```
 
 This creates `../dist/pawflow-relay-slint-<os>/` with the native binary and `runtime/` next to it. Launch the binary directly from that folder:

@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
@@ -21,6 +23,7 @@ fn main() -> Result<(), slint::PlatformError> {
     wire_relay_actions(&ui, Arc::clone(&relays));
     wire_image_actions(&ui, Arc::clone(&relays));
     wire_log_actions(&ui);
+    wire_navigation(&ui);
 
     refresh_ui(&ui.as_weak(), &relays);
     ui.run()
@@ -211,6 +214,23 @@ fn wire_log_actions(ui: &AppWindow) {
     let ui_weak = ui.as_weak();
     ui.on_clear_logs(move || {
         let _ = ui_weak.upgrade_in_event_loop(|ui| ui.set_logs("".into()));
+    });
+}
+
+fn wire_navigation(ui: &AppWindow) {
+    let ui_weak = ui.as_weak();
+    ui.on_show_relay_panel(move || {
+        let _ = ui_weak.upgrade_in_event_loop(|ui| ui.set_active_panel(0));
+    });
+
+    let ui_weak = ui.as_weak();
+    ui.on_show_server_panel(move || {
+        let _ = ui_weak.upgrade_in_event_loop(|ui| ui.set_active_panel(1));
+    });
+
+    let ui_weak = ui.as_weak();
+    ui.on_show_image_panel(move || {
+        let _ = ui_weak.upgrade_in_event_loop(|ui| ui.set_active_panel(2));
     });
 }
 

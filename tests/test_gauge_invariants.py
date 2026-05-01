@@ -600,14 +600,31 @@ def test_accepted_live_preempt_keeps_pending_rescue():
     assert "even_if_active=True" in src
 
 
-def test_final_drain_only_suppresses_proven_preempt_rescue_messages():
-    emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
-    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    assert "_msg._pending_source = _qmsg.get(\"_pending_source\"" in emitter_src
-    assert "_msg._pending_enqueued_at = _qmsg.get(\"_pending_enqueued_at\"" in emitter_src
-    assert "_unhandled_user_msgs" in core_src
-    assert '_pending_source != "preempt_rescue"' in core_src
-    assert "_enqueued_at > _provider_response_completed_at" in core_src
+def test_final_drain_only_suppresses_proven_text_preempt_rescue_messages():
+    from core.llm_client import LLMMessage
+    from tasks.ai.agent_core import _preempt_rescue_requires_retrigger
+
+    text_rescue = LLMMessage(
+        role="user", content="late text", conversation_id="conv-live")
+    text_rescue._pending_source = "preempt_rescue"
+    text_rescue._pending_enqueued_at = 100.0
+
+    image_rescue = LLMMessage(role="user", content=[
+        {"type": "text", "text": "look"},
+        {"type": "image_ref", "image_id": "img"},
+    ], conversation_id="conv-live")
+    image_rescue._pending_source = "preempt_rescue"
+    image_rescue._pending_enqueued_at = 100.0
+
+    http_msg = LLMMessage(
+        role="user", content="normal queued text", conversation_id="conv-live")
+    http_msg._pending_source = "http"
+    http_msg._pending_enqueued_at = 100.0
+
+    assert _preempt_rescue_requires_retrigger(text_rescue, 101.0) is False
+    assert _preempt_rescue_requires_retrigger(text_rescue, 99.0) is True
+    assert _preempt_rescue_requires_retrigger(image_rescue, 101.0) is True
+    assert _preempt_rescue_requires_retrigger(http_msg, 101.0) is True
 
 
 def test_pending_wake_is_not_lost_while_conversation_is_still_active():

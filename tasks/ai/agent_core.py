@@ -41,6 +41,27 @@ def _strip_context_ack(text: str) -> str:
     return text
 
 
+def _preempt_rescue_requires_retrigger(message, provider_completed_at: float) -> bool:
+    """Return True when a drained preempt rescue still needs a real turn.
+
+    A provider may prove that a text steer was answered inline, but that does
+    not prove PawFlow's full queued message was consumed. Multimodal queued
+    content is rebuilt only during PendingQueue drain, so it must always run
+    through a normal PawFlow turn.
+    """
+    if getattr(message, "_pending_source", "") != "preempt_rescue":
+        return True
+    if isinstance(getattr(message, "content", None), list):
+        return True
+    if not provider_completed_at:
+        return True
+    try:
+        enqueued_at = float(getattr(message, "_pending_enqueued_at", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return True
+    return enqueued_at > provider_completed_at
+
+
 def _apply_bg_results(messages, conversation_id):
     """Apply completed background tool results to in-memory messages."""
     import core.background_tool as _bg
@@ -2213,18 +2234,11 @@ class AgentCoreMixin:
                               if m.role == "user" and m.msg_id not in _existing_ids]
             if _new_user_msgs:
                 _apply_queued_delegate_turn_mode(_new_user_msgs)
-            _unhandled_user_msgs = []
-            for m in _new_user_msgs:
-                _pending_source = getattr(m, "_pending_source", "")
-                if _pending_source != "preempt_rescue":
-                    _unhandled_user_msgs.append(m)
-                    continue
-                try:
-                    _enqueued_at = float(getattr(m, "_pending_enqueued_at", 0.0) or 0.0)
-                except (TypeError, ValueError):
-                    _enqueued_at = 0.0
-                if _provider_response_completed_at and _enqueued_at > _provider_response_completed_at:
-                    _unhandled_user_msgs.append(m)
+            _unhandled_user_msgs = [
+                m for m in _new_user_msgs
+                if _preempt_rescue_requires_retrigger(
+                    m, _provider_response_completed_at)
+            ]
             if _new_user_msgs and (not _had_preempts or _unhandled_user_msgs):
                 logger.info("[agent:%s] %d truly new message(s) arrived during last turn — re-triggering",
                             conversation_id[:8], len(_unhandled_user_msgs or _new_user_msgs))

@@ -268,6 +268,17 @@ struct DisplayState {
     relays: String,
     docker: String,
     catalog: String,
+    server_row_name: String,
+    server_row_meta: String,
+    relay_row_name: String,
+    relay_row_meta: String,
+    server_name: String,
+    server_url: String,
+    relay_name: String,
+    relay_server: String,
+    relay_path: String,
+    relay_mode: String,
+    relay_docker_image: String,
 }
 
 fn run_background<F>(ui: slint::Weak<AppWindow>, status: &'static str, work: F)
@@ -287,6 +298,23 @@ fn refresh_ui(ui: &slint::Weak<AppWindow>, relays: &RelayProcesses) {
                 ui.set_relay_list(state.relays.into());
                 ui.set_docker_list(state.docker.into());
                 ui.set_catalog_text(state.catalog.into());
+                ui.set_server_row_name(state.server_row_name.into());
+                ui.set_server_row_meta(state.server_row_meta.into());
+                ui.set_relay_row_name(state.relay_row_name.into());
+                ui.set_relay_row_meta(state.relay_row_meta.into());
+                if !state.server_name.is_empty() {
+                    ui.set_server_name(state.server_name.into());
+                }
+                if !state.server_url.is_empty() {
+                    ui.set_server_url(state.server_url.into());
+                }
+                if !state.relay_name.is_empty() {
+                    ui.set_relay_name(state.relay_name.into());
+                    ui.set_relay_server(state.relay_server.into());
+                    ui.set_workspace_path(state.relay_path.into());
+                    ui.set_relay_mode(state.relay_mode.into());
+                    ui.set_docker_image(state.relay_docker_image.into());
+                }
                 ui.set_status_text("Ready".into());
             });
         }
@@ -305,6 +333,8 @@ fn load_display_state(relays: &RelayProcesses) -> Result<DisplayState, String> {
     let workspaces = state.get("workspaces").and_then(Value::as_array).cloned().unwrap_or_default();
     let docker_state = list_docker_images();
     let catalog = load_image_catalog();
+    let server_summary = primary_server_summary(&servers);
+    let relay_summary = primary_relay_summary(&workspaces, &running);
 
     Ok(DisplayState {
         summary: format!(
@@ -317,6 +347,17 @@ fn load_display_state(relays: &RelayProcesses) -> Result<DisplayState, String> {
         relays: format_workspaces(&workspaces, &running),
         docker: format_docker_state(&docker_state),
         catalog: format_catalog_state(&catalog),
+        server_row_name: server_summary.row_name,
+        server_row_meta: server_summary.row_meta,
+        relay_row_name: relay_summary.row_name,
+        relay_row_meta: relay_summary.row_meta,
+        server_name: server_summary.name,
+        server_url: server_summary.url,
+        relay_name: relay_summary.name,
+        relay_server: relay_summary.server,
+        relay_path: relay_summary.path,
+        relay_mode: relay_summary.mode,
+        relay_docker_image: relay_summary.docker_image,
     })
 }
 
@@ -769,6 +810,72 @@ fn relay_image_generator_path() -> Result<PathBuf, String> {
 
 fn first_existing_path(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates.iter().find(|path| path.exists()).cloned()
+}
+
+struct ServerSummary {
+    row_name: String,
+    row_meta: String,
+    name: String,
+    url: String,
+}
+
+struct RelaySummary {
+    row_name: String,
+    row_meta: String,
+    name: String,
+    server: String,
+    path: String,
+    mode: String,
+    docker_image: String,
+}
+
+fn primary_server_summary(servers: &[Value]) -> ServerSummary {
+    let Some(server) = servers.first() else {
+        return ServerSummary {
+            row_name: "No server".into(),
+            row_meta: "add profile".into(),
+            name: String::new(),
+            url: String::new(),
+        };
+    };
+    let name = value_str(server, "name");
+    let url = value_str(server, "url");
+    let logged = truthy(server.get("session_token")) || truthy(server.get("logged_in"));
+    ServerSummary {
+        row_name: name.clone(),
+        row_meta: if logged { "logged in".into() } else { "login needed".into() },
+        name,
+        url,
+    }
+}
+
+fn primary_relay_summary(workspaces: &[Value], running: &[String]) -> RelaySummary {
+    let Some(workspace) = workspaces.first() else {
+        return RelaySummary {
+            row_name: "No relay".into(),
+            row_meta: "add relay".into(),
+            name: String::new(),
+            server: String::new(),
+            path: String::new(),
+            mode: "rw".into(),
+            docker_image: String::new(),
+        };
+    };
+    let name = value_str(workspace, "name");
+    let server = value_str(workspace, "server");
+    let path = value_str(workspace, "path");
+    let mode = optional_value_str(workspace, "mode").unwrap_or_else(|| "rw".into());
+    let docker_image = value_str(workspace, "docker_image");
+    let status = if running.iter().any(|item| item == &name) { "running" } else { "stopped" };
+    RelaySummary {
+        row_name: name.clone(),
+        row_meta: status.into(),
+        name,
+        server,
+        path,
+        mode,
+        docker_image,
+    }
 }
 
 fn format_servers(servers: &[Value]) -> String {

@@ -1,4 +1,65 @@
-import { Button, CheckBox, LineEdit, ComboBox } from "std-widgets.slint";
+import { CheckBox, ComboBox, LineEdit } from "std-widgets.slint";
+
+component ActionButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 32px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.enabled ? (root.primary ? #2d88f0 : root.danger ? #bd3c50 : #2b4166) : #23324a;
+    background: root.enabled ? (root.primary ? #1f73d8 : root.danger ? #9e2f42 : #13223a) : #101827;
+
+    Text {
+        text: root.text;
+        color: root.enabled ? #f4f8ff : #5f6f8c;
+        font-size: 12px;
+        font-weight: root.primary || root.danger ? 700 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+component TreeItem inherits Rectangle {
+    in property <string> title;
+    in property <string> meta;
+    in property <bool> selected: false;
+    in property <bool> running: false;
+    callback clicked();
+
+    height: 38px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.selected ? #2a63a8 : #0b1424;
+    background: root.selected ? #142947 : #0b1424;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        alignment: center;
+
+        Rectangle {
+            width: 7px;
+            height: 7px;
+            border-radius: 4px;
+            background: root.running ? #23b3ff : #71829e;
+        }
+        Text { text: root.title; color: #f2f6ff; font-size: 13px; font-weight: 600; }
+        Rectangle { horizontal-stretch: 1; }
+        Text { text: root.meta; color: #88a0c4; font-size: 11px; }
+    }
+
+    TouchArea { clicked => { root.clicked(); } }
+}
 
 export component AppWindow inherits Window {
     title: "PawFlow Relay Desktop";
@@ -13,6 +74,10 @@ export component AppWindow inherits Window {
     in-out property <string> relay-list: "No relay configured";
     in-out property <string> docker-list: "Docker images not loaded";
     in-out property <string> catalog-text: "Image catalog not loaded";
+    in-out property <string> server-row-name: "No server";
+    in-out property <string> server-row-meta: "add profile";
+    in-out property <string> relay-row-name: "No relay";
+    in-out property <string> relay-row-meta: "add relay";
     in-out property <string> logs: "[slint] Ready. Refresh to load PawFlow relay state.\n";
 
     in-out property <string> server-name: "prod";
@@ -51,69 +116,75 @@ export component AppWindow inherits Window {
         spacing: 0px;
 
         Rectangle {
-            width: 258px;
+            width: 224px;
             background: #0b1424;
-            border-color: #213452;
+            border-color: #203452;
             border-width: 1px;
 
             VerticalLayout {
-                padding: 14px;
+                padding: 12px;
                 spacing: 14px;
 
                 HorizontalLayout {
                     spacing: 10px;
                     alignment: center;
                     Rectangle {
-                        width: 34px;
-                        height: 34px;
+                        width: 28px;
+                        height: 28px;
                         border-radius: 6px;
-                        background: #2269d3;
+                        background: #1f73d8;
                         Text { text: "P"; color: white; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     VerticalLayout {
                         spacing: 0px;
-                        Text { text: "PawFlow Relay"; color: #f2f6ff; font-size: 16px; font-weight: 700; }
-                        Text { text: "Client relay manager"; color: #8fa4c8; font-size: 12px; }
+                        Text { text: "PawFlow Relay"; color: #f2f6ff; font-size: 14px; font-weight: 700; }
+                        Text { text: "Client relay manager"; color: #8fa4c8; font-size: 11px; }
                     }
                 }
 
-                Rectangle { height: 1px; background: #1e314f; }
+                Rectangle { height: 1px; background: #203452; }
 
-                Text { text: "SERVERS"; color: #8fa4c8; font-size: 12px; font-weight: 700; }
-                Button { text: "Server profile"; clicked => { root.show-server-panel(); } }
-                Rectangle {
-                    height: 112px;
-                    background: #081120;
-                    border-color: #213452;
-                    border-width: 1px;
-                    border-radius: 4px;
-                    clip: true;
-                    Text { text: root.server-list; color: #dce8ff; font-family: "Consolas"; font-size: 11px; wrap: word-wrap; }
+                HorizontalLayout {
+                    alignment: center;
+                    Text { text: "SERVERS"; color: #9fb4d6; font-size: 11px; font-weight: 700; }
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton { width: 22px; height: 22px; text: "+"; clicked => { root.show-server-panel(); } }
+                }
+                TreeItem {
+                    title: root.server-row-name;
+                    meta: root.server-row-meta;
+                    selected: root.active-panel == 1;
+                    running: false;
+                    clicked => { root.show-server-panel(); }
                 }
 
-                Text { text: "RELAYS"; color: #8fa4c8; font-size: 12px; font-weight: 700; }
-                Button { text: "Relay settings"; clicked => { root.show-relay-panel(); } }
-                Rectangle {
-                    height: 138px;
-                    background: #081120;
-                    border-color: #213452;
-                    border-width: 1px;
-                    border-radius: 4px;
-                    clip: true;
-                    Text { text: root.relay-list; color: #dce8ff; font-family: "Consolas"; font-size: 11px; wrap: word-wrap; }
+                HorizontalLayout {
+                    alignment: center;
+                    Text { text: "RELAYS"; color: #9fb4d6; font-size: 11px; font-weight: 700; }
+                    Rectangle { horizontal-stretch: 1; }
+                    ActionButton { width: 22px; height: 22px; text: "+"; clicked => { root.show-relay-panel(); } }
+                }
+                TreeItem {
+                    title: root.relay-row-name;
+                    meta: root.relay-row-meta;
+                    selected: root.active-panel == 0;
+                    running: root.relay-row-meta == "running";
+                    clicked => { root.show-relay-panel(); }
                 }
 
-                Text { text: "TOOLS"; color: #8fa4c8; font-size: 12px; font-weight: 700; }
-                Button { text: "Build relay image"; clicked => { root.show-image-panel(); } }
-                Rectangle {
-                    vertical-stretch: 1;
-                    background: #081120;
-                    border-color: #213452;
-                    border-width: 1px;
-                    border-radius: 4px;
-                    clip: true;
-                    Text { text: root.docker-list; color: #dce8ff; font-family: "Consolas"; font-size: 11px; wrap: word-wrap; }
+                HorizontalLayout {
+                    alignment: center;
+                    Text { text: "TOOLS"; color: #9fb4d6; font-size: 11px; font-weight: 700; }
+                    Rectangle { horizontal-stretch: 1; }
                 }
+                TreeItem {
+                    title: "Image builder";
+                    meta: "docker";
+                    selected: root.active-panel == 2;
+                    clicked => { root.show-image-panel(); }
+                }
+
+                Rectangle { vertical-stretch: 1; }
             }
         }
 
@@ -122,9 +193,9 @@ export component AppWindow inherits Window {
             spacing: 0px;
 
             Rectangle {
-                height: 72px;
+                height: 62px;
                 background: #0f192a;
-                border-color: #213452;
+                border-color: #203452;
                 border-width: 1px;
 
                 HorizontalLayout {
@@ -135,13 +206,13 @@ export component AppWindow inherits Window {
 
                     VerticalLayout {
                         spacing: 2px;
-                        Text { text: root.active-panel == 0 ? root.relay-name : root.active-panel == 1 ? "Server profile" : "Relay image builder"; color: #f2f6ff; font-size: 20px; font-weight: 700; }
-                        Text { text: root.active-panel == 0 ? root.workspace-path : root.active-panel == 1 ? root.server-url : root.catalog-text; color: #8fa4c8; font-size: 12px; }
+                        Text { text: root.active-panel == 0 ? root.relay-name : root.active-panel == 1 ? root.server-name : "Build Relay Image"; color: #f2f6ff; font-size: 17px; font-weight: 700; }
+                        Text { text: root.active-panel == 0 ? root.workspace-path : root.active-panel == 1 ? root.server-url : root.catalog-text; color: #8fa4c8; font-size: 11px; }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: root.summary-text; color: #b8c9e8; font-size: 12px; }
                     Text { text: root.status-text; color: #64d89d; font-weight: 700; }
-                    Button { text: "Refresh"; clicked => { root.refresh-state(); } }
+                    ActionButton { width: 72px; text: "Refresh"; primary: true; clicked => { root.refresh-state(); } }
                 }
             }
 
@@ -149,20 +220,20 @@ export component AppWindow inherits Window {
                 background: #050a13;
 
                 VerticalLayout {
-                    padding: 18px;
+                    padding: 16px;
                     spacing: 0px;
 
                     Rectangle {
                         visible: root.active-panel == 0;
-                        width: 760px;
-                        height: 360px;
+                        width: 690px;
+                        height: 390px;
                         background: #101b2d;
-                        border-color: #2a4164;
+                        border-color: #22395e;
                         border-width: 1px;
                         border-radius: 6px;
 
                         VerticalLayout {
-                            padding: 18px;
+                            padding: 16px;
                             spacing: 10px;
                             Text { text: "Relay settings"; color: #f2f6ff; font-size: 18px; font-weight: 700; }
                             Text { text: "Edit the workspace share or control the relay process."; color: #8fa4c8; font-size: 12px; }
@@ -185,31 +256,31 @@ export component AppWindow inherits Window {
                             HorizontalLayout {
                                 spacing: 16px;
                                 CheckBox { text: "Allow exec"; checked <=> root.allow-exec; }
-                                CheckBox { text: "Remote desktop"; checked <=> root.allow-remote-desktop; }
-                                CheckBox { text: "Local host access"; checked <=> root.allow-local-access; }
+                                CheckBox { text: "Allow remote desktop"; checked <=> root.allow-remote-desktop; }
+                                CheckBox { text: "Allow local access"; checked <=> root.allow-local-access; }
                             }
 
                             HorizontalLayout {
                                 spacing: 8px;
-                                Button { text: "Save"; clicked => { root.save-relay(); } }
-                                Button { text: "Start"; clicked => { root.start-relay(); } }
-                                Button { text: "Stop"; clicked => { root.stop-relay(); } }
-                                Button { text: "Delete Relay"; clicked => { root.delete-relay(); } }
+                                ActionButton { width: 48px; text: "Save"; primary: true; clicked => { root.save-relay(); } }
+                                ActionButton { width: 56px; text: "Start"; clicked => { root.start-relay(); } }
+                                ActionButton { width: 52px; text: "Stop"; clicked => { root.stop-relay(); } }
+                                ActionButton { width: 92px; text: "Delete Relay"; danger: true; clicked => { root.delete-relay(); } }
                             }
                         }
                     }
 
                     Rectangle {
                         visible: root.active-panel == 1;
-                        width: 620px;
+                        width: 610px;
                         height: 330px;
                         background: #101b2d;
-                        border-color: #2a4164;
+                        border-color: #22395e;
                         border-width: 1px;
                         border-radius: 6px;
 
                         VerticalLayout {
-                            padding: 18px;
+                            padding: 16px;
                             spacing: 10px;
                             Text { text: "Server profile"; color: #f2f6ff; font-size: 18px; font-weight: 700; }
                             Text { text: "Edit connection details, login, or remove this server profile."; color: #8fa4c8; font-size: 12px; }
@@ -221,24 +292,24 @@ export component AppWindow inherits Window {
                             LineEdit { text <=> root.gateway-key; input-type: password; }
                             HorizontalLayout {
                                 spacing: 8px;
-                                Button { text: "Save"; clicked => { root.save-server(); } }
-                                Button { text: "Login / Status"; clicked => { root.login-server(); } }
-                                Button { text: "Delete Server"; clicked => { root.delete-server(); } }
+                                ActionButton { width: 48px; text: "Save"; primary: true; clicked => { root.save-server(); } }
+                                ActionButton { width: 104px; text: "Login / Status"; clicked => { root.login-server(); } }
+                                ActionButton { width: 98px; text: "Delete Server"; danger: true; clicked => { root.delete-server(); } }
                             }
                         }
                     }
 
                     Rectangle {
                         visible: root.active-panel == 2;
-                        width: 760px;
-                        height: 330px;
+                        width: 690px;
+                        height: 300px;
                         background: #101b2d;
-                        border-color: #2a4164;
+                        border-color: #22395e;
                         border-width: 1px;
                         border-radius: 6px;
 
                         VerticalLayout {
-                            padding: 18px;
+                            padding: 16px;
                             spacing: 10px;
                             Text { text: "Relay image builder"; color: #f2f6ff; font-size: 18px; font-weight: 700; }
                             Text { text: root.catalog-text; color: #8fa4c8; font-size: 12px; wrap: word-wrap; }
@@ -249,7 +320,7 @@ export component AppWindow inherits Window {
                             }
                             Text { text: "Extra features (comma separated)"; color: #a8b9d8; font-size: 12px; }
                             LineEdit { text <=> root.image-features; }
-                            Button { text: "Build Docker image"; clicked => { root.build-image(); } }
+                            ActionButton { width: 132px; text: "Build Image"; primary: true; clicked => { root.build-image(); } }
                         }
                     }
 
@@ -258,9 +329,9 @@ export component AppWindow inherits Window {
             }
 
             Rectangle {
-                height: 150px;
+                height: 148px;
                 background: #0b1424;
-                border-color: #213452;
+                border-color: #203452;
                 border-width: 1px;
                 clip: true;
 
@@ -268,9 +339,9 @@ export component AppWindow inherits Window {
                     padding: 10px;
                     spacing: 6px;
                     HorizontalLayout {
-                        Text { text: "Logs"; color: #f2f6ff; font-size: 13px; font-weight: 700; }
+                        Text { text: "Logs"; color: #f2f6ff; font-size: 12px; font-weight: 700; }
                         Rectangle { horizontal-stretch: 1; }
-                        Button { text: "Clear"; clicked => { root.clear-logs(); } }
+                        ActionButton { width: 50px; text: "Clear"; primary: true; clicked => { root.clear-logs(); } }
                     }
                     Text { text: root.logs; color: #d8e5ff; font-family: "Consolas"; font-size: 11px; wrap: word-wrap; }
                 }

@@ -21,6 +21,8 @@ class ListDirHandler(BaseFsHandler):
             "properties": {
                 "path": {"type": "string", "description": "Directory path (default: root)"},
                 "source": {"type": "string", "description": "Filesystem service name. Omit for default."},
+                "recursive": {"type": "boolean", "description": "List descendants recursively."},
+                "max_entries": {"type": "integer", "description": "Maximum number of entries to return when listing recursively."},
             },
         }
 
@@ -29,6 +31,11 @@ class ListDirHandler(BaseFsHandler):
         arguments = self._resolve_expressions(arguments)
         path = arguments.get("path", ".")
         source = arguments.get("source", "")
+        recursive = bool(arguments.get("recursive", False))
+        try:
+            max_entries = int(arguments.get("max_entries") or 0)
+        except (TypeError, ValueError):
+            max_entries = 0
 
         _svc_name, path = self._parse_fs_url(path)
         if _svc_name:
@@ -40,13 +47,18 @@ class ListDirHandler(BaseFsHandler):
             return self._filestore_list()
 
         if workdir:
-            return self._workdir_list(path)
+            return self._workdir_list(path, recursive=recursive, max_entries=max_entries)
 
         if svc is None:
             return self._no_target_error(source)
 
         try:
-            entries = svc.list_dir(path, local=bool(arguments.get("local", False)))
+            entries = svc.list_dir(
+                path,
+                local=bool(arguments.get("local", False)),
+                recursive=recursive,
+                max_entries=max_entries,
+            )
             _svc_id = source or getattr(svc, 'service_id', '') or 'fs'
             _base = f"fs://{_svc_id}/{path.rstrip('/')}/" if path != "." else f"fs://{_svc_id}/"
             lines = []

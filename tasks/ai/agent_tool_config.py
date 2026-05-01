@@ -76,6 +76,19 @@ class AgentToolConfigMixin:
         file_base_url = _rv(file_base_url) or ""
 
         for h in registry.list_tools():
+            # Provider-invariant handler context. API providers execute tools
+            # directly through this registry, while Codex/Claude MCP paths pass
+            # through ToolRelayService which already does this generically.
+            # Keep this first so every tool sees the same required runtime
+            # invariants regardless of provider.
+            if user_id and hasattr(h, 'set_user_id'):
+                h.set_user_id(user_id)
+            if conversation_id and hasattr(h, 'set_conversation_id'):
+                h.set_conversation_id(conversation_id)
+            if agent_name and hasattr(h, 'set_agent_name'):
+                h.set_agent_name(agent_name)
+            if file_base_url and hasattr(h, 'set_base_url'):
+                h.set_base_url(file_base_url)
             if isinstance(h, CreateFileHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
@@ -295,6 +308,8 @@ class AgentToolConfigMixin:
                     h.set_service(fs_svc)
                 if user_id:
                     h.set_user_id(user_id)
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
                 if file_base_url:
                     h.set_base_url(file_base_url)
             elif hasattr(h, 'name') and h.name == 'read_history':

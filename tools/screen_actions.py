@@ -1,17 +1,21 @@
-"""Screen actions for Windows/macOS host (via pyautogui).
+"""Screen actions for Windows/macOS host.
 
-Used by pawflow_cli/relay.py for local_screen actions on the user's
-actual desktop. Linux Docker containers use fs_screen.py (xdotool) instead.
+Used by the relay host helper for local screen actions on the user's actual
+machine. Linux Docker containers use fs_screen.py (xdotool/mss) instead.
 """
 
 import base64
 import io
+import json
+import os
+import subprocess
 import sys
 
 _BUTTON_MAP = {"left": "left", "right": "right", "middle": "middle"}
+_CHILD_ENV = "PAWFLOW_SCREEN_ACTION_CHILD"
 
-# Make process DPI-aware on Windows so pyautogui uses physical pixels
-# (matching screenshot coordinates)
+# Make process DPI-aware on Windows so coordinates use physical pixels matching
+# the screenshots returned by ImageGrab/pyautogui.
 if sys.platform == "win32":
     try:
         import ctypes
@@ -32,7 +36,18 @@ def _get_pyautogui():
 
 
 def handle_screen_action(action: str, req: dict) -> dict:
-    """Dispatch a screen_* action. Returns dict result."""
+    """Dispatch a screen_* action. Returns dict result.
+
+    Host GUI libraries can block inside OS APIs. Keep the relay host-helper
+    thread killable by running every screen action in a subprocess with the
+    request timeout. The child process executes the direct implementation.
+    """
+    if os.environ.get(_CHILD_ENV) != "1":
+        return _screen_action_subprocess(action, req)
+    return _handle_screen_action_direct(action, req)
+
+
+def _handle_screen_action_direct(action: str, req: dict) -> dict:
     _dispatch = {
         "screen_screenshot": _screenshot,
         "screen_click": _click,
@@ -52,34 +67,108 @@ def handle_screen_action(action: str, req: dict) -> dict:
         return {"error": str(e)}
 
 
+def _screen_action_subprocess(action: str, req: dict) -> dict:
+    try:
+        timeout = float(req.get("timeout", 15) or 15)
+    except (TypeError, ValueError):
+        timeout = 15
+    env = dict(os.environ)
+    env[_CHILD_ENV] = "1"
+    try:
+        proc = subprocess.run(
+            [sys.executable, __file__, action],
+            input=json.dumps(req),
+            text=True,
+            capture_output=True,
+            timeout=max(1, timeout),
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"error": f"{action} timed out after {int(timeout)}s"}
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or f"exit code {proc.returncode}").strip()
+        return {"error": err}
+    try:
+        return json.loads(proc.stdout or "{}")
+    except Exception as e:
+        return {"error": f"Invalid {action} response: {e}"}
+
+
 def _screenshot(req):
-    pag = _get_pyautogui()
-    screenshot = pag.screenshot()
+    screenshot = _grab_screenshot()
     w, h = screenshot.size
     buf = io.BytesIO()
     screenshot.save(buf, format="PNG")
     return {"image": base64.b64encode(buf.getvalue()).decode("ascii"), "width": w, "height": h}
 
 
-def _click(req):
+def _grab_screenshot():
+    if sys.platform == "win32":
+        try:
+            from PIL import ImageGrab
+            return ImageGrab.grab(all_screens=True)
+        except Exception:
+            pass
     pag = _get_pyautogui()
+    return pag.screenshot()
+
+
+def _win_user32():
+    import ctypes
+    return ctypes.windll.user32
+
+
+def _win_set_cursor(x: int, y: int) -> None:
+    user32 = _win_user32()
+    if not user32.SetCursorPos(int(x), int(y)):
+        raise RuntimeError("SetCursorPos failed")
+
+
+def _win_mouse_event(flags: int, data: int = 0) -> None:
+    user32 = _win_user32()
+    user32.mouse_event(flags, 0, 0, data, 0)
+
+
+def _win_mouse_down_up(button: str):
+    flags = {
+        "left": (0x0002, 0x0004),
+        "right": (0x0008, 0x0010),
+        "middle": (0x0020, 0x0040),
+    }.get(button, (0x0002, 0x0004))
+    _win_mouse_event(flags[0])
+    _win_mouse_event(flags[1])
+
+
+def _click(req):
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
     button = _BUTTON_MAP.get(req.get("button", "left"), "left")
-    pag.click(x, y, button=button)
+    if sys.platform == "win32":
+        _win_set_cursor(x, y)
+        _win_mouse_down_up(button)
+    else:
+        pag = _get_pyautogui()
+        pag.click(x, y, button=button)
     return {"clicked": True, "x": x, "y": y}
 
 
 def _double_click(req):
-    pag = _get_pyautogui()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
-    pag.doubleClick(x, y)
+    button = _BUTTON_MAP.get(req.get("button", "left"), "left")
+    if sys.platform == "win32":
+        _win_set_cursor(x, y)
+        _win_mouse_down_up(button)
+        _win_mouse_down_up(button)
+    else:
+        pag = _get_pyautogui()
+        pag.doubleClick(x, y)
     return {"double_clicked": True, "x": x, "y": y}
 
 
 def _type(req):
     text = req.get("text", "")
     if sys.platform == "win32":
-        # Use Win32 SendInput with KEYEVENTF_UNICODE — reliable for all chars
+        # Use Win32 SendInput with KEYEVENTF_UNICODE — reliable for all chars.
         import ctypes
         from ctypes import wintypes
         INPUT_KEYBOARD = 1
@@ -106,11 +195,7 @@ def _type(req):
             ]
 
         class HARDWAREINPUT(ctypes.Structure):
-            _fields_ = [
-                ("uMsg", wintypes.DWORD),
-                ("wParamL", wintypes.WORD),
-                ("wParamH", wintypes.WORD),
-            ]
+            _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD), ("wParamH", wintypes.WORD)]
 
         class _INPUTunion(ctypes.Union):
             _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("hi", HARDWAREINPUT)]
@@ -142,7 +227,6 @@ def _type(req):
 def _key(req):
     pag = _get_pyautogui()
     key = req.get("key", "")
-    # Handle combos like ctrl+c, alt+tab
     if "+" in key:
         parts = [k.strip().lower() for k in key.split("+")]
         pag.hotkey(*parts)
@@ -152,21 +236,44 @@ def _key(req):
 
 
 def _move(req):
-    pag = _get_pyautogui()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
-    pag.moveTo(x, y)
+    if sys.platform == "win32":
+        _win_set_cursor(x, y)
+    else:
+        pag = _get_pyautogui()
+        pag.moveTo(x, y)
     return {"moved": True, "x": x, "y": y}
 
 
 def _scroll(req):
-    pag = _get_pyautogui()
     x, y = int(req.get("x", 0)), int(req.get("y", 0))
     amount = int(req.get("amount", 3))
-    pag.scroll(-amount, x=x, y=y)  # pyautogui: negative = down
+    if sys.platform == "win32":
+        _win_set_cursor(x, y)
+        _win_mouse_event(0x0800, -amount * 120)
+    else:
+        pag = _get_pyautogui()
+        pag.scroll(-amount, x=x, y=y)
     return {"scrolled": amount}
 
 
 def _mouse_position(req):
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+        pt = POINT()
+        if not ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+            raise RuntimeError("GetCursorPos failed")
+        return {"x": int(pt.x), "y": int(pt.y)}
     pag = _get_pyautogui()
     pos = pag.position()
     return {"x": pos.x, "y": pos.y}
+
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1].startswith("screen_"):
+    request = json.loads(sys.stdin.read() or "{}")
+    sys.stdout.write(json.dumps(handle_screen_action(sys.argv[1], request)))

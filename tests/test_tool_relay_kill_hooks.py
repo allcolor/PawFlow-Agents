@@ -11,6 +11,7 @@ import threading
 
 import pytest
 
+from core.llm_client import LLMToolCall
 from services.tool_relay_service import (
     ToolRelayService,
     register_kill_hook,
@@ -18,6 +19,7 @@ from services.tool_relay_service import (
     _set_current_cancel_event,
     current_cancel_event,
 )
+from tasks.ai.agent_tool_exec import AgentToolExecMixin
 
 
 @pytest.fixture(autouse=True)
@@ -138,3 +140,42 @@ def test_register_kill_hook_outside_dispatch_is_noop():
 
 def test_current_cancel_event_returns_none_outside_dispatch():
     assert current_cancel_event() is None
+
+
+def test_api_provider_direct_tool_execution_is_target_killable(monkeypatch):
+    ready = threading.Event()
+    fired = threading.Event()
+    results = {}
+    from core.tool_approval import ToolApprovalGate
+    monkeypatch.setattr(ToolApprovalGate, "check", lambda *args, **kwargs: "approved")
+
+    class Agent(AgentToolExecMixin):
+        def _run_hook(self, *args, **kwargs):
+            return None
+
+    class Registry:
+        def list_tools(self):
+            return []
+
+        def execute(self, name, arguments):
+            register_kill_hook(lambda: fired.set())
+            ready.set()
+            fired.wait(timeout=2)
+            return "killed" if fired.is_set() else "not killed"
+
+    tc = LLMToolCall(id="tc-api", name="screen", arguments={"action": "screenshot"})
+
+    def run_tool():
+        results["value"] = Agent()._execute_tool_calls(
+            [tc], Registry(), {}, 100,
+            agent_name="deepseek", conversation_id="c1")
+
+    thread = threading.Thread(target=run_tool, daemon=True)
+    thread.start()
+
+    assert ready.wait(timeout=2)
+    assert ToolRelayService.cancel_request("tc-api") is True
+    thread.join(timeout=2)
+    assert fired.is_set()
+    assert not thread.is_alive()
+    assert results["value"][0][1] == "killed"

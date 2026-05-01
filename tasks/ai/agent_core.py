@@ -106,11 +106,25 @@ class AgentCoreMixin:
     }
 
     @classmethod
-    def _wrap_tool_output(cls, tool_name: str, content) -> str:
+    def _wrap_tool_output(cls, tool_name: str, content):
         """Wrap untrusted tool output so embedded instructions are read as
         data, not as orders. Applied to every tool result before it's
         persisted into the conversation and fed back to the LLM.
         """
+        if isinstance(content, list):
+            if tool_name in cls._TOOL_OUTPUT_TRUSTED:
+                return content
+            wrapped_parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text = part.get("text", "")
+                    wrapped_parts.append({
+                        "type": "text",
+                        "text": cls._wrap_tool_output(tool_name, text),
+                    })
+                else:
+                    wrapped_parts.append(part)
+            return wrapped_parts
         if isinstance(content, bytes):
             try:
                 content = content.decode("utf-8", errors="replace")
@@ -1650,13 +1664,11 @@ class AgentCoreMixin:
                             _fatal_error = True
                             _fatal_error_msg = f"Compact failed: {compact_err}"
                             break
-                        # Re-adopt current generation so the compacted loop
-                        # is not killed by a stale generation check.
-                        # (The CC kill + compact may have taken long enough
-                        # for a new message to bump the generation.)
-                        with self._conv_gen_lock:
-                            emitter.generation = self._conv_generation.get(
-                                emitter.gen_key, emitter.generation)
+                        # If generation changed while compacting, a real
+                        # cancel/restart happened. Do not let the compacting
+                        # thread re-adopt the newer generation: that resurrects
+                        # an old provider loop and creates ghost agents.
+                        emitter.check_cancelled()
                         continue
                     except Exception as llm_err:
                         err_str = str(llm_err)

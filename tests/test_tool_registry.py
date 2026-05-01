@@ -11,7 +11,9 @@ Tests cover:
 """
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 from typing import Dict, Any
 
@@ -494,7 +496,7 @@ class TestMetaToolAliases(unittest.TestCase):
         svc.write_file("a", b"x", local=True)
         svc.delete_file("a", local=True)
         svc.mkdir("a", local=True)
-        svc.list_dir(".", local=True)
+        svc.list_dir(".", local=True, recursive=True, max_entries=5)
         svc.stat("a", local=True)
         svc.exists("a", local=True)
         svc.search(".", "*.py", local=True)
@@ -509,6 +511,28 @@ class TestMetaToolAliases(unittest.TestCase):
         assert calls
         for action, _path, kwargs in calls:
             assert kwargs.get("local") is True, action
+        list_call = next(call for call in calls if call[0] == "list_dir")
+        assert list_call[2]["recursive"] is True
+        assert list_call[2]["max_entries"] == 5
+
+    def test_relay_list_dir_action_supports_recursive_limit(self):
+        from tools.fs_actions import action_list_dir
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a" / "b").mkdir(parents=True)
+            (root / "a" / "one.txt").write_text("1", encoding="utf-8")
+            (root / "a" / "b" / "two.txt").write_text("2", encoding="utf-8")
+
+            entries = action_list_dir(str(root), str(root), {
+                "recursive": True,
+                "max_entries": 3,
+            })
+
+        assert len(entries) == 3
+        names = [entry["name"] for entry in entries]
+        assert "a" in names
+        assert any(name.startswith("a/") for name in names)
 
     def test_monitor_exposes_and_forwards_relay_local_to_bash(self):
         from core.handlers import bash as bash_mod

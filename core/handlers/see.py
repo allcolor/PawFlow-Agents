@@ -282,11 +282,9 @@ class SeeHandler(BaseFsHandler):
 
     def _read_filestore_bytes(self, path: str) -> bytes:
         """Read raw bytes from FileStore."""
-        import re
         from core.file_store import FileStore
         store = FileStore.instance()
-        _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
-        file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
+        file_id = self._filestore_id_from_path(path)
         entry = store.get(file_id, user_id=self._user_id)
         if not entry:
             found = store.find_by_name(file_id)

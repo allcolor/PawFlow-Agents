@@ -42,6 +42,14 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "showOpenDialog" in main
     assert "relay:select-directory" in main
     assert "relay:docker-images" in main
+    assert "function runDocker(" in main
+    assert "function runDockerBuild(" in main
+    assert "function wslPath(" in main
+    assert "PAWFLOW_RELAY_WSL_DISTRO" in main
+    assert "wsl.exe" in main
+    assert "wslpath" in main
+    assert "return { images, error: '' }" in main
+    assert "return { images: [], error: message }" in main
     assert "relay:image-catalog" in main
     assert "relay:build-image" in main
     assert "docker builder prune" not in main
@@ -75,6 +83,8 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "buildImageBtn" in renderer
     assert "Build Relay Image" in renderer
     assert "window.pawflowRelay.buildRelayImage" in renderer
+    assert "dockerError" in renderer
+    assert "Docker unavailable" in renderer
     assert "selectDirectory" in renderer
     assert "allowExec" in renderer
     assert "allowRemoteDesktop" in renderer
@@ -134,3 +144,4 @@ def test_relay_client_doc_mentions_desktop_app():
     assert "npm start" in doc
     assert "npm run package:portable" in readme
     assert "runtime/tools/" in readme
+    assert "PAWFLOW_RELAY_WSL_DISTRO" in readme

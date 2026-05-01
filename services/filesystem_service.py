@@ -1014,9 +1014,12 @@ class RelayService(BaseService):
 
     # ── Filesystem interface ──
 
-    def list_dir(self, path: str = ".", local: bool = False):
+    def list_dir(self, path: str = ".", local: bool = False,
+                 recursive: bool = False, max_entries: int = 0):
         from core.filesystem import FilesystemEntry
-        data = self._request("list_dir", path, local=local)
+        data = self._request(
+            "list_dir", path, local=local,
+            recursive=bool(recursive), max_entries=int(max_entries or 0))
         return [FilesystemEntry(**e) if isinstance(e, dict) else e for e in data]
 
     def read_file(self, path: str, local: bool = False) -> bytes:

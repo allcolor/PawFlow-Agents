@@ -66,6 +66,40 @@ class AgentToolExecMixin:
                 if consecutive_tracker[tc.name] > max_consecutive:
                     blocked.add(tc.name)
 
+        def _handler_for_result_shape(tc):
+            tool_name = tc.name
+            tool_args = tc.arguments if isinstance(tc.arguments, dict) else {}
+            unwrap_budget = 3
+            wrapper_names = {"use_tool", "mcp__pawflow__use_tool", "mcp_pawflow_use_tool"}
+            while tool_name in wrapper_names and isinstance(tool_args, dict) and unwrap_budget > 0:
+                nested_name = (tool_args.get("tool_name")
+                               or tool_args.get("name")
+                               or tool_args.get("tool")
+                               or "")
+                nested_args = tool_args.get("arguments")
+                if nested_args is None:
+                    nested_args = tool_args.get("params")
+                if nested_args is None:
+                    nested_args = tool_args.get("input")
+                if nested_args is None:
+                    nested_args = {}
+                for _ in range(3):
+                    if isinstance(nested_args, str):
+                        try:
+                            nested_args = json.loads(nested_args)
+                        except (json.JSONDecodeError, TypeError):
+                            nested_args = {}
+                            break
+                    else:
+                        break
+                if not nested_name:
+                    break
+                tool_name = nested_name
+                tool_args = nested_args
+                unwrap_budget -= 1
+            return next((h for h in registry.list_tools()
+                         if getattr(h, "name", "") == tool_name), None)
+
         def _exec_one(tc):
             if tc.name in blocked:
                 return tc, (
@@ -219,7 +253,7 @@ class AgentToolExecMixin:
                 # (see _deflate_image_messages) so base64 doesn't bloat context.
                 # Gate on handler's _returns_images flag — a grep match on the
                 # literal "__image_data__:" string must NOT be split into blocks.
-                _h = next((h for h in registry.list_tools() if h.name == tc.name), None)
+                _h = _handler_for_result_shape(tc)
                 _ri = bool(getattr(_h, '_returns_images', False))
                 if _ri and isinstance(result, str) and "__image_data__:" in result:
                     lines = result.split("\n")

@@ -241,18 +241,51 @@ class BaseFsHandler(ToolHandler):
         """Parse a path into (service_name, path).
 
         Recognized formats:
-          fs://service/path           → (service, path)
-          fs://filestore/id/name      → ("filestore", "id/name")
-          /files/{id}/{name}          → ("filestore", "id/name")
-          (anything else)             → ("", path)
+          fs://service/path                    → (service, path)
+          fs://filestore/id/name               → ("filestore", "id/name")
+          /files/{id}/{name}                   → ("filestore", "id/name")
+          /filestore/{id}/{name}               → ("filestore", "id/name")
+          /filestore/{conversation}/{id}/name  → ("filestore", "conversation/id/name")
+          (anything else)                      → ("", path)
         """
         if path.startswith("fs://"):
             parts = path[5:].split("/", 1)
             return (parts[0], parts[1] if len(parts) > 1 else ".")
-        # Bare FileStore URL — auto-route to filestore
+        # Bare FileStore URL/path — auto-route to server FileStore.
         if path.startswith("/files/"):
             return ("filestore", path[len("/files/"):])
+        if path.startswith("/filestore/"):
+            return ("filestore", path[len("/filestore/"):])
         return ("", path)
+
+    @staticmethod
+    def _filestore_id_from_path(path: str) -> str:
+        """Extract a FileStore id from fs:// or /filestore paths.
+
+        Web/relay logs may show /filestore/{conversation_id}/{file_id}/name,
+        while tool URLs use fs://filestore/{file_id}/name. Prefer the first
+        12-hex segment after an optional conversation-id segment.
+        """
+        cleaned = (path or "").strip()
+        if cleaned.startswith("fs://filestore/"):
+            cleaned = cleaned[len("fs://filestore/"):]
+        elif cleaned.startswith("/filestore/"):
+            cleaned = cleaned[len("/filestore/"):]
+        elif cleaned.startswith("/files/"):
+            cleaned = cleaned[len("/files/"):]
+        elif cleaned.startswith("files/"):
+            cleaned = cleaned[len("files/"):]
+        elif cleaned.startswith("filestore/"):
+            cleaned = cleaned[len("filestore/"):]
+        segments = [seg for seg in cleaned.split("/") if seg]
+        if len(segments) >= 2:
+            first, second = segments[0], segments[1]
+            if re.fullmatch(r"[a-f0-9]{13,64}", first) and re.fullmatch(r"[a-f0-9]{12}", second):
+                return second
+        for seg in segments:
+            if re.fullmatch(r"[a-f0-9]{12}", seg):
+                return seg
+        return segments[0] if segments else cleaned
 
     @staticmethod
     def _sandbox_path(path: str, base: str) -> str:
@@ -289,8 +322,7 @@ class BaseFsHandler(ToolHandler):
         """Read from server FileStore — same pagination as relay read."""
         from core.file_store import FileStore
         store = FileStore.instance()
-        _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
-        file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
+        file_id = self._filestore_id_from_path(path)
         entry = store.get(file_id, user_id=self._user_id)
         if not entry:
             found = store.find_by_name(file_id)
@@ -329,22 +361,19 @@ class BaseFsHandler(ToolHandler):
         store = FileStore.instance()
         _id = file_id
         if not _id:
-            _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
-            _id = _fid_match.group(1) if _fid_match else path.split("/")[0]
+            _id = self._filestore_id_from_path(path)
         store.delete(_id)
         return f"Deleted '{_id}' from FileStore"
 
     def _filestore_exists(self, path: str) -> str:
         from core.file_store import FileStore
-        _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
-        file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
+        file_id = self._filestore_id_from_path(path)
         entry = FileStore.instance().get(file_id, user_id=self._user_id)
         return "true" if entry else "false"
 
     def _filestore_stat(self, path: str) -> str:
         from core.file_store import FileStore
-        _fid_match = re.search(r'/?(?:files/|filestore/)?([a-f0-9]{12})(?:/|$)', path)
-        file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
+        file_id = self._filestore_id_from_path(path)
         entry = FileStore.instance().get(file_id, user_id=self._user_id)
         if not entry:
             return f"Error: '{file_id}' not found in FileStore"
@@ -380,17 +409,27 @@ class BaseFsHandler(ToolHandler):
             f.write(content)
         return f"Written {len(content)} chars to {path}"
 
-    def _workdir_list(self, path: str = ".") -> str:
+    def _workdir_list(self, path: str = ".", recursive: bool = False,
+                      max_entries: int = 0) -> str:
         full = self._sandbox_path(path, self._workdir)
         if not os.path.isdir(full):
             return f"Error: '{path}' is not a directory"
-        entries = sorted(os.listdir(full))
         lines = []
-        for e in entries:
-            ep = os.path.join(full, e)
+        if recursive:
+            iterator = []
+            for root, dirs, files in os.walk(full):
+                for name in sorted(dirs + files):
+                    iterator.append(os.path.join(root, name))
+            entries = sorted(iterator)
+        else:
+            entries = [os.path.join(full, e) for e in sorted(os.listdir(full))]
+        for ep in entries:
+            rel = os.path.relpath(ep, full).replace(os.sep, "/") if recursive else os.path.basename(ep)
             kind = "📁" if os.path.isdir(ep) else "📄"
             size = f" ({os.path.getsize(ep)} bytes)" if os.path.isfile(ep) else ""
-            lines.append(f"{kind} {e}{size}")
+            lines.append(f"{kind} {rel}{size}")
+            if max_entries > 0 and len(lines) >= max_entries:
+                break
         return "\n".join(lines) if lines else "(empty directory)"
 
     def _workdir_exists(self, path: str) -> str:

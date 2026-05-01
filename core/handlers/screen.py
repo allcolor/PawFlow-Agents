@@ -21,6 +21,7 @@ class ScreenHandler(BaseFsHandler):
 
     _fs_service = None
     _user_id: str = ""
+    _conversation_id: str = ""
     _base_url: str = ""
 
     @property
@@ -76,6 +77,9 @@ class ScreenHandler(BaseFsHandler):
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id
 
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
@@ -136,6 +140,7 @@ class ScreenHandler(BaseFsHandler):
             timeout = float(req_args.pop("timeout", 30) or 30)
         except (TypeError, ValueError):
             timeout = 30
+        req_args["timeout"] = max(1, timeout - 1)
         try:
             result = svc._request(
                 f"screen_{action}", ".", _request_timeout=timeout,

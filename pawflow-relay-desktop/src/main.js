@@ -113,6 +113,65 @@ function dockerCommand() {
   return process.env.PAWFLOW_RELAY_DOCKER || 'docker';
 }
 
+function wslBaseArgs() {
+  const distro = process.env.PAWFLOW_RELAY_WSL_DISTRO || '';
+  return distro ? ['-d', distro, '--'] : ['--'];
+}
+
+function dockerConnectError(message) {
+  const text = String(message || '').toLowerCase();
+  return (
+    text.includes('dockerdesktoplinuxengine')
+    || text.includes('npipe:')
+    || text.includes('pipe/docker_engine')
+    || text.includes('cannot connect to the docker daemon')
+    || text.includes('failed to connect to the docker api')
+    || text.includes('the system cannot find the file specified')
+    || text.includes('enoent')
+  );
+}
+
+async function runWslCommand(args, options = {}) {
+  return runCommand('wsl.exe', [...wslBaseArgs(), ...args], options);
+}
+
+async function wslPath(winPath) {
+  if (process.platform !== 'win32') return winPath;
+  return (await runWslCommand(['wslpath', '-a', winPath])).trim();
+}
+
+async function runDocker(args, options = {}) {
+  if (process.env.PAWFLOW_RELAY_DOCKER) {
+    return runCommand(dockerCommand(), args, options);
+  }
+  try {
+    return await runCommand('docker', args, options);
+  } catch (err) {
+    if (process.platform !== 'win32' || !dockerConnectError(err.message)) {
+      throw err;
+    }
+    appendLog('docker', '[docker] Windows Docker unavailable; trying WSL docker\n');
+    return runWslCommand(['docker', ...args], options);
+  }
+}
+
+async function runDockerBuild(imageName, contextDir, options = {}) {
+  const args = ['build', '-t', imageName, contextDir];
+  if (process.env.PAWFLOW_RELAY_DOCKER) {
+    return runCommand(dockerCommand(), args, options);
+  }
+  try {
+    return await runCommand('docker', args, options);
+  } catch (err) {
+    if (process.platform !== 'win32' || !dockerConnectError(err.message)) {
+      throw err;
+    }
+    appendLog('docker', '[docker] Windows Docker unavailable; trying WSL docker\n');
+    const wslContextDir = await wslPath(contextDir);
+    return runWslCommand(['docker', 'build', '-t', imageName, wslContextDir], options);
+  }
+}
+
 function relayImageCatalogPath() {
   const found = firstExistingPath([
     path.join(runtimeRoot(), 'config', 'relay_image_catalog.json'),
@@ -136,20 +195,27 @@ function loadRelayImageCatalog() {
 }
 
 async function listDockerImages() {
-  const out = await runCommand(dockerCommand(), [
-    'images',
-    '--format',
-    '{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}',
-  ]);
-  return out.split('\n')
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => {
-      const [repository, tag, id, size] = line.split('\t');
-      return { name: `${repository}:${tag}`, repository, tag, id, size };
-    })
-    .filter(image => image.repository && image.tag && image.repository !== '<none>' && image.tag !== '<none>')
-    .sort((a, b) => a.name.localeCompare(b.name));
+  try {
+    const out = await runDocker([
+      'images',
+      '--format',
+      '{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}',
+    ]);
+    const images = out.split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => {
+        const [repository, tag, id, size] = line.split('\t');
+        return { name: `${repository}:${tag}`, repository, tag, id, size };
+      })
+      .filter(image => image.repository && image.tag && image.repository !== '<none>' && image.tag !== '<none>')
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { images, error: '' };
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    appendLog('docker', `[docker] ${message}\n`);
+    return { images: [], error: message };
+  }
 }
 
 function safeImageBuildName(imageName) {
@@ -186,10 +252,10 @@ async function buildRelayImage(input) {
   await runCommand(pythonCommand(), generateArgs, { cwd: repoRoot(), env: pythonEnv(), logName: 'image-build' });
 
   appendLog('image-build', `Building Docker image ${imageName}\n`);
-  await runCommand(dockerCommand(), ['build', '-t', imageName, outDir], { logName: 'image-build' });
+  await runDockerBuild(imageName, outDir, { logName: 'image-build' });
   appendLog('image-build', 'Pruning Docker build cache\n');
   try {
-    await runCommand(dockerCommand(), ['builder', 'prune', '-f'], { logName: 'image-build' });
+    await runDocker(['builder', 'prune', '-f'], { logName: 'image-build' });
   } catch (err) {
     appendLog('image-build', `[prune] ${err.message}\n`);
   } finally {

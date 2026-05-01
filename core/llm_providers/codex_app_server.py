@@ -610,6 +610,44 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             thinking_parts.append(text)
 
         turn_failed = False
+        compact_hard_killed = False
+
+        def _hard_kill_for_context_compaction(reason: str) -> None:
+            """Make contextCompaction an immediate process/container barrier."""
+            nonlocal compact_hard_killed
+            if compact_hard_killed:
+                return
+            compact_hard_killed = True
+            logger.warning(
+                "[codex-app] contextCompaction hard-kill — %s", reason)
+            try:
+                lock = self._codex_app_ensure_lock()
+                with lock:
+                    active = getattr(self, "_codex_app_active", None)
+                    if isinstance(active, dict):
+                        active.pop(active_key, None)
+            except Exception:
+                logger.debug("[codex-app] compact active cleanup failed", exc_info=True)
+            if live_reg is not None and live_key is not None:
+                try:
+                    live_reg.evict(live_key, "context_compaction")
+                except Exception:
+                    logger.debug("[codex-app-live] compact evict failed", exc_info=True)
+            if proc is not None:
+                try:
+                    if proc.poll() is None:
+                        proc.kill()
+                except Exception:
+                    logger.debug("[codex-app] compact proc kill failed", exc_info=True)
+            if container:
+                self._codex_pool_release(container)
+            if internal_token:
+                try:
+                    from core.internal_auth import revoke_token
+                    revoke_token(internal_token)
+                except Exception:
+                    logger.debug("[codex-app] compact token revoke failed", exc_info=True)
+
         try:
             thread_key = f"codex_app_server_thread:{agent_name or 'default'}"
             if not is_reuse:
@@ -760,6 +798,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         from core.llm_client import CCCompactDetected
                         logger.warning(
                             "[codex-app] contextCompaction detected — handing compaction to PawFlow")
+                        _hard_kill_for_context_compaction("item/started")
                         raise CCCompactDetected(
                             "Codex app-server contextCompaction detected")
                     if item.get("type") == "mcpToolCall":
@@ -792,6 +831,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                         from core.llm_client import CCCompactDetected
                         logger.warning(
                             "[codex-app] contextCompaction completed before interception — compacting PawFlow context")
+                        _hard_kill_for_context_compaction("item/completed")
                         raise CCCompactDetected(
                             "Codex app-server contextCompaction completed")
                     if item.get("type") == "mcpToolCall":
@@ -903,7 +943,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     logger.debug("[codex-app-live] register failed", exc_info=True)
                     keep_alive = False
 
-            if not keep_alive:
+            if not keep_alive and not compact_hard_killed:
                 if live_reg is not None and live_key is not None:
                     try:
                         live_reg.evict(live_key, "app_server_teardown")

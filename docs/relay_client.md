@@ -54,11 +54,12 @@ Profiles are split into `servers.json` and `workspaces.json`. Gateway keys and s
 
 ## Relay Desktop
 
-The first Electron Relay Desktop slice lives in `pawflow-relay-desktop/`. It uses the same local state as the CLI and manages:
+The Electron Relay Desktop slice lives in `pawflow-relay-desktop/`. It uses the same local state as the CLI and manages:
 
 - server profiles: URL, private gateway key, login status;
 - workspace shares: path, read/write mode, relay image/profile, local execution permission;
-- running relay processes and logs.
+- running relay processes and logs;
+- Docker relay images and custom image builds.
 
 Run it from a checkout:
 
@@ -67,5 +68,19 @@ cd pawflow-relay-desktop
 npm install
 npm start
 ```
+
+## Relay Desktop Slint
+
+The native Slint replacement track lives in `pawflow-relay-slint/`. It targets feature parity with the Electron GUI while producing platform-native binaries for Windows, Linux, and macOS. It manages the same server profiles, relay workspaces, process lifecycle, Docker image inventory, image builder, and logs through `pawflow_relay.manager` and `python -m pawflow_relay`.
+
+Run it from a checkout:
+
+```bash
+cd pawflow-relay-slint
+python scripts/prepare-runtime.py --repo-root .. --out runtime
+cargo run
+```
+
+The `Relay Slint Desktop` GitHub Actions workflow builds `pawflow-relay-slint-linux`, `pawflow-relay-slint-windows`, and `pawflow-relay-slint-macos` artifacts. Each artifact contains the native binary and the packaged Python `runtime/` directory. Tray integration is the remaining desktop-shell parity item before replacing the Electron path.
 
 PawCode and VS Code should not grow relay management screens. If a conversation has no linked relay, they can show server state, but relay creation and attachment remains a webchat/server-resource or Relay Desktop responsibility.

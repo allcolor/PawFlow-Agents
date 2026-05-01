@@ -79,22 +79,18 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             t.is_alive() and t.name == _thread_name
             for t in threading.enumerate())
         _stream_mark("active_check")
-        # Safety: if thread is "active" but no context entry, it's a zombie.
-        # Kill its CC process + release pool slot before starting a new loop.
+        # A live agent thread can temporarily have no _active_contexts entry:
+        # context preparation, provider compact/restart, and final cleanup all
+        # run outside _run_agent_loop's push/pop window. Treat the thread name
+        # as authoritative here and queue/preempt below; killing it as a
+        # "zombie" creates duplicate ghost loops while the old thread can still
+        # flush callbacks into the transcript.
         if _already_active:
             with self._active_contexts_lock:
                 if _agent_key not in self._active_contexts:
-                    logger.warning("[agent:%s] zombie thread detected — killing CC process", conversation_id[:8])
-                    # Kill any orphaned CC process for this agent
-                    try:
-                        _zombie_cc = self._active_claude_client.get(_agent_key)
-                        if _zombie_cc and hasattr(_zombie_cc, 'cancel_claude_code'):
-                            _zombie_cc.cancel_claude_code(force=True)
-                            logger.info("[agent:%s] zombie CC process killed", conversation_id[:8])
-                        self._active_claude_client.pop(_agent_key, None)
-                    except Exception as _ze:
-                        logger.debug("[agent:%s] zombie cleanup failed: %s", conversation_id[:8], _ze)
-                    _already_active = False
+                    logger.info(
+                        "[agent:%s] active thread has no context yet — treating as busy",
+                        conversation_id[:8])
 
         # Source of truth: persist the user message to the transcript
         # IMMEDIATELY, before any routing decision (fresh turn, preempt

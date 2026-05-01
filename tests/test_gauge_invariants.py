@@ -462,11 +462,45 @@ def test_api_tool_execution_registers_kill_hooks_for_ui_kill():
 
 def test_screen_actions_have_server_side_timeout_and_cancel_pending():
     screen_src = Path("core/handlers/screen.py").read_text(encoding="utf-8")
+    tool_config_src = Path("tasks/ai/agent_tool_config.py").read_text(encoding="utf-8")
     fs_src = Path("services/filesystem_service.py").read_text(encoding="utf-8")
+    host_screen_src = Path("tools/screen_actions.py").read_text(encoding="utf-8")
+    assert "Provider-invariant handler context" in tool_config_src
+    assert "hasattr(h, 'set_user_id')" in tool_config_src
+    assert "hasattr(h, 'set_conversation_id')" in tool_config_src
+    assert "hasattr(h, 'set_agent_name')" in tool_config_src
+    assert "hasattr(h, 'set_base_url')" in tool_config_src
+    assert "def set_conversation_id" in screen_src
+    assert "h.name == 'screen'" in tool_config_src
+    assert "h.set_conversation_id(conversation_id)" in tool_config_src
     assert '"timeout"' in screen_src
     assert "_request_timeout=timeout" in screen_src
+    assert 'req_args["timeout"] = max(1, timeout - 1)' in screen_src
     assert 'kwargs.pop("_request_timeout", None)' in fs_src
     assert "self.cancel_pending(request_id)" in fs_src
+    assert "subprocess.run(" in host_screen_src
+    assert "timeout=max(1, timeout)" in host_screen_src
+    assert "PAWFLOW_SCREEN_ACTION_CHILD" in host_screen_src
+    assert "def _screen_action_subprocess" in host_screen_src
+    assert "GetCursorPos" in host_screen_src
+
+
+def test_live_agent_thread_without_context_is_not_killed_as_zombie():
+    streaming_src = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
+    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    codex_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
+    assert "zombie thread detected" not in streaming_src
+    assert "active thread has no context yet" in streaming_src
+    assert "t.name == f\"agent-stream-{conversation_id}\"" in loop_src
+    assert "t.name.startswith(f\"agent-stream-{conversation_id}:\")" in loop_src
+    assert "resurrects" in core_src
+    assert "emitter.generation = self._conv_generation.get" not in core_src
+    assert "def _hard_kill_for_context_compaction" in codex_src
+    assert "_hard_kill_for_context_compaction(\"item/started\")" in codex_src
+    assert "_hard_kill_for_context_compaction(\"item/completed\")" in codex_src
+    assert "not keep_alive and not compact_hard_killed" in codex_src
+
 
 
 def test_accepted_live_preempt_keeps_pending_rescue():

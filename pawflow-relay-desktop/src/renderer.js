@@ -2,6 +2,7 @@ const state = {
   servers: [],
   workspaces: [],
   dockerImages: [],
+  dockerError: '',
   imageCatalog: null,
   running: new Set(),
   selected: { type: 'home', name: '' },
@@ -34,10 +35,18 @@ async function refresh() {
   state.workspaces = data.workspaces || [];
   state.running = new Set(await window.pawflowRelay.running());
   try {
-    state.dockerImages = await window.pawflowRelay.listDockerImages();
+    const dockerState = await window.pawflowRelay.listDockerImages();
+    if (Array.isArray(dockerState)) {
+      state.dockerImages = dockerState;
+      state.dockerError = '';
+    } else {
+      state.dockerImages = dockerState.images || [];
+      state.dockerError = dockerState.error || '';
+    }
   } catch (err) {
     state.dockerImages = [];
-    appendLog('docker', `[docker] ${err.message}\n`);
+    state.dockerError = err.message || String(err);
+    appendLog('docker', `[docker] ${state.dockerError}\n`);
   }
   try {
     state.imageCatalog = await window.pawflowRelay.relayImageCatalog();
@@ -222,6 +231,9 @@ function renderWorkspacePanel(share) {
     return `<option value="${escapeAttr(server.name)}" ${selected}>${escapeHtml(server.name)}</option>`;
   }).join('');
   const dockerOptions = dockerImageOptions(share?.docker_image || '');
+  const dockerStatus = state.dockerError
+    ? `<p class="field-note error">Docker unavailable: ${escapeHtml(state.dockerError)}</p>`
+    : '';
   const running = share ? state.running.has(share.name) : false;
   const title = isNew ? 'New relay' : 'Relay settings';
   const help = isNew
@@ -266,6 +278,7 @@ function renderWorkspacePanel(share) {
             <select name="dockerImage">${dockerOptions}</select>
             <button class="button secondary" type="button" id="buildImageBtn">Build</button>
           </div>
+          ${dockerStatus}
         </label>
       </div>
       <div class="toggle-grid">

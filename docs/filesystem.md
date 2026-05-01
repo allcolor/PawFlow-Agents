@@ -146,7 +146,7 @@ Example: `allowed_paths=src,docs` + `denied_paths=src/secret` → can read `src/
 ## Operations
 
 ### Basic
-- `list_dir(path)` — List directory contents
+- `list_dir(path, recursive=false, max_entries=0)` — List directory contents. With `recursive=true`, returns descendant paths relative to `path`; `max_entries` caps large recursive listings.
 - `read_file(path)` — Read file bytes
 - `write_file(path, content)` — Create or overwrite file
 - `delete_file(path)` — Delete file (requires `full` mode)

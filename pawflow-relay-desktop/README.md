@@ -37,6 +37,15 @@ The wrapper uses WSL cleanup for broken UNC `node_modules` directories and
 `cmd.exe pushd` to map the UNC path to a temporary drive letter before starting
 Electron.
 
+When Docker Desktop is available only through WSL, the app first tries the
+Windows `docker` CLI and then falls back to `wsl.exe docker`. Set the distro
+explicitly when needed:
+
+```powershell
+$env:PAWFLOW_RELAY_WSL_DISTRO = "Ubuntu-24.04"
+.\start-windows.ps1
+```
+
 ## Portable Runtime
 
 `npm run prepare-runtime` creates `pawflow-relay-desktop/runtime/` with the

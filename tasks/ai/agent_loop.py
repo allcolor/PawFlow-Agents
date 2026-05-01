@@ -767,11 +767,20 @@ class AgentLoopTask(
         Cooldown: ignores repeated interrupts within 10 seconds.
         No-op if no agent is actively running.
         """
-        # Check if anything is actually running for this conversation
+        # Check if anything is actually running for this conversation. A
+        # thread can be alive while _active_contexts is temporarily empty
+        # during context preparation, provider compact/restart, or cleanup.
         with self._active_contexts_lock:
             _any_active = any(
                 k == conversation_id or k.startswith(conversation_id + ":")
                 for k in self._active_contexts)
+        if not _any_active:
+            _any_active = any(
+                t.is_alive() and (
+                    t.name == f"agent-stream-{conversation_id}"
+                    or t.name.startswith(f"agent-stream-{conversation_id}:")
+                )
+                for t in threading.enumerate())
         if not _any_active:
             logger.info(f"[agent:{conversation_id[:8]}] interrupt ignored — no active agent")
             return

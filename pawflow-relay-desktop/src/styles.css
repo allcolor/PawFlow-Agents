@@ -149,6 +149,8 @@ input:focus, select:focus { outline: 1px solid var(--accent); border-color: var(
   gap: 8px;
 }
 .image-picker .button { min-width: 76px; }
+.field-note { margin-top: 0; font-size: 11px; line-height: 1.35; }
+.field-note.error { color: #ff9eaa; }
 .toggle-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

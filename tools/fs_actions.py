@@ -53,15 +53,27 @@ def _rel(abs_path: str, root: str) -> str:
 
 def action_list_dir(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     p = Path(path)
+    recursive = bool(req.get("recursive", False))
+    try:
+        max_entries = int(req.get("max_entries") or 0)
+    except (TypeError, ValueError):
+        max_entries = 0
+
     entries = []
-    for entry in sorted(p.iterdir()):
+    iterator = p.rglob("*") if recursive else p.iterdir()
+    for entry in sorted(iterator):
         st = entry.stat()
+        name = entry.name
+        if recursive:
+            name = str(entry.relative_to(p)).replace("\\", "/")
         entries.append({
-            "name": entry.name,
+            "name": name,
             "kind": "directory" if entry.is_dir() else "file",
             "size": st.st_size if entry.is_file() else 0,
             "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
         })
+        if max_entries > 0 and len(entries) >= max_entries:
+            break
     return entries
 
 

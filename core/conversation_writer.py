@@ -49,8 +49,12 @@ class ConversationWriter:
     def for_conversation(cls, cid: str) -> 'ConversationWriter':
         with cls._global_lock:
             w = cls._instances.get(cid)
-            if w and w._alive:
+            if w and w._can_accept_writes():
                 return w
+            if w:
+                logger.error(
+                    "[conv-writer:%s] replacing dead writer with %d queued item(s)",
+                    cid[:8], w._queue.qsize())
             w = cls(cid)
             cls._instances[cid] = w
             return w
@@ -101,8 +105,8 @@ class ConversationWriter:
         the sentinel's event fires only after every prior item has been
         processed. Returns False on timeout.
         """
-        if not self._alive:
-            return True
+        if not self._can_accept_writes():
+            return self._queue.empty()
         evt = threading.Event()
         self._queue.put({"_flush": True, "_done_event": evt})
         return evt.wait(timeout=wait_timeout)
@@ -116,6 +120,20 @@ class ConversationWriter:
             target=self._writer_loop, daemon=True,
             name=f"conv-writer-{cid[:8]}")
         self._thread.start()
+
+    def _can_accept_writes(self) -> bool:
+        return self._alive and self._thread.is_alive() and not self._stop
+
+    def _ensure_can_accept_writes(self) -> None:
+        if self._can_accept_writes():
+            return
+        self._alive = False
+        with self._global_lock:
+            if ConversationWriter._instances.get(self._cid) is self:
+                ConversationWriter._instances.pop(self._cid, None)
+        raise RuntimeError(
+            f"ConversationWriter for {self._cid} is not running; "
+            "call ConversationWriter.for_conversation() to get a live writer")
 
     def enqueue_message(self, msg: Dict, agent_name: str = "",
                         user_id: str = "", ttl: int = 0,
@@ -132,6 +150,7 @@ class ConversationWriter:
         sse_events fire (visible => persisted invariant).
         """
         _require_ts_seq(msg)
+        self._ensure_can_accept_writes()
         evt = threading.Event() if wait else None
         self._queue.put({
             "op": "append_message",
@@ -148,6 +167,7 @@ class ConversationWriter:
 
     def flush(self, timeout: float = 10.0):
         """Block until all queued messages are written."""
+        self._ensure_can_accept_writes()
         evt = threading.Event()
         self._queue.put({"_flush": True, "_done_event": evt})
         evt.wait(timeout=timeout)

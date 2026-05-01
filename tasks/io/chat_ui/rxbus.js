@@ -20,6 +20,9 @@ const _commandResult$ = new rxjs.ReplaySubject(200, 30000);
 // command_result for every action$ call via _reply_conversation_id.
 let _uiActionEventSource = null;
 let _uiActionBusId = '';
+let _uiActionLastActivity = 0;
+let _uiActionCreatedAt = 0;
+let _uiActionReconnectTimer = null;
 
 function _actionClientId() {
   try {
@@ -39,24 +42,73 @@ function _uiActionConversationId() {
   return _uiActionBusId;
 }
 
-function _ensureUIActionSSE() {
+function _closeUIActionSSE() {
+  if (_uiActionReconnectTimer) {
+    clearTimeout(_uiActionReconnectTimer);
+    _uiActionReconnectTimer = null;
+  }
+  if (_uiActionEventSource) {
+    try { _uiActionEventSource.close(); } catch (_) {}
+  }
+  _uiActionEventSource = null;
+  _uiActionLastActivity = 0;
+  _uiActionCreatedAt = 0;
+}
+
+function _reconnectUIActionSSE() {
+  _closeUIActionSSE();
+  _ensureUIActionSSE(true);
+}
+
+function _scheduleUIActionReconnect() {
+  if (_uiActionReconnectTimer) return;
+  _uiActionReconnectTimer = setTimeout(() => {
+    _uiActionReconnectTimer = null;
+    if (!_uiActionEventSource || _uiActionEventSource.readyState !== EventSource.OPEN) {
+      _reconnectUIActionSSE();
+    }
+  }, 1000);
+}
+
+function _uiActionSSEIsStale() {
+  if (!_uiActionEventSource) return false;
+  const now = Date.now();
+  if (_uiActionLastActivity && now - _uiActionLastActivity > 30000) return true;
+  return !_uiActionLastActivity && _uiActionCreatedAt
+    && now - _uiActionCreatedAt > 5000;
+}
+
+function _ensureUIActionSSE(force) {
   const busId = _uiActionConversationId();
+  if (force || _uiActionSSEIsStale()) _closeUIActionSSE();
   if (_uiActionEventSource && _uiActionEventSource.readyState !== EventSource.CLOSED) return;
   const token = getToken();
   const url = SSE_URL + '?conversation_id=' + encodeURIComponent(busId)
     + '&client_id=' + encodeURIComponent(_actionClientId() + ':actions')
     + (token ? '&token=' + encodeURIComponent(token) : '')
     + '&replay=true';
+  _uiActionCreatedAt = Date.now();
   _uiActionEventSource = new EventSource(url);
+  _uiActionEventSource.onopen = () => {
+    _uiActionLastActivity = Date.now();
+  };
+  _uiActionEventSource.addEventListener('sse_ping', () => {
+    _uiActionLastActivity = Date.now();
+  });
   _uiActionEventSource.addEventListener('command_result', (e) => {
+    _uiActionLastActivity = Date.now();
     const data = JSON.parse(e.data || '{}');
     _pushCommandResult(data);
   });
   _uiActionEventSource.onerror = () => {
-    // Browser EventSource handles retry. Drop the object only after the
-    // browser declares it closed so the next action can recreate it.
-    if (_uiActionEventSource && _uiActionEventSource.readyState === EventSource.CLOSED) {
+    // Browser EventSource can remain half-open across restarts. Recreate the
+    // per-tab action stream so context-menu actions do not wait forever on a
+    // dead command_result channel.
+    if (!_uiActionEventSource || _uiActionEventSource.readyState === EventSource.CLOSED) {
       _uiActionEventSource = null;
+      _uiActionLastActivity = 0;
+    } else {
+      _scheduleUIActionReconnect();
     }
   };
 }

@@ -627,6 +627,15 @@ def test_final_drain_only_suppresses_proven_text_preempt_rescue_messages():
     assert _preempt_rescue_requires_retrigger(http_msg, 101.0) is True
 
 
+def test_provider_compact_discards_pending_messages_already_in_compacted_context():
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    compact_block = src[
+        src.index("PawFlow compact: %d"):
+        src.index("# 3. Save compacted context + invalidate CC")]
+    assert "discard_msg_ids" in compact_block
+    assert "_compacted_ids" in compact_block
+
+
 def test_pending_wake_is_not_lost_while_conversation_is_still_active():
     loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
     poller_src = Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")

@@ -176,6 +176,22 @@ class TestLLMConnectionService:
         assert LLMClient(provider="openai", config={"timeout": ""}).timeout is None
         assert LLMClient(provider="openai", config={"timeout": 37}).timeout == 37
 
+    def test_permanent_request_errors_are_not_retryable(self):
+        client = LLMClient(provider="openai", config={})
+        assert client._is_permanent_request_error("HTTP 401 unauthorized") is True
+        assert client._is_permanent_request_error("403 permission_denied") is True
+        assert client._is_permanent_request_error("model_not_found") is True
+        assert client._is_permanent_request_error("HTTP 429 rate_limit") is False
+        assert client._is_permanent_request_error("HTTP 500 server_error") is False
+
+    def test_default_models_are_loaded_from_system_config(self):
+        src = open("core/llm_client.py", encoding="utf-8").read()
+        assert "DEFAULT_MODELS = {" not in src
+        with open("data/system/default_models.json", encoding="utf-8") as fh:
+            configured = json.load(fh)
+        assert LLMClient.DEFAULT_MODELS == configured
+        assert set(configured) >= {"openai", "anthropic", "claude-code", "codex-app-server", "gemini"}
+
 
 class TestInferLLMTask:
 

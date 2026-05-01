@@ -135,7 +135,7 @@ def test_codex_app_server_registers_live_app_server_session():
     assert "live_session.turn_lock.acquire()" in src
     assert "live_session.turn_lock.release()" in src
     assert "live_reg.ensure_sweeper" in src
-    assert "idle_ttl_seconds=int(getattr(self, \"timeout\", 1800) or 1800)" in src
+    assert "idle_ttl_seconds=int(_idle_ttl) if _idle_ttl else None" in src
     assert "active_turn=True" in src
     assert "active_turn=False" in src
 

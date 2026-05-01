@@ -1552,6 +1552,9 @@ function _checkServerRestart(data) {
   _lastRestartReconnectAt = now;
   console.warn('[SSE] server restart detected (start_time ' + prev
     + ' → ' + data.server_start_time + ') — reconnecting SSE');
+  if (typeof _reconnectUIActionSSE === 'function') {
+    try { _reconnectUIActionSSE(); } catch (_) {}
+  }
   if (conversationId) {
     if (eventSource) { try { eventSource.close(); } catch (_) {} eventSource = null; }
     if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }

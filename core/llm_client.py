@@ -14,6 +14,7 @@ import random
 import re
 import threading
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Union
 
@@ -27,6 +28,22 @@ from core.llm_providers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _load_default_models() -> Dict[str, str]:
+    path = Path(os.getenv(
+        "PAWFLOW_DEFAULT_MODELS_FILE",
+        Path(__file__).resolve().parents[1] / "data" / "system" / "default_models.json",
+    ))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("default models config unavailable at %s: %s", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        logger.warning("default models config must be an object: %s", path)
+        return {}
+    return {str(k): str(v) for k, v in data.items() if k and v}
 
 
 @dataclass
@@ -326,14 +343,7 @@ class LLMClient(
         "anthropic": "https://api.anthropic.com",
     }
 
-    DEFAULT_MODELS = {
-        "openai": "gpt-4o-mini",
-        "anthropic": "claude-opus-4-6",
-        "claude-code": "claude-opus-4-6",
-        "codex-app-server": "gpt-5.4",
-        "gemini": "gemini-2.5-pro",
-    }
-
+    DEFAULT_MODELS = _load_default_models()
 
     # Regex for parsing <tool_call>...</tool_call> tags from claude-code responses
     TOOL_CALL_RE = re.compile(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', re.DOTALL)
@@ -540,6 +550,27 @@ class LLMClient(
 
         # Can't parse exact overflow — return a conservative estimate
         return 4000
+
+    @staticmethod
+    def _is_permanent_request_error(error_text: str) -> bool:
+        """Return True for auth/config errors that retries cannot fix."""
+        text = error_text or ""
+        lower = text.lower()
+        if re.search(r'\b(400|401|403|404)\b', text):
+            return True
+        permanent_markers = (
+            "unauthorized",
+            "forbidden",
+            "invalid api key",
+            "invalid_api_key",
+            "incorrect api key",
+            "authentication_error",
+            "permission_denied",
+            "not found",
+            "model_not_found",
+            "invalid_request_error",
+        )
+        return any(marker in lower for marker in permanent_markers)
 
     @staticmethod
     def _parse_retry_after(error_text: str) -> float:
@@ -756,6 +787,11 @@ class LLMClient(
                             overflow, reduced,
                         )
 
+                if self._is_permanent_request_error(err_str):
+                    if isinstance(last_error, LLMClientError):
+                        raise last_error
+                    raise LLMClientError(str(last_error))
+
                 # Match HTTP codes as standalone tokens — plain substring
                 # matching fired false positives on captured CC PIDs like
                 # 165500 / 1429xx, turning our own intentional kills into
@@ -951,6 +987,11 @@ class LLMClient(
                             "would be non-positive (%d). Cannot auto-recover.",
                             overflow, reduced,
                         )
+
+                if self._is_permanent_request_error(err_str):
+                    if isinstance(last_error, LLMClientError):
+                        raise last_error
+                    raise LLMClientError(str(last_error))
 
                 # HTTP status codes matched as standalone tokens — plain
                 # substring matching was catastrophic: a captured CC

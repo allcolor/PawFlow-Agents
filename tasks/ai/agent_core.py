@@ -1622,6 +1622,19 @@ class AgentCoreMixin:
                             ))
                             logger.info("[agent:%s] PawFlow compact: %d → %d messages",
                                         conversation_id[:8], len(_full_messages), len(messages))
+                            try:
+                                from core.pending_queue import PendingQueue
+                                _compacted_ids = {
+                                    getattr(_m, "msg_id", "") for _m in messages
+                                    if getattr(_m, "msg_id", "")
+                                }
+                                PendingQueue.for_agent(
+                                    conversation_id, _agent_name or "").discard_msg_ids(
+                                        _compacted_ids)
+                            except Exception as _pq_err:
+                                logger.warning(
+                                    "[agent:%s] pending compact dedupe failed: %s",
+                                    conversation_id[:8], _pq_err)
 
                             # 3. Save compacted context + invalidate CC
                             # session: clear the extra AND purge the

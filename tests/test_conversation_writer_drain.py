@@ -135,6 +135,30 @@ def test_enqueue_message_requires_ts_and_seq(fake_store):
         w.enqueue_message(bad)
 
 
+def test_for_conversation_replaces_dead_writer(fake_store):
+    cid = "conv-dead-writer"
+    w = ConversationWriter.for_conversation(cid)
+    w._alive = False
+    w._stop = True
+
+    replacement = ConversationWriter.for_conversation(cid)
+
+    assert replacement is not w
+    replacement.enqueue_message(_msg(content="after restart"))
+    assert ConversationWriter.shutdown_all(wait_timeout=5.0)
+    assert [row[2]["content"] for row in fake_store.routed] == ["after restart"]
+
+
+def test_dead_writer_refuses_new_messages(fake_store):
+    cid = "conv-dead-refuse"
+    w = ConversationWriter.for_conversation(cid)
+    w._alive = False
+    w._stop = True
+
+    with pytest.raises(RuntimeError):
+        w.enqueue_message(_msg())
+
+
 def test_enqueue_message_sse_fires_after_persist(fake_store):
     """SSE events must fire only AFTER append_message returns (visible
     implies persisted). Verify by ordering: routed entry exists before

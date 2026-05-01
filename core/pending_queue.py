@@ -170,6 +170,54 @@ class PendingQueue:
                         self.agent_name or "_shared", _age_summary)
         return entries
 
+    def discard_msg_ids(self, msg_ids, sources=None) -> int:
+        """Remove queued entries whose msg_id is already represented elsewhere.
+
+        Used after provider-triggered compaction: the compacted context is
+        rebuilt from the flushed transcript, so matching pending entries would
+        replay the same user turn after the new provider session starts.
+        """
+        ids = {str(mid) for mid in (msg_ids or []) if mid}
+        source_set = {str(s) for s in (sources or []) if s} if sources else None
+        if not ids or self._path is None or not self._path.exists():
+            return 0
+        with self._lock:
+            kept: List[Dict] = []
+            removed = 0
+            try:
+                with open(self._path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        raw = line.strip()
+                        if not raw:
+                            continue
+                        try:
+                            entry = json.loads(raw)
+                        except Exception as e:
+                            logger.warning("[pending-queue] skipping corrupt line "
+                                            "in %s: %s", self._path, e)
+                            continue
+                        if not isinstance(entry, dict):
+                            continue
+                        if str(entry.get("msg_id") or "") in ids and (
+                                source_set is None
+                                or entry.get("_pending_source", "") in source_set):
+                            removed += 1
+                            continue
+                        kept.append(entry)
+            except FileNotFoundError:
+                return 0
+            tmp = self._path.with_suffix(".jsonl.tmp")
+            with open(tmp, "w", encoding="utf-8") as fh:
+                for entry in kept:
+                    fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            tmp.replace(self._path)
+        if removed:
+            logger.info("[pending-queue] discarded %d already-compacted "
+                        "message(s) from %s/%s",
+                        removed, self.conv_id[:8],
+                        self.agent_name or "_shared")
+        return removed
+
     def peek_count(self) -> int:
         """How many messages are waiting (no side effects)."""
         if self._path is None or not self._path.exists():

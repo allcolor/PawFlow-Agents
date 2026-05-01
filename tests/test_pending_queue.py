@@ -121,6 +121,26 @@ def test_concurrent_enqueue(fake_store):
     assert len(ids) == 50
 
 
+def test_discard_msg_ids_removes_only_matching_entries(fake_store):
+    q = PendingQueue.for_agent("c1", "claude")
+    q.enqueue(_msg("already compacted", "m1", 1), source="preempt_rescue")
+    q.enqueue(_msg("still pending", "m2", 2), source="http")
+
+    assert q.discard_msg_ids({"m1"}) == 1
+    drained = q.drain()
+    assert [m["msg_id"] for m in drained] == ["m2"]
+
+
+def test_discard_msg_ids_can_filter_by_source(fake_store):
+    q = PendingQueue.for_agent("c1", "claude")
+    q.enqueue(_msg("rescue", "m1", 1), source="preempt_rescue")
+    q.enqueue(_msg("normal", "m2", 2), source="http")
+
+    assert q.discard_msg_ids({"m1", "m2"}, sources={"preempt_rescue"}) == 1
+    drained = q.drain()
+    assert [m["msg_id"] for m in drained] == ["m2"]
+
+
 def test_all_nonempty_scan(fake_store):
     PendingQueue.for_agent("c1", "claude").enqueue(_msg("a", "m1", 1))
     PendingQueue.for_agent("c1", "qwen").enqueue(_msg("b", "m2", 2))

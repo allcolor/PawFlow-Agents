@@ -240,6 +240,7 @@ def _copy_runtime_files(out_dir: Path) -> None:
         ROOT / "tools" / "fs_common.py",
         ROOT / "tools" / "fs_http.py",
         ROOT / "tools" / "audio_capture.py",
+        ROOT / "tools" / "screen_actions.py",
         ROOT / "docker" / "pawflow_sdk" / "pawflow.py",
     ]:
         if not src.exists():

@@ -332,6 +332,24 @@ class ToolRelayService(BaseService):
             cancel_evt = info.get("cancel")
             if cancel_evt:
                 cancel_evt.set()
+            _hooks = list(info.get("kill_hooks") or [])
+            _success = 0
+            _failure = 0
+            for hook in _hooks:
+                try:
+                    hook()
+                    _success += 1
+                except Exception as _he:
+                    _failure += 1
+                    logger.warning(
+                        "[tool-relay] kill_hook failed for targeted %s tool=%s: %s",
+                        request_id, info.get("tool_name"), _he)
+            logger.info(
+                "[tool-relay] targeted cancel request=%s tool=%s "
+                "kill_hook_count=%d kill_hook_success=%d kill_hook_failed=%d",
+                request_id, info.get("tool_name", "?"),
+                len(_hooks), _success, _failure)
+            if cancel_evt:
                 logger.info("[tool-relay] cancelled request (cc_tc=%s)",
                             info.get("cc_tc_id") or request_id)
                 return True
@@ -1543,3 +1561,6 @@ def register_kill_hook(callback) -> None:
     if hooks is None:
         return
     hooks.append(callback)
+    cancel_evt = current_cancel_event()
+    if cancel_evt is not None and cancel_evt.is_set():
+        callback()

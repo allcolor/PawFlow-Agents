@@ -441,19 +441,32 @@ def test_live_badge_requires_reused_live_process():
     assert reused_data["active"][0]["codex_reuse_count"] == 1
 
 
-def test_interrupt_uses_live_user_stop_or_pending_user_stop():
-    """Interrupt must be a user STOP command delivered to the living agent.
-
-    CLI providers get it via send_user_message; providers that cannot accept a
-    mid-request message get the same user message queued for the next loop.
-    """
+def test_interrupt_uses_live_stop_or_silent_api_cancel():
+    """Interrupt is live steering for steerable providers, silent cancel for APIs."""
     src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
     assert "send_user_message(SOFT_INTERRUPT_USER_COMMAND)" in src
-    assert "PendingQueue.for_agent" in src
-    assert "source=\"interrupt\"" in src
-    assert "STOP user message queued" in src
+    assert "Interrupt means \"stop the current loop\" only" in src
+    assert "STOP user message queued" not in src
+    assert "source=\"interrupt\"" not in src
     assert "interrupt-synth" not in src
     assert "resp = client.complete_stream(" not in src
+
+
+def test_api_tool_execution_registers_kill_hooks_for_ui_kill():
+    src = Path("tasks/ai/agent_tool_exec.py").read_text(encoding="utf-8")
+    assert "ToolRelayService._inflight[tc.id]" in src
+    assert "_set_current_cancel_event(_cancel_event)" in src
+    assert "_set_current_kill_hooks(_kill_hooks)" in src
+    assert "ToolRelayService._inflight.pop(tc.id, None)" in src
+
+
+def test_screen_actions_have_server_side_timeout_and_cancel_pending():
+    screen_src = Path("core/handlers/screen.py").read_text(encoding="utf-8")
+    fs_src = Path("services/filesystem_service.py").read_text(encoding="utf-8")
+    assert '"timeout"' in screen_src
+    assert "_request_timeout=timeout" in screen_src
+    assert 'kwargs.pop("_request_timeout", None)' in fs_src
+    assert "self.cancel_pending(request_id)" in fs_src
 
 
 def test_accepted_live_preempt_keeps_pending_rescue():
@@ -555,14 +568,14 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     assert "emitter.check_cancelled()\n                        _cc_turn_count" in core_src
 
 
-def test_soft_interrupt_is_user_stop_command():
+def test_soft_interrupt_live_stop_is_not_persisted_for_api_fallback():
     policy_src = Path("core/interrupt_policy.py").read_text(encoding="utf-8")
     loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     cc_src = Path("core/llm_providers/claude_code.py").read_text(encoding="utf-8")
     assert "STOP IMMEDIATELY!" in policy_src
-    assert "\"role\": \"user\"" in loop_src
-    assert "\"content\": SOFT_INTERRUPT_USER_COMMAND" in loop_src
+    assert "send_user_message(SOFT_INTERRUPT_USER_COMMAND)" in loop_src
+    assert "\"content\": SOFT_INTERRUPT_USER_COMMAND" not in loop_src
     assert "SOFT_INTERRUPT_USER_COMMAND" in core_src
     assert "SOFT_INTERRUPT_USER_COMMAND" in cc_src
     assert "STOP IMMEDIATELY!" not in loop_src

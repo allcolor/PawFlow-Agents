@@ -64,6 +64,7 @@ class ScreenHandler(BaseFsHandler):
                 "key": {"type": "string", "description": "Key name: Enter, Tab, Escape, Space, Backspace, Delete, Up, Down, Left, Right, F1-F12, ctrl+c, alt+tab, etc."},
                 "button": {"type": "string", "description": "Mouse button: left (default), right, middle"},
                 "amount": {"type": "integer", "description": "Scroll amount (positive=down, negative=up, default 3)"},
+                "timeout": {"type": "number", "description": "Maximum seconds to wait for the relay screen action before cancelling it (default 30)."},
                 "relay": {"type": "string", "description": "Relay service name. Omit to auto-select."},
                 "local": {"type": "boolean", "description": "If true, act on the user's REAL desktop (relay → host helper). If false (default), act on the Docker virtual desktop (relay's Xvfb / container, i.e. the one started via /desktop docker)."},
             },
@@ -132,7 +133,13 @@ class ScreenHandler(BaseFsHandler):
         req_args = {k: v for k, v in arguments.items()
                     if k not in ("action", "relay")}
         try:
-            result = svc._request(f"screen_{action}", ".", **req_args)
+            timeout = float(req_args.pop("timeout", 30) or 30)
+        except (TypeError, ValueError):
+            timeout = 30
+        try:
+            result = svc._request(
+                f"screen_{action}", ".", _request_timeout=timeout,
+                **req_args)
         except Exception as e:
             err = str(e)
             if "Unknown action" in err or "not supported" in err:

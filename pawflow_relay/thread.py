@@ -401,6 +401,7 @@ class RelayThread:
                 (_tools_dir, "fs_common.py"),
                 (_tools_dir, "fs_http.py"),
                 (_tools_dir, "audio_capture.py"),
+                (_tools_dir, "screen_actions.py"),
                 (_sdk_dir, "pawflow.py"),
             ]
             for _src_dir, _rf in _src_files:

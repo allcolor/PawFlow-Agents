@@ -849,6 +849,7 @@ class RelayService(BaseService):
                 f"--server wss://<server_host>:<server_port>/ws/relay/{self._service_id} "
                 f"--relay-id {self._service_id} --token <token> --dir <path>"
             )
+        wait_timeout = kwargs.pop("_request_timeout", None)
 
         request_id = uuid.uuid4().hex[:12]
         evt = threading.Event()
@@ -883,7 +884,9 @@ class RelayService(BaseService):
         except Exception:
             pass
 
-        evt.wait()  # no limit — relay operations take as long as they take
+        if not evt.wait(timeout=wait_timeout):
+            self.cancel_pending(request_id)
+            raise Exception(f"Relay timeout for {action} on {self._service_id}")
 
         if "error" in holder:
             raise Exception(holder["error"])

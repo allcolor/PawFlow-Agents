@@ -87,6 +87,7 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
     assert (out_dir / "run-relay.sh").exists()
     assert (out_dir / "runtime" / "pawflow_relay_launcher.py").exists()
     assert (out_dir / "runtime" / "fs_actions.py").exists()
+    assert (out_dir / "runtime" / "screen_actions.py").exists()
     assert (out_dir / "runtime" / "pawflow.py").exists()
     assert (out_dir / "runtime" / "pawflow_relay" / "__init__.py").exists()
     assert "relay.base" in manifest["features"]

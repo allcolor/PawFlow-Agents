@@ -837,45 +837,12 @@ class AgentLoopTask(
             return
 
         # LLM API streams are not transport-bidirectional once the HTTP request
-        # is in flight. Preserve the same semantic model by queuing the STOP as
-        # the next user message, then stopping the current loop and waking an
-        # immediate follow-up turn. The next turn sees a normal user message,
-        # not a synthetic system prompt.
-        try:
-            from core.conversation_store import ConversationStore
-            from core.conversation_writer import ConversationWriter
-            from core.pending_queue import PendingQueue
-            import time as _time
-            import uuid as _uuid
-
-            _meta = ConversationStore.instance().get_metadata(conversation_id)
-            _uid = _meta.get("user_id", "") if _meta else ""
-            _stop_msg = {
-                "role": "user",
-                "content": SOFT_INTERRUPT_USER_COMMAND,
-                "source": {"type": "user", "interrupt": True,
-                           "name": _uid},
-                "msg_id": _uuid.uuid4().hex[:12],
-                "ts": _time.time(),
-            }
-            ConversationWriter.for_conversation(conversation_id).enqueue_message(
-                _stop_msg, agent_name=agent_name or "", user_id=_uid)
-            PendingQueue.for_agent(conversation_id, agent_name or "").enqueue(
-                _stop_msg, source="interrupt")
-            logger.info(
-                f"[agent:{conversation_id[:8]}] interrupt queued as user STOP "
-                f"for '{agent_name or 'agent'}'")
-        except Exception:
-            logger.error("[interrupt] failed to queue STOP user message", exc_info=True)
-
+        # is in flight. Interrupt means "stop the current loop" only: do not
+        # inject a synthetic STOP user message into the transcript/context.
+        logger.info(
+            f"[agent:{conversation_id[:8]}] interrupt cancels active loop "
+            f"for non-steerable provider '{agent_name or 'agent'}'")
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
-        try:
-            from core.poll_scheduler import PollScheduler
-            PollScheduler.instance().schedule(
-                conversation_id, delay_seconds=0,
-                reason="[interrupt] STOP user message queued")
-        except Exception:
-            logger.debug("interrupt wake scheduling failed", exc_info=True)
         return
 
 

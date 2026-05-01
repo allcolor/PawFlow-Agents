@@ -103,6 +103,7 @@ def test_relay_desktop_prepare_runtime_script_declares_required_payload():
     script = (DESKTOP / "scripts" / "prepare-runtime.js").read_text(encoding="utf-8")
     assert "pawflow_relay_launcher.py" in script
     assert "fs_actions.py" in script
+    assert "screen_actions.py" in script
     assert "docker', 'pawflow_sdk', 'pawflow.py'" in script
     assert "config', 'relay_image_catalog.json'" in script
     assert "scripts', 'generate-relay-image.py'" in script
@@ -119,6 +120,7 @@ def test_relay_desktop_generated_runtime_has_required_payload():
     runtime = DESKTOP / "runtime"
     assert (runtime / "tools" / "pawflow_relay_launcher.py").is_file()
     assert (runtime / "tools" / "fs_actions.py").is_file()
+    assert (runtime / "tools" / "screen_actions.py").is_file()
     assert (runtime / "docker" / "pawflow_sdk" / "pawflow.py").is_file()
     assert (runtime / "config" / "relay_image_catalog.json").is_file()
     assert (runtime / "scripts" / "generate-relay-image.py").is_file()

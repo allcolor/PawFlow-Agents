@@ -142,7 +142,34 @@ class AgentToolExecMixin:
                     h.set_source_agent(agent_name, agent_svc)
                     h.set_delegate_tc_id(tc.id)
                     break
+            _tool_relay_bound = False
+            _kill_hooks = []
+            _cancel_event = threading.Event()
+            _background_event = threading.Event()
             try:
+                # API-provider tools execute directly in this pool, not through
+                # ToolRelayService._handle_execute. Register the same in-flight
+                # metadata so UI Kill can target tc.id and invoke hooks from
+                # nested relay requests (screen/local screenshots, bash, etc.).
+                from services.tool_relay_service import (
+                    ToolRelayService, _set_current_cancel_event,
+                    _set_current_kill_hooks)
+                with ToolRelayService._inflight_lock:
+                    ToolRelayService._inflight[tc.id] = {
+                        "conv": conversation_id,
+                        "agent": agent_name,
+                        "cancel": _cancel_event,
+                        "background": _background_event,
+                        "cc_tc_id": tc.id,
+                        "bg_tc_id": tc.id,
+                        "tool_name": tc.name,
+                        "args_hash": "",
+                        "started_at": time.time(),
+                        "kill_hooks": _kill_hooks,
+                    }
+                _set_current_cancel_event(_cancel_event)
+                _set_current_kill_hooks(_kill_hooks)
+                _tool_relay_bound = True
                 # Resolve $VAR / ${VAR} in arguments before execution
                 if _all_env:
                     _skip = set()
@@ -217,6 +244,15 @@ class AgentToolExecMixin:
             except Exception as e:
                 logger.error("Tool '%s' failed: %s", tc.name, e)
                 return tc, f"Error: {e}"
+            finally:
+                if _tool_relay_bound:
+                    try:
+                        _set_current_cancel_event(None)
+                        _set_current_kill_hooks(None)
+                        with ToolRelayService._inflight_lock:
+                            ToolRelayService._inflight.pop(tc.id, None)
+                    except Exception:
+                        logger.debug("exception suppressed", exc_info=True)
 
         from concurrent.futures import ThreadPoolExecutor, wait
         import core.background_tool as _bg

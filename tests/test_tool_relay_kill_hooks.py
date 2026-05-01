@@ -15,6 +15,7 @@ from services.tool_relay_service import (
     ToolRelayService,
     register_kill_hook,
     _set_current_kill_hooks,
+    _set_current_cancel_event,
     current_cancel_event,
 )
 
@@ -51,6 +52,15 @@ def test_cancel_agent_invokes_kill_hooks():
     hooks.append(lambda: fired.append("b"))
     ToolRelayService.cancel_agent("c1", "claude")
     assert fired == ["a", "b"]
+
+
+def test_cancel_request_invokes_kill_hooks():
+    cancel, _, hooks = _make_inflight("r1")
+    fired = []
+    hooks.append(lambda: fired.append("targeted"))
+    assert ToolRelayService.cancel_request("r1") is True
+    assert cancel.is_set()
+    assert fired == ["targeted"]
 
 
 def test_cancel_agent_skips_other_conversations():
@@ -102,6 +112,21 @@ def test_register_kill_hook_appends_to_thread_local_list():
         register_kill_hook(_h)
         assert hooks == [_h]
     finally:
+        _set_current_kill_hooks(None)
+
+
+def test_register_kill_hook_runs_immediately_when_already_cancelled():
+    hooks: list = []
+    cancel = threading.Event()
+    cancel.set()
+    fired = []
+    _set_current_kill_hooks(hooks)
+    _set_current_cancel_event(cancel)
+    try:
+        register_kill_hook(lambda: fired.append("late"))
+        assert fired == ["late"]
+    finally:
+        _set_current_cancel_event(None)
         _set_current_kill_hooks(None)
 
 

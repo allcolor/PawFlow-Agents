@@ -1,0 +1,71 @@
+# PawFlow Relay Client
+
+PawFlow relay lifecycle is separate from PawFlow clients.
+
+- Webchat, PawCode, VS Code, and API clients open conversations and send messages.
+- Server relays are created and started from the webchat resource panel.
+- Client relays are started by the standalone PawFlow Relay client on the machine that owns the files or desktop.
+
+This separation keeps PawCode and the VS Code extension equivalent to the webchat: they do not create, start, stop, or own relays.
+
+## CLI
+
+The standalone relay client is exposed as `pawflow-relay` when installed from the Python package, or as `python -m pawflow_relay` from a checkout.
+
+Add a server profile:
+
+```bash
+pawflow-relay server add prod https://pawflow.example:9090 --gateway-key RoyBetty
+```
+
+Login to the server:
+
+```bash
+pawflow-relay server login prod
+```
+
+Add a local workspace share:
+
+```bash
+pawflow-relay workspace add repo --server prod --path ~/src/project --mode rw
+```
+
+Start the relay:
+
+```bash
+pawflow-relay start repo
+```
+
+The legacy direct mode remains available for low-level scripting:
+
+```bash
+python -m pawflow_relay --server https://pawflow.example:9090 --dir ~/src/project
+```
+
+## Local State
+
+The relay client stores server and workspace profiles outside the project tree:
+
+- Linux/macOS: `~/.pawflow/relay/`
+- Windows: `%APPDATA%\\PawFlow\\relay\\`
+- Override: `PAWFLOW_RELAY_HOME=/custom/path`
+
+Profiles are split into `servers.json` and `workspaces.json`. Gateway keys and session tokens are currently stored in this local profile; the desktop client should migrate secrets to the OS keychain before a stable release.
+
+## Relay Desktop
+
+The first Electron Relay Desktop slice lives in `pawflow-relay-desktop/`. It uses the same local state as the CLI and manages:
+
+- server profiles: URL, private gateway key, login status;
+- workspace shares: path, read/write mode, relay image/profile, local execution permission;
+- running relay processes and logs.
+
+Run it from a checkout:
+
+```bash
+cd pawflow-relay-desktop
+npm install
+npm start
+```
+
+PawCode and VS Code should not grow relay management screens. If a conversation has no linked relay, they can show server state, but relay creation and attachment remains a webchat/server-resource or Relay Desktop responsibility.

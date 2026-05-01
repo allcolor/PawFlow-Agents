@@ -1,9 +1,11 @@
-"""PawFlow Relay — orchestrator + standalone entry point.
+"""PawFlow Relay — standalone client and low-level relay thread.
 
 Usage:
-    Standalone: python -m pawflow_relay --dir /path --server https://...
-    PawCode:    from pawflow_relay import RelayThread
-    VS Code:    spawn `python -m pawflow_relay --dir ... --token ...`
+    Managed client: pawflow-relay server add ...; pawflow-relay start ...
+    Legacy direct:  python -m pawflow_relay --dir /path --server https://...
+
+PawCode, VS Code, and API frontends are PawFlow clients only; they do not own
+relay lifecycle.
 """
 
 from pawflow_relay.thread import RelayThread  # noqa: F401

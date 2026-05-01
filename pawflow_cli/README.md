@@ -1,6 +1,6 @@
 # PawCode — Terminal Frontend for PawFlow
 
-PawCode is a CLI application that connects to PawFlow as a terminal-based chat frontend, like Claude Code is to Claude. It auto-mounts your working directory as a filesystem relay.
+PawCode is a CLI application that connects to PawFlow as a terminal-based chat frontend, like Claude Code is to Claude. It does not manage relay lifecycle; use webchat resources or the standalone `pawflow-relay` client for filesystem and desktop access.
 
 ## Quick Start
 
@@ -8,7 +8,7 @@ PawCode is a CLI application that connects to PawFlow as a terminal-based chat f
 # Install dependencies
 pip install prompt_toolkit rich tiktoken
 
-# Run (opens browser for OAuth login, auto-mounts CWD)
+# Run (opens browser for OAuth login when needed)
 python -m pawflow_cli --dir .
 
 # With custom server
@@ -18,7 +18,7 @@ PAWFLOW_SERVER=http://myserver:9090 python -m pawflow_cli
 ## Features
 
 - **Streaming chat** with Rich markdown rendering
-- **Auto-relay** — mounts your directory as a filesystem service
+- **Shared relay bindings** — uses relays already linked to the conversation
 - **70+ slash commands** — full feature parity with web chat
 - **Tab completion** for all commands
 - **Multiline input** — Alt+Enter for newline, Enter to send
@@ -29,7 +29,7 @@ PAWFLOW_SERVER=http://myserver:9090 python -m pawflow_cli
 - **Approval dialogs** for tool/exec permissions
 - **File explorer** — /explore for interactive file browsing
 - **Security scanning** — /call security_scan
-- **Git integration** — /diff, /run, all git operations via agent
+- **Git integration** — /diff, /run via linked relays where available
 
 ## Key Commands
 
@@ -48,10 +48,10 @@ PAWFLOW_SERVER=http://myserver:9090 python -m pawflow_cli
 - `/stop <agent> [-f]` — Interrupt/cancel
 
 ### Development
-- `/run <command>` — Shell command on relay
-- `/diff [ref]` — Colored git diff
+- `/run <command>` — Shell command through a linked relay
+- `/diff [ref]` — Colored git diff through a linked relay
 - `/plan <description>` — Read-only strategy mode
-- `/watch <file>` — Monitor file for changes
+- `/watch <file>` — Monitor file for changes through a linked relay
 - `/view <path|url>` — Open in browser
 
 ### Resources
@@ -73,15 +73,15 @@ PAWFLOW_SERVER=http://myserver:9090 python -m pawflow_cli
 
 ## Architecture
 
-PawCode is a pure HTTP/SSE client — it connects to the same PawFlow backend as the web chat. The relay runs in-process, mounting your directory via WebSocket.
+PawCode is a pure HTTP/SSE client. Relay-backed tools operate through relay services linked to the conversation on the PawFlow server.
 
 ```
 ┌─────────────────────────┐
 │     PawCode Terminal     │
 │  prompt_toolkit + Rich   │
-│  SSE thread + Relay      │
+│  SSE client              │
 └───────────┬─────────────┘
-            │ HTTP POST + SSE GET + WS
+            │ HTTP POST + SSE GET
             ▼
 ┌─────────────────────────┐
 │    PawFlow Server        │

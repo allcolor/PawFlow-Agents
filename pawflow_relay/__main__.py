@@ -1,6 +1,12 @@
-"""Standalone entry point: python -m pawflow_relay
+"""Standalone entry point: python -m pawflow_relay.
 
-Launches the relay orchestrator (same as PawCode, without the shell).
+The default interface is the relay client manager:
+
+    python -m pawflow_relay server add local https://pawflow.example:9090
+    python -m pawflow_relay workspace add repo --server local --path .
+    python -m pawflow_relay start repo
+
+The legacy direct mode is still available with --server/--dir.
 """
 
 import argparse
@@ -9,7 +15,15 @@ import signal
 import sys
 
 
-def main():
+_MANAGER_COMMANDS = {"server", "workspace", "start", "status"}
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in _MANAGER_COMMANDS:
+        from pawflow_relay.manager_cli import main as manager_main
+        return manager_main(argv)
+
     parser = argparse.ArgumentParser(
         prog="pawflow-relay",
         description="PawFlow Relay — connect a directory to a PawFlow server")
@@ -31,7 +45,7 @@ def main():
                         help="Session token (skip login)")
     parser.add_argument("--username", default="",
                         help="Username (required if --token is provided)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Acquire gateway cookie if key provided
     gateway_cookie = ""
@@ -132,4 +146,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main() or 0)

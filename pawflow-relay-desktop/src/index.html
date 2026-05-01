@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PawFlow Relay Desktop</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">P</div>
+      <div>
+        <h1>PawFlow Relay</h1>
+        <p>Client relay manager</p>
+      </div>
+    </div>
+
+    <nav class="tree" aria-label="Relay resources">
+      <section class="tree-section">
+        <div class="tree-title">
+          <span>Servers</span>
+          <button id="addServerBtn" title="Add server">+</button>
+        </div>
+        <div id="serverTree" class="tree-items"></div>
+      </section>
+
+      <section class="tree-section">
+        <div class="tree-title">
+          <span>Relays</span>
+          <button id="addWorkspaceBtn" title="Add relay workspace">+</button>
+        </div>
+        <div id="workspaceTree" class="tree-items"></div>
+      </section>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h2 id="panelTitle">Relay Manager</h2>
+        <p id="panelSubtitle">Select an item or create a server/workspace.</p>
+      </div>
+      <div class="top-actions">
+        <button id="refreshBtn" class="secondary">Refresh</button>
+      </div>
+    </header>
+
+    <section id="detailPanel" class="detail-panel"></section>
+
+    <section class="logs-panel">
+      <div class="logs-head">
+        <h3>Logs</h3>
+        <button id="clearLogsBtn" class="secondary">Clear</button>
+      </div>
+      <pre id="logs"></pre>
+    </section>
+  </main>
+
+  <div id="contextMenu" class="context-menu hidden"></div>
+  <div id="toast" role="status"></div>
+  <script src="renderer.js"></script>
+</body>
+</html>

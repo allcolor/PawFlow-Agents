@@ -22,7 +22,7 @@ Services are reusable integrations configured by id and referenced from flows, a
 
 | Type | Purpose |
 |---|---|
-| `relay` | WebSocket relay to a user machine, PawCode, VS Code, or relay process. |
+| `relay` | WebSocket relay to a user machine via server relay or standalone relay client. |
 | `toolRelay` | Tool relay/MCP bridge for containerized scripts and CLI providers. |
 | `filesystem` | Server-side filesystem service. |
 | `googleDrive` | Google Drive filesystem backend. |

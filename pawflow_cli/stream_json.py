@@ -6,7 +6,6 @@ This allows any tool that integrates with Claude Code (VS Code, Agent SDK, etc.)
 to use PawCode instead.
 """
 
-import atexit
 import json
 import queue
 import signal
@@ -17,7 +16,6 @@ from uuid import uuid4
 
 from pawflow_cli.api import AgentAPIClient, SSEClient
 from pawflow_cli.auth import authenticate
-from pawflow_cli.relay import RelayThread
 from pawflow_cli.stream_events import translate_sse_event
 
 
@@ -37,7 +35,6 @@ class StreamJsonMode:
         self.session_id = ""
         self._api = None   # AgentAPIClient
         self._sse = None   # SSEClient
-        self._relay = None  # RelayThread
 
     def run(self):
         """Main loop: emit init, read stdin NDJSON, dispatch, emit results."""
@@ -51,15 +48,8 @@ class StreamJsonMode:
             self._api = AgentAPIClient(
                 self.server_url, self.session_token, self.gateway_cookie)
 
-            # Start relay (same as interactive PawCode)
-            self._relay = RelayThread(
-                self.server_url, self.session_token, self.username,
-                self.directory,
-                docker_image=self.docker_image,
-                gateway_cookie=self.gateway_cookie,
-            )
-            self._relay.start()
-            atexit.register(self._cleanup)
+            # PawCode stream-json is a chat client only. Filesystem relay
+            # lifecycle is managed by the standalone pawflow-relay client.
 
             # Handle SIGINT gracefully
             def _sig(sig, frame):
@@ -253,16 +243,10 @@ class StreamJsonMode:
         sys.stderr.flush()
 
     def _cleanup(self):
-        """Disconnect SSE, stop relay."""
+        """Disconnect SSE."""
         if self._sse:
             try:
                 self._sse.disconnect()
             except Exception:
                 pass
             self._sse = None
-        if self._relay:
-            try:
-                self._relay.stop()
-            except Exception:
-                pass
-            self._relay = None

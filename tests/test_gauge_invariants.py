@@ -32,6 +32,7 @@ _RESOURCES_JS = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8"
 _SERVICES_JS = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
 _TABS_JS = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
 _FLOW_GRAPH_HTML = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
+_MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
 _AGENT_CONTEXT_PY = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
 _AGENT_CORE_PY = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 _CONTEXT_OPS_PY = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
@@ -87,6 +88,23 @@ def test_flow_graph_opens_reactflow_via_blob_to_avoid_frame_refusal():
     assert '<link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.6.0/dist/style.css">' not in _FLOW_GRAPH_HTML
     assert "panOnDrag: true" in _FLOW_GRAPH_HTML
     assert "zoomOnScroll: true" in _FLOW_GRAPH_HTML
+
+
+def test_chat_tool_display_unwraps_meta_use_tool_calls():
+    assert "function _unwrapDisplayedToolCall" in _MESSAGES_JS
+    assert "mcp_pawflow_use_tool" in _MESSAGES_JS
+    assert "mcp__pawflow__use_tool" in _MESSAGES_JS
+    assert "toolArgs.tool_name" in _MESSAGES_JS
+    assert "toolArgs.arguments || {}" in _MESSAGES_JS
+
+
+def test_iteration_status_updates_state_without_polluting_chat_timeline():
+    start = _SSE_JS.index("eventSource.addEventListener('iteration_status'")
+    end = _SSE_JS.index("eventSource.addEventListener('flowfile_in'", start)
+    block = _SSE_JS[start:end]
+    assert "updateActivePanel()" in block
+    assert "document.getElementById('status').textContent" in block
+    assert "addMsg(" not in block
 
 
 def test_compact_progress_done_applies_gauge_immediately():
@@ -224,8 +242,37 @@ def test_list_resources_uses_cached_stored_context_usage():
     src = Path("tasks/ai/actions/agent_resource.py").read_text(encoding="utf-8")
     assert "def _stored_context_usage" in src
     assert 'existing.get("message_count") is not None' in src
-    assert "context_usage_from_cache" in src
-    assert 'store.set_extra(conv_id, "context_usage", context_usage_map)' in src
+    list_resources_block = src[
+        src.index('if action == "list_resources":'):
+        src.index('if action == "get_resource_detail":')]
+    assert "context_usage_from_cache" not in list_resources_block
+    assert "load_agent_context" not in list_resources_block
+    assert 'store.set_extra(conv_id, "context_usage", context_usage_map)' not in list_resources_block
+
+
+def test_audio_frontend_never_opens_stream_without_token():
+    audio_src = Path("tasks/io/chat_ui/audio.js").read_text(encoding="utf-8")
+    terminal_src = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
+    tabs_src = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
+
+    assert "if (!sessionId || !_audioToken)" in audio_src
+    assert "if (resp.audio_session && resp.audio_token)" in terminal_src
+    assert "audioConnect(resp.audio_session, resp.audio_token)" in terminal_src
+    assert "audioConnect(resp.audio_session, resp.audio_token || '')" not in terminal_src
+    assert "audioConnect(resp.audio_session);" not in terminal_src
+    assert "panel.dataset.audioToken = audioToken || ''" in tabs_src
+    assert "activeAudioTab.dataset.audioToken" in audio_src
+    assert "if (!sid || !token)" in audio_src
+    assert "audioConnect(sid, token)" in audio_src
+
+
+def test_open_desktop_backend_does_not_emit_audio_session_without_token():
+    src = Path("tasks/ai/actions/service_flow.py").read_text(encoding="utf-8")
+    assert "_audio_token = register_audio_source" in src
+    assert '"audio_session": session_id if _audio_token else ""' in src
+    assert '"audio_session": _sid if _audio_token else ""' in src
+    assert '"audio_session": session_id,\n                "audio_token": _audio_lookup_token(session_id)' not in src
+    assert '"audio_session": _sid,\n                            "audio_token": _audio_lookup_token(_sid)' not in src
 
 
 def test_list_active_reports_live_pawflow_context_usage():
@@ -427,8 +474,10 @@ def test_final_drain_only_suppresses_proven_preempt_rescue_messages():
     emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     assert "_msg._pending_source = _qmsg.get(\"_pending_source\"" in emitter_src
+    assert "_msg._pending_enqueued_at = _qmsg.get(\"_pending_enqueued_at\"" in emitter_src
     assert "_unhandled_user_msgs" in core_src
-    assert 'getattr(m, "_pending_source", "") != "preempt_rescue"' in core_src
+    assert '_pending_source != "preempt_rescue"' in core_src
+    assert "_enqueued_at > _provider_response_completed_at" in core_src
 
 
 def test_pending_wake_is_not_lost_while_conversation_is_still_active():

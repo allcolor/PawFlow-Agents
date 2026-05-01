@@ -105,6 +105,7 @@ sdk = [
 
 [project.scripts]
 pawflow = "cli:main"
+pawflow-relay = "pawflow_relay.manager_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/allcolor/PawFlow-Agents"
@@ -143,5 +144,8 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
-include = ["core*", "engine*", "tasks*", "services*", "api*", "gui*", "pawflow_sdk*"]
+include = [
+    "core*", "engine*", "tasks*", "services*", "api*", "gui*",
+    "pawflow_sdk*", "pawflow_relay*", "pawflow_cli*",
+]
 exclude = ["tests*"]

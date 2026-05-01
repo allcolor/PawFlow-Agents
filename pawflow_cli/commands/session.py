@@ -107,17 +107,11 @@ def handle_session_commands(app, cmd, arg, text):
 
 
 def _connect_relay(app, path: str):
-    """Connect filesystem relay to a directory. Default: current workspace."""
-    directory = path or app.directory
-    if directory:
-        directory = os.path.abspath(os.path.expanduser(directory))
-        if not os.path.isdir(directory):
-            app.renderer.print_error(f"Directory not found: {directory}")
-            return
-    try:
-        app.connect_relay(directory)
-    except Exception as e:
-        app.renderer.print_error(f"Relay failed: {e}")
+    """Relay lifecycle moved to webchat resources or pawflow-relay."""
+    app.renderer.print_error(
+        "PawCode no longer manages relays. Use webchat resources for server "
+        "relays, or run `pawflow-relay workspace add ...` and `pawflow-relay start ...`."
+    )
 
 
 def _list_bg_tools(app):
@@ -162,14 +156,5 @@ def _cancel_bg_tool(app, tc_id: str):
 
 
 def _disconnect_relay(app, path: str):
-    """Disconnect filesystem relay."""
-    if not app.relay or not app.relay._registered:
-        app.renderer.print_system("No relay connected.")
-        return
-
-    app.renderer.print_system(f"Disconnecting relay ({app.relay.directory})...")
-    try:
-        app.relay.stop()
-        app.renderer.print_system("Relay disconnected.")
-    except Exception as e:
-        app.renderer.print_error(f"Error: {e}")
+    """Relay lifecycle moved to webchat resources or pawflow-relay."""
+    app.renderer.print_system("PawCode has no managed relay to disconnect.")

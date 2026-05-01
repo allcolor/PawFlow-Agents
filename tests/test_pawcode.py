@@ -31,24 +31,11 @@ class TestPawCodeImports:
         from pawflow_cli.config import load_config, save_config, load_session
         assert load_config is not None
 
-    def test_stream_json_constructs_relay_with_keyword_docker_image(self, monkeypatch):
-        """stream-json must not pass allow_exec as RelayThread's docker_image."""
+    def test_stream_json_does_not_start_relay(self, monkeypatch):
+        """PawCode stream-json is a chat client and does not own relay lifecycle."""
         import io
         import sys
         from pawflow_cli import stream_json as sj
-
-        captured = {}
-
-        class FakeRelayThread:
-            def __init__(self, *args, **kwargs):
-                captured["args"] = args
-                captured["kwargs"] = kwargs
-
-            def start(self):
-                captured["started"] = True
-
-            def stop(self):
-                captured["stopped"] = True
 
         class FakeAPI:
             def __init__(self, *args, **kwargs):
@@ -57,15 +44,12 @@ class TestPawCodeImports:
         monkeypatch.setattr(sj, "authenticate", lambda *a, **k: {
             "token": "tok", "username": "alice"})
         monkeypatch.setattr(sj, "AgentAPIClient", FakeAPI)
-        monkeypatch.setattr(sj, "RelayThread", FakeRelayThread)
         monkeypatch.setattr(sys, "stdin", io.StringIO(""))
         monkeypatch.setattr(sys, "stdout", io.StringIO())
 
         mode = sj.StreamJsonMode("http://server", ".", docker_image="img")
         assert mode.run() == 0
-        assert captured["args"] == ("http://server", "tok", "alice", mode.directory)
-        assert captured["kwargs"]["docker_image"] == "img"
-        assert captured["started"] is True
+        assert not hasattr(sj, "RelayThread")
 
 
 class TestRelayId:
@@ -180,6 +164,17 @@ class TestFuzzyEdit:
         f.write_text("hello world\n")
         req = {"old_string": "hello world", "new_string": "goodbye world"}
         result = action_edit(str(tmp_path), str(f), req)
+        assert result["replacements"] == 1
+        assert f.read_text() == "goodbye world\n"
+
+    def test_edit_accepts_old_str_new_str_aliases(self, tmp_path):
+        from tools.fs_actions import action_edit
+        f = tmp_path / "test.txt"
+        f.write_text("hello world\n")
+        result = action_edit(str(tmp_path), str(f), {
+            "old_str": "hello world",
+            "new_str": "goodbye world",
+        })
         assert result["replacements"] == 1
         assert f.read_text() == "goodbye world\n"
 

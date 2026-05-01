@@ -225,8 +225,8 @@ class ToolRegistry:
                         if _cc_name not in _schema_props:
                             args[_pf_name] = args.pop(_cc_name)
                 try:
-                    from core.handlers.meta_tools import _normalize_tool_args
-                    args = _normalize_tool_args(name, args)
+                    from core.handlers.meta_tools import _normalize_tool_args, _schema_with_local
+                    args = _normalize_tool_args(name, args, _schema_with_local(handler))
                 except Exception:
                     pass
             # Validate: reject unknown arguments so the LLM learns

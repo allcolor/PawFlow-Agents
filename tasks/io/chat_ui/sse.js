@@ -421,19 +421,6 @@ function connectSSE(cid, onReady, opts) {
     updateActivePanel();
     document.getElementById('status').textContent =
       t('iterStatus', {agent: displayAgentName(agentName), i: data.iteration, r: data.round, mr: data.max_rounds, t: data.total_tools});
-    // Multi-tour: show compact progress message in chat when iteration advances
-    if (data.iteration > 1 || data.round > 1) {
-      const lastShown = activeInteractions[aKey] ? activeInteractions[aKey]._lastShownIter : undefined;
-      if (data.iteration !== lastShown) {
-        addMsg('system-compact', t('iterProgress', {
-          agent: displayAgentName(agentName), i: data.iteration, r: data.round,
-          mr: data.max_rounds, t: data.total_tools
-        }));
-        if (activeInteractions[aKey]) {
-          activeInteractions[aKey]._lastShownIter = data.iteration;
-        }
-      }
-    }
   });
 
   // FlowFile incoming indicator

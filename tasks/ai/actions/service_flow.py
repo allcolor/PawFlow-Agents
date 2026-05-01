@@ -1369,7 +1369,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         if not source_svc:
             flowfile.set_content(json.dumps({
                 "error": f"No connected relay found{' for ' + relay_source if relay_source else ''}. "
-                         "Connect a relay first (pawcode, vscode plugin, or python relay)."
+                         "Connect a server relay or standalone pawflow-relay client first."
             }).encode())
             return [flowfile]
 
@@ -2198,22 +2198,23 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             login_session_id=_login_sid)
                         _ensure_vnc_routes()
                         # Re-register audio for already-running desktop
+                        _audio_token = ""
                         try:
                             from services.audio_proxy import register_audio_source
                             _audio_port = status.get("local_screen_audio_port")
                             if _audio_port:
                                 _relay_addr = getattr(svc, '_relay_addr', None) or '127.0.0.1'
-                                register_audio_source(_sid, _relay_addr, _audio_port,
-                                                              owner_user_id=user_id,
-                                                              login_session_id=_login_sid)
+                                _audio_token = register_audio_source(_sid, _relay_addr, _audio_port,
+                                                                     owner_user_id=user_id,
+                                                                     login_session_id=_login_sid)
                         except Exception:
                             pass
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True, "local_screen": True,
                             "relay_id": relay_id,
                             "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/{_vtok}/websockify",
-                            "audio_session": _sid,
-                            "audio_token": _audio_lookup_token(_sid),
+                            "audio_session": _sid if _audio_token else "",
+                            "audio_token": _audio_token,
                         }).encode())
                         return [flowfile]
                 else:
@@ -2228,6 +2229,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             login_session_id=_login_sid)
                         _ensure_vnc_routes()
                         # Re-register audio for already-running desktop
+                        _audio_token = ""
                         try:
                             from services.audio_proxy import register_audio_source
                             _ahp = 0
@@ -2242,17 +2244,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             if not _ahp:
                                 _ahp = _get_container_port(relay_id, 6180)
                             if _ahp:
-                                register_audio_source(_sid, "127.0.0.1", _ahp,
-                                                              owner_user_id=user_id,
-                                                              login_session_id=_login_sid)
+                                _audio_token = register_audio_source(_sid, "127.0.0.1", _ahp,
+                                                                     owner_user_id=user_id,
+                                                                     login_session_id=_login_sid)
                         except Exception:
                             pass
                         flowfile.set_content(json.dumps({
                             "ok": True, "already_running": True,
                             "relay_id": relay_id,
                             "url": f"/vnc/{_sid}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/{_vtok}/websockify",
-                            "audio_session": _sid,
-                            "audio_token": _audio_lookup_token(_sid),
+                            "audio_session": _sid if _audio_token else "",
+                            "audio_token": _audio_token,
                         }).encode())
                         return [flowfile]
 
@@ -2296,15 +2298,16 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             _ensure_vnc_routes()
 
             # Register audio source if available
+            _audio_token = ""
             try:
                 from services.audio_proxy import register_audio_source
                 if local_screen:
                     # Local relay: audio_capture runs on relay host
                     _audio_port = result.get("audio_port") if isinstance(result, dict) else None
                     if _audio_port:
-                        register_audio_source(session_id, _relay_addr, _audio_port,
-                                              owner_user_id=user_id,
-                                              login_session_id=_login_sid)
+                        _audio_token = register_audio_source(session_id, _relay_addr, _audio_port,
+                                                             owner_user_id=user_id,
+                                                             login_session_id=_login_sid)
                 else:
                     # Docker: get audio_host_port from relay metadata, fallback to docker port 6180
                     _audio_host_port = 0
@@ -2319,17 +2322,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     if not _audio_host_port:
                         _audio_host_port = _get_container_port(relay_id, 6180)
                     if _audio_host_port:
-                        register_audio_source(session_id, "127.0.0.1", _audio_host_port,
-                                              owner_user_id=user_id,
-                                              login_session_id=_login_sid)
+                        _audio_token = register_audio_source(session_id, "127.0.0.1", _audio_host_port,
+                                                             owner_user_id=user_id,
+                                                             login_session_id=_login_sid)
             except Exception as _ae:
                 logger.debug("[open_desktop] Audio registration skipped: %s", _ae)
 
             flowfile.set_content(json.dumps({
                 "ok": True, "relay_id": relay_id, "local_screen": local_screen,
                 "url": f"/vnc/{session_id}/{_vtok}/vnc.html?autoconnect=true&resize=scale&path=vnc/{session_id}/{_vtok}/websockify",
-                "audio_session": session_id,
-                "audio_token": _audio_lookup_token(session_id),
+                "audio_session": session_id if _audio_token else "",
+                "audio_token": _audio_token,
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

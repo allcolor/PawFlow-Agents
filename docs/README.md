@@ -7,8 +7,8 @@
 | [Architecture](architecture.md) | Internal architecture: FlowFile, Task, Service, Flow, engine |
 | [Agent System](AGENT_SYSTEM.md) | Agent loop, context management, plans, multi-agent, streaming |
 | [LLM Providers](llm_providers.md) | OpenAI/Anthropic APIs, Claude Code, Codex, Gemini, OpenAI-compatible endpoints |
-| [PawCode CLI](pawcode.md) | Terminal client, auto-relay, stream-JSON mode, shared conversations |
-| [VS Code Extension](vscode.md) | Editor client, native TypeScript relay, resource panel, approvals |
+| [PawCode CLI](pawcode.md) | Terminal client, stream-JSON mode, shared conversations |
+| [VS Code Extension](vscode.md) | Editor client, resource panel, approvals |
 | [Multi-Client Conversations](multi_client_conversations.md) | Web, CLI, VS Code, API, and channels sharing one conversation runtime |
 | [Desktop, VNC, Screen, and Audio](desktop_vnc.md) | noVNC desktop, screen automation, local vs Docker desktop, audio sync |
 | [Media and Multimodal Tools](media_tools.md) | Image, video, audio, 3D, try-on, lipsync, voice clone, speech-to-video |
@@ -35,6 +35,7 @@
 |----------|-------------|
 | [Deployment](deployment.md) | Local, Docker, sidecar, and production deployment |
 | [Docker](docker.md) | Containerization, relay Docker mode, desktop audio notes |
+| [Relay Client](relay_client.md) | Standalone client relay CLI/Desktop contract |
 | [Relay Image Profiles](relay_images.md) | Server full relay image and configurable client relay image profiles |
 | [Security Model](security_model.md) | Trust boundaries, relay risk, desktop/VNC, provider egress, production checklist |
 | [Development](development.md) | Creating custom tasks and services |

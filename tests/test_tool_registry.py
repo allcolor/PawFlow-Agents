@@ -53,6 +53,16 @@ class MockHandler(ToolHandler):
         return self._result
 
 
+class CapturingHandler(MockHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.received_args = None
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        self.received_args = arguments
+        return self._result
+
+
 class ErrorHandler(MockHandler):
     """Handler that raises on execute."""
 
@@ -599,10 +609,46 @@ class TestArgumentValidation(unittest.TestCase):
         result = reg.execute("strict", {"input": "ok"})
         assert result == "mock_result"
 
+    def test_result_limit_aliases_normalized_before_validation(self):
+        reg = ToolRegistry()
+        handler = CapturingHandler(
+            name="limited",
+            schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+            },
+        )
+        reg.register(handler)
+        result = reg.execute("limited", {"path": "/workspace", "max_results": 50})
+        assert result == "mock_result"
+        assert handler.received_args == {"path": "/workspace", "limit": 50}
+
+    def test_output_limit_aliases_normalized_before_validation(self):
+        reg = ToolRegistry()
+        handler = CapturingHandler(
+            name="output_limited",
+            schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "max_output": {"type": "integer"},
+                },
+            },
+        )
+        reg.register(handler)
+        result = reg.execute("output_limited", {"command": "git status", "max_chars": 1200})
+        assert result == "mock_result"
+        assert handler.received_args == {"command": "git status", "max_output": 1200}
+
     def test_edit_schema_accepts_old_new_aliases(self):
         schema = EditHandler().parameters_schema
         assert "old" in schema["properties"]
         assert "new" in schema["properties"]
+        assert "old_str" in schema["properties"]
+        assert "new_str" in schema["properties"]
 
     def test_underscore_prefixed_args_allowed(self):
         """Arguments starting with _ are not validated (internal use)."""

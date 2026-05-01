@@ -49,6 +49,8 @@ class EditHandler(BaseFsHandler):
                 "new_string": {"type": "string", "description": "Replacement string"},
                 "old": {"type": "string", "description": "Alias for old_string"},
                 "new": {"type": "string", "description": "Alias for new_string"},
+                "old_str": {"type": "string", "description": "Alias for old_string"},
+                "new_str": {"type": "string", "description": "Alias for new_string"},
                 "replace_all": {"type": "boolean", "description": "Replace all occurrences (default: first only)"},
                 "start_line": {"type": "integer", "description": "Start line for line-based edit (1-based)"},
                 "end_line": {"type": "integer", "description": "End line for line-based edit"},
@@ -64,6 +66,10 @@ class EditHandler(BaseFsHandler):
             arguments["old_string"] = arguments.get("old", "")
         if "new_string" not in arguments and "new" in arguments:
             arguments["new_string"] = arguments.get("new", "")
+        if "old_string" not in arguments and "old_str" in arguments:
+            arguments["old_string"] = arguments.get("old_str", "")
+        if "new_string" not in arguments and "new_str" in arguments:
+            arguments["new_string"] = arguments.get("new_str", "")
         path = arguments.get("path", "")
         if not path:
             return "Error: 'path' is required"

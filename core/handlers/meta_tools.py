@@ -33,6 +33,30 @@ _RELAY_FILESYSTEM_TOOLS = {
     "find_replace", "batch_edit",
 }
 
+_COMMON_ARG_ALIASES = {
+    "limit": (
+        "max_results", "maxResults", "max_result", "maxResult",
+        "result_limit", "resultLimit", "max_items", "maxItems",
+        "max_count", "maxCount",
+    ),
+    "max_output": (
+        "max_output_chars", "maxOutputChars", "max_chars", "maxChars",
+        "output_limit", "outputLimit",
+    ),
+    "path": ("cwd", "dir", "directory"),
+}
+
+
+def _schema_props(schema: Dict[str, Any] = None) -> set:
+    if not isinstance(schema, dict):
+        return set()
+    props = schema.get("properties") or {}
+    return set(props.keys()) if isinstance(props, dict) else set()
+
+
+def _alias_description(target: str) -> str:
+    return f"Alias for {target}."
+
 
 def _canonical_tool_name(name: str) -> str:
     if not isinstance(name, str):
@@ -44,7 +68,7 @@ def _canonical_tool_name(name: str) -> str:
     return _TOOL_ALIASES.get(name) or _TOOL_ALIASES.get(name.lower()) or name
 
 
-def _normalize_tool_args(tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_tool_args(tool_name: str, tool_args: Dict[str, Any], schema: Dict[str, Any] = None) -> Dict[str, Any]:
     if "relay" in tool_args:
         tool_args = dict(tool_args)
         relay = tool_args.get("relay")
@@ -59,12 +83,26 @@ def _normalize_tool_args(tool_name: str, tool_args: Dict[str, Any]) -> Dict[str,
                 tool_args["source_service"] = relay
             if "dest_service" not in tool_args:
                 tool_args["dest_service"] = relay
-    if tool_name == "bash" and "cwd" in tool_args and "path" not in tool_args:
-        tool_args = dict(tool_args)
-        tool_args["path"] = tool_args.pop("cwd")
-    if tool_name == "fetch" and "max_chars" in tool_args:
-        tool_args = dict(tool_args)
-        tool_args.setdefault("limit", tool_args.pop("max_chars"))
+    props = _schema_props(schema)
+    if props:
+        for target, aliases in _COMMON_ARG_ALIASES.items():
+            if target not in props or target in tool_args:
+                continue
+            for alias in aliases:
+                if alias in tool_args:
+                    tool_args = dict(tool_args)
+                    tool_args[target] = tool_args.pop(alias)
+                    break
+        if "limit" in props and "max_chars" in tool_args and "limit" not in tool_args:
+            tool_args = dict(tool_args)
+            tool_args["limit"] = tool_args.pop("max_chars")
+    else:
+        if tool_name == "bash" and "cwd" in tool_args and "path" not in tool_args:
+            tool_args = dict(tool_args)
+            tool_args["path"] = tool_args.pop("cwd")
+        if tool_name == "fetch" and "max_chars" in tool_args:
+            tool_args = dict(tool_args)
+            tool_args.setdefault("limit", tool_args.pop("max_chars"))
     return tool_args
 
 
@@ -89,7 +127,7 @@ def _schema_with_local(handler: Any) -> Dict[str, Any]:
             "type": "integer",
             "description": "Alias for limit; maximum number of characters to return.",
         })
-        return schema
+        return _schema_with_aliases(schema)
     if hasattr(handler, "set_service_resolver"):
         schema = json.loads(json.dumps(schema))
         props = schema.setdefault("properties", {})
@@ -113,9 +151,9 @@ def _schema_with_local(handler: Any) -> Dict[str, Any]:
                 "type": "string",
                 "description": "Alias for service; optional audio service id override.",
             })
-        return schema
+        return _schema_with_aliases(schema)
     if not _is_fs_handler(handler):
-        return schema
+        return _schema_with_aliases(schema)
     schema = json.loads(json.dumps(schema))
     props = schema.setdefault("properties", {})
     props.setdefault("relay", {
@@ -131,6 +169,30 @@ def _schema_with_local(handler: Any) -> Dict[str, Any]:
             "helper instead of the relay Docker container. Requires the "
             "relay to be started with --allow-local."),
     })
+    return _schema_with_aliases(schema)
+
+
+def _schema_with_aliases(schema: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(schema, dict):
+        return schema
+    schema = json.loads(json.dumps(schema))
+    props = schema.setdefault("properties", {})
+    if not isinstance(props, dict):
+        return schema
+    for target, aliases in _COMMON_ARG_ALIASES.items():
+        if target not in props:
+            continue
+        target_type = props.get(target, {}).get("type", "string") if isinstance(props.get(target), dict) else "string"
+        for alias in aliases:
+            props.setdefault(alias, {
+                "type": target_type,
+                "description": _alias_description(target),
+            })
+    if "limit" in props:
+        props.setdefault("max_chars", {
+            "type": "integer",
+            "description": "Alias for limit when limiting returned text size.",
+        })
     return schema
 
 
@@ -324,11 +386,11 @@ class UseToolHandler(ToolHandler):
         if tool_name in ("get_tool_schema", "use_tool"):
             return (f"Error: '{tool_name}' is a meta-tool -- call it directly "
                     f"as a top-level tool call, not via use_tool.")
-        tool_args = _normalize_tool_args(tool_name, tool_args)
         # Validate arguments against tool schema
         handler = self._registry.get(tool_name)
         if handler:
             schema = _schema_with_local(handler)
+            tool_args = _normalize_tool_args(tool_name, tool_args, schema)
             props = schema.get("properties", {})
             if props and isinstance(tool_args, dict):
                 unknown = [k for k in tool_args if k not in props]

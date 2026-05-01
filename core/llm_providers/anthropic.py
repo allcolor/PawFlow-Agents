@@ -262,57 +262,67 @@ class LLMAnthropicMixin:
         messages = regroup_split_assistant_messages(messages)
         system_text = ""
         api_messages: List[Dict[str, Any]] = []
-        for m in messages:
+
+        def _tool_result_content(m) -> Any:
+            tool_content: Any = m.content
+            if isinstance(m.content, list):
+                # Multimodal tool result: build content blocks (text + images)
+                blocks: List[Dict[str, Any]] = []
+                for part in m.content:
+                    if part.get("type") == "text":
+                        blocks.append({"type": "text", "text": part["text"]})
+                    elif part.get("type") == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        if url.startswith("data:"):
+                            header, _, b64data = url.partition(",")
+                            media_type = header.split(":")[1].split(";")[0] if ":" in header else "image/png"
+                            blocks.append({
+                                "type": "image",
+                                "source": {"type": "base64", "media_type": media_type, "data": b64data},
+                            })
+                        else:
+                            blocks.append({"type": "image", "source": {"type": "url", "url": url}})
+                    elif part.get("type") == "image_ref":
+                        from core.file_store import FileStore
+                        import base64 as _b64
+                        _fid = part.get("file_id", "")
+                        if not _fid:
+                            raise ValueError(
+                                "image_ref block missing file_id — producer bug")
+                        _fname, _data, _ct = FileStore.instance().get_required(
+                            _fid,
+                            user_id=user_id,
+                            conversation_id=conversation_id)
+                        _data_b64 = _b64.b64encode(_data).decode("ascii")
+                        mime = part.get("mime_type", _ct) or "image/png"
+                        blocks.append({
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": mime, "data": _data_b64},
+                        })
+                tool_content = blocks if blocks else m.text_content
+            return tool_content
+
+        i = 0
+        while i < len(messages):
+            m = messages[i]
             if m.role == "system":
                 system_text = m.text_content if isinstance(m.content, list) else m.content
             elif m.role == "tool":
-                # Anthropic: tool results are sent as user messages with tool_result content blocks
-                tool_content: Any = m.content
-                if isinstance(m.content, list):
-                    # Multimodal tool result: build content blocks (text + images)
-                    blocks: List[Dict[str, Any]] = []
-                    for part in m.content:
-                        if part.get("type") == "text":
-                            blocks.append({"type": "text", "text": part["text"]})
-                        elif part.get("type") == "image_url":
-                            url = part.get("image_url", {}).get("url", "")
-                            if url.startswith("data:"):
-                                header, _, b64data = url.partition(",")
-                                media_type = header.split(":")[1].split(";")[0] if ":" in header else "image/png"
-                                blocks.append({
-                                    "type": "image",
-                                    "source": {"type": "base64", "media_type": media_type, "data": b64data},
-                                })
-                            else:
-                                blocks.append({"type": "image", "source": {"type": "url", "url": url}})
-                        elif part.get("type") == "image_ref":
-                            from core.file_store import FileStore
-                            import base64 as _b64
-                            _fid = part.get("file_id", "")
-                            if not _fid:
-                                raise ValueError(
-                                    "image_ref block missing file_id — producer bug")
-                            _fname, _data, _ct = FileStore.instance().get_required(
-                                _fid,
-                                user_id=user_id,
-                                conversation_id=conversation_id)
-                            _data_b64 = _b64.b64encode(_data).decode("ascii")
-                            mime = part.get("mime_type", _ct) or "image/png"
-                            blocks.append({
-                                "type": "image",
-                                "source": {"type": "base64", "media_type": mime, "data": _data_b64},
-                            })
-                    tool_content = blocks if blocks else m.text_content
-                api_messages.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": m.tool_call_id or "",
-                            "content": tool_content,
-                        }
-                    ],
-                })
+                # Anthropic requires all results for one assistant tool_use
+                # turn to be in the immediately-following user message. PawFlow
+                # stores one role=tool message per result, so group adjacent
+                # tool messages when building the provider payload.
+                content_blocks: List[Dict[str, Any]] = []
+                while i < len(messages) and messages[i].role == "tool":
+                    tm = messages[i]
+                    content_blocks.append({
+                        "type": "tool_result",
+                        "tool_use_id": tm.tool_call_id or "",
+                        "content": _tool_result_content(tm),
+                    })
+                    i += 1
+                api_messages.append({"role": "user", "content": content_blocks})
+                continue
             elif m.role == "assistant" and m.tool_calls:
                 # Assistant message with tool_use content blocks
                 content_blocks: List[Dict[str, Any]] = []
@@ -391,6 +401,7 @@ class LLMAnthropicMixin:
                     api_messages.append({"role": "assistant", "content": _blocks})
                 else:
                     api_messages.append({"role": m.role, "content": m.content or ""})
+            i += 1
         return system_text, api_messages
 
     def _apply_anthropic_cache_control(self, api_messages: List[Dict[str, Any]]) -> None:

@@ -1,6 +1,6 @@
 # PawCode CLI
 
-PawCode is the terminal client for PawFlow. It connects to the same backend and conversations as the web UI and VS Code extension, while also starting a local relay for the current working directory.
+PawCode is the terminal client for PawFlow. It connects to the same backend and conversations as the web UI and VS Code extension. PawCode is chat-only: relay lifecycle is managed by webchat server resources or the standalone PawFlow Relay client.
 
 ## Quick Start
 
@@ -11,12 +11,12 @@ python -m pawflow_cli --dir .
 PAWFLOW_SERVER=http://localhost:9090 python -m pawflow_cli --dir .
 ```
 
-PawCode opens the browser for OAuth login when needed, then mounts the selected directory as a relay filesystem service.
+PawCode opens the browser for OAuth login when needed, then connects as a conversation client. Start filesystem access separately with `pawflow-relay` or from the webchat resource panel.
 
 ## What PawCode Adds
 
 - streaming chat with Rich markdown rendering;
-- local auto-relay for filesystem and shell tools;
+- access to conversations that may already have linked relays;
 - the same conversation store as the web UI;
 - multi-agent streaming and active-agent status;
 - approval dialogs for sensitive actions;
@@ -35,9 +35,9 @@ PawCode opens the browser for OAuth login when needed, then mounts the selected 
 | `/msg <agent|ALL> <text>` | Send to a specific agent or all agents. |
 | `/btw <agent> <question>` | Ask a side question without interrupting main work. |
 | `/stop <agent> [-f]` | Interrupt or force-stop an agent. |
-| `/run <command>` | Execute a shell command through the relay. |
-| `/terminal` | Run terminal commands via the relay. |
-| `/diff` | Show git diff. |
+| `/run <command>` | Execute through the conversation's linked relay, if one exists. |
+| `/terminal` | Run terminal commands through a linked relay, if available. |
+| `/diff` | Show git diff through a linked relay, if available. |
 | `/plan <description>` | Enter plan mode. |
 | `/call <tool> ...` | Invoke a PawFlow tool directly. |
 | `/explore` | Browse files interactively. |
@@ -60,4 +60,4 @@ echo '{"type":"user","message":{"role":"user","content":"hello"}}' | \
 
 ## Relay Behavior
 
-The CLI relay exposes the selected working directory to PawFlow tools. Filesystem, grep/glob, edit, shell, screen, and project graph tools operate through that relay. For untrusted workloads, use Docker relay mode instead of direct host execution.
+PawCode no longer starts or stops relays. Filesystem, grep/glob, edit, shell, screen, and project graph tools operate through relays already linked to the conversation by the server/webchat or the standalone relay client. See `docs/relay_client.md` for client relay setup.

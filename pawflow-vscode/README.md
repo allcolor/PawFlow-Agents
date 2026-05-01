@@ -1,6 +1,6 @@
 # PawFlow for VS Code
 
-AI agent chat and code assistant powered by PawFlow. Chat with agents, edit code, manage resources — all from VS Code.
+AI agent chat and code assistant powered by PawFlow. Chat with agents, send editor selections, and manage resources from VS Code.
 
 ## Installation
 
@@ -11,7 +11,6 @@ AI agent chat and code assistant powered by PawFlow. Chat with agents, edit code
 ## Features
 
 - **Chat sidebar** with streaming responses and markdown rendering
-- **Native TypeScript relay** — no Python dependency for filesystem access
 - **OAuth login** via browser (same as web chat)
 - **Resource panel** — agents, skills, tasks, services, variables, secrets
 - **Context menus** — edit, delete, activate, assign (right-click)
@@ -28,31 +27,32 @@ AI agent chat and code assistant powered by PawFlow. Chat with agents, edit code
 - `PawFlow: Open Chat` — Focus chat panel
 - `PawFlow: Login` — Authenticate via browser
 - `PawFlow: New Conversation` — Start fresh
-- `PawFlow: Toggle Relay` — Start/stop filesystem relay
 - `PawFlow: Explain This Code` — Explain selected code
 - `PawFlow: Fix This Code` — Fix selected code
 - `PawFlow: Add Tests` — Generate tests for selection
 - `PawFlow: Plan` — Read-only strategy planning
-- `PawFlow: Run Command` — Execute shell command on relay
+- `PawFlow: Run Command` — Execute through a relay already linked to the conversation
 
 ## Settings
 
 - `pawflow.serverUrl` — PawFlow server URL (default: http://localhost:9090)
-- `pawflow.autoRelay` — Auto-start relay on activation
-- `pawflow.allowExec` — Allow shell execution
-- `pawflow.pythonPath` — Python interpreter (unused — relay is native TS)
+- `pawflow.gatewayKey` — Private gateway access key
+- `pawflow.pythonPath` — Optional Python interpreter path for helper commands
+
+## Relay Lifecycle
+
+VS Code is a PawFlow client, like webchat and PawCode. It does not create, start, stop, or own relays. Use the webchat resource panel for server relays, or PawFlow Relay Desktop/CLI for client relays.
 
 ## Architecture
 
-The extension connects to the same PawFlow backend as the web chat and PawCode CLI. The relay is implemented in native TypeScript (no Python needed).
+The extension connects to the same PawFlow backend as the web chat and PawCode CLI. Relay-backed tools operate through server-side conversation relay bindings.
 
 ```
 ┌─────────────────────────┐
 │   VS Code Extension      │
 │  Webview + Node.js API   │
-│  TS Relay (native)       │
 └───────────┬─────────────┘
-            │ HTTP POST + SSE GET + WS
+            │ HTTP POST + SSE GET
             ▼
 ┌─────────────────────────┐
 │    PawFlow Server        │

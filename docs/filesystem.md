@@ -34,7 +34,7 @@ All backends are wrapped in `PermissionEnforcedFilesystem` which enforces:
 
 | Type | Description | Git Support | Requires |
 |------|-------------|-------------|----------|
-| `relay` | WebSocket relay to user's machine (exec, git, shell) | Yes | pawcode, vscode plugin, or `pawflow_relay.py` |
+| `relay` | WebSocket relay to user's machine (exec, git, shell) | Yes | server relay or standalone `pawflow-relay` client |
 | `filesystem` | Server disk (admin only) | Yes | Admin role |
 | `googleDrive` | Google Drive via REST API | No | OAuth2 authorization |
 | `oneDrive` | OneDrive via Graph API | No | OAuth2 authorization |

@@ -688,7 +688,7 @@ PawFlow exposes the runtime through the listener/UI server and client integratio
 | Web chat | Main conversation UI at `/chat` |
 | Admin UI | Service, runtime, and configuration UI at `/admin` |
 | PawCode CLI | Terminal client using the same conversation runtime |
-| VS Code extension | Editor client with relay, resources, and approvals |
+| VS Code extension | Editor client with resources and approvals |
 | Relay WebSocket | `/ws/relay` for filesystem/exec relay connections |
 | Tool relay WebSocket | `/ws/tools/_tool_relay` for internal tool execution plumbing |
 
@@ -806,7 +806,7 @@ PawFlow provides a unified filesystem abstraction layer. See `docs/filesystem.md
 
 | Type | Description | Git | Required |
 |------|-------------|-----|----------|
-| `relay` | WebSocket relay to user machine (exec, git, shell) | Yes | pawcode, vscode plugin, `pawflow_relay.py` |
+| `relay` | WebSocket relay to user machine (exec, git, shell) | Yes | server relay or standalone `pawflow-relay` client |
 | `filesystem` | Server disk (admin only) | Yes | Admin role |
 | `googleDrive` | Google Drive REST API v3 | No | OAuth2 |
 | `oneDrive` | OneDrive Graph API | No | OAuth2 |

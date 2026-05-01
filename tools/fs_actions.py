@@ -613,6 +613,10 @@ def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         req["old_string"] = req.get("old", "")
     if "new_string" not in req and "new" in req:
         req["new_string"] = req.get("new", "")
+    if "old_string" not in req and "old_str" in req:
+        req["old_string"] = req.get("old_str", "")
+    if "new_string" not in req and "new_str" in req:
+        req["new_string"] = req.get("new_str", "")
     new_string = req.get("new_string", "")
     start_line = int(req.get("start_line", 0) or 0)
     end_line = int(req.get("end_line", 0) or 0)

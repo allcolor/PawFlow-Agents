@@ -2,14 +2,12 @@ import * as vscode from 'vscode';
 import { AgentAPIClient, acquireGatewayCookie } from './api/client';
 import { SSEClient } from './api/sse';
 import { PawFlowAuth } from './auth/provider';
-import { RelayManager } from './relay/manager';
 import { ChatPanelProvider } from './webview/chatPanel';
 import { StatusBarProvider } from './statusBar/provider';
 
 let apiClient: AgentAPIClient | undefined;
 let sseClient: SSEClient | undefined;
 let auth: PawFlowAuth;
-let relay: RelayManager;
 let statusBar: StatusBarProvider;
 let chatProvider: ChatPanelProvider;
 
@@ -35,7 +33,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Initialize components
   auth = new PawFlowAuth(context);
-  relay = new RelayManager(context);
   statusBar = new StatusBarProvider();
 
   // Try cached auth — validate token before using it
@@ -62,24 +59,11 @@ export async function activate(context: vscode.ExtensionContext) {
     if (session && apiClient) {
       sseClient = new SSEClient(serverUrl, session.token, gatewayCookie);
       statusBar.setConnected(session.username);
-
-      // Auto-start relay
-      if (config.get<boolean>('autoRelay', true)) {
-        const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        if (workspaceDir) {
-          try {
-            await relay.start(apiClient, session.username, workspaceDir,
-                              config.get<string>('dockerImage', ''));
-          } catch (e: any) {
-            vscode.window.showWarningMessage(`PawFlow relay failed: ${e.message}`);
-          }
-        }
-      }
     }
   }
 
   // Chat panel
-  chatProvider = new ChatPanelProvider(context, () => apiClient, () => sseClient, relay);
+  chatProvider = new ChatPanelProvider(context, () => apiClient, () => sseClient);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('pawflow.chatView', chatProvider)
   );
@@ -105,15 +89,6 @@ export async function activate(context: vscode.ExtensionContext) {
         sseClient = new SSEClient(serverUrl, session.token, gatewayCookie);
         statusBar.setConnected(session.username);
         vscode.window.showInformationMessage(`PawFlow: Logged in as ${session.username}`);
-
-        // Start relay after login
-        if (config.get<boolean>('autoRelay', true)) {
-          const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-          if (workspaceDir && apiClient) {
-            await relay.start(apiClient, session.username, workspaceDir,
-                              config.get<string>('dockerImage', ''));
-          }
-        }
       } catch (e: any) {
         vscode.window.showErrorMessage(`PawFlow login failed: ${e.message}`);
       }
@@ -124,52 +99,19 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('pawflow.toggleRelay', async () => {
-      if (!apiClient) {
-        vscode.window.showWarningMessage('PawFlow: Not logged in');
-        return;
-      }
-      if (relay.isRunning) {
-        await relay.stop(apiClient);
-        vscode.window.showInformationMessage('PawFlow: Relay stopped');
-      } else {
-        const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        if (workspaceDir) {
-          await relay.start(apiClient, auth.getUsername(), workspaceDir,
-                            config.get<boolean>('allowExec', true),
-                            config.get<string>('dockerImage', ''));
-          vscode.window.showInformationMessage('PawFlow: Relay started');
-        }
-      }
+      vscode.window.showInformationMessage(
+        'PawFlow relays are managed from webchat resources or PawFlow Relay Desktop/CLI.'
+      );
     }),
 
-    vscode.commands.registerCommand('pawflow.connectRelay', async (path?: string) => {
-      if (!apiClient) {
-        vscode.window.showWarningMessage('PawFlow: Not logged in');
-        return;
-      }
-      const dir = path || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!dir) {
-        vscode.window.showWarningMessage('PawFlow: No workspace folder and no path specified');
-        return;
-      }
-      try {
-        await relay.start(apiClient, auth.getUsername(), dir,
-                          config.get<boolean>('allowExec', true),
-                          config.get<string>('dockerImage', ''));
-        vscode.window.showInformationMessage(`PawFlow: Relay connected to ${dir}`);
-      } catch (e: any) {
-        vscode.window.showErrorMessage(`PawFlow relay failed: ${e.message}`);
-      }
+    vscode.commands.registerCommand('pawflow.connectRelay', async () => {
+      vscode.window.showInformationMessage(
+        'PawFlow relays are managed from webchat resources or PawFlow Relay Desktop/CLI.'
+      );
     }),
 
-    vscode.commands.registerCommand('pawflow.disconnectRelay', async (path?: string) => {
-      if (!apiClient) { return; }
-      // If path is specified, only disconnect if current relay matches
-      // For now, we disconnect the current relay regardless
-      if (relay.isRunning) {
-        await relay.stop(apiClient);
-        vscode.window.showInformationMessage('PawFlow: Relay disconnected');
-      }
+    vscode.commands.registerCommand('pawflow.disconnectRelay', async () => {
+      vscode.window.showInformationMessage('VS Code has no managed PawFlow relay to disconnect.');
     }),
 
     vscode.commands.registerCommand('pawflow.explainSelection', () => {
@@ -220,21 +162,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // Disposables
-  // Forward relay status to chat panel
-  relay.onDidChangeStatus((status) => {
-    chatProvider.postRelayStatus(status);
-    if (status === 'running' || status === 'running-docker') {
-      const label = status === 'running-docker'
-        ? auth.getUsername() + ' [relay 🐳 ✓]'
-        : auth.getUsername() + ' [relay ✓]';
-      statusBar.setConnected(label);
-    } else {
-      statusBar.setError(auth.getUsername() + ' [relay ✗]');
-    }
-  });
-
-  context.subscriptions.push(statusBar, relay);
+  context.subscriptions.push(statusBar);
 
   // Show login prompt if not authenticated
   if (!apiClient) {
@@ -257,6 +185,4 @@ function sendSelectionToChat(prefix: string) {
   chatProvider.sendMessage(message);
 }
 
-export function deactivate() {
-  if (relay) { relay.dispose(); }
-}
+export function deactivate() {}

@@ -756,6 +756,12 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
 
                 if method == "item/started":
                     item = params.get("item", {}) or {}
+                    if item.get("type") == "contextCompaction":
+                        from core.llm_client import CCCompactDetected
+                        logger.warning(
+                            "[codex-app] contextCompaction detected — handing compaction to PawFlow")
+                        raise CCCompactDetected(
+                            "Codex app-server contextCompaction detected")
                     if item.get("type") == "mcpToolCall":
                         if block_callback and turn_text_parts:
                             _flush_text()
@@ -782,6 +788,12 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
 
                 if method == "item/completed":
                     item = params.get("item", {}) or {}
+                    if item.get("type") == "contextCompaction":
+                        from core.llm_client import CCCompactDetected
+                        logger.warning(
+                            "[codex-app] contextCompaction completed before interception — compacting PawFlow context")
+                        raise CCCompactDetected(
+                            "Codex app-server contextCompaction completed")
                     if item.get("type") == "mcpToolCall":
                         raw_id = item.get("id") or ""
                         tc_id = f"{stream_uniq}:{raw_id}" if raw_id else ""

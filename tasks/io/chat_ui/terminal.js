@@ -414,8 +414,10 @@ async function cmdDesktop(text, parts) {
       // Connect audio if available. The capability token is separate
       // from the VNC one (different resource_type) — audioConnect needs
       // both the session id and the audio token to build the WS URL.
-      if (resp.audio_session) {
-        audioConnect(resp.audio_session, resp.audio_token || '');
+      if (resp.audio_session && resp.audio_token) {
+        audioConnect(resp.audio_session, resp.audio_token);
+      } else if (resp.audio_session) {
+        console.warn('[audio] desktop returned audio session without capability token; skipping websocket');
       }
       addMsg('system', (localScreen ? 'Local screen' : 'Desktop') + ' ready.');
     },
@@ -463,10 +465,12 @@ async function cmdAudio(text, parts) {
         addMsg('system', '\u26a0 ' + resp.error);
         return;
       }
-      if (resp.audio_session) {
-        addAudioTab(relayId, resp.audio_session);
-        audioConnect(resp.audio_session);
+      if (resp.audio_session && resp.audio_token) {
+        addAudioTab(relayId, resp.audio_session, resp.audio_token);
+        audioConnect(resp.audio_session, resp.audio_token);
         addMsg('system', 'Audio streaming from ' + relayId + '.');
+      } else if (resp.audio_session) {
+        addMsg('system', '\u26a0 Audio source is available but no capability token was returned.');
       } else {
         addMsg('system', '\u26a0 No audio available on this relay.');
       }

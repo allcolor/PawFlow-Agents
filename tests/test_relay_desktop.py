@@ -1,0 +1,134 @@
+from pathlib import Path
+import json
+import subprocess
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DESKTOP = ROOT / "pawflow-relay-desktop"
+
+
+def test_relay_desktop_package_exposes_electron_app():
+    package = json.loads((DESKTOP / "package.json").read_text(encoding="utf-8"))
+    assert package["main"] == "src/main.js"
+    assert package["scripts"]["start"] == "electron ."
+    assert package["scripts"]["prepare-runtime"] == "node scripts/prepare-runtime.js"
+    assert package["scripts"]["package:portable"] == "node scripts/package-portable.js"
+    assert "scripts/prepare-runtime.js" in package["scripts"]["check"]
+    assert "scripts/package-portable.js" in package["scripts"]["check"]
+    assert "electron" in package["devDependencies"]
+
+
+def test_relay_desktop_uses_python_manager_and_safe_preload():
+    main = (DESKTOP / "src" / "main.js").read_text(encoding="utf-8")
+    preload = (DESKTOP / "src" / "preload.js").read_text(encoding="utf-8")
+    renderer = (DESKTOP / "src" / "renderer.js").read_text(encoding="utf-8")
+
+    assert "Tray" in main
+    assert "Menu" in main
+    assert "nativeImage" in main
+    assert "assets', 'tray-icon.png'" in main
+    assert "nativeImage.createFromPath" in main
+    assert (DESKTOP / "src" / "assets" / "tray-icon.png").is_file()
+    assert "function createTray()" in main
+    assert "function refreshTrayMenu()" in main
+    assert "win.hide()" in main
+    assert "before-quit" in main
+    assert "Open PawFlow Relay" in main
+    assert "Relays" in main
+    assert "Servers" in main
+    assert "Start" in main
+    assert "Stop" in main
+    assert "Login" in main
+    assert "showOpenDialog" in main
+    assert "relay:select-directory" in main
+    assert "relay:docker-images" in main
+    assert "relay:image-catalog" in main
+    assert "relay:build-image" in main
+    assert "docker builder prune" not in main
+    assert "builder', 'prune', '-f'" in main
+    assert "nodeIntegration: false" in main
+    assert "contextIsolation: true" in main
+    assert "process.platform === 'win32' ? 'py' : 'python3'" in main
+    assert "function runtimeRoot()" in main
+    assert "PAWFLOW_RELAY_RUNTIME_ROOT" in main
+    assert "roots.join(path.delimiter)" in main
+    assert "from pawflow_relay import manager" in main
+    assert "python -m pawflow_relay" not in main
+    assert "'-m', 'pawflow_relay', 'start'" in main
+    assert "contextBridge.exposeInMainWorld('pawflowRelay'" in preload
+    assert "ipcRenderer.invoke('relay:add-server'" in preload
+    assert "ipcRenderer.invoke('relay:delete-server'" in preload
+    assert "ipcRenderer.invoke('relay:delete-workspace'" in preload
+    assert "ipcRenderer.invoke('relay:select-directory'" in preload
+    assert "ipcRenderer.invoke('relay:docker-images'" in preload
+    assert "ipcRenderer.invoke('relay:image-catalog'" in preload
+    assert "ipcRenderer.invoke('relay:build-image'" in preload
+    assert "relay:delete-server" in main
+    assert "relay:delete-workspace" in main
+    assert "window.pawflowRelay.addWorkspace" in renderer
+    assert "window.pawflowRelay.start" in renderer
+    assert "window.pawflowRelay.deleteServer" in renderer
+    assert "window.pawflowRelay.deleteWorkspace" in renderer
+    assert "cancelServerBtn" in renderer
+    assert "cancelWorkspaceBtn" in renderer
+    assert "browsePathBtn" in renderer
+    assert "buildImageBtn" in renderer
+    assert "Build Relay Image" in renderer
+    assert "window.pawflowRelay.buildRelayImage" in renderer
+    assert "selectDirectory" in renderer
+    assert "allowExec" in renderer
+    assert "allowRemoteDesktop" in renderer
+    assert "Allow local access" in renderer
+    assert "showContextMenu" in renderer
+    assert "serverTree" in renderer
+    assert "workspaceTree" in renderer
+
+
+def test_relay_desktop_uses_webchat_style_tree_shell():
+    index = (DESKTOP / "src" / "index.html").read_text(encoding="utf-8")
+    css = (DESKTOP / "src" / "styles.css").read_text(encoding="utf-8")
+
+    assert "serverTree" in index
+    assert "workspaceTree" in index
+    assert "detailPanel" in index
+    assert "contextMenu" in index
+    assert ".sidebar" in css
+    assert ".tree-item" in css
+    assert ".card" in css
+    assert ".toggle-grid" in css
+    assert ".button.ghost" in css
+
+
+def test_relay_desktop_prepare_runtime_script_declares_required_payload():
+    script = (DESKTOP / "scripts" / "prepare-runtime.js").read_text(encoding="utf-8")
+    assert "pawflow_relay_launcher.py" in script
+    assert "fs_actions.py" in script
+    assert "docker', 'pawflow_sdk', 'pawflow.py'" in script
+    assert "config', 'relay_image_catalog.json'" in script
+    assert "scripts', 'generate-relay-image.py'" in script
+    assert "copyDir(path.join(repoRoot, 'pawflow_relay')" in script
+    assert "__pycache__" in script
+    portable = (DESKTOP / "scripts" / "package-portable.js").read_text(encoding="utf-8")
+    assert "prepare-runtime.js" in portable
+    assert "dist', 'pawflow-relay-desktop'" in portable
+    assert "node_modules" in portable
+
+
+def test_relay_desktop_generated_runtime_has_required_payload():
+    subprocess.run(["npm", "run", "prepare-runtime"], cwd=DESKTOP, check=True)
+    runtime = DESKTOP / "runtime"
+    assert (runtime / "tools" / "pawflow_relay_launcher.py").is_file()
+    assert (runtime / "tools" / "fs_actions.py").is_file()
+    assert (runtime / "docker" / "pawflow_sdk" / "pawflow.py").is_file()
+    assert (runtime / "config" / "relay_image_catalog.json").is_file()
+    assert (runtime / "scripts" / "generate-relay-image.py").is_file()
+    assert (runtime / "pawflow_relay" / "thread.py").is_file()
+
+
+def test_relay_client_doc_mentions_desktop_app():
+    doc = (ROOT / "docs" / "relay_client.md").read_text(encoding="utf-8")
+    readme = (DESKTOP / "README.md").read_text(encoding="utf-8")
+    assert "pawflow-relay-desktop/" in doc
+    assert "npm start" in doc
+    assert "npm run package:portable" in readme
+    assert "runtime/tools/" in readme

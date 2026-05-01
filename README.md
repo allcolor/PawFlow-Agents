@@ -231,8 +231,8 @@ pytest tests/ -v    # 2500+ tests across 100+ test files
 | [Expression Language](docs/EXPRESSION_LANGUAGE.md) | 40+ operators, scopes, cascade |
 | [Slash Commands](docs/SLASH_COMMANDS.md) | All webchat commands |
 | [LLM Providers](docs/llm_providers.md) | OpenAI, Anthropic, Claude Code, Codex, Gemini, compatible APIs |
-| [PawCode CLI](docs/pawcode.md) | Terminal client and auto-relay |
-| [VS Code Extension](docs/vscode.md) | Editor client and TypeScript relay |
+| [PawCode CLI](docs/pawcode.md) | Terminal client and stream-JSON mode |
+| [VS Code Extension](docs/vscode.md) | Editor client and resource panel |
 | [Multi-Client Conversations](docs/multi_client_conversations.md) | Shared runtime across web, CLI, VS Code, API, channels |
 | [Desktop/VNC](docs/desktop_vnc.md) | noVNC desktop, screen tool, audio notes |
 | [Media Tools](docs/media_tools.md) | Image/video/audio/3D/voice tools |

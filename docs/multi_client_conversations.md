@@ -20,8 +20,8 @@ Clients are interchangeable frontends over that state.
 | Client | Role |
 |---|---|
 | Web chat | Main browser UI with SSE, file explorer, context editor, slash commands. |
-| PawCode CLI | Terminal UI with local auto-relay and stream-JSON compatibility. |
-| VS Code extension | Editor client with workspace relay, resource panel, selection commands. |
+| PawCode CLI | Terminal UI and stream-JSON compatibility. Relay lifecycle is external. |
+| VS Code extension | Editor client with resource panel and selection commands. Relay lifecycle is external. |
 | API/flows | `publishMessage`, `readConversation`, `spawnAgent`, and HTTP tasks can interact with conversations. |
 | Messaging channels | Telegram, Discord, Slack, and WhatsApp receivers/senders can bridge messages into flows and agents. |
 

@@ -139,7 +139,7 @@ class ScreenHandler(BaseFsHandler):
                 return (
                     "Error: relay does not support screen actions. "
                     "Update the relay or install screen automation dependencies "
-                    "(pyautogui for Python relay, @nut-tree/nut-js for VS Code relay)."
+                    "(pyautogui on the relay host or desktop-capable relay image)."
                 )
             return f"Error: screen action failed: {e}"
 

@@ -253,6 +253,12 @@ function audioConnect(sessionId, token) {
   _audioSessionId = sessionId;
   _audioToken = token || '';
 
+  if (!sessionId || !_audioToken) {
+    console.error('[audio] missing session or capability token; refusing to open websocket');
+    _updateAudioUI(false);
+    return;
+  }
+
   if (typeof AudioDecoder === 'undefined') {
     console.error('[audio] WebCodecs not available');
     return;
@@ -548,6 +554,7 @@ function audioDisconnect() {
   _sharedRing = null;
   _sharedCtrl = null;
   _audioSessionId = null;
+  _audioToken = '';
   _updateAudioUI(false);
 }
 
@@ -556,13 +563,19 @@ function audioRestart() {
   // without touching the VNC view. Used when the stream stalls silently
   // (backend TCP dead, decoder wedged, etc).
   var sid = _audioSessionId;
-  if (!sid) {
-    console.warn('[audio] restart requested but no active session');
+  var token = _audioToken;
+  var activeAudioTab = document.querySelector('.tab-content[id^="tabContent_audio-"]');
+  if ((!sid || !token) && activeAudioTab) {
+    sid = sid || activeAudioTab.dataset.audioSession || '';
+    token = token || activeAudioTab.dataset.audioToken || '';
+  }
+  if (!sid || !token) {
+    console.warn('[audio] restart requested but no active session/token');
     return;
   }
   console.log('[audio] restart requested for session', sid);
   audioDisconnect();
-  audioConnect(sid);
+  audioConnect(sid, token);
 }
 
 function audioToggleMute() {

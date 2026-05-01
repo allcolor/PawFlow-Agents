@@ -27,6 +27,7 @@ venv/
 
 # Node
 node_modules/
+pawflow-relay-desktop/runtime/
 
 # ── Data layout: repository/ runtime/ system/ ────────────────
 

@@ -3,7 +3,6 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { AgentAPIClient } from '../api/client';
 import { SSEClient } from '../api/sse';
-import { RelayManager } from '../relay/manager';
 import { SSEEvent, Attachment, ReplyTo } from '../api/types';
 
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
@@ -16,7 +15,6 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     private context: vscode.ExtensionContext,
     private getApi: () => AgentAPIClient | undefined,
     private getSse: () => SSEClient | undefined,
-    private relay: RelayManager,
   ) {}
 
   getConversationId(): string | null { return this.conversationId; }
@@ -68,19 +66,15 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           vscode.commands.executeCommand('pawflow.disconnectRelay', msg.path || '');
           break;
         case 'openFile':
-          // Open a file in VS Code editor from the webview
+          // Open a local file in VS Code. Relay-backed fs:// paths are owned
+          // by server relay bindings and cannot be mapped by the extension.
           try {
-            const relayRoot = this.relay?.getRootDir?.() || '';
-            let filePath = msg.path || '';
-            // Resolve fs://service/path → absolute path
+            const filePath = msg.path || '';
             if (filePath.startsWith('fs://')) {
-              const rest = filePath.slice(5);
-              const sep = rest.indexOf('/');
-              filePath = sep > 0 ? rest.slice(sep + 1) : rest;
-            }
-            // Make absolute if relay root is known
-            if (relayRoot && !require('path').isAbsolute(filePath)) {
-              filePath = require('path').join(relayRoot, filePath);
+              vscode.window.showWarningMessage(
+                'Relay files are managed by PawFlow; open them from webchat or FileStore.'
+              );
+              break;
             }
             const uri = vscode.Uri.file(filePath);
             vscode.window.showTextDocument(uri, { preview: true });

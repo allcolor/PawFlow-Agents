@@ -8,6 +8,7 @@ import json
 import os
 import secrets
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -19,11 +20,43 @@ from pawflow_relay.utils import (
 )
 
 
+def _relay_container_prefix(relay_id: str) -> str:
+    return f"pf-{relay_id[:12].replace('.', '-').replace('_', '-')}"
+
+
+def _make_relay_container_name(relay_id: str, purpose: str) -> str:
+    return f"{_relay_container_prefix(relay_id)}-{purpose}-{secrets.token_hex(4)}"
+
+
+def _kill_relay_containers(relay_id: str) -> int:
+    prefix = _relay_container_prefix(relay_id)
+    try:
+        result = subprocess.run(
+            docker_cmd() + [
+                "ps", "-a", "--filter", f"name={prefix}",
+                "--format", "{{.ID}}\t{{.Names}}",
+            ],
+            capture_output=True, text=True, timeout=10)
+    except Exception:
+        return 0
+    killed = 0
+    for line in result.stdout.strip().splitlines():
+        if not line.strip():
+            continue
+        container_id = line.split("\t", 1)[0]
+        try:
+            subprocess.run(docker_cmd() + ["rm", "-f", container_id],
+                           capture_output=True, timeout=10)
+            killed += 1
+        except Exception:
+            pass
+    return killed
+
+
 class RelayThread:
     """Manages a background filesystem relay connection.
 
-    Used by PawCode CLI (as background thread), standalone relay, and
-    VS Code extension (as subprocess).
+    Used by standalone client relays and server-managed relay launch paths.
     """
 
     def __init__(self, server_url: str, session_token: str, username: str,
@@ -31,9 +64,13 @@ class RelayThread:
                  gateway_cookie: str = "",
                  gateway_key: str = "",
                  docker_cpus: str = "", docker_memory: str = "",
+                 allow_exec: bool = True,
+                 allow_remote_desktop: bool = True,
                  allow_local: bool = False,
                  on_token_refresh=None,
-                 log_file: str = ""):
+                 log_file: str = "",
+                 relay_id: str = "",
+                 read_only: bool = False):
         self.server_url = server_url
         self.session_token = session_token
         self.username = username
@@ -44,8 +81,11 @@ class RelayThread:
         self.log_file = log_file
         self.docker_cpus = docker_cpus or os.environ.get("PAWFLOW_RELAY_CPUS", "2")
         self.docker_memory = docker_memory or os.environ.get("PAWFLOW_RELAY_MEMORY", "4g")
+        self.allow_exec = allow_exec
+        self.allow_remote_desktop = allow_remote_desktop
         self.allow_local = allow_local
-        self.relay_id = generate_relay_id(username, self.directory)
+        self.read_only = read_only
+        self.relay_id = relay_id or generate_relay_id(username, self.directory)
         self.port = 0
         self.ws_token = ""
         self._thread = None
@@ -153,7 +193,8 @@ class RelayThread:
         fired another re-register — self-reinforcing loop observed in
         the wild.
         """
-        config_str = f"port=0,path=/ws/relay,token={self.ws_token},mode=readwrite"
+        _mode = "readonly" if self.read_only else "readwrite"
+        config_str = f"port=0,path=/ws/relay,token={self.ws_token},mode={_mode}"
         if self.docker_image:
             config_str += f",docker_image={self.docker_image}"
         if self.allow_local:
@@ -180,7 +221,8 @@ class RelayThread:
 
         # Create new service. 'port' is kept for legacy config schema
         # compatibility; the server now registers on the main HTTP listener.
-        config_str = f"port=0,path=/ws/relay,token={self.ws_token},mode=readwrite"
+        _mode = "readonly" if self.read_only else "readwrite"
+        config_str = f"port=0,path=/ws/relay,token={self.ws_token},mode={_mode}"
         if self.docker_image:
             config_str += f",docker_image={self.docker_image}"
         if self.allow_local:
@@ -241,8 +283,7 @@ class RelayThread:
             self._docker_proc = None
         # Kill orphans from this specific relay
         try:
-            from core.docker_utils import kill_containers
-            _killed = kill_containers(self.relay_id)
+            _killed = _kill_relay_containers(self.relay_id)
             if _killed:
                 self._log(f"[Relay] Cleaned {_killed} orphan container(s)")
         except Exception:
@@ -274,7 +315,6 @@ class RelayThread:
         self._host_helper_thread.start()
 
         import subprocess as _sp
-        from core.docker_utils import make_container_name
 
         restart_delay = 1
         max_restart_delay = 60
@@ -296,7 +336,7 @@ class RelayThread:
                     "RelayThread.start() must run before _run_docker_relay. "
                     "Stopping restart loop.")
                 break
-            self._docker_container = make_container_name(self.relay_id, "relay")
+            self._docker_container = _make_relay_container_name(self.relay_id, "relay")
             from urllib.parse import urlparse as _up
             _parsed = _up(self.server_url)
             _scheme = 'wss' if _parsed.scheme == 'https' else 'ws'
@@ -331,8 +371,8 @@ class RelayThread:
                 _host_ip = get_host_ip()
                 _ws_host_override = f"{_server_host}:{_host_ip}"
             ws_url = f"{_scheme}://{_server_host}:{_server_port}/ws/relay/{self.relay_id}"
-            self._desktop_host_port = find_free_port()
-            self._audio_host_port = find_free_port()
+            self._desktop_host_port = find_free_port() if self.allow_remote_desktop else 0
+            self._audio_host_port = find_free_port() if self.allow_remote_desktop else 0
             _tok_masked = (self.ws_token[:4] + "****") if len(self.ws_token) > 4 else "****"
             self._log(
                 f"[Relay] Docker launch: token={_tok_masked} "
@@ -340,10 +380,10 @@ class RelayThread:
                 f"session_token={'set' if self.session_token else 'EMPTY'}, "
                 f"gateway_cookie={'set' if self.gateway_cookie else 'EMPTY'}, "
                 f"ws_url={ws_url}")
-            # Dev-mount the relay scripts from the host so /opt/pawflow
-            # inside the container always reflects the current tree on
-            # disk. Nothing is baked into the image anymore — the
-            # Dockerfile only prepares the system deps.
+            # In a source checkout, dev-mount relay scripts from the host so
+            # /opt/pawflow reflects the current tree. In standalone desktop
+            # installs those files are not next to the app, so the container
+            # falls back to the scripts baked into the relay image.
             _project_root = os.path.dirname(
                 os.path.dirname(os.path.abspath(__file__)))
             _tools_dir = os.path.join(_project_root, "tools")
@@ -426,6 +466,20 @@ class RelayThread:
             self._env_file_path = _env_file_path
             _env_file_container = translate_path(to_host_path(_env_file_path))
 
+            _desktop_publish_args = []
+            if self.allow_remote_desktop:
+                _desktop_publish_args = [
+                    "--publish", f"{self._desktop_host_port}:6080",
+                    "--publish", f"{self._audio_host_port}:6180",
+                    "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
+                ]
+
+            _relay_permission_args = []
+            if self.allow_exec:
+                _relay_permission_args.append("--allow-exec")
+            if self.allow_remote_desktop:
+                _relay_permission_args += ["--allow-automation", "--allow-local-screen"]
+
             docker_run_cmd = docker_cmd() + [
                 "run", "--rm",
                 "--name", self._docker_container,
@@ -459,9 +513,7 @@ class RelayThread:
                 "-e", "GIT_CONFIG_VALUE_3=false",
                 "-e", f"PAWFLOW_HOST_HELPER={get_host_ip()}:{host_helper_port}",
                 "-e", f"PAWFLOW_SESSION_TOKEN={self.session_token}",
-                "--publish", f"{self._desktop_host_port}:6080",
-                "--publish", f"{self._audio_host_port}:6180",
-                "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
+                *_desktop_publish_args,
                 "-e", f"PAWFLOW_HOST_WORKDIR={self.directory.replace(chr(92), '/')}",
                 "-e", "HOME=/home/pawflow",
                 "-e", "USER=pawflow",
@@ -472,9 +524,7 @@ class RelayThread:
                 "--token", self.ws_token,
                 "--relay-id", self.relay_id,
                 "--dir", "/workspace",
-                "--allow-exec",
-                "--allow-automation",
-                "--allow-local-screen",
+                *_relay_permission_args,
                 "--server-mount", "/cc_sessions",
                 "--filestore-mount", "/filestore",
             ] + (["--allow-local"] if self.allow_local else [])

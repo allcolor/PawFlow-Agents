@@ -207,7 +207,7 @@ function closeDesktopTab(tabId) {
 }
 
 /** Add an Audio-only tab (minimal controls, no VNC). */
-function addAudioTab(relayId, audioSession) {
+function addAudioTab(relayId, audioSession, audioToken) {
   const tabId = 'audio-' + relayId;
   if (document.getElementById('tabContent_' + tabId)) {
     switchTab(tabId);
@@ -233,6 +233,7 @@ function addAudioTab(relayId, audioSession) {
   panel.dataset.tab = tabId;
   panel.dataset.relayId = relayId;
   panel.dataset.audioSession = audioSession;
+  panel.dataset.audioToken = audioToken || '';
   panel.innerHTML = '<div class="audio-tab-panel">'
     + '<div class="audio-tab-controls">'
     + '<div class="audio-title">\uD83D\uDD0A Audio \u2014 ' + relayId + '</div>'

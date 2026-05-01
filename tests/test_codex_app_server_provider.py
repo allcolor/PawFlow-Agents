@@ -150,6 +150,13 @@ def test_codex_app_server_registers_live_app_server_session():
     )
 
 
+def test_codex_app_server_hands_context_compaction_to_pawflow():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    assert 'item.get("type") == "contextCompaction"' in src
+    assert "CCCompactDetected" in src
+    assert "handing compaction to PawFlow" in src
+
+
 def test_codex_live_sweeper_does_not_evict_active_turn():
     from core.codex_live_registry import CodexLiveRegistry
 

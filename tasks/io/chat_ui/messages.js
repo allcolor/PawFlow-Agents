@@ -13,7 +13,29 @@ const _TOOL_DISPLAY = {
   get_tool_schema: 'GetToolSchema',
 };
 
+function _unwrapDisplayedToolCall(name, args) {
+  let toolName = name || '?';
+  let toolArgs = args || {};
+  if (typeof toolArgs === 'string') {
+    try { toolArgs = JSON.parse(toolArgs); } catch(e) {}
+  }
+  if ((toolName === 'use_tool'
+      || toolName === 'mcp_pawflow_use_tool'
+      || toolName === 'mcp__pawflow__use_tool')
+      && toolArgs && typeof toolArgs === 'object' && toolArgs.tool_name) {
+    toolName = toolArgs.tool_name;
+    toolArgs = toolArgs.arguments || {};
+    if (typeof toolArgs === 'string') {
+      try { toolArgs = JSON.parse(toolArgs); } catch(e) {}
+    }
+  }
+  return { toolName, toolArgs };
+}
+
 function _toolCallSummary(name, args) {
+  const normalized = _unwrapDisplayedToolCall(name, args);
+  name = normalized.toolName;
+  args = normalized.toolArgs;
   const display = _TOOL_DISPLAY[name] || name;
   // Build summary from actual args sent (not hardcoded param names)
   let summary = '';
@@ -256,13 +278,15 @@ function addMsg(role, text, extra) {
     const _inner = document.createElement('div');
     _inner.className = 'delegate-message msg-inner-' + role;
     if (role === 'tool_call' || role === 'tool') {
-      const toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
+      let toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
       // Prefer `arguments` (full dict) over `tool_args` (500-char JSON
       // string — invalid parse on long commands → `Bash()`). Same fix
       // as the non-delegate branch below.
       const toolArgs = (extra && extra.arguments) || (extra && extra.tool_args) || {};
       let args = toolArgs;
-      if (typeof args === 'string') { try { args = JSON.parse(args); } catch(e) {} }
+      const normalized = _unwrapDisplayedToolCall(toolName, args);
+      toolName = normalized.toolName;
+      args = normalized.toolArgs;
       const tcId = (extra && extra.tc_id) || '';
       if (tcId) _inner.dataset.tcId = tcId;
       _inner.dataset.tool = toolName;
@@ -325,14 +349,16 @@ function addMsg(role, text, extra) {
   } else if (role === 'assistant') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool_call' || role === 'tool') {
-    const toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
+    let toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
     // Prefer `arguments` (untouched dict from classify) over `tool_args`
     // (JSON string truncated to 500 chars — invalid on long bash commands,
     // JSON.parse throws, summary shows `Bash()`). Fall back to the string
     // form only when `arguments` is missing.
     const toolArgs = (extra && extra.arguments) || (extra && extra.tool_args) || {};
     let args = toolArgs;
-    if (typeof args === 'string') { try { args = JSON.parse(args); } catch(e) {} }
+    const normalized = _unwrapDisplayedToolCall(toolName, args);
+    toolName = normalized.toolName;
+    args = normalized.toolArgs;
     const tcId = (extra && extra.tc_id) || '';
     if (tcId) el.dataset.tcId = tcId;
     el.dataset.tool = toolName;

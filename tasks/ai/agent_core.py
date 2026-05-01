@@ -1449,16 +1449,19 @@ class AgentCoreMixin:
                             # (session already has it from initial context)
                             _call_context = [_new_msgs[-1]]
 
+                    _provider_response_completed_at = 0.0
                     try:
                         _check_budget(ctx, total_tokens_in, total_tokens_out)
                         response = _llm_call(_call_context)
+                        _provider_response_completed_at = time.time()
                     except AgentCancelled:
                         raise
                     except CCCompactDetected:
-                        # CC started auto-compacting → kill CC, compact PawFlow context,
-                        # start new CC session with compacted context.
+                        # A stateful CLI provider started auto-compacting → kill it,
+                        # compact PawFlow context, then start a new session with the
+                        # compacted context.
                         _agent_name = ctx.get("active_agent_name", "")
-                        logger.warning("[agent:%s] CCCompactDetected — compacting PawFlow context for %s",
+                        logger.warning("[agent:%s] provider compact detected — compacting PawFlow context for %s",
                                        conversation_id[:8], _agent_name)
                         # Tell the UI: auto-compact started (shows the
                         # 'Compacting (<agent>)' typing indicator).
@@ -1574,6 +1577,7 @@ class AgentCoreMixin:
                                 self._serialize_messages(messages))
                             _store.invalidate_claude_session_for_agent(
                                 conversation_id, _agent_name)
+                            ctx["_cli_has_session"] = False
                             ctx["_claude_has_session"] = False
 
                             # 4. Prepare for new CC session — PawFlow ctx
@@ -2170,10 +2174,18 @@ class AgentCoreMixin:
                               if m.role == "user" and m.msg_id not in _existing_ids]
             if _new_user_msgs:
                 _apply_queued_delegate_turn_mode(_new_user_msgs)
-            _unhandled_user_msgs = [
-                m for m in _new_user_msgs
-                if getattr(m, "_pending_source", "") != "preempt_rescue"
-            ]
+            _unhandled_user_msgs = []
+            for m in _new_user_msgs:
+                _pending_source = getattr(m, "_pending_source", "")
+                if _pending_source != "preempt_rescue":
+                    _unhandled_user_msgs.append(m)
+                    continue
+                try:
+                    _enqueued_at = float(getattr(m, "_pending_enqueued_at", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    _enqueued_at = 0.0
+                if _provider_response_completed_at and _enqueued_at > _provider_response_completed_at:
+                    _unhandled_user_msgs.append(m)
             if _new_user_msgs and (not _had_preempts or _unhandled_user_msgs):
                 logger.info("[agent:%s] %d truly new message(s) arrived during last turn — re-triggering",
                             conversation_id[:8], len(_unhandled_user_msgs or _new_user_msgs))

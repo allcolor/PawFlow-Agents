@@ -1,12 +1,11 @@
 # VS Code Extension
 
-The PawFlow VS Code extension brings the shared PawFlow agent runtime into the editor. It connects to the same backend as the web UI and PawCode, and includes a native TypeScript relay for workspace file access.
+The PawFlow VS Code extension brings the shared PawFlow agent runtime into the editor. It connects to the same backend as the web UI and PawCode. Relay lifecycle is external: use webchat server resources or the standalone PawFlow Relay client to expose files/desktops.
 
 ## Features
 
 - chat sidebar with streaming markdown responses;
 - OAuth login through the browser;
-- native TypeScript relay, no Python relay required for workspace file access;
 - resource panel for agents, skills, tasks, services, variables, and secrets;
 - context menus for edit/delete/activate/assign actions;
 - forms for creating resources;
@@ -32,8 +31,6 @@ Open the `pawflow-vscode` folder in VS Code and press `F5` to launch an Extensio
 | Setting | Purpose |
 |---|---|
 | `pawflow.serverUrl` | PawFlow server URL, default `http://localhost:9090`. |
-| `pawflow.autoRelay` | Start the workspace relay automatically. |
-| `pawflow.allowExec` | Allow shell execution through the relay. |
 | `pawflow.pythonPath` | Optional Python interpreter path for Python-backed helper commands. |
 
 ## Shared Runtime
@@ -46,10 +43,10 @@ The extension is a client, not a separate agent implementation. It shares:
 - auth/session state;
 - file store outputs;
 - SSE event stream;
-- relay-backed tools.
+- relay-backed tools already linked to the conversation.
 
-A conversation started in the browser can be resumed from VS Code, and files edited by an agent are visible in the workspace.
+A conversation started in the browser can be resumed from VS Code. If that conversation has a linked relay, relay-backed file and shell tools operate through the server-side relay binding, not a VS Code-owned relay process.
 
 ## Security Notes
 
-The VS Code relay can expose workspace files and shell execution to PawFlow agents. Keep `pawflow.allowExec` disabled unless you trust the server, the active conversation, and the selected agent/tool permissions.
+VS Code does not start workspace relays. Expose local files or desktops through the standalone PawFlow Relay client only when you trust the server, the active conversation, and the selected agent/tool permissions.

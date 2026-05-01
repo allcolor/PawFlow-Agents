@@ -15,7 +15,6 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from pawflow_cli.auth import authenticate
-from pawflow_cli.relay import RelayThread
 from pawflow_cli.api import AgentAPIClient, SSEClient
 from pawflow_cli.ui.renderer import TerminalRenderer
 from pawflow_cli.config import load_config, save_config
@@ -72,7 +71,7 @@ class PawCode:
         self.renderer = TerminalRenderer()
         self.api: AgentAPIClient = None
         self.sse: SSEClient = None
-        self.relay: RelayThread = None
+        self.relay = None
 
         self.conversation_id = None
         self.selected_agent = ""
@@ -121,16 +120,9 @@ class PawCode:
         self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
 
         if self.session_token:
-            try:
-                self.connect_relay(self.directory)
-            except Exception as e:
-                if "401" in str(e) or "Unauthorized" in str(e):
-                    self.session_token = ""
-                    self.username = ""
-                    self.renderer.print_system(
-                        "Session expired. Use /login or run: pawcode auth login")
-                else:
-                    raise
+            self.renderer.print_system(
+                "PawCode is chat-only; manage filesystem relays from webchat "
+                "or the standalone pawflow-relay client.")
 
         # Cleanup on exit
         atexit.register(self._cleanup)
@@ -812,26 +804,8 @@ class PawCode:
         self.username = auth["username"]
         self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
 
-        # Start relay
-        # Route relay logs to ~/.pawflow/logs/relay.log so the interactive
-        # UI stays clean. Path printed once so users know where to tail
-        # when they need to debug.
-        from pawflow_cli.config import CONFIG_DIR as _CLI_CONFIG_DIR
-        _relay_log = str(_CLI_CONFIG_DIR / "logs" / "relay.log")
-        self.renderer.print_system(
-            f"Relay logs → {_relay_log} (tail -f for live output).")
-        self.relay = RelayThread(
-            self.server_url, self.session_token, self.username,
-            self.directory,
-            docker_image=self.docker_image,
-            gateway_cookie=self.gateway_cookie,
-            gateway_key=self.gateway_key,
-            docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
-            allow_local=self.allow_local,
-            on_token_refresh=self._on_relay_token_refresh,
-            log_file=_relay_log,
-        )
-        self.relay.start()
+        # PawCode no longer owns relay lifecycle. Filesystem relays are managed
+        # by webchat server resources or the standalone pawflow-relay client.
 
         # Resolve conversation
         if not conversation_id:
@@ -934,38 +908,15 @@ class PawCode:
         self._cleanup()
 
     def connect_relay(self, directory: str = ""):
-        """Connect (or reconnect) the filesystem relay."""
-        directory = directory or self.directory
-        if not directory:
-            self.renderer.print_error("No directory specified.")
-            return
-        if self.relay and self.relay._registered:
-            self.renderer.print_system(f"Stopping current relay ({self.relay.directory})...")
-            self.relay.stop()
-        self.renderer.print_system(f"Mounting {directory} as filesystem relay...")
-        from pawflow_cli.config import CONFIG_DIR as _CLI_CONFIG_DIR
-        _relay_log = str(_CLI_CONFIG_DIR / "logs" / "relay.log")
-        self.relay = RelayThread(
-            self.server_url, self.session_token, self.username,
-            directory,
-            docker_image=self.docker_image,
-            gateway_cookie=self.gateway_cookie,
-            gateway_key=self.gateway_key,
-            docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
-            allow_local=self.allow_local,
-            on_token_refresh=self._on_relay_token_refresh,
-            log_file=_relay_log,
+        """Relay lifecycle is owned by the standalone relay client."""
+        self.renderer.print_error(
+            "PawCode no longer starts relays. Use PawFlow webchat resource "
+            "management for server relays, or run `pawflow-relay` for client relays."
         )
-        self.relay.start()
-        _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""
-        self.renderer.print_system(
-            f"Relay '{self.relay.relay_id}' connected{_mode}")
 
     def _cleanup(self):
         if self.sse:
             self.sse.disconnect()
-        if self.relay:
-            self.relay.stop()
 
 
 def main():
@@ -981,17 +932,17 @@ def main():
     parser.add_argument("--server", default=default_server,
                         help=f"PawFlow server URL (env: PAWFLOW_SERVER, default: {default_server})")
     parser.add_argument("--dir", default=".",
-                        help="Directory to mount as filesystem (default: current directory)")
+                        help="Client working directory hint (relay lifecycle is external)")
     parser.add_argument("--no-relay", action="store_true",
-                        help="Don't mount filesystem relay (chat only)")
+                        help="Deprecated no-op: PawCode is always chat-only")
     parser.add_argument("--docker-image", default="",
-                        help="Run relay inside this Docker image (e.g. pawflow-relay-dev:latest)")
+                        help="Deprecated for PawCode; configure relay images via pawflow-relay")
     parser.add_argument("--docker-cpus", default="",
-                        help="CPU limit for Docker relay (default: 2, env: PAWFLOW_RELAY_CPUS)")
+                        help="Deprecated for PawCode; configure relay limits via pawflow-relay")
     parser.add_argument("--docker-memory", default="",
-                        help="Memory limit for Docker relay (default: 4g, env: PAWFLOW_RELAY_MEMORY)")
+                        help="Deprecated for PawCode; configure relay limits via pawflow-relay")
     parser.add_argument("--allow-local", action="store_true", default=False,
-                        help="Allow tools to execute on the host machine (not just Docker)")
+                        help="Deprecated for PawCode; configure local execution via pawflow-relay")
     parser.add_argument("--login", action="store_true",
                         help="Force re-authentication")
     parser.add_argument("-p", "--prompt", nargs="?", const="-", default=None,

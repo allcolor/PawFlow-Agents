@@ -71,7 +71,7 @@ class LLMConnectionService(BaseService):
         return self._client.default_model
 
     @property
-    def timeout(self) -> int:
+    def timeout(self):
         return self._client.timeout
 
     @property
@@ -353,8 +353,8 @@ class LLMConnectionService(BaseService):
                 "description": "Fallback model (used when primary fails)",
             },
             "timeout": {
-                "type": "integer", "default": 180,
-                "description": "Request timeout in seconds",
+                "type": "integer", "default": 0,
+                "description": "Request timeout in seconds (0 = no timeout)",
             },
             "max_retries": {
                 "type": "integer", "default": 2,
@@ -484,7 +484,7 @@ class LLMConnectionService(BaseService):
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "max_concurrent": {"visible": False},
-                    "timeout":       {"default": 1800},
+                    "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
@@ -500,7 +500,7 @@ class LLMConnectionService(BaseService):
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "max_concurrent": {"visible": False},
-                    "timeout":       {"default": 1800},
+                    "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
@@ -516,7 +516,7 @@ class LLMConnectionService(BaseService):
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
                     "max_concurrent": {"visible": False},
-                    "timeout":       {"default": 1800},
+                    "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},

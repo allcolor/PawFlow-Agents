@@ -8,10 +8,11 @@
 //
 //   fireAction('compact', {conversation_id: cid});  // fire-and-forget, no result needed
 
-const { Subject, filter, take, map, catchError, of, EMPTY, first, tap } = rxjs;
+const { filter, take, map, catchError, of, EMPTY, first, tap } = rxjs;
 
-// Central subject — all SSE command_result events flow through here
-const _commandResult$ = new rxjs.Subject();
+// Central command-result bus. Replay a short window so an SSE replay or
+// ultra-fast inline response cannot be lost before action$ subscribers attach.
+const _commandResult$ = new rxjs.ReplaySubject(200, 30000);
 
 // Dedicated UI command-result stream. Action results must not depend on the
 // conversation SSE lifecycle: resumeConv deliberately closes/reopens that
@@ -142,15 +143,14 @@ function action$(actionName, params = {}, opts = {}) {
     });
   });
 
-  // Return filtered observable: wait for the matching command_result.
-  // When the server tags the result with a conversation_id, only
-  // accept matches for the conv this call was issued from. Untagged
-  // results (older code paths without conv scoping) are accepted
-  // unconditionally so nothing regresses.
+  // Return filtered observable: wait for the exact per-call result.
+  // The bus is replayed, so accepting untagged historical results would
+  // route stale responses into new calls. Browser action$ always sends
+  // _call_id, and the backend echoes it as _callId for every result path.
   return _commandResult$.pipe(
     filter(r => {
       if (r.action !== actionName) return false;
-      if (r._callId && r._callId !== _callId) return false;
+      if (r._callId !== _callId) return false;
       if (_callConvId && r.conversation_id && r.conversation_id !== _callConvId) return false;
       return true;
     }),

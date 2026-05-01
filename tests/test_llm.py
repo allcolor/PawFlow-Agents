@@ -10,6 +10,7 @@ from tasks import register_all_tasks
 register_all_tasks()
 
 from core import FlowFile, TaskFactory, ServiceFactory
+from core.llm_client import LLMClient
 from services.llm_connection import LLMConnectionService, LLMMessage, LLMResponse
 
 
@@ -163,6 +164,17 @@ class TestLLMConnectionService:
         assert "provider" in schema
         assert "api_key" in schema
         assert schema["api_key"]["sensitive"] is True
+
+    def test_timeout_default_means_no_timeout(self):
+        svc = LLMConnectionService({"provider": "openai", "api_key": "k"})
+        schema = svc.get_parameter_schema()
+
+        assert schema["timeout"]["default"] == 0
+        assert svc.timeout is None
+        assert LLMClient(provider="openai", config={}).timeout is None
+        assert LLMClient(provider="openai", config={"timeout": 0}).timeout is None
+        assert LLMClient(provider="openai", config={"timeout": ""}).timeout is None
+        assert LLMClient(provider="openai", config={"timeout": 37}).timeout == 37
 
 
 class TestInferLLMTask:

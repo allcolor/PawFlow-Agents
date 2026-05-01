@@ -136,16 +136,23 @@ def _request_action_label(req: "PendingRequest") -> str:
         return ""
 
 
+def _is_long_lived_stream_path(path: str) -> bool:
+    return path == "/api/agent/events" or path.startswith("/relay-proxy/")
+
+
 def _emit_timing_summary(req: "PendingRequest") -> None:
     """Emit one grep-friendly per-request timing line."""
     t = req.timing
     if not t or "recv" not in t:
         return
+    is_long_stream = _is_long_lived_stream_path(req.path)
     segments = []
     for label, a, b in _TIMING_SEGMENTS:
+        if is_long_stream and label == "respond→send":
+            continue
         if a in t and b in t:
             segments.append(f"{label}={int((t[b] - t[a]) * 1000)}ms")
-    last = t.get("send") or t.get("respond") or t.get("dispatch")
+    last = (t.get("respond") if is_long_stream else None) or t.get("send") or t.get("respond") or t.get("dispatch")
     total = int((last - t["recv"]) * 1000) if last else 0
     action = _request_action_label(req)
     msg = "[http-timing] req_id=%s %s %s%s total=%dms %s status=%d"
@@ -154,7 +161,7 @@ def _emit_timing_summary(req: "PendingRequest") -> None:
         f" action={action}" if action else "",
         total, " ".join(segments), req.response_status,
     )
-    if total > 5000 and not req.path.startswith("/relay-proxy/"):
+    if total > 5000 and not is_long_stream:
         logger.info(msg, *args)
     else:
         logger.debug(msg, *args)
@@ -494,7 +501,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # when this thread woke up from the event.
         _waited = time.monotonic() - req.timing.get(
             "recv", req.timing.get("dispatch", time.monotonic()))
-        _is_streaming_path = path.startswith("/relay-proxy/")
+        _is_streaming_path = _is_long_lived_stream_path(path)
         if _waited > 5.0 and not _is_streaming_path:
             _action = _request_action_label(req)
             logger.warning("[http] slow response — %s %s%s took %.1fs "

@@ -16,7 +16,7 @@ Config:
     max_tokens: Max response tokens per LLM call (default: 4096)
     max_iterations: Max tool-use loop iterations (default: 200, safety limit)
     tools: JSON list of tool definitions (optional, overrides builtin)
-    timeout: Request timeout in seconds (default: 120)
+    timeout: Request timeout in seconds (0/empty = no timeout)
     conversation_attribute: If set, store conversation history in this attribute (JSON)
 
 Output attributes:
@@ -100,9 +100,15 @@ class AgentLoopTask(
     _conv_gen_lock = threading.Lock()
     _conv_interrupt: Dict[str, bool] = {}
     _interrupt_lock = threading.Lock()
-    # Active agent contexts — push on enter, pop on exit (finally).
+    # Active agent turns — provider-agnostic UI truth. Created as soon as
+    # the streaming worker starts, before context preparation/compact, and
+    # removed only by the final streaming cleanup.
+    _active_turns: Dict[str, dict] = {}
+    # Active agent contexts — push on enter, pop in _run_agent_loop finally.
+    # Contexts can be temporarily absent during context preparation, compact,
+    # provider restart, or retrigger gaps; list_active must not rely on them
+    # as the only source of active work.
     # Key: "conversation_id:agent_name", Value: ctx dict
-    # This is the SOLE source of truth for "which agents are active".
     _active_contexts: Dict[str, dict] = {}
     _active_contexts_lock = threading.Lock()
     _active_claude_client: Dict[str, Any] = {}          # conv_id:agent -> CC client
@@ -178,8 +184,14 @@ class AgentLoopTask(
         if not inst:
             return False
         key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+        prefix = f"{conversation_id}:"
         with inst._active_contexts_lock:
-            return key in inst._active_contexts
+            if key in inst._active_turns or key in inst._active_contexts:
+                return True
+            if not agent_name:
+                return any(k == conversation_id or k.startswith(prefix)
+                           for k in inst._active_turns)
+        return False
 
     @classmethod
     def is_conversation_active(cls, conversation_id: str) -> bool:
@@ -319,8 +331,8 @@ class AgentLoopTask(
                 "description": "JSON list of custom tool definitions (overrides builtins)",
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 120,
-                "description": "Request timeout in seconds",
+                "type": "integer", "required": False, "default": 0,
+                "description": "Request timeout in seconds (0 = no timeout)",
             },
             "conversation_attribute": {
                 "type": "string", "required": False, "default": "",

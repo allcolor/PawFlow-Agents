@@ -54,6 +54,7 @@ Common fields:
 | `compact_target_tokens` | no | Target size after compaction. |
 | `compact_threshold_pct` | no | `0` disables proactive compaction. A positive value triggers compaction at that percentage of `max_context_size`. |
 | `token_multiplier` | no | Optional conservative multiplier for provider token estimates. |
+| `timeout` | no | Request/stall timeout in seconds. `0` or missing means no timeout; only a positive value limits provider calls. |
 
 For context windows, the rule is strict: if the provider API/CLI reports the context window, that value is authoritative. Otherwise `max_context_size` from the LLM service is authoritative. If neither exists, the service is misconfigured and should fail loudly instead of using a hidden default.
 

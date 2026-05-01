@@ -114,14 +114,50 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         with _exec._active_contexts_lock:
             import time as _time
             import re as _re_active
+            active_by_key = {}
+
+            def _matches_conv(key: str) -> bool:
+                return key == conv_id or key.startswith(conv_id + ":")
+
+            def _task_id_from_key(key: str) -> str:
+                _tm = _re_active.search(r'::task::([^:]+)', key)
+                return _tm.group(1) if _tm else ""
+
+            def _row_key(key: str, agent_name: str, task_id: str) -> str:
+                if task_id:
+                    return key
+                return f"{conv_id}:{agent_name}" if agent_name else key
+
+            # Provider-agnostic active turn metadata is created before context
+            # preparation and compact, so the panel stays correct while
+            # _active_contexts is temporarily empty.
+            for _k, turn in getattr(_exec, "_active_turns", {}).items():
+                if not _matches_conv(_k):
+                    continue
+                _aname = turn.get("agent_name", "")
+                _task_id = turn.get("task_id", "") or _task_id_from_key(_k)
+                _started = turn.get("started_at", 0)
+                _row = {
+                    "agent_name": _aname,
+                    "task_id": _task_id,
+                    "iteration": turn.get("iteration", 0),
+                    "round": turn.get("round", 0),
+                    "max_rounds": turn.get("max_rounds", 0),
+                    "last_tool": turn.get("last_tool", ""),
+                    "duration_s": _time.time() - _started if _started else 0,
+                    "status": turn.get("status", "thinking"),
+                    "message_preview": turn.get("message_preview", ""),
+                }
+                _cu = _ctx_usage_map.get(_aname)
+                if _cu:
+                    _row["context_usage"] = _cu
+                active_by_key[_row_key(_k, _aname, _task_id)] = _row
+
             for _k, ctx in _exec._active_contexts.items():
                 if _k == conv_id or _k.startswith(conv_id + ":"):
                     _started = ctx.get("_started_at", 0)
                     # Extract task_id from key pattern conv::task::t_xxx:agent
-                    _task_id = ""
-                    _tm = _re_active.search(r'::task::([^:]+)', _k)
-                    if _tm:
-                        _task_id = _tm.group(1)
+                    _task_id = _task_id_from_key(_k)
                     _aname = ctx.get("active_agent_name", "")
                     _row = {
                         "agent_name": _aname,
@@ -135,7 +171,8 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                     _cu = _ctx_usage_map.get(_aname)
                     if _cu:
                         _row["context_usage"] = _cu
-                    active.append(_row)
+                    active_by_key[_row_key(_k, _aname, _task_id)] = _row
+            active.extend(active_by_key.values())
         # Also include scheduled tasks (active but between turns)
         try:
             from core.conversation_store import ConversationStore

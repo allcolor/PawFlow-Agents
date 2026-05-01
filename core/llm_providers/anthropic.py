@@ -24,6 +24,25 @@ class LLMAnthropicMixin:
             self._cache_detector = CacheBreakDetector()
         return self._cache_detector
 
+    @staticmethod
+    def _log_anthropic_cache_usage(tokens_in: int, cache_creation_tokens: int,
+                                   cache_read_tokens: int) -> None:
+        """Log Anthropic cache usage without deriving impossible negatives.
+
+        Anthropic reports cache creation/read tokens separately from
+        `input_tokens` on cached requests, so subtracting cache tokens from
+        `input_tokens` can produce negative values. Treat `input_tokens` as
+        the non-cached input portion reported by the provider.
+        """
+        _cache_total = cache_creation_tokens + cache_read_tokens
+        if _cache_total > 0:
+            _hit_pct = (cache_read_tokens / _cache_total * 100) if _cache_total else 0
+            logger.info(
+                "Anthropic KV cache: %d created, %d read (%.0f%% hit), %d input tokens",
+                cache_creation_tokens, cache_read_tokens, _hit_pct, tokens_in)
+        elif tokens_in > 0:
+            logger.info("Anthropic KV cache: MISS — %d input tokens, 0 cached", tokens_in)
+
     def _stream_anthropic(self, messages, model, temperature, max_tokens, tools, callback, thinking_budget: int = 0, thinking_callback=None,
                            *, call_user_id: str = "", call_conversation_id: str = ""):
         """Anthropic streaming: reads SSE events from the API."""
@@ -217,14 +236,8 @@ class LLMAnthropicMixin:
                         except (json.JSONDecodeError, KeyError):
                             pass
 
-            _cache_total = cache_creation_tokens + cache_read_tokens
-            if _cache_total > 0:
-                _hit_pct = (cache_read_tokens / _cache_total * 100) if _cache_total else 0
-                logger.info("Anthropic KV cache: %d created, %d read (%.0f%% hit), %d uncached input",
-                            cache_creation_tokens, cache_read_tokens, _hit_pct,
-                            tokens_in - cache_read_tokens - cache_creation_tokens)
-            elif tokens_in > 0:
-                logger.info("Anthropic KV cache: MISS — %d input tokens, 0 cached", tokens_in)
+            self._log_anthropic_cache_usage(
+                tokens_in, cache_creation_tokens, cache_read_tokens)
 
             # Check for cache break
             _diag = detector.check_post_call(cache_read_tokens, cache_creation_tokens)
@@ -546,14 +559,8 @@ class LLMAnthropicMixin:
         tokens_in = usage.get("input_tokens", 0)
         cache_creation_tokens = usage.get("cache_creation_input_tokens", 0) or 0
         cache_read_tokens = usage.get("cache_read_input_tokens", 0) or 0
-        _cache_total = cache_creation_tokens + cache_read_tokens
-        if _cache_total > 0:
-            _hit_pct = (cache_read_tokens / _cache_total * 100) if _cache_total else 0
-            logger.info("Anthropic KV cache: %d created, %d read (%.0f%% hit), %d uncached input",
-                        cache_creation_tokens, cache_read_tokens, _hit_pct,
-                        tokens_in - cache_read_tokens - cache_creation_tokens)
-        elif tokens_in > 0:
-            logger.info("Anthropic KV cache: MISS — %d input tokens, 0 cached", tokens_in)
+        self._log_anthropic_cache_usage(
+            tokens_in, cache_creation_tokens, cache_read_tokens)
 
         # Check for cache break
         _diag = detector.check_post_call(cache_read_tokens, cache_creation_tokens)

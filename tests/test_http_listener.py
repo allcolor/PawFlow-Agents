@@ -11,7 +11,8 @@ import pytest
 
 from services.http_listener_service import (
     HTTPListenerService, PendingRequest, RouteRegistry,
-    RouteConflictError, RouteEntry, _request_action_label,
+    RouteConflictError, RouteEntry, _emit_timing_summary,
+    _request_action_label,
 )
 from services.http_auth_service import HTTPAuthService, AuthValidationResult
 from tasks.io.http_receiver import HTTPReceiverTask
@@ -47,6 +48,35 @@ def _create_expired_test_session():
     session.expires_at = time.time() - 10
     sm._save_sessions()
     return session.session_id
+
+
+def test_sse_timing_summary_uses_respond_not_stream_lifetime(caplog):
+    req = PendingRequest(
+        request_id="abcdef123456",
+        method="GET",
+        path="/api/agent/events",
+        headers={},
+        body=b"",
+    )
+    req.response_status = 200
+    base = time.monotonic()
+    req.timing = {
+        "recv": base,
+        "dispatch": base,
+        "enqueue": base,
+        "dequeue": base + 0.01,
+        "respond": base + 0.25,
+        "send": base + 128.0,
+    }
+
+    with caplog.at_level("DEBUG", logger="services.http_listener_service"):
+        _emit_timing_summary(req)
+
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "total=250ms" in logged
+    assert "respond→send" not in logged
+    assert "total=128" not in logged
+
 
 
 def test_request_action_label_extracts_api_ui_action_only():

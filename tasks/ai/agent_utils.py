@@ -68,7 +68,7 @@ class AgentUtilsMixin:
                 "api_key": self.config["api_key"],
                 "base_url": self.config.get("base_url", ""),
                 "model": default_model,
-                "timeout": int(self.config.get("timeout", 120)),
+                "timeout": self.config.get("timeout", 0),
             }
             client = LLMClient(
                 provider=self.config.get("provider", "openai"),
@@ -464,10 +464,12 @@ class AgentUtilsMixin:
                 _tk = ctx.get("_thought_key")
                 if _tk:
                     self._active_thoughts.discard(_tk)
-        # Clean up active claude-code client reference (keyed by conv:agent)
+        # Clean up provider-agnostic active turn + live client references.
         _agent_n = ctx.get("active_agent_name", "") if ctx else ""
         _cc_key = f"{conversation_id}:{_agent_n}" if _agent_n else conversation_id
+        _turn_key = (ctx or {}).get("_active_turn_key") or _cc_key
         with self._active_contexts_lock:
+            self._active_turns.pop(_turn_key, None)
             self._active_claude_client.pop(_cc_key, None)
 
     def _calibrate_cpt(self, service_id: str, total_chars: int,

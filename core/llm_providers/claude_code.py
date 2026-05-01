@@ -1665,8 +1665,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # kill the process. The retry loop in stream_chat will relaunch
         # a fresh CC process with the same session.
         # Read from the LLM service config (timeout property) so users can
-        # tune it without touching code.
-        _STALL_TIMEOUT = int(getattr(self, "timeout", 120) or 120)
+        # tune it without touching code. 0/None means no stall timeout;
+        # the user can still stop explicitly.
+        _STALL_TIMEOUT = int(getattr(self, "timeout", None) or 0)
         _stall_start_time = 0.0  # time.monotonic() when stall watch begins
         _got_assistant = False   # set True on first assistant event
         _last_tool_result_time = 0.0  # monotonic time of last tool_result with no pending tools
@@ -1763,7 +1764,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         def _stall_watchdog():
             pass  # _stall_killed is on self
             while not _watchdog_stop.is_set():
-                if _stall_start_time and not _got_assistant:
+                if _STALL_TIMEOUT > 0 and _stall_start_time and not _got_assistant:
                     elapsed = time.monotonic() - _stall_start_time
                     if elapsed >= _STALL_TIMEOUT:
                         logger.warning(
@@ -1786,7 +1787,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             pass
                         return
                 # Tool result stall: all tools resolved but no assistant response
-                if _last_tool_result_time and not _pending_tool_ids:
+                if _STALL_TIMEOUT > 0 and _last_tool_result_time and not _pending_tool_ids:
                     elapsed = time.monotonic() - _last_tool_result_time
                     if elapsed >= _STALL_TIMEOUT:
                         logger.warning(
@@ -2055,9 +2056,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     if subtype == "init":
                         _stall_start_time = time.monotonic()
                         _got_assistant = False
-                        logger.info("[claude-code][%s/%s/%s] init — stall watchdog armed (%.0fs timeout)",
-                                    user_id[:6] or '?', conv_id[:8] or '?',
-                                    agent_name or 'default', _STALL_TIMEOUT)
+                        if _STALL_TIMEOUT > 0:
+                            logger.info("[claude-code][%s/%s/%s] init — stall watchdog armed (%.0fs timeout)",
+                                        user_id[:6] or '?', conv_id[:8] or '?',
+                                        agent_name or 'default', _STALL_TIMEOUT)
+                        else:
+                            logger.info("[claude-code][%s/%s/%s] init — stall watchdog disabled",
+                                        user_id[:6] or '?', conv_id[:8] or '?',
+                                        agent_name or 'default')
                     continue
 
                 if etype == "assistant":

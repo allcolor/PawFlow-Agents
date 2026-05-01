@@ -461,7 +461,10 @@ class LLMClient(
 
     @property
     def timeout(self):
-        return int(self._cfg("timeout", 60))
+        raw = self._cfg("timeout", None)
+        if raw in (None, "", 0, "0"):
+            return None
+        return int(raw)
 
     @property
     def max_retries(self):

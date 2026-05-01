@@ -246,10 +246,33 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             flowfile.set_attribute("agent.fast_restart_after_preempt", "true")
             flowfile.set_content(_original_content)
 
-        # Mark active
+        # Mark active before context preparation. Active Agents is a PawFlow
+        # execution-state panel, so it must stay correct while compact/context
+        # loading runs before _run_agent_loop pushes _active_contexts.
+        _active_agent_guess = _target
+        if not _active_agent_guess and conversation_id:
+            try:
+                _ares = ConversationStore.instance().get_extra(
+                    conversation_id, "active_resources") or {}
+                _active_agent_guess = _ares.get("agent", "") or ""
+            except Exception:
+                logger.debug("exception suppressed", exc_info=True)
+        _active_turn_key = (
+            f"{conversation_id}:{_active_agent_guess}"
+            if _active_agent_guess else conversation_id
+        )
+        _active_turn_started = time.time()
         with self._active_lock:
             self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
             self._user_active_conversations.add(conversation_id)
+        with self._active_contexts_lock:
+            self._active_turns[_active_turn_key] = {
+                "conversation_id": conversation_id,
+                "agent_name": _active_agent_guess,
+                "started_at": _active_turn_started,
+                "status": "preparing",
+                "message_preview": _user_text[:160],
+            }
 
         if _target:
             bus.publish_event(conversation_id, "thinking", {
@@ -263,6 +286,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
         # Background thread: prepare context (may compact), then run agent loop
         def _bg_streaming():
+            nonlocal _active_turn_key
             logger.info("[agent:%s] bg_streaming started for %s",
                         conversation_id[:8], _target or "(default)")
             try:
@@ -290,10 +314,30 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     "agent_name": _err_agent, "response": "",
                     "finish_reason": "error",
                 })
-                with self._active_lock:
-                    self._active_conversations[conversation_id] = max(0,
-                        self._active_conversations.get(conversation_id, 1) - 1)
+                self._decrement_active(conversation_id, {
+                    "active_agent_name": _err_agent or _active_agent_guess,
+                    "_active_turn_key": _active_turn_key,
+                })
                 return
+
+            _resolved_agent = ctx.get("active_agent_name", "") or _active_agent_guess
+            _resolved_turn_key = (
+                f"{conversation_id}:{_resolved_agent}"
+                if _resolved_agent else conversation_id
+            )
+            with self._active_contexts_lock:
+                _turn = self._active_turns.pop(_active_turn_key, None) or {}
+                _turn.update({
+                    "conversation_id": conversation_id,
+                    "agent_name": _resolved_agent,
+                    "started_at": _turn.get("started_at", _active_turn_started),
+                    "status": "thinking",
+                    "message_preview": _turn.get("message_preview", _user_text[:160]),
+                    "max_rounds": ctx.get("max_rounds", 0),
+                })
+                self._active_turns[_resolved_turn_key] = _turn
+            _active_turn_key = _resolved_turn_key
+            ctx["_active_turn_key"] = _active_turn_key
 
             _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
             with self._conv_gen_lock:

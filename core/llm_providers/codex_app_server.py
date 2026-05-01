@@ -495,8 +495,9 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
             try:
                 from core.codex_live_registry import CodexLiveRegistry
                 live_reg = CodexLiveRegistry.instance()
+                _idle_ttl = getattr(self, "timeout", None)
                 live_reg.ensure_sweeper(
-                    idle_ttl_seconds=int(getattr(self, "timeout", 1800) or 1800))
+                    idle_ttl_seconds=int(_idle_ttl) if _idle_ttl else None)
                 live_key = (user_id, conv_id, agent_name or "default", svc_id,
                             int(resume_pool_idx))
                 live_session = live_reg.get(live_key)

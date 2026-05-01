@@ -768,8 +768,9 @@ class LLMGeminiMixin(GeminiSessionMixin):
             try:
                 from core.gemini_live_registry import GeminiLiveRegistry
                 live_reg = GeminiLiveRegistry.instance()
+                _idle_ttl = getattr(self, "timeout", None)
                 live_reg.ensure_sweeper(
-                    idle_ttl_seconds=int(getattr(self, "timeout", 1800) or 1800))
+                    idle_ttl_seconds=int(_idle_ttl) if _idle_ttl else None)
                 live_key = (user_id, conv_id, agent_name or "default", svc_id)
                 live_session = live_reg.get(live_key)
                 if live_session is not None and legacy_session_cleared:

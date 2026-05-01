@@ -403,6 +403,73 @@ def test_list_active_keeps_idle_live_sessions_out_of_active_payload():
     assert data["codex_live"] == [live_entry]
 
 
+def test_list_active_uses_provider_agnostic_active_turn_without_context():
+    """Active Agents must not disappear during context preparation/compact.
+    `_active_contexts` is only present inside _run_agent_loop; `_active_turns`
+    covers the provider-agnostic worker lifetime before and between loops.
+    """
+    from core import FlowFile
+    from tasks.ai.actions.usage import _handle_usage
+
+    fake_exec = SimpleNamespace(
+        _active_turns={
+            "conv-live:assistant": {
+                "conversation_id": "conv-live",
+                "agent_name": "assistant",
+                "started_at": 100.0,
+                "status": "preparing",
+                "message_preview": "compact is running",
+            },
+        },
+        _active_contexts={},
+        _active_contexts_lock=threading.Lock())
+
+    class _Store:
+        def get_extra(self, *_args, **_kwargs):
+            return {}
+
+    ff = FlowFile()
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec), \
+            patch("core.conversation_store.ConversationStore.instance", return_value=_Store()), \
+            patch("core.cc_live_registry.LiveSessionRegistry.instance") as cc_reg, \
+            patch("core.codex_live_registry.CodexLiveRegistry.instance") as codex_reg, \
+            patch("core.gemini_live_registry.GeminiLiveRegistry.instance") as gemini_reg, \
+            patch("time.time", return_value=130.0):
+        cc_reg.return_value.status.return_value = []
+        codex_reg.return_value.status.return_value = []
+        gemini_reg.return_value.status.return_value = []
+        out = _handle_usage(
+            SimpleNamespace(), "list_active", {"conversation_id": "conv-live"},
+            None, "user", ff)
+
+    data = json.loads(out[0].get_content().decode("utf-8"))
+    assert data["active"] == [{
+        "agent_name": "assistant",
+        "task_id": "",
+        "iteration": 0,
+        "round": 0,
+        "max_rounds": 0,
+        "last_tool": "",
+        "duration_s": 30.0,
+        "status": "preparing",
+        "message_preview": "compact is running",
+    }]
+
+
+def test_is_agent_active_uses_provider_agnostic_active_turns():
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    fake_exec = SimpleNamespace(
+        _active_turns={"conv-live:assistant": {"agent_name": "assistant"}},
+        _active_contexts={},
+        _active_contexts_lock=threading.Lock())
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec):
+        assert AgentLoopTask.is_agent_active("conv-live", "assistant") is True
+        assert AgentLoopTask.is_agent_active("conv-live", "") is True
+        assert AgentLoopTask.is_agent_active("conv-live", "other") is False
+
+
 def test_live_badge_requires_reused_live_process():
     """The LIVE badge means this active turn reused an already-live process.
     First execution has a live process entry, but reuse_count is still zero.
@@ -579,6 +646,8 @@ def test_ui_actions_have_no_sync_allowlist_and_use_reply_bus():
     assert "body._call_id = _callId" in rxbus_src
     assert "body._reply_conversation_id = _uiActionConversationId()" in rxbus_src
     assert "new EventSource(url)" in rxbus_src
+    assert "new rxjs.ReplaySubject" in rxbus_src
+    assert "r._callId !== _callId" in rxbus_src
 
 
 def test_agent_background_llm_calls_pass_provider_agnostic_scope():

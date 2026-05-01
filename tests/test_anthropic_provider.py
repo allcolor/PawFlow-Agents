@@ -61,6 +61,23 @@ def test_anthropic_preserves_signed_thinking_before_tool_results():
     assert api_messages[1]["content"][1]["type"] == "tool_use"
 
 
+def test_anthropic_cache_log_does_not_report_negative_input(caplog):
+    client = LLMClient(provider="anthropic", config={"api_key": "test"})
+
+    with caplog.at_level("INFO", logger="core.llm_providers.anthropic"):
+        client._log_anthropic_cache_usage(
+            tokens_in=1508,
+            cache_creation_tokens=0,
+            cache_read_tokens=164352,
+        )
+
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "-" not in logged
+    assert "1508 input tokens" in logged
+    assert "164352 read" in logged
+
+
+
 def test_anthropic_response_preserves_thinking_signature(monkeypatch):
     client = LLMClient(provider="anthropic", config={"api_key": "test"})
 

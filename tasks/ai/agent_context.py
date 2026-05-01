@@ -67,7 +67,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 sub-conversations that have their own isolated message store.
         """
         model = self.config.get("model", "")
-        timeout = int(self.config.get("timeout", 120))
+        # LLM timeout is resolved by the LLM service/client. Missing or 0 means
+        # no timeout; only an explicit positive value limits the provider call.
 
         # LLM service routing — all LLM access goes through services
         _user_id_for_svc = flowfile.get_attribute("http.auth.principal") or ""

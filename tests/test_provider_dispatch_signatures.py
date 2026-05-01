@@ -509,6 +509,7 @@ def test_provider_mixins_have_no_method_collisions():
     #   - `_pool_counter` / `_pool_lock` are accessed via
     #     `<Mixin>._pool_counter` (class-name prefix), so per-class
     #     state is preserved despite the name collision.
+    #   - Python runtime metadata dunders can be injected on every class.
     OK_TO_COLLIDE = {
         "_DISALLOWED_BUILTIN_TOOLS",
         "_LEGACY_IMAGE_RE",
@@ -516,6 +517,8 @@ def test_provider_mixins_have_no_method_collisions():
         "_get_tool_relay_info",
         "_pool_counter",
         "_pool_lock",
+        "__firstlineno__",
+        "__static_attributes__",
     }
 
     failures = []

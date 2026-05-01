@@ -118,12 +118,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 _stamped_user["attachments"] = _attachments_body
             if not _skip_pre_persist:
                 try:
-                    try:
-                        from core.bg_bucket_builder import BgBucketBuilder
-                        BgBucketBuilder.instance().note_foreground_activity(
-                            conversation_id)
-                    except Exception:
-                        logger.debug("bg foreground hint failed", exc_info=True)
                     _cw = ConversationWriter.for_conversation(conversation_id)
                     _stream_mark("writer_obtained")
                     _cw.enqueue_message(
@@ -649,6 +643,11 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     [LLMMessage(role="user", content=prompt,
                                  conversation_id=conversation_id)],
                     max_tokens=30, temperature=0.3,
+                    call_user_id=ctx.get("user_id", ""),
+                    call_conversation_id=conversation_id,
+                    call_agent_name="title",
+                    call_event_cid="",
+                    call_ephemeral_stream=True,
                 )
                 title = (resp.content or "").strip().strip('"\'')
                 if not title:

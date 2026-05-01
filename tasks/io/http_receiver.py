@@ -22,6 +22,7 @@ The task sets these FlowFile attributes:
     route.relationship    — determines which connection the FF is routed to
 """
 
+import itertools
 import json
 import logging
 import queue
@@ -56,7 +57,8 @@ class HTTPReceiverTask(BaseTask):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self._queue: queue.Queue = queue.Queue(maxsize=1000)
+        self._queue: queue.PriorityQueue = queue.PriorityQueue(maxsize=1000)
+        self._seq = itertools.count()
         self._registered = False
         self._owner_id: Optional[str] = None
 
@@ -67,6 +69,11 @@ class HTTPReceiverTask(BaseTask):
     def has_pending_input(self) -> bool:
         """Protocol method: tells the scheduler this task has self-generated input."""
         return not self._queue.empty()
+
+    def has_priority_input(self) -> bool:
+        """Return True when an interactive HTTP/UI request is waiting."""
+        with self._queue.mutex:
+            return any(item[0] <= 1 for item in self._queue.queue)
 
     @property
     def is_persistent_source(self) -> bool:
@@ -168,10 +175,12 @@ class HTTPReceiverTask(BaseTask):
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Enqueue for pickup by execute()
+        # Enqueue for pickup by execute(). Lower values are served first:
+        # /api/ui must remain responsive even while agent/tool work is busy.
+        queue_priority = 0 if pending_req.path == "/api/ui" else 10
         pending_req.mark("enqueue")
         try:
-            self._queue.put_nowait(ff)
+            self._queue.put_nowait((queue_priority, next(self._seq), ff))
             logger.debug("[httpReceiver] enqueued %s %s (req_id=%s, qsize=%d)",
                         pending_req.method, pending_req.path,
                         pending_req.request_id[:8], self._queue.qsize())
@@ -196,7 +205,8 @@ class HTTPReceiverTask(BaseTask):
         self._ensure_routes_registered()
 
         try:
-            ff = self._queue.get_nowait()
+            _item = self._queue.get_nowait()
+            ff = _item[2] if isinstance(_item, tuple) else _item
             _route = ff.get_attribute("http.route") or "?"
             _method = ff.get_attribute("http.method") or "?"
             _rid = ff.get_attribute("http.request.id") or "?"

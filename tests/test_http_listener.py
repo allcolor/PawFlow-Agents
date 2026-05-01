@@ -11,7 +11,7 @@ import pytest
 
 from services.http_listener_service import (
     HTTPListenerService, PendingRequest, RouteRegistry,
-    RouteConflictError, RouteEntry,
+    RouteConflictError, RouteEntry, _request_action_label,
 )
 from services.http_auth_service import HTTPAuthService, AuthValidationResult
 from tasks.io.http_receiver import HTTPReceiverTask
@@ -47,6 +47,26 @@ def _create_expired_test_session():
     session.expires_at = time.time() - 10
     sm._save_sessions()
     return session.session_id
+
+
+def test_request_action_label_extracts_api_ui_action_only():
+    req = PendingRequest(
+        request_id="rid",
+        method="POST",
+        path="/api/ui",
+        headers={},
+        body=json.dumps({"action": "list_resources", "message": "secret body"}).encode(),
+    )
+    assert _request_action_label(req) == "list_resources"
+
+    other = PendingRequest(
+        request_id="rid2",
+        method="POST",
+        path="/api/agent",
+        headers={},
+        body=json.dumps({"action": "send_message"}).encode(),
+    )
+    assert _request_action_label(other) == ""
 
 
 # ---------------------------------------------------------------------------

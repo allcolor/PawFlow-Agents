@@ -138,6 +138,50 @@ def test_empty_conversation_id_raises():
             target_tokens=100, conversation_id="", final=True)
 
 
+def test_call_summarize_uses_resolved_summarizer_client(monkeypatch):
+    """The displayed summarizer_service and executed provider must match.
+
+    A compact context can hold an older summarizer client if the service config
+    changes while the agent is active. _call_summarize re-resolves the
+    summarizer service for max_context_size, so it must also use that resolved
+    client instead of executing the stale one.
+    """
+
+    class _OldCC:
+        provider = "claude-code"
+
+    class _ResolvedDeepseek:
+        provider = "anthropic"
+
+    class _FakeFileStore:
+        def store(self, *args, **kwargs):
+            return "fid_compact"
+
+    class _Host(AgentSummarizeMixin):
+        executed_provider = ""
+
+        def _get_summarizer_client(self, user_id=""):
+            return _ResolvedDeepseek(), 400000, "deepseek_llm_service"
+
+        def _summarize_via_cc(self, *args, **kwargs):
+            raise AssertionError("stale claude-code client was used")
+
+        def _summarize_via_api(self, client, *args, **kwargs):
+            self.executed_provider = client.provider
+            return "VALID API SUMMARY " * 5
+
+    from core.file_store import FileStore
+    monkeypatch.setattr(FileStore, "instance", lambda: _FakeFileStore())
+
+    host = _Host()
+    result = host._call_summarize(
+        _OldCC(), "text to summarize", target_tokens=2000,
+        user_id="quentin.anciaux", conversation_id="cid_deepseek")
+
+    assert "VALID API SUMMARY" in result
+    assert host.executed_provider == "anthropic"
+
+
 def test_summarize_via_cc_kill_on_delivery_not_treated_as_failure(monkeypatch):
     """_summarize_via_cc deliberately kills CC the moment compact_result
     delivers (see _stream_claude_code). CC exits non-zero → complete_stream

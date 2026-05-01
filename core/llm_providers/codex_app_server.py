@@ -129,12 +129,6 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
     @staticmethod
     def _codex_app_extract_images(messages, user_id: str, conversation_id: str) -> list:
         """Extract images from the last user message for native vision."""
-        if not user_id:
-            raise ValueError(
-                "_codex_app_extract_images: user_id is required to resolve image_ref attachments")
-        if not conversation_id:
-            raise ValueError(
-                "_codex_app_extract_images: conversation_id is required to resolve image_ref attachments")
         image_blocks = []
         last_user_idx = -1
         for i, m in enumerate(messages):
@@ -188,6 +182,14 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
 
                 elif btype == "image_ref":
                     if is_last_user:
+                        if not user_id:
+                            raise ValueError(
+                                "_codex_app_extract_images: user_id is required "
+                                "to resolve image_ref attachments")
+                        if not conversation_id:
+                            raise ValueError(
+                                "_codex_app_extract_images: conversation_id is "
+                                "required to resolve image_ref attachments")
                         from core.file_store import FileStore
                         fid = block.get("file_id", "")
                         if not fid:

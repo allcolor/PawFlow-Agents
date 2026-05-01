@@ -241,13 +241,24 @@ def test_context_usage_cache_counts_suffix_then_resets():
 def test_list_resources_uses_cached_stored_context_usage():
     src = Path("tasks/ai/actions/agent_resource.py").read_text(encoding="utf-8")
     assert "def _stored_context_usage" in src
-    assert 'existing.get("message_count") is not None' in src
     list_resources_block = src[
         src.index('if action == "list_resources":'):
         src.index('if action == "get_resource_detail":')]
     assert "context_usage_from_cache" not in list_resources_block
     assert "load_agent_context" not in list_resources_block
+    assert "reg.resolve(llm_service" not in list_resources_block
+    assert "resolve_definition(\n                                llm_service" not in list_resources_block
+    assert "get_client()" not in list_resources_block
     assert 'store.set_extra(conv_id, "context_usage", context_usage_map)' not in list_resources_block
+
+
+def test_list_resources_uses_async_flow_template_cache():
+    src = Path("tasks/ai/actions/agent_resource.py").read_text(encoding="utf-8")
+    list_resources_block = src[
+        src.index('if action == "list_resources":'):
+        src.index('if action == "get_resource_detail":')]
+    assert "result[\"flow_templates\"] = _get_flow_templates_cached(user_id)" in list_resources_block
+    assert ".rglob(" not in list_resources_block
 
 
 def test_audio_frontend_never_opens_stream_without_token():
@@ -275,7 +286,7 @@ def test_open_desktop_backend_does_not_emit_audio_session_without_token():
     assert '"audio_session": _sid,\n                            "audio_token": _audio_lookup_token(_sid)' not in src
 
 
-def test_list_active_reports_live_pawflow_context_usage():
+def test_list_active_uses_stored_context_usage_without_live_token_count():
     from core import FlowFile
     from core.llm_client import LLMMessage
     from tasks.ai.actions.usage import _handle_usage
@@ -296,7 +307,12 @@ def test_list_active_reports_live_pawflow_context_usage():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
-        def get_extra(self, *_args, **_kwargs):
+        def get_extra(self, _cid, key, **_kwargs):
+            if key == "context_usage":
+                return {"assistant": {
+                    "source": "message_meta", "max": 10000,
+                    "used": 9300, "pct": 0.93,
+                }}
             return {}
 
     ff = FlowFile()
@@ -316,10 +332,10 @@ def test_list_active_reports_live_pawflow_context_usage():
     data = json.loads(out[0].get_content().decode("utf-8"))
     row = data["active"][0]
     assert row["agent_name"] == "assistant"
-    assert row["context_usage"]["source"] == "active_context"
+    assert row["context_usage"]["source"] == "message_meta"
     assert row["context_usage"]["max"] == 10000
-    assert row["context_usage"]["used"] > 0
-    assert row["context_usage"]["pct"] > 0
+    assert row["context_usage"]["used"] == 9300
+    assert row["context_usage"]["pct"] == 0.93
 
 
 def test_runtime_context_agent_follows_resolved_active_agent():
@@ -536,16 +552,69 @@ def test_pending_wake_is_not_lost_while_conversation_is_still_active():
     assert "hashlib_resched" in poller_src
 
 
-def test_bg_bucket_yields_to_pending_queue_before_memory_llm_work():
-    """Background pyramid jobs must not start extra memory-extract LLM calls
-    while the user already has a queued message waiting for the foreground
-    agent."""
+def test_api_summarizer_preserves_thinking_signature_across_tool_loop():
+    src = Path("tasks/ai/agent_summarize.py").read_text(encoding="utf-8")
+    assert "thinking=getattr(response, \"thinking\", \"\") or \"\"" in src
+    assert "thinking_signature=getattr(response, \"thinking_signature\", \"\") or \"\"" in src
+
+
+def test_proactive_compact_threshold_uses_real_token_multiplier():
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    threshold_block = src[
+        src.index("def _should_proactive_compact"):
+        src.index("def _messages_changed")]
+    assert "resolve_token_multiplier" in threshold_block
+    assert "ctx.get(\"resolved_svc\")" in threshold_block
+    assert "token_multiplier=tmul" in threshold_block
+
+
+def test_ui_actions_have_no_sync_allowlist_and_use_reply_bus():
+    actions_src = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
+    rxbus_src = Path("tasks/io/chat_ui/rxbus.js").read_text(encoding="utf-8")
+
+    assert "_SYNC_ACTIONS" not in actions_src
+    assert "action in _SYNC_ACTIONS" not in actions_src
+    assert "_reply_conversation_id" in actions_src
+    assert "reply_conversation_id, \"command_result\"" in actions_src
+    assert "body._call_id = _callId" in rxbus_src
+    assert "body._reply_conversation_id = _uiActionConversationId()" in rxbus_src
+    assert "new EventSource(url)" in rxbus_src
+
+
+def test_agent_background_llm_calls_pass_provider_agnostic_scope():
+    """Agent-side auxiliary LLM calls must behave the same for every provider.
+
+    CLI providers need call_* identity for sessions/events; API providers need
+    the same scope to resolve FileStore/image attachments. Passing it everywhere
+    keeps the selected llm_service irrelevant to the task semantics.
+    """
+    expected = [
+        ("tasks/ai/agent_summarize.py", "call_scope = {"),
+        ("tasks/ai/agent_summarize.py", "read_handler.set_user_id(user_id)"),
+        ("tasks/ai/agent_core.py", "_interrupt_call_kwargs = {"),
+        ("tasks/ai/agent_compaction.py", "_synth_call_kwargs = {"),
+        ("tasks/ai/agent_streaming.py", "call_agent_name=\"title\""),
+        ("tasks/ai/agent_side_channels.py", "_btw_call_kwargs = {"),
+        ("core/agent_executor.py", "_delegate_call_kwargs"),
+        ("core/agent_executor.py", "**(call_kwargs or {})"),
+        ("core/handlers/learn.py", "call_agent_name=self._agent_name or \"learn\""),
+        ("core/memory_auto_extract.py", "call_agent_name=\"memory\""),
+    ]
+    for path, marker in expected:
+        assert marker in Path(path).read_text(encoding="utf-8")
+
+
+def test_bg_bucket_runs_as_independent_background_work():
+    """Background pyramid jobs write buckets/memories, not the active agent
+    context, so they must not yield just because the foreground agent is
+    active or a user message is queued."""
     src = Path("core/bg_bucket_builder.py").read_text(encoding="utf-8")
-    assert "def _has_pending_messages" in src
-    assert "pending user message queued" in src
+    assert "ThreadPoolExecutor" in src
+    assert "thread_name_prefix=\"bg-bucket\"" in src
     assert "seq cache cold — seeding asynchronously" in src
-    assert "skip auto memory extract" in src
-    assert "pausing bucket catch-up" in src
+    assert "foreground agent active/starting" not in src
+    assert "skip auto memory extract" not in src
+    assert "pausing bucket catch-up" not in src
 
 
 def test_context_editor_never_treats_transcript_as_agent_context():

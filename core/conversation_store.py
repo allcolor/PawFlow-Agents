@@ -874,11 +874,13 @@ class ConversationStore:
         """
         path = self._shared_ctx_path(cid)
         _max_seq = 0
+        _shared_chars = 0
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
                 xf = self._stamp_line(cid, self._transform_for_shared(m))
                 f.write(json.dumps(xf, ensure_ascii=False) + "\n")
+                _shared_chars += self._row_payload_chars(xf)
                 _s = int(xf.get("seq") or 0)
                 if _s > _max_seq:
                     _max_seq = _s
@@ -895,6 +897,8 @@ class ConversationStore:
                 _bb.note_shared_seq(cid, _max_seq)
             if messages:
                 _bb.note_shared_rows_appended(cid, len(messages))
+            if _shared_chars:
+                _bb.note_shared_chars_appended(cid, _shared_chars)
             _uid = self._cid_user.get(cid, "") or ""
             if _uid:
                 _bb.maybe_trigger(cid, _uid)

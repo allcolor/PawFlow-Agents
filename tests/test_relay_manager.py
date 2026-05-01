@@ -4,6 +4,7 @@ import pytest
 
 from pawflow_relay import manager
 from pawflow_relay.manager_cli import main as relay_cli_main
+from pawflow_relay.thread import RelayThread
 
 
 def test_relay_manager_stores_servers_and_workspaces(monkeypatch, tmp_path):
@@ -67,6 +68,52 @@ def test_relay_manager_workspace_permission_flags(monkeypatch, tmp_path):
     assert share["allow_exec"] is False
     assert share["allow_remote_desktop"] is False
     assert share["allow_local"] is True
+
+
+def test_relay_thread_full_reconnect_reinstalls_with_new_token(monkeypatch, tmp_path):
+    relay = RelayThread(
+        server_url="https://pawflow.example:9090",
+        session_token="session-token",
+        username="user",
+        directory=str(tmp_path),
+        docker_image="relay:latest",
+        relay_id="fs_user_repo",
+    )
+    relay.ws_token = "old-token"
+    calls = []
+
+    def fake_api(method, path, body=None):
+        calls.append(("api", method, path, body))
+        return {}
+
+    def fake_api_retry(method, path, body=None, attempts=5):
+        calls.append(("retry", method, path, body))
+        return {}
+
+    monkeypatch.setattr("pawflow_relay.thread.secrets.token_urlsafe", lambda n: "new-token")
+    relay._api = fake_api
+    relay._api_retry = fake_api_retry
+
+    relay._restart_service_registration()
+
+    assert calls[0] == (
+        "api", "POST", "/api/ui",
+        {"action": "service_uninstall", "service_id": "fs_user_repo"},
+    )
+    assert calls[1][0:3] == ("retry", "POST", "/api/ui")
+    assert calls[1][3]["action"] == "service_install"
+    assert calls[1][3]["service_name"] == "fs_user_repo"
+    assert "token=new-token" in calls[1][3]["config_str"]
+    assert relay.ws_token == "new-token"
+    assert relay._registered is True
+
+
+def test_relay_docker_loop_treats_400_as_full_reconnect():
+    source = Path("pawflow_relay/thread.py").read_text(encoding="utf-8")
+
+    assert 'if "HTTP/1.1 400 Bad Request" in msg:' in source
+    assert "_full_reconnect_requested.set()" in source
+    assert "self._restart_service_registration()" in source
 
 
 def test_relay_manager_start_requires_logged_in_server(monkeypatch, tmp_path):

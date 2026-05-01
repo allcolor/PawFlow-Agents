@@ -118,6 +118,7 @@ class AgentSerializationMixin:
                 msg_id=entry.get("msg_id", ""),
                 display_only=entry.get("display_only", False),
                 thinking=entry.get("thinking", ""),
+                thinking_signature=entry.get("thinking_signature", ""),
                 timestamp=_ts,
                 seq=_seq,
                 conversation_id=(entry.get("conversation_id")

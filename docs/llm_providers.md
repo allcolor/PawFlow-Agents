@@ -124,6 +124,12 @@ Operational notes:
 - `compact_threshold_pct=0` means no proactive compaction; use a positive percentage such as `90` to compact before the provider hard limit.
 - Preemption uses kill/resume semantics for long-running Codex turns.
 
+## Compaction Summarizer
+
+`system.summarizer_service` selects both the compaction budget source and the client that executes summary generation. The summarizer re-resolves the configured service for each compaction call and replaces stale in-memory clients when the service provider changed, so switching from a CLI service to an API-compatible service such as DeepSeek cannot silently keep running the old CLI provider.
+
+All summarizer providers use the same `compact_result` tool contract. Provider call scope (`call_user_id`, `call_conversation_id`, and `call_agent_name`) is passed uniformly so API providers and CLI providers receive equivalent identity context.
+
 ## Gemini CLI
 
 Gemini uses either API-key auth or Gemini CLI OAuth state.

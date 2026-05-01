@@ -149,6 +149,11 @@ class LearnHandler(ToolHandler):
                                       conversation_id=self._conversation_id)],
                 temperature=0.3,
                 max_tokens=2000,
+                call_user_id=self._user_id,
+                call_conversation_id=self._conversation_id,
+                call_agent_name=self._agent_name or "learn",
+                call_event_cid="",
+                call_ephemeral_stream=True,
             )
             content = resp.content.strip()
         except Exception as e:

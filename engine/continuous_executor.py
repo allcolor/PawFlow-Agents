@@ -102,6 +102,7 @@ class ContinuousFlowExecutor:
         self._task_retry_counts: Dict[str, int] = {}
 
         self._pool: Optional[ThreadPoolExecutor] = None
+        self._interactive_pool: Optional[ThreadPoolExecutor] = None
         self._scheduler_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
@@ -264,6 +265,10 @@ class ContinuousFlowExecutor:
 
         self._stop_event.clear()
         self._pool = ThreadPoolExecutor(max_workers=self._max_workers)
+        self._interactive_pool = ThreadPoolExecutor(
+            max_workers=max(2, min(8, self._max_workers)),
+            thread_name_prefix="pawflow-ui",
+        )
         self._scheduler_thread = threading.Thread(
             target=self._scheduler_loop,
             name="continuous-executor",
@@ -305,6 +310,9 @@ class ContinuousFlowExecutor:
         if self._pool:
             self._pool.shutdown(wait=False, cancel_futures=True)
             self._pool = None
+        if self._interactive_pool:
+            self._interactive_pool.shutdown(wait=False, cancel_futures=True)
+            self._interactive_pool = None
 
         for task_id in self._tasks:
             self._task_states.stop(task_id)
@@ -371,6 +379,32 @@ class ContinuousFlowExecutor:
 
     # -- Scheduler --
 
+    @staticmethod
+    def _is_interactive_http_ff(flowfile: FlowFile) -> bool:
+        """True for UI HTTP requests that must not wait behind agent work."""
+        if not flowfile or not flowfile.get_attribute("http.request.id"):
+            return False
+        if flowfile.get_attribute("http.path") == "/api/ui":
+            return True
+        try:
+            return int(flowfile.get_attribute("priority") or "0") >= 10
+        except (TypeError, ValueError):
+            return False
+
+    def _has_interactive_input(self, task_id: str, incoming: List[Connection]) -> bool:
+        task = self._tasks.get(task_id)
+        if task and hasattr(task, "has_priority_input"):
+            try:
+                if task.has_priority_input():
+                    return True
+            except Exception:
+                logger.debug("priority-input check failed for %s", task_id, exc_info=True)
+        for conn in incoming or []:
+            for ff in conn.peek_all(limit=20):
+                if self._is_interactive_http_ff(ff):
+                    return True
+        return False
+
     def _scheduler_loop(self):
         """Main scheduling loop.
 
@@ -430,7 +464,12 @@ class ContinuousFlowExecutor:
                     with self._lock:
                         self._in_flight[task_id] = self._in_flight.get(task_id, 0) + 1
                     try:
-                        self._pool.submit(self._execute_task, task_id)
+                        _pool = (self._interactive_pool
+                                 if self._has_interactive_input(task_id, incoming)
+                                 else self._pool)
+                        if _pool is None:
+                            raise RuntimeError("executor pool is not running")
+                        _pool.submit(self._execute_task, task_id)
                     except RuntimeError:
                         # Pool was shutdown between stop_event check and submit
                         with self._lock:

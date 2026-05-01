@@ -44,6 +44,12 @@ Common event types include:
 - `plan_updated`
 - `title_generated`
 
+## UI Action Results
+
+The web chat does not rely on synchronous `/api/ui` responses for action payloads. Each `action$()` call sends a `_call_id` and a `_reply_conversation_id` that points to a per-tab UI SSE bus. The HTTP response only acknowledges acceptance; the action result is published as `command_result` on that reply bus and routed back to the matching subscriber by `_call_id`.
+
+The UI action bus is separate from the active conversation SSE stream because the web chat may close and reopen the conversation stream while rendering history. System clients that do not provide a reply bus, such as relay registration or CLI bootstrap calls, can still receive an inline HTTP result.
+
 ## Concurrent Messages
 
 If a client sends a message while an agent is running:

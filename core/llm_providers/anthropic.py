@@ -111,6 +111,7 @@ class LLMAnthropicMixin:
             cache_creation_tokens = 0
             cache_read_tokens = 0
             thinking_text = ""
+            thinking_signature = ""
             current_block_type = None
             # Per-block buffers: callbacks fire ONCE per block (CC parity).
             # CC's SDK delivers whole blocks, so its `token`/`thinking_content`
@@ -167,6 +168,8 @@ class LLMAnthropicMixin:
                                         thinking_text += t_text
                                         # Buffer — fire on content_block_stop.
                                         _thinking_block_buf += t_text
+                                elif delta.get("type") == "signature_delta":
+                                    thinking_signature = delta.get("signature", "") or thinking_signature
                                 elif delta.get("type") == "text_delta":
                                     text = delta.get("text", "")
                                     if text:
@@ -239,6 +242,7 @@ class LLMAnthropicMixin:
                 cache_creation_tokens=cache_creation_tokens,
                 cache_read_tokens=cache_read_tokens,
                 thinking=thinking_text,
+                thinking_signature=thinking_signature,
             )
         finally:
             conn.close()
@@ -327,7 +331,11 @@ class LLMAnthropicMixin:
                 # Assistant message with tool_use content blocks
                 content_blocks: List[Dict[str, Any]] = []
                 if getattr(m, "thinking", ""):
-                    content_blocks.append({"type": "thinking", "thinking": m.thinking})
+                    thinking_block = {"type": "thinking", "thinking": m.thinking}
+                    signature = getattr(m, "thinking_signature", "")
+                    if signature:
+                        thinking_block["signature"] = signature
+                    content_blocks.append(thinking_block)
                 text = m.text_content if isinstance(m.content, list) else m.content
                 if text:
                     content_blocks.append({"type": "text", "text": text})
@@ -395,7 +403,11 @@ class LLMAnthropicMixin:
             else:
                 # Assistant message with thinking but no tool_calls
                 if m.role == "assistant" and getattr(m, "thinking", ""):
-                    _blocks = [{"type": "thinking", "thinking": m.thinking}]
+                    _thinking_block = {"type": "thinking", "thinking": m.thinking}
+                    _signature = getattr(m, "thinking_signature", "")
+                    if _signature:
+                        _thinking_block["signature"] = _signature
+                    _blocks = [_thinking_block]
                     if m.content:
                         _blocks.append({"type": "text", "text": m.content if isinstance(m.content, str) else m.text_content})
                     api_messages.append({"role": "assistant", "content": _blocks})
@@ -514,9 +526,11 @@ class LLMAnthropicMixin:
 
         # Parse thinking blocks
         thinking_text = ""
+        thinking_signature = ""
         for block in content_blocks:
             if block.get("type") == "thinking":
                 thinking_text += block.get("thinking", "")
+                thinking_signature = block.get("signature", "") or thinking_signature
 
         # Parse tool_use blocks
         tool_calls = []
@@ -559,4 +573,5 @@ class LLMAnthropicMixin:
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cache_read_tokens,
             thinking=thinking_text,
+            thinking_signature=thinking_signature,
         )

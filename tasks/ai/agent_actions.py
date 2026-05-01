@@ -88,40 +88,35 @@ class AgentActionsMixin:
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
 
+        reply_conversation_id = body.get("_reply_conversation_id", "") or body.get("conversation_id", "")
+        call_id = body.get("_call_id", "")
+
         # Unified command dispatch: parse /command text → action body → redispatch
         if action == "command":
             result = _handle_command_dispatch(self, action, body, store, user_id, flowfile)
             if result is not None:
                 if isinstance(result, dict) and result.get("_redispatch"):
-                    # Re-dispatch with parsed action
+                    # Re-dispatch with parsed action, preserving async reply metadata.
                     body = result["body"]
+                    if reply_conversation_id:
+                        body["_reply_conversation_id"] = reply_conversation_id
+                    if call_id:
+                        body["_call_id"] = call_id
                     action = body["action"]
                     flowfile = result["flowfile"]
                 else:
-                    return result
+                    return self._return_action_result_async(
+                        action, result, reply_conversation_id, call_id, flowfile)
 
         conversation_id = body.get("conversation_id", "")
+        reply_conversation_id = body.get("_reply_conversation_id", "") or reply_conversation_id or conversation_id
+        call_id = body.get("_call_id", "") or call_id
 
-        # Fast read-only actions MUST run sync and return their payload in
-        # the HTTP response -- they are called from the critical path of
-        # the UI loader (clear -> load_history -> render). If they were
-        # dispatched to bg and published via SSE 'command_result', the
-        # client has no SSE open yet (SSE is opened AFTER render in the
-        # canonical resumeConv flow), so the result would be buffered then
-        # discarded by the next subscribe(replay=False) -- leaving the
-        # load_history Observable pending forever and the webchat blank.
-        _SYNC_ACTIONS = {
-            "load_history", "list_conversations", "list_resources",
-            "list_services", "list_repo_agents", "list_active",
-            "get_permission_mode", "relay_list_available",
-            "get_agent_conv_config", "list_secrets",
-            "cc_live_status",
-            "codex_live_status",
-            "gemini_live_status",
-        }
-
-        # No conversation_id, or read-only action: run sync.
-        if not conversation_id or action in _SYNC_ACTIONS:
+        # No reply bus available → run synchronously and return the payload
+        # in the HTTP response. System clients (relay, CLI, registration
+        # bootstraps) call /api/ui without a chat conversation context, so
+        # there is no SSE channel to publish a command_result on.
+        if not reply_conversation_id:
             for handler in _ACTION_HANDLERS:
                 result = handler(self, action, body, store, user_id, flowfile)
                 if result is not None:
@@ -129,10 +124,63 @@ class AgentActionsMixin:
             return None
 
         return self._run_action_bg(
-            action, body, store, user_id, flowfile, conversation_id)
+            action, body, store, user_id, flowfile, conversation_id,
+            reply_conversation_id=reply_conversation_id, call_id=call_id)
 
 
-    def _run_action_bg(self, action, body, store, user_id, flowfile, conversation_id):
+    def _return_action_result_async(self, action, result, reply_conversation_id,
+                                    call_id, flowfile):
+        """Publish an already-computed command result via SSE and return ACK.
+
+        When the caller did not provide a reply bus (system clients without
+        a chat conversation context), the result is returned inline in the
+        HTTP response instead.
+        """
+        if not reply_conversation_id:
+            if isinstance(result, list):
+                return result
+            if isinstance(result, FlowFile):
+                return [result]
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+            return [flowfile]
+        _content = ""
+        if isinstance(result, list) and result:
+            _content = result[0].get_content().decode("utf-8", errors="replace")
+        elif isinstance(result, FlowFile):
+            _content = result.get_content().decode("utf-8", errors="replace")
+        else:
+            _content = json.dumps(result, ensure_ascii=False)
+        from core.conversation_event_bus import ConversationEventBus
+        # See _run_action_bg: the result's conversation_id is the call's
+        # scope (so the rxbus per-call filter routes it back to the right
+        # subscriber); reply_conversation_id is only the SSE channel.
+        _call_conv = flowfile.get_attribute("conversation_id") or ""
+        try:
+            _body = json.loads(flowfile.get_content().decode("utf-8", errors="replace"))
+            if isinstance(_body, dict):
+                _call_conv = _body.get("conversation_id", "") or _call_conv
+        except Exception:
+            pass
+        payload = {
+            "action": action,
+            "result": _content,
+            "conversation_id": _call_conv,
+        }
+        if call_id:
+            payload["_callId"] = call_id
+        ConversationEventBus.instance().publish_event(
+            reply_conversation_id, "command_result", payload)
+        from tasks.ai.agent_streaming import SERVER_START_TIME
+        flowfile.set_content(json.dumps({
+            "status": "accepted", "action": action,
+            "_callId": call_id,
+            "server_start_time": SERVER_START_TIME,
+        }).encode())
+        return [flowfile]
+
+
+    def _run_action_bg(self, action, body, store, user_id, flowfile, conversation_id,
+                       reply_conversation_id: str = "", call_id: str = ""):
         """Run an action in background. Return ack immediately, result via SSE."""
         import copy
         _body = copy.deepcopy(body)
@@ -149,29 +197,40 @@ class AgentActionsMixin:
                         if isinstance(result, list) and result:
                             _content = result[0].get_content().decode("utf-8", errors="replace")
                         from core.conversation_event_bus import ConversationEventBus
+                        # The "conversation_id" field is the *call's* scope so
+                        # the rxbus filter can route the result back to the
+                        # call site that issued it. The reply_conversation_id
+                        # (UI bus) is only the SSE channel we deliver on.
+                        payload = {
+                            "action": action, "result": _content,
+                            "conversation_id": conversation_id,
+                        }
+                        if call_id:
+                            payload["_callId"] = call_id
                         ConversationEventBus.instance().publish_event(
-                            conversation_id, "command_result", {
-                                "action": action, "result": _content,
-                                "conversation_id": conversation_id,
-                            })
+                            reply_conversation_id, "command_result", payload)
                         return
             except Exception as e:
                 logger.error("[bg-cmd] %s failed: %s", action, e, exc_info=True)
                 try:
                     from core.conversation_event_bus import ConversationEventBus
+                    payload = {
+                        "action": action, "error": str(e),
+                        "conversation_id": conversation_id,
+                    }
+                    if call_id:
+                        payload["_callId"] = call_id
                     ConversationEventBus.instance().publish_event(
-                        conversation_id, "command_result", {
-                            "action": action, "error": str(e),
-                            "conversation_id": conversation_id,
-                        })
+                        reply_conversation_id, "command_result", payload)
                 except Exception:
                     pass
 
         threading.Thread(target=_bg, daemon=True,
-                         name=f"cmd-{action}-{conversation_id[:8]}").start()
+                         name=f"cmd-{action}-{(conversation_id or reply_conversation_id)[:8]}").start()
         from tasks.ai.agent_streaming import SERVER_START_TIME
         flowfile.set_content(json.dumps({
             "status": "accepted", "action": action,
+            "_callId": call_id,
             "server_start_time": SERVER_START_TIME,
         }).encode())
         return [flowfile]

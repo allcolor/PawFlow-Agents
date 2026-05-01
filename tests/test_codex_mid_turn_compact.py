@@ -6,6 +6,10 @@ _GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 _AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 _AGENT_COMPACTION = Path("tasks/ai/agent_compaction.py").read_text(
     encoding="utf-8")
+_CONTEXT_OPS = Path("tasks/ai/actions/context_ops.py").read_text(
+    encoding="utf-8")
+_AGENT_RESOURCE = Path("tasks/ai/actions/agent_resource.py").read_text(
+    encoding="utf-8")
 
 
 def test_ccd_handler_propagates_trigger_fraction():
@@ -114,3 +118,49 @@ def test_manual_compact_done_publishes_context_usage():
     assert '"context_max"' in done_block
     assert '"context_pct"' in done_block
     assert 'set_extra(\n                                conversation_id, "context_usage"' in _AGENT_COMPACTION
+
+
+def test_compact_budget_uses_active_service_config_not_summarizer():
+    """The summarizer writes the summary, but active LLM service config owns
+    compact_target_tokens, token_multiplier, and the post-compact gauge.
+    """
+    assert "budget_config: dict | None = None" in _AGENT_COMPACTION
+    assert "_budget_cfg = (budget_config" in _AGENT_COMPACTION
+    assert "_abs_cap = int(_budget_cfg.get(\"compact_target_tokens\", 0) or 0)" in _AGENT_COMPACTION
+    assert "resolve_token_multiplier(_budget_cfg)" in _AGENT_COMPACTION
+
+
+def test_codex_forced_compact_passes_active_budget_config():
+    """Codex compact_boundary uses the summarizer client, but must pass the
+    codex appserver service config so compact_target_tokens=50k is honored.
+    """
+    h_start = _AGENT_CORE.index("PawFlow compact:")
+    handler = _AGENT_CORE[max(0, h_start - 2500):h_start]
+    assert "_full_messages, _sc" in handler
+    assert "budget_config=getattr(ctx.get(\"resolved_svc\"), \"config\", None)" in handler
+
+
+def test_manual_compact_uses_selected_agent_llm_service_budget():
+    """The /compact path must use the selected agent's llm_service config,
+    not the summarizer service, for max_context_size and compact_target_tokens.
+    """
+    assert "def _ctx_llm_service_config" in _CONTEXT_OPS
+    assert "get_agent_config(conv_id, _name).get(\"llm_service\")" in _CONTEXT_OPS
+    assert "_compact_budget_config = _ctx_llm_service_config(conv_id, _ctx_agent)" in _CONTEXT_OPS
+    assert "_compact_max = _ctx_max_tokens(conv_id, _ctx_agent)" in _CONTEXT_OPS
+    assert "budget_config=_compact_budget_config" in _CONTEXT_OPS
+    assert "effective_context_window(" in _CONTEXT_OPS
+
+
+def test_list_resources_does_not_resolve_services_on_ui_refresh():
+    """Resource polling must stay cheap; context_usage is repaired when written,
+    not by resolving live LLM services during list_resources.
+    """
+    block = _AGENT_RESOURCE[
+        _AGENT_RESOURCE.index('if action == "list_resources":'):
+        _AGENT_RESOURCE.index('if action == "get_resource_detail":')]
+    assert "def _stored_context_usage" in block
+    assert "reg.resolve(llm_service" not in block
+    assert "resolve_definition(\n                                llm_service" not in block
+    assert "effective_context_window(" not in block
+    assert "get_client()" not in block

@@ -359,7 +359,8 @@ class AgentCoreMixin:
         def _agent_compact_threshold_fraction() -> float:
             try:
                 cfg = (
-                    getattr(client, "config", None)
+                    getattr(ctx.get("resolved_svc"), "config", None)
+                    or getattr(client, "config", None)
                     or getattr(client, "_config_ref", None)
                     or getattr(getattr(client, "_client", None),
                                "_config_ref", None)
@@ -432,6 +433,7 @@ class AgentCoreMixin:
                     tool_defs=ctx.get("tool_defs"),
                     chars_per_token=ctx.get("chars_per_token", 0),
                     user_id=user_id,
+                    budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                 )
                 if compacted and len(compacted) <= len(messages):
                     messages[:] = compacted
@@ -829,7 +831,8 @@ class AgentCoreMixin:
                     _compact_pct = 0
                     try:
                         _agent_client_cfg = (
-                            getattr(client, "config", None)
+                            getattr(ctx.get("resolved_svc"), "config", None)
+                            or getattr(client, "config", None)
                             or getattr(client, "_config_ref", None)
                             or getattr(getattr(client, "_client", None),
                                        "_config_ref", None)
@@ -864,8 +867,11 @@ class AgentCoreMixin:
                         if trigger_tokens <= 0:
                             return False
                         provider_view = _with_provider_system_prompt(stored_msgs)
+                        from core.token_counter import resolve_token_multiplier as _rtm
+                        tmul = _rtm(getattr(ctx.get("resolved_svc"), "config", None))
                         used_tokens = self._estimate_tokens(
-                            provider_view, tool_defs=tool_defs, chars_per_token=cpt)
+                            provider_view, tool_defs=tool_defs,
+                            chars_per_token=cpt, token_multiplier=tmul)
                         return used_tokens >= trigger_tokens
 
                     def _messages_changed(candidate, current):
@@ -907,7 +913,9 @@ class AgentCoreMixin:
                                 tool_defs=ctx.get("tool_defs"),
                                 chars_per_token=_cpt,
                                 user_id=user_id,
+                                budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                             )
+
                             if _messages_changed(compacted_messages, messages):
                                 messages[:] = compacted_messages
                         llm_context = list(messages)
@@ -936,6 +944,7 @@ class AgentCoreMixin:
                                 tool_defs=ctx.get("tool_defs"),
                                 chars_per_token=_cpt,
                                 user_id=user_id,
+                                budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                             )
                             if _messages_changed(compacted_messages, messages):
                                 messages[:] = compacted_messages
@@ -1019,6 +1028,13 @@ class AgentCoreMixin:
                             source={"type": "user", "interrupt": True},
                             conversation_id=conversation_id,
                         ))
+                        _interrupt_call_kwargs = {
+                            "call_user_id": user_id,
+                            "call_conversation_id": conversation_id,
+                            "call_agent_name": ctx.get("active_agent_name", ""),
+                            "call_event_cid": ctx.get("_event_cid", conversation_id),
+                            "call_ephemeral_stream": False,
+                        }
                         _irpt_resp = client.complete_stream(
                             messages=_with_provider_system_prompt(self._compact(
                                 copy.deepcopy(messages), compact_client,
@@ -1026,12 +1042,14 @@ class AgentCoreMixin:
                                 target_fraction=0.25,
                                 conversation_id=conversation_id,
                                 agent_name=ctx.get("active_agent_name") or "",
-                                user_id=user_id)),
+                                user_id=user_id,
+                                budget_config=getattr(ctx.get("resolved_svc"), "config", None))),
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],
                             tools=None,
                             callback=emitter.get_token_callback(False),
+                            **_interrupt_call_kwargs,
                         ) if emitter.is_streaming else client.complete(
                             messages=_with_provider_system_prompt(self._compact(
                                 copy.deepcopy(messages), compact_client,
@@ -1039,11 +1057,13 @@ class AgentCoreMixin:
                                 target_fraction=0.25,
                                 conversation_id=conversation_id,
                                 agent_name=ctx.get("active_agent_name") or "",
-                                user_id=user_id)),
+                                user_id=user_id,
+                                budget_config=getattr(ctx.get("resolved_svc"), "config", None))),
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],
                             tools=None,
+                            **_interrupt_call_kwargs,
                         )
                         _append(LLMMessage(
                             role="assistant", content=_irpt_resp.content,
@@ -1091,6 +1111,7 @@ class AgentCoreMixin:
                                     tool_defs=ctx.get("tool_defs"),
                                     chars_per_token=ctx.get("chars_per_token", 0),
                                     user_id=user_id,
+                                    budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                                 )
                                 if _messages_changed(compacted_llm_context, llm_context):
                                     llm_context = compacted_llm_context
@@ -1576,6 +1597,7 @@ class AgentCoreMixin:
                                 compact_instructions=ctx.get("compact_instructions", ""),
                                 force=True,
                                 user_id=user_id,
+                                budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                             ))
                             logger.info("[agent:%s] PawFlow compact: %d → %d messages",
                                         conversation_id[:8], len(_full_messages), len(messages))
@@ -1772,7 +1794,8 @@ class AgentCoreMixin:
                                 agent_name=_agent_for_compact,
                                 tool_defs=ctx.get("tool_defs"),
                                 chars_per_token=ctx.get("chars_per_token", 0),
-                                user_id=user_id)
+                                user_id=user_id,
+                                budget_config=getattr(ctx.get("resolved_svc"), "config", None))
                             messages[:] = _compacted
                             if _is_claude_code and conversation_id and _agent_for_compact:
                                 try:
@@ -1950,10 +1973,13 @@ class AgentCoreMixin:
                             conversation_id=conversation_id)
                         # Attach thinking to the first assistant message
                         _thinking_txt = response.thinking or ""
+                        _thinking_sig = getattr(response, "thinking_signature", "") or ""
                         for _m in msgs:
                             if _m.role == "assistant" and _thinking_txt:
                                 _m.thinking = _thinking_txt
+                                _m.thinking_signature = _thinking_sig
                                 _thinking_txt = ""  # only on the first one
+                                _thinking_sig = ""
                             _append(_m)
                         if action == "break":
                             response_content = final
@@ -1967,6 +1993,7 @@ class AgentCoreMixin:
                         role="assistant", content=response.content,
                         tool_calls=response.tool_calls,
                         thinking=response.thinking or "",
+                        thinking_signature=getattr(response, "thinking_signature", "") or "",
                         source=_agent_source(response.tokens_in, response.tokens_out, response.model,
                                              tok_cache_creation=response.cache_creation_tokens,
                                              tok_cache_read=response.cache_read_tokens),

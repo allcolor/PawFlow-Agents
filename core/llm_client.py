@@ -131,6 +131,7 @@ class LLMMessage:
     msg_id: str = ""  # unique ID — auto-generated if empty
     display_only: bool = False  # True = visible in transcript, excluded from LLM context
     thinking: str = ""  # LLM thinking/reasoning output (part of context, visible in transcript)
+    thinking_signature: str = ""  # Anthropic extended-thinking signature, when provided
     is_error: bool = False  # True = LLM error message (displayed as error in UI)
     timestamp: float = 0.0  # creation time (epoch seconds)
     seq: int = 0  # per-conversation monotonic — minted at creation from conversation_id's counter
@@ -295,6 +296,7 @@ class LLMResponse:
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
     thinking: str = ""
+    thinking_signature: str = ""
 
 class LLMClient(
     LLMCliSharedMixin,

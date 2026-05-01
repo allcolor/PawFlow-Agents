@@ -137,7 +137,7 @@ class AgentSideChannelsMixin:
                 "call_agent_name": agent_name,
                 "call_event_cid": conversation_id,  # publish to parent conv
                 "call_ephemeral_stream": True,
-            } if _is_cc else {}
+            }
             response = _btw_client.complete_stream(
                 messages=btw_messages,
                 tools=None,

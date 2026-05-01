@@ -107,34 +107,10 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         from core.conversation_store import ConversationStore as _CS_active
         _ctx_usage_map = _CS_active.instance().get_extra(conv_id, "context_usage") or {}
 
-        def _active_context_usage(ctx):
-            """Return the live PawFlow context gauge for an active turn.
-
-            This intentionally counts the active PawFlow message context,
-            not the provider prompt payload. Resume/live providers may only
-            send a tiny delta to their CLI session, but the UI gauge must show
-            the true PawFlow context pressure.
-            """
-            try:
-                max_ctx = int(ctx.get("max_context_size", 0) or 0)
-                if max_ctx <= 0:
-                    return None
-                messages = ctx.get("messages") or []
-                from core.token_counter import resolve_token_multiplier
-                from tasks.ai.context_usage_cache import context_usage_from_cache
-                tmul = resolve_token_multiplier(
-                    getattr(ctx.get("resolved_svc"), "config", None))
-                usage = context_usage_from_cache(
-                    messages, max_ctx,
-                    ctx.get("_context_usage_cache"),
-                    source="active_context",
-                    token_multiplier=tmul)
-                ctx["_context_usage_cache"] = usage
-                return usage
-            except Exception:
-                logger.debug("list_active live context gauge failed", exc_info=True)
-                return None
-
+        # list_active is on the UI poll path. Never tokenize live contexts
+        # here: active turns can hold very large message lists, and this action
+        # must stay a cheap status read regardless of the selected LLM service.
+        # Agent turns persist context_usage via message_meta; use that cache.
         with _exec._active_contexts_lock:
             import time as _time
             import re as _re_active
@@ -156,7 +132,7 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                         "last_tool": ctx.get("_last_tool", ""),
                         "duration_s": _time.time() - _started if _started else 0,
                     }
-                    _cu = _active_context_usage(ctx) or _ctx_usage_map.get(_aname)
+                    _cu = _ctx_usage_map.get(_aname)
                     if _cu:
                         _row["context_usage"] = _cu
                     active.append(_row)

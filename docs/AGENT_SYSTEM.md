@@ -194,6 +194,8 @@ As a last resort, messages are brute-force truncated: per-message character budg
 
 Auto-compaction runs when messages exceed 90% of `max_context_size`. It is skipped when a Claude Code session is active (CC manages its own context).
 
+Background pyramid buckets are different from hot-path context compaction. They run asynchronously and only submit a summarizer call when the bucket input is useful: at least four times the L1 summary target (`BUCKET_OUTPUT_TARGET`, currently 2000 tokens). This prevents the background worker from spending an LLM call to summarize tiny slices after every few chat messages.
+
 ### Context-usage gauge (per-agent)
 
 At the end of each turn, `agent_core` receives the provider's real `usage` (input/output tokens) and derives `context_used / context_max / context_pct`. These fields are:

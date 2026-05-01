@@ -802,6 +802,8 @@ class SubAgentExecutor:
                     role="assistant",
                     content=response.content,
                     tool_calls=response.tool_calls,
+                    thinking=response.thinking or "",
+                    thinking_signature=getattr(response, "thinking_signature", "") or "",
                     source=agent_source,
                     conversation_id=sub_conv_id or task.parent_conversation_id,
                 ))
@@ -881,6 +883,10 @@ class SubAgentExecutor:
                                      "arguments": tc.arguments}
                                     for tc in m.tool_calls
                                 ]
+                            if getattr(m, 'thinking', ''):
+                                d["thinking"] = m.thinking
+                            if getattr(m, 'thinking_signature', ''):
+                                d["thinking_signature"] = m.thinking_signature
                             if hasattr(m, 'tool_call_id') and m.tool_call_id:
                                 d["tool_call_id"] = m.tool_call_id
                             return d
@@ -898,7 +904,7 @@ class SubAgentExecutor:
             else:
                 # Max iterations reached — force synthesis
                 result.response = self._force_synthesis(
-                    messages, task.model,
+                    messages, task.model, _delegate_call_kwargs,
                 )
                 result.status = "completed"
 
@@ -1039,6 +1045,8 @@ class SubAgentExecutor:
                     msg_id=m.get("msg_id", ""),
                     timestamp=m.get("ts") or m.get("timestamp") or 0.0,
                     seq=m.get("seq") or 0,
+                    thinking=m.get("thinking", ""),
+                    thinking_signature=m.get("thinking_signature", ""),
                 )
                 if m.get("tool_calls"):
                     msg.tool_calls = [
@@ -1114,6 +1122,7 @@ class SubAgentExecutor:
 
     def _force_synthesis(
         self, messages: List[LLMMessage], model: str,
+        call_kwargs: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Force a final response when max iterations reached."""
         # Inherit conv_id from the last message (all must share it).
@@ -1136,6 +1145,7 @@ class SubAgentExecutor:
                 temperature=0.7,
                 max_tokens=0,
                 tools=None,
+                **(call_kwargs or {}),
             )
             return resp.content
         except Exception as e:

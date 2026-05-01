@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from core.bg_bucket_builder import BgBucketBuilder
 from core.bucket_store import (
-    BucketStore, L1_TRIGGER_MSGS, ROLLUP_TRIGGER_COUNT,
+    BUCKET_OUTPUT_TARGET, BucketStore, L1_TRIGGER_MSGS, ROLLUP_TRIGGER_COUNT,
     TAIL_RESERVE, TAIL_TOKEN_BUDGET,
 )
 
@@ -31,6 +31,9 @@ from core.bucket_store import (
 # name so tests can reason about partial-bucket flush thresholds
 # without poking at underscore-prefixed names.
 PARTIAL_MIN = BgBucketBuilder._PARTIAL_MIN
+MIN_BG_INPUT_CHARS = int(
+    BUCKET_OUTPUT_TARGET * BgBucketBuilder._MIN_BG_INPUT_MULTIPLIER
+    * BgBucketBuilder._CHARS_PER_TOKEN_EST)
 
 
 # ── helpers ──────────────────────────────────────────────────────
@@ -499,6 +502,7 @@ def test_token_trigger_fires_below_msg_threshold(tmp_path, monkeypatch):
     bb._shared_seq_cache[cid] = _msg_gap
     bb._pyramid_seq_cache[cid] = 0
     bb._shared_unbucketed_rows_cache[cid] = _msg_gap
+    bb._shared_unbucketed_chars_cache[cid] = MIN_BG_INPUT_CHARS + 1000
     bb._transcript_chars_post_pyramid_cache[cid] = (
         int(TAIL_TOKEN_BUDGET * 0.7 * 3.5) + 1000)  # over threshold
 
@@ -508,34 +512,29 @@ def test_token_trigger_fires_below_msg_threshold(tmp_path, monkeypatch):
     bb._executor.shutdown(wait=False)
 
 
-def test_maybe_trigger_defers_while_foreground_is_starting(tmp_path, monkeypatch):
+def test_maybe_trigger_submits_background_job_without_foreground_gate(tmp_path, monkeypatch):
     bb = BgBucketBuilder(max_workers=1)
     submitted: List[str] = []
-    deferred: List[Tuple[str, str]] = []
 
     monkeypatch.setattr(
         bb._executor, "submit",
         lambda *a, **kw: submitted.append(a) or None)
-    monkeypatch.setattr(
-        bb, "_defer_trigger",
-        lambda cid, uid, delay=5.0: deferred.append((cid, uid)))
     bb.set_summarizer_resolver(
         lambda uid: (_fake_client(), 128000, "svc"))
     bb.set_summarize_fn(_make_summarize_fn()[0])
 
-    cid = "cid_foreground"
+    cid = "cid_background"
     bb._shared_seq_cache[cid] = L1_TRIGGER_MSGS + TAIL_RESERVE + 1
     bb._pyramid_seq_cache[cid] = 0
     bb._shared_unbucketed_rows_cache[cid] = L1_TRIGGER_MSGS + TAIL_RESERVE + 1
+    bb._shared_unbucketed_chars_cache[cid] = MIN_BG_INPUT_CHARS + 1000
     bb._transcript_chars_post_pyramid_cache[cid] = 0
-    bb.note_foreground_activity(cid, seconds=30)
 
     bb.maybe_trigger(cid, "uid")
 
-    assert submitted == []
-    assert deferred == [(cid, "uid")]
+    assert len(submitted) == 1
     with bb._pending_lock:
-        assert cid not in bb._pending
+        assert cid in bb._pending
     bb._executor.shutdown(wait=False)
 
 
@@ -553,11 +552,41 @@ def test_no_trigger_below_both_thresholds(tmp_path, monkeypatch):
     bb._shared_seq_cache[cid] = TAIL_RESERVE + PARTIAL_MIN + 1
     bb._pyramid_seq_cache[cid] = 0
     bb._shared_unbucketed_rows_cache[cid] = TAIL_RESERVE + PARTIAL_MIN + 1
+    bb._shared_unbucketed_chars_cache[cid] = MIN_BG_INPUT_CHARS + 1000
     bb._transcript_chars_post_pyramid_cache[cid] = 100  # tiny
 
     bb.maybe_trigger(cid, "uid")
     assert submitted == []
     bb._executor.shutdown(wait=False)
+
+
+def test_token_trigger_waits_for_useful_shared_input(tmp_path, monkeypatch):
+    """Do not pay an LLM call for tiny bg bucket inputs.
+
+    Background buckets target 2000 tokens; they need at least 4x that
+    much useful shared content before token-pressure can submit a job.
+    """
+    bb = BgBucketBuilder(max_workers=1)
+    submitted: List[str] = []
+    monkeypatch.setattr(
+        bb._executor, "submit",
+        lambda *a, **kw: submitted.append(a) or None)
+    bb.set_summarizer_resolver(
+        lambda uid: (_fake_client(), 128000, "svc"))
+
+    cid = "cid_tiny_bg_input"
+    bb._shared_seq_cache[cid] = TAIL_RESERVE + PARTIAL_MIN + 1
+    bb._pyramid_seq_cache[cid] = 0
+    bb._shared_unbucketed_rows_cache[cid] = TAIL_RESERVE + PARTIAL_MIN + 1
+    bb._shared_unbucketed_chars_cache[cid] = 2_682
+    bb._transcript_chars_post_pyramid_cache[cid] = (
+        int(TAIL_TOKEN_BUDGET * 0.7 * 3.5) + 1000)
+
+    bb.maybe_trigger(cid, "uid")
+
+    assert submitted == []
+    bb._executor.shutdown(wait=False)
+
 
 
 def test_note_transcript_bytes_appended_accumulates(tmp_path):

@@ -113,6 +113,8 @@ class BgBucketBuilder:
     # ballooned with tool I/O. Floor stays > 0 so we don't pay the
     # LLM cost for trivial chunks.
     _PARTIAL_MIN = 5
+    _MIN_BG_INPUT_MULTIPLIER = 4
+    _CHARS_PER_TOKEN_EST = 3.5
 
     @classmethod
     def instance(cls) -> "BgBucketBuilder":
@@ -149,6 +151,7 @@ class BgBucketBuilder:
         self._shared_seq_cache: Dict[str, int] = {}
         self._pyramid_seq_cache: Dict[str, int] = {}
         self._shared_unbucketed_rows_cache: Dict[str, int] = {}
+        self._shared_unbucketed_chars_cache: Dict[str, int] = {}
         # Transcript-side token estimate accumulated since last pyramid
         # advance. The /compact tail budget is measured in transcript
         # tokens (it includes tool_use/tool_result/msg_patch rows that
@@ -165,59 +168,7 @@ class BgBucketBuilder:
         # decision changes — otherwise every shared write prints a
         # line.
         self._last_trigger_log: Dict[str, str] = {}
-        # Foreground user turns have priority over maintenance LLM work.
-        # maybe_trigger defers while a conversation is starting/running.
-        self._foreground_until: Dict[str, float] = {}
-        self._deferred_timers: Dict[str, threading.Timer] = {}
 
-    def note_foreground_activity(self, cid: str, seconds: float = 30.0) -> None:
-        """Mark a conversation as foreground-hot so bg jobs yield briefly."""
-        if not cid:
-            return
-        until = time.monotonic() + max(0.0, float(seconds))
-        with self._pending_lock:
-            self._foreground_until[cid] = max(
-                self._foreground_until.get(cid, 0.0), until)
-
-    def _foreground_active(self, cid: str) -> bool:
-        now = time.monotonic()
-        with self._pending_lock:
-            until = self._foreground_until.get(cid, 0.0)
-            if until and until <= now:
-                self._foreground_until.pop(cid, None)
-                until = 0.0
-        if until > now:
-            return True
-        try:
-            from tasks.ai.agent_loop import AgentLoopTask
-            return AgentLoopTask.is_conversation_active(cid)
-        except Exception:
-            return False
-
-    @staticmethod
-    def _has_pending_messages(cid: str) -> bool:
-        """Return True when foreground user input is queued for this conv."""
-        try:
-            from core.pending_queue import PendingQueue
-            q = PendingQueue.instance()
-            return bool(q.count(cid))
-        except Exception:
-            return False
-
-    def _defer_trigger(self, cid: str, user_id: str, delay: float = 5.0) -> None:
-        def _run_deferred():
-            with self._pending_lock:
-                self._deferred_timers.pop(cid, None)
-            self.maybe_trigger(cid, user_id)
-
-        with self._pending_lock:
-            timer = self._deferred_timers.get(cid)
-            if timer is not None and timer.is_alive():
-                return
-            timer = threading.Timer(delay, _run_deferred)
-            timer.daemon = True
-            self._deferred_timers[cid] = timer
-        timer.start()
 
     def _seed_seq_caches_async(self, cid: str, user_id: str) -> bool:
         """Seed cold seq caches without blocking the foreground writer.
@@ -298,6 +249,24 @@ class BgBucketBuilder:
             if cid in self._shared_unbucketed_rows_cache:
                 self._shared_unbucketed_rows_cache[cid] += n
             # Cold cache: _seed_seq_caches will populate it from disk.
+
+    def note_shared_chars_appended(self, cid: str, n_chars: int) -> None:
+        """O(1) hint for shared content chars since the last bucket."""
+        if not cid or not isinstance(n_chars, int) or n_chars <= 0:
+            return
+        with self._seq_cache_lock:
+            if cid in self._shared_unbucketed_chars_cache:
+                self._shared_unbucketed_chars_cache[cid] += n_chars
+            # Cold cache: _seed_seq_caches will populate it from disk.
+
+    def note_shared_chars_bucketed(self, cid: str, n_chars: int) -> None:
+        """O(1) decrement after a bucket absorbs shared content chars."""
+        if not cid or not isinstance(n_chars, int) or n_chars <= 0:
+            return
+        with self._seq_cache_lock:
+            if cid in self._shared_unbucketed_chars_cache:
+                self._shared_unbucketed_chars_cache[cid] = max(
+                    0, self._shared_unbucketed_chars_cache[cid] - n_chars)
 
     def note_transcript_bytes_appended(self, cid: str, n_chars: int) -> None:
         """O(1) hint that n_chars of transcript content were appended.
@@ -420,6 +389,7 @@ class BgBucketBuilder:
             shared_seq = self._shared_seq_cache.get(cid)
             pyramid_seq = self._pyramid_seq_cache.get(cid)
             unbucketed_rows = self._shared_unbucketed_rows_cache.get(cid)
+            shared_chars = self._shared_unbucketed_chars_cache.get(cid)
             transcript_chars = self._transcript_chars_post_pyramid_cache.get(cid)
 
         # Cold path: seed all caches from disk on first access. This method
@@ -427,22 +397,18 @@ class BgBucketBuilder:
         # seed must be asynchronous; otherwise background maintenance can
         # stall a foreground append after restart or cache invalidation.
         if (shared_seq is None or pyramid_seq is None
-                or unbucketed_rows is None or transcript_chars is None):
-            if self._foreground_active(cid):
-                self._defer_trigger(cid, user_id)
-                _log_once("foreground agent active/starting — deferring bg seq seed")
-                return
-            if self._has_pending_messages(cid):
-                self._defer_trigger(cid, user_id)
-                _log_once("pending user message queued — deferring bg seq seed")
-                return
+                or unbucketed_rows is None or shared_chars is None
+                or transcript_chars is None):
             self._seed_seq_caches_async(cid, user_id)
             _log_once("seq cache cold — seeding asynchronously")
             return
 
         seq_gap = shared_seq - pyramid_seq
         # 3.5 chars/token matches agent_compaction default (chars_per_token).
-        transcript_tokens_est = int(transcript_chars / 3.5)
+        transcript_tokens_est = int(transcript_chars / self._CHARS_PER_TOKEN_EST)
+        shared_tokens_est = int(shared_chars / self._CHARS_PER_TOKEN_EST)
+        min_input_tokens = BUCKET_OUTPUT_TARGET * self._MIN_BG_INPUT_MULTIPLIER
+        min_input_chars = int(min_input_tokens * self._CHARS_PER_TOKEN_EST)
 
         # Need at least a few unbucketable shared rows for _pick_chunk
         # to return non-[] (TAIL_RESERVE + _PARTIAL_MIN).
@@ -454,6 +420,15 @@ class BgBucketBuilder:
                 f"{buildable_threshold} needed — _pick_chunk would "
                 f"return []; waiting for shared catch-up "
                 f"(transcript_tokens_est={transcript_tokens_est})")
+            return
+
+        if shared_chars < min_input_chars:
+            _log_once(
+                f"only ~{shared_tokens_est} shared tokens < {min_input_tokens} "
+                f"minimum ({self._MIN_BG_INPUT_MULTIPLIER}x target); "
+                f"waiting for useful bg bucket input "
+                f"(shared_chars={shared_chars}, transcript_tokens_est="
+                f"{transcript_tokens_est})")
             return
 
         # Trigger A: transcript token budget. When the gap-since-pyramid
@@ -477,16 +452,6 @@ class BgBucketBuilder:
                 f"{token_threshold}")
             return
 
-        if self._foreground_active(cid):
-            self._defer_trigger(cid, user_id)
-            _log_once(
-                "foreground agent active/starting — deferring bg bucket job")
-            return
-        if self._has_pending_messages(cid):
-            self._defer_trigger(cid, user_id)
-            _log_once("pending user message queued — deferring bg bucket job")
-            return
-
         with self._pending_lock:
             if cid in self._pending:
                 _log_once("job already in flight, skipping")
@@ -502,6 +467,7 @@ class BgBucketBuilder:
                 f"submitted job ({_trigger_kind}): shared_seq={shared_seq} "
                 f"pyramid_seq={pyramid_seq} seq_gap={seq_gap} "
                 f"unbucketed_rows={unbucketed_rows} "
+                f"shared_tokens_est={shared_tokens_est} "
                 f"transcript_tokens_est={transcript_tokens_est}")
         except RuntimeError as _e:
             # Executor has been shutdown (e.g. test teardown)
@@ -644,8 +610,10 @@ class BgBucketBuilder:
         shared_path = cs._shared_ctx_path(cid)
         shared_seq = self._read_last_seq(shared_path)
 
-        # Unbucketed rows: count shared rows with seq > pyramid last_seq.
+        # Unbucketed rows/chars: count shared rows and payload chars with
+        # seq > pyramid last_seq.
         unbucketed = self._count_rows_since(shared_path, pyramid_seq)
+        shared_chars = self._sum_chars_since(shared_path, pyramid_seq)
 
         # Transcript chars post-pyramid: sum payload chars (one scan).
         transcript_path = conv_dir / "transcript.jsonl"
@@ -656,6 +624,7 @@ class BgBucketBuilder:
             self._shared_seq_cache.setdefault(cid, shared_seq)
             self._pyramid_seq_cache.setdefault(cid, pyramid_seq)
             self._shared_unbucketed_rows_cache.setdefault(cid, unbucketed)
+            self._shared_unbucketed_chars_cache.setdefault(cid, shared_chars)
             self._transcript_chars_post_pyramid_cache.setdefault(
                 cid, transcript_chars)
 
@@ -858,11 +827,6 @@ class BgBucketBuilder:
                     cid, user_id, store, chunk, client, ctx_max):
                 break
             built += 1
-            if self._has_pending_messages(cid):
-                logger.info(
-                    "[bg-bucket] pausing bucket catch-up cid=%s: pending user message queued",
-                    cid[:8])
-                break
             self._maybe_rollup(store, client, user_id, ctx_max, cid)
 
         if built:
@@ -967,6 +931,7 @@ class BgBucketBuilder:
         # no further attribution needed.
         from core.llm_client import LLMMessage
         llm_msgs: List[LLMMessage] = []
+        chunk_shared_chars = 0
         for m in chunk:
             role = m.get("role", "user")
             content = m.get("content", "")
@@ -977,6 +942,7 @@ class BgBucketBuilder:
                         if isinstance(p, dict) and p.get("type") == "text")
                 else:
                     content = str(content)
+            chunk_shared_chars += len(content)
             llm_msgs.append(LLMMessage(
                 role=role, content=content,
                 conversation_id=cid,
@@ -1036,6 +1002,7 @@ class BgBucketBuilder:
         # reflect the new pyramid coverage without re-reading meta.json.
         self.note_pyramid_seq(cid, last_seq)
         self.note_pyramid_rows_bucketed(cid, len(chunk))
+        self.note_shared_chars_bucketed(cid, chunk_shared_chars)
         # Decrement transcript-chars counter by the chars-weight covered
         # by [first_seq..last_seq]. We compute this from the same
         # transcript scan _extract_trace already paid for, so no extra
@@ -1080,11 +1047,6 @@ class BgBucketBuilder:
         # long-term facts/preferences/decisions. Runs here (bg worker)
         # so the hot path compact stays fast. Best-effort, failures
         # never propagate.
-        if self._has_pending_messages(cid):
-            logger.info(
-                "[bg-bucket] skip auto memory extract cid=%s: pending user message queued",
-                cid[:8])
-            return True
         try:
             from core.memory_auto_extract import auto_extract_memories
             auto_extract_memories(
@@ -1215,11 +1177,6 @@ class BgBucketBuilder:
                     len(bucket_docs))
 
         if result and user_id:
-            if self._has_pending_messages(cid):
-                logger.info(
-                    "[bg-bucket] skip consolidate memory extract cid=%s: pending user message queued",
-                    cid[:8])
-                return result
             try:
                 from core.memory_auto_extract import auto_extract_memories
                 auto_extract_memories(

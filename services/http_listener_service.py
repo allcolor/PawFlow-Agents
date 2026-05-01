@@ -125,16 +125,19 @@ _TIMING_SEGMENTS = (
 )
 
 
+def _request_action_label(req: "PendingRequest") -> str:
+    if req.path != "/api/ui" or not req.body:
+        return ""
+    try:
+        data = json.loads(req.body.decode("utf-8", errors="replace"))
+        action = data.get("action", "") if isinstance(data, dict) else ""
+        return str(action or "")[:80]
+    except Exception:
+        return ""
+
+
 def _emit_timing_summary(req: "PendingRequest") -> None:
-    """Emit one grep-friendly per-request timing line.
-
-    Filter quickly with `grep '\\[http-timing\\]'`; restrict to a path
-    with `grep '\\[http-timing\\].*POST /api/ui'`; sort by total via
-    `awk -F'total=' '{print $2}' | sort -rn`.
-
-    Always logged at INFO so users can collect timing without bumping
-    log level — the volume is bounded by request rate, not log spam.
-    """
+    """Emit one grep-friendly per-request timing line."""
     t = req.timing
     if not t or "recv" not in t:
         return
@@ -144,11 +147,17 @@ def _emit_timing_summary(req: "PendingRequest") -> None:
             segments.append(f"{label}={int((t[b] - t[a]) * 1000)}ms")
     last = t.get("send") or t.get("respond") or t.get("dispatch")
     total = int((last - t["recv"]) * 1000) if last else 0
-    logger.debug(
-        "[http-timing] req_id=%s %s %s total=%dms %s status=%d",
+    action = _request_action_label(req)
+    msg = "[http-timing] req_id=%s %s %s%s total=%dms %s status=%d"
+    args = (
         req.request_id[:8], req.method, req.path,
+        f" action={action}" if action else "",
         total, " ".join(segments), req.response_status,
     )
+    if total > 5000 and not req.path.startswith("/relay-proxy/"):
+        logger.info(msg, *args)
+    else:
+        logger.debug(msg, *args)
 
 
 # ---------------------------------------------------------------------------
@@ -487,9 +496,12 @@ class _RequestHandler(BaseHTTPRequestHandler):
             "recv", req.timing.get("dispatch", time.monotonic()))
         _is_streaming_path = path.startswith("/relay-proxy/")
         if _waited > 5.0 and not _is_streaming_path:
-            logger.warning("[http] slow response — %s %s took %.1fs "
+            _action = _request_action_label(req)
+            logger.warning("[http] slow response — %s %s%s took %.1fs "
                             "(request_id=%s, status=%d)",
-                            method, path, _waited, req.request_id[:8],
+                            method, path,
+                            f" action={_action}" if _action else "",
+                            _waited, req.request_id[:8],
                             req.response_status)
 
         # Send the flow's response

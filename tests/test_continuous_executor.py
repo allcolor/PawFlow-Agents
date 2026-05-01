@@ -7,9 +7,12 @@ from tasks import register_all_tasks
 register_all_tasks()
 
 from core import FlowFile, Flow, TaskFactory
+from core.connection import Connection
 from core.task_state import TaskState
 from engine.continuous_executor import ContinuousFlowExecutor
 from engine.flow_version import FlowVersionManager, FlowDiff
+from services.http_listener_service import PendingRequest
+from tasks.io.http_receiver import HTTPReceiverTask
 
 
 def make_flow(tasks_dict, relations):
@@ -32,6 +35,40 @@ def make_flow(tasks_dict, relations):
 
 
 class TestContinuousFlowExecutor:
+
+    def test_interactive_http_flowfiles_use_reserved_lane(self):
+        flow = make_flow(
+            {"log1": {"type": "log", "parameters": {"message": "test", "level": "INFO"}}},
+            [],
+        )
+        executor = ContinuousFlowExecutor(flow, max_retries=1)
+        normal = FlowFile(content=b"{}")
+        normal.set_attribute("http.request.id", "req-normal")
+        normal.set_attribute("http.path", "/api/agent")
+        assert not executor._is_interactive_http_ff(normal)
+
+        ui = FlowFile(content=b"{}")
+        ui.set_attribute("http.request.id", "req-ui")
+        ui.set_attribute("http.path", "/api/ui")
+        assert executor._is_interactive_http_ff(ui)
+
+        conn = Connection("source", "log1")
+        assert conn.enqueue(ui)
+        assert executor._has_interactive_input("log1", [conn])
+
+    def test_http_receiver_prioritizes_api_ui_requests(self):
+        task = HTTPReceiverTask({"service_id": "missing", "routes": []})
+        task._registered = True
+        slow = PendingRequest("slow", "POST", "/api/agent", {}, b"{}")
+        ui = PendingRequest("ui", "POST", "/api/ui", {}, b'{"action":"load_history"}')
+
+        task._on_request(slow, "POST:/api/agent")
+        task._on_request(ui, "POST:/api/ui")
+
+        [first] = task.execute(None)
+        [second] = task.execute(None)
+        assert first.get_attribute("http.path") == "/api/ui"
+        assert second.get_attribute("http.path") == "/api/agent"
 
     def test_inject_and_process(self):
         flow = make_flow(

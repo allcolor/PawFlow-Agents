@@ -183,6 +183,24 @@ class RelayThread:
         except Exception:
             return False
 
+    def _service_config_str(self):
+        _mode = "readonly" if self.read_only else "readwrite"
+        config_str = f"port=0,path=/ws/relay,token={self.ws_token},mode={_mode}"
+        if self.docker_image:
+            config_str += f",docker_image={self.docker_image}"
+        if self.allow_local:
+            config_str += ",allow_local=true"
+        return config_str
+
+    def _install_service(self, *, retry=False):
+        call = self._api_retry if retry else self._api
+        call("POST", "/api/ui", {
+            "action": "service_install",
+            "service_type": "relay",
+            "service_name": self.relay_id,
+            "config_str": self._service_config_str(),
+        })
+
     def _reregister_service(self):
         """Re-register the relay service on the server (keeps same port/token).
 
@@ -193,18 +211,19 @@ class RelayThread:
         fired another re-register — self-reinforcing loop observed in
         the wild.
         """
-        _mode = "readonly" if self.read_only else "readwrite"
-        config_str = f"port=0,path=/ws/relay,token={self.ws_token},mode={_mode}"
-        if self.docker_image:
-            config_str += f",docker_image={self.docker_image}"
-        if self.allow_local:
-            config_str += ",allow_local=true"
-        self._api("POST", "/api/ui", {
-            "action": "service_install",
-            "service_type": "relay",
-            "service_name": self.relay_id,
-            "config_str": config_str,
-        })
+        self._install_service()
+
+    def _restart_service_registration(self):
+        """Apply the same registration reset as a manual stop/start."""
+        self._log("[Relay] Full reconnect: reinstalling relay service")
+        try:
+            self._api("POST", "/api/ui",
+                      {"action": "service_uninstall", "service_id": self.relay_id})
+        except Exception:
+            pass
+        self.ws_token = secrets.token_urlsafe(32)
+        self._install_service(retry=True)
+        self._registered = True
 
     def start(self):
         """Register the service and start the relay thread."""
@@ -221,18 +240,7 @@ class RelayThread:
 
         # Create new service. 'port' is kept for legacy config schema
         # compatibility; the server now registers on the main HTTP listener.
-        _mode = "readonly" if self.read_only else "readwrite"
-        config_str = f"port=0,path=/ws/relay,token={self.ws_token},mode={_mode}"
-        if self.docker_image:
-            config_str += f",docker_image={self.docker_image}"
-        if self.allow_local:
-            config_str += ",allow_local=true"
-        self._api_retry("POST", "/api/ui", {
-            "action": "service_install",
-            "service_type": "relay",
-            "service_name": self.relay_id,
-            "config_str": config_str,
-        })
+        self._install_service(retry=True)
         self._registered = True
 
         # Wait for WS listener to start
@@ -537,6 +545,7 @@ class RelayThread:
                 f"[Relay] docker run -v flags ({len(_v_args)}): "
                 f"{' | '.join(_v_args)}")
             _start_time = time.time()
+            _full_reconnect_requested = threading.Event()
             try:
                 # Merge stdout into stderr so we capture *everything* the
                 # container emits in a single reader. Python's print()
@@ -561,6 +570,11 @@ class RelayThread:
                                     out.flush()
                                 except Exception:
                                     pass
+                                if "HTTP/1.1 400 Bad Request" in msg:
+                                    self._log(
+                                        "[Relay] Relay handshake got 400; "
+                                        "requesting full stop/start reconnect")
+                                    _full_reconnect_requested.set()
                     except Exception:
                         pass
                 threading.Thread(target=_read_relay_logs, daemon=True,
@@ -576,6 +590,12 @@ class RelayThread:
                         break
                     except _sp.TimeoutExpired:
                         pass
+                    if _full_reconnect_requested.is_set():
+                        try:
+                            self._docker_proc.kill()
+                        except Exception:
+                            pass
+                        break
                     # Periodic health check: is the relay still connected to the server?
                     if time.time() - _last_health > _health_interval:
                         _last_health = time.time()
@@ -586,16 +606,11 @@ class RelayThread:
                             self._log(
                                 f"[Relay] Health: relay not connected "
                                 f"({_consecutive_fails} consecutive)")
-                            if _consecutive_fails == 3:
-                                # Re-register the service so the relay can reconnect
-                                self._log("[Relay] Re-registering relay service")
-                                try:
-                                    self._reregister_service()
-                                except Exception as _rr_err:
-                                    self._log(f"[Relay] Re-register failed: {_rr_err}")
-                            elif _consecutive_fails >= 6:
-                                # Relay still not back after re-register + 90s — kill container
-                                self._log("[Relay] Relay stuck, killing container")
+                            if _consecutive_fails >= 3:
+                                self._log(
+                                    "[Relay] Relay disconnected; requesting "
+                                    "full stop/start reconnect")
+                                _full_reconnect_requested.set()
                                 try:
                                     self._docker_proc.kill()
                                 except Exception:
@@ -604,6 +619,13 @@ class RelayThread:
 
                 if self._stop_event.is_set():
                     break
+
+                if _full_reconnect_requested.is_set():
+                    try:
+                        self._restart_service_registration()
+                        restart_delay = 1
+                    except Exception as _fr_err:
+                        self._log(f"[Relay] Full reconnect failed: {_fr_err}")
 
                 rc = self._docker_proc.poll()
                 if rc and rc != 0:

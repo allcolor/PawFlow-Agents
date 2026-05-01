@@ -13,6 +13,53 @@ const { Subject, filter, take, map, catchError, of, EMPTY, first, tap } = rxjs;
 // Central subject — all SSE command_result events flow through here
 const _commandResult$ = new rxjs.Subject();
 
+// Dedicated UI command-result stream. Action results must not depend on the
+// conversation SSE lifecycle: resumeConv deliberately closes/reopens that
+// stream around history rendering. This per-tab bus stays open and receives
+// command_result for every action$ call via _reply_conversation_id.
+let _uiActionEventSource = null;
+let _uiActionBusId = '';
+
+function _actionClientId() {
+  try {
+    let cid = sessionStorage.getItem('pawflow_sse_client_id');
+    if (!cid) {
+      cid = 'tab-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+      sessionStorage.setItem('pawflow_sse_client_id', cid);
+    }
+    return cid;
+  } catch (_err) {
+    return 'tab-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+  }
+}
+
+function _uiActionConversationId() {
+  if (!_uiActionBusId) _uiActionBusId = '__ui__:' + _actionClientId();
+  return _uiActionBusId;
+}
+
+function _ensureUIActionSSE() {
+  const busId = _uiActionConversationId();
+  if (_uiActionEventSource && _uiActionEventSource.readyState !== EventSource.CLOSED) return;
+  const token = getToken();
+  const url = SSE_URL + '?conversation_id=' + encodeURIComponent(busId)
+    + '&client_id=' + encodeURIComponent(_actionClientId() + ':actions')
+    + (token ? '&token=' + encodeURIComponent(token) : '')
+    + '&replay=true';
+  _uiActionEventSource = new EventSource(url);
+  _uiActionEventSource.addEventListener('command_result', (e) => {
+    const data = JSON.parse(e.data || '{}');
+    _pushCommandResult(data);
+  });
+  _uiActionEventSource.onerror = () => {
+    // Browser EventSource handles retry. Drop the object only after the
+    // browser declares it closed so the next action can recreate it.
+    if (_uiActionEventSource && _uiActionEventSource.readyState === EventSource.CLOSED) {
+      _uiActionEventSource = null;
+    }
+  };
+}
+
 // Track pending action count for loading indicator
 let _pendingActions = 0;
 
@@ -35,7 +82,9 @@ function _updateLoadingState() {
  */
 function action$(actionName, params = {}, opts = {}) {
 
-  // Fire the fetch (no await)
+  // Fire the fetch (no await). Results are always delivered through the
+  // per-tab UI SSE bus, not through the HTTP response body.
+  _ensureUIActionSSE();
   const body = { action: actionName, ...params };
   if (!body.conversation_id && typeof conversationId !== 'undefined' && conversationId) {
     body.conversation_id = conversationId;
@@ -48,6 +97,8 @@ function action$(actionName, params = {}, opts = {}) {
   // Unique call id so multiple concurrent calls to the same action
   // on the same conv don't route their sync results to each other.
   const _callId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  body._call_id = _callId;
+  body._reply_conversation_id = _uiActionConversationId();
   _pendingActions++;
   _updateLoadingState();
 

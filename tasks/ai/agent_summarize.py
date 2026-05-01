@@ -368,7 +368,15 @@ class AgentSummarizeMixin:
         _svc_id = llm_service
         _svc_ctx_max = 0
         try:
-            _, _svc_ctx_max, _resolved_svc = self._get_summarizer_client(user_id)
+            _resolved_client, _svc_ctx_max, _resolved_svc = self._get_summarizer_client(user_id)
+            if _resolved_client is not None:
+                _old_provider = getattr(client, "provider", "") or getattr(getattr(client, "_client", None), "provider", "")
+                _new_provider = getattr(_resolved_client, "provider", "") or getattr(getattr(_resolved_client, "_client", None), "provider", "")
+                if _old_provider and _new_provider and _old_provider != _new_provider:
+                    logger.warning(
+                        "[compact] replacing stale summarizer client provider=%s with service '%s' provider=%s",
+                        _old_provider, _resolved_svc, _new_provider)
+                client = _resolved_client
             if not _svc_id:
                 _svc_id = _resolved_svc
         except Exception:
@@ -571,7 +579,7 @@ class AgentSummarizeMixin:
                     max_retries, _pub, conversation_id, user_id)
             return self._summarize_via_api(
                 client, _prompt, _fid, _ckey, target_tokens,
-                max_retries, _pub)
+                max_retries, _pub, conversation_id, user_id)
 
         # PTL retry loop: if the summarizer LLM itself raises a
         # prompt-too-long-family error (rare — we already chunk above
@@ -767,7 +775,8 @@ class AgentSummarizeMixin:
 
     def _summarize_via_api(self, client, prompt: str, file_id: str,
                            compact_key: str, target_tokens: int,
-                           max_retries: int, _pub) -> str:
+                           max_retries: int, _pub,
+                           conversation_id: str, user_id: str) -> str:
         """Run summarization via API tool loop (OpenAI, Anthropic, Gemini).
 
         Mini agent loop: send prompt with read + compact_result tools,
@@ -777,9 +786,28 @@ class AgentSummarizeMixin:
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
         from core.handlers.read import ReadHandler
 
+        if not user_id:
+            raise ValueError(
+                "BUG: user_id is required for API-based summarization "
+                "so every summarizer provider gets the same call scope")
+        if not conversation_id:
+            raise ValueError(
+                "BUG: conversation_id is required for API-based summarization")
+
         read_handler = ReadHandler()
+        if hasattr(read_handler, "set_user_id"):
+            read_handler.set_user_id(user_id)
+        if hasattr(read_handler, "set_conversation_id"):
+            read_handler.set_conversation_id(conversation_id)
         tools = [_READ_TOOL, _COMPACT_RESULT_TOOL]
         max_loop = 15  # max tool-loop iterations (read pages + compact)
+        call_scope = {
+            "call_user_id": user_id,
+            "call_conversation_id": conversation_id,
+            "call_agent_name": "_compact",
+            "call_event_cid": "",
+            "call_ephemeral_stream": True,
+        }
 
         for attempt in range(1, max_retries + 1):
             _pub("Compacting...")
@@ -804,6 +832,7 @@ class AgentSummarizeMixin:
                         max_tokens=min(target_tokens * 3, 8000),
                         tools=tools,
                         temperature=0.3,
+                        **call_scope,
                     )
                 except Exception as e:
                     logger.error("[compact-api] LLM call failed (attempt %d, iter %d): %s",
@@ -830,6 +859,8 @@ class AgentSummarizeMixin:
                 assistant_msg = LLMMessage(
                     role="assistant", content=response.content or "",
                     tool_calls=response.tool_calls,
+                    thinking=getattr(response, "thinking", "") or "",
+                    thinking_signature=getattr(response, "thinking_signature", "") or "",
                     conversation_id="_compact")
                 messages.append(assistant_msg)
 
@@ -841,6 +872,10 @@ class AgentSummarizeMixin:
                         # Execute compact_result directly
                         from core.handlers.compact_result import CompactResultHandler
                         handler = CompactResultHandler()
+                        if hasattr(handler, "set_user_id"):
+                            handler.set_user_id(user_id)
+                        if hasattr(handler, "set_conversation_id"):
+                            handler.set_conversation_id(conversation_id)
                         handler.execute(args)
                         # Retrieve result
                         try:

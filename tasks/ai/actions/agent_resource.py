@@ -12,6 +12,79 @@ from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+_FLOW_TEMPLATES_TTL = 30.0
+_FLOW_TEMPLATES_CACHE: Dict[str, Dict[str, Any]] = {}
+_FLOW_TEMPLATES_REFRESHING: set[str] = set()
+_FLOW_TEMPLATES_LOCK = threading.Lock()
+
+
+def _scan_flow_templates(user_id: str) -> List[Dict[str, Any]]:
+    from core.paths import REPOSITORY_DIR
+
+    templates = []
+    roots = [("global", REPOSITORY_DIR / "flows" / "global")]
+    if user_id:
+        roots.append(("user", REPOSITORY_DIR / "flows" / "users" / user_id))
+    for scope_label, root in roots:
+        if not root.is_dir():
+            continue
+        for latest in root.rglob("latest.json"):
+            flow_dir = latest.parent
+            try:
+                ptr = json.loads(latest.read_text(encoding="utf-8"))
+                version = (ptr.get("version") or "").strip()
+                if not version:
+                    continue
+                vfile = flow_dir / "versions" / f"{version}.json"
+                if not vfile.is_file():
+                    continue
+                raw = json.loads(vfile.read_text(encoding="utf-8"))
+                templates.append({
+                    "id": raw.get("id") or flow_dir.name,
+                    "name": raw.get("name") or flow_dir.name,
+                    "version": version,
+                    "description": raw.get("description") or "",
+                    "scope": raw.get("scope") or scope_label,
+                    "tasks_count": len(raw.get("tasks", {}) or {}),
+                    "services_count": len(raw.get("services", {}) or {}),
+                })
+            except Exception as exc:
+                logger.debug("list_resources flow_templates: skip %s: %s", latest, exc)
+    templates.sort(key=lambda t: (t["scope"], t["name"]))
+    return templates
+
+
+def _get_flow_templates_cached(user_id: str) -> List[Dict[str, Any]]:
+    key = user_id or ""
+    now = time.monotonic()
+    with _FLOW_TEMPLATES_LOCK:
+        entry = _FLOW_TEMPLATES_CACHE.get(key) or {}
+        cached = list(entry.get("data") or [])
+        if entry.get("expires", 0.0) > now:
+            return cached
+        if key in _FLOW_TEMPLATES_REFRESHING:
+            return cached
+        _FLOW_TEMPLATES_REFRESHING.add(key)
+
+    def _refresh() -> None:
+        try:
+            data = _scan_flow_templates(key)
+            with _FLOW_TEMPLATES_LOCK:
+                _FLOW_TEMPLATES_CACHE[key] = {
+                    "data": data,
+                    "expires": time.monotonic() + _FLOW_TEMPLATES_TTL,
+                }
+        except Exception as exc:
+            logger.debug("list_resources flow_templates failed: %s", exc)
+        finally:
+            with _FLOW_TEMPLATES_LOCK:
+                _FLOW_TEMPLATES_REFRESHING.discard(key)
+
+    threading.Thread(
+        target=_refresh, name=f"flow-template-cache-{key or 'global'}",
+        daemon=True).start()
+    return cached
+
 
 def _handle_agent_resource(self, action, body, store, user_id, flowfile):
     """Handle agent resource actions. Returns [flowfile] or None."""
@@ -441,7 +514,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             active = store.get_extra(conv_id, "active_resources") or {}
             active = self._ensure_active_agent(conv_id, active, uid)
         # conv_agents is the source of truth for agent membership
-        from core.conv_agent_config import get_all_agent_configs, get_agent_config
+        from core.conv_agent_config import get_all_agent_configs
         conv_agent_cfgs = get_all_agent_configs(conv_id) if conv_id else {}
         conv_agent_names = list(conv_agent_cfgs.keys())
 
@@ -454,17 +527,20 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if not isinstance(context_usage_map, dict):
             context_usage_map = {}
 
-        def _stored_context_usage(aname, acfg):
-            existing = context_usage_map.get(aname)
-            if isinstance(existing, dict) and existing.get("message_count") is not None:
-                return existing
-            return existing
+        def _stored_context_usage(aname):
+            # Cheap UI hydration only. Context window repair happens when
+            # context_usage is written, not in the synchronous refresh path.
+            return context_usage_map.get(aname)
+
+        all_agent_defs = rs.list_all("agent", uid, conversation_id=conv_id)
+        agent_defs_by_name = {a.get("name"): a for a in all_agent_defs}
+        assigned_by_skill = {}
 
         agents_out = []
         for aname in conv_agent_names:
             acfg = conv_agent_cfgs.get(aname, {})
             _def_name = acfg.get("definition") or aname
-            a = rs.get_any("agent", _def_name, uid)
+            a = agent_defs_by_name.get(_def_name) or agent_defs_by_name.get(aname)
             if not a:
                 a = {"name": aname, "description": "", "_scope": ""}
             entry = {
@@ -475,7 +551,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "llm_service": acfg.get("llm_service", ""),
                 "assigned_skills": a.get("assigned_skills") or [],
             }
-            _cu = _stored_context_usage(aname, acfg)
+            for skill_name in entry["assigned_skills"]:
+                assigned_by_skill.setdefault(skill_name, []).append(aname)
+            _cu = _stored_context_usage(aname)
             if _cu:
                 entry["context_usage"] = _cu
             if conv_id:
@@ -494,17 +572,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "in_conversation": a["name"] in set(conv_agent_names),
         } for a in all_repo_agents]
 
-        # Skills: show all from repo, mark assigned_to
+        # Skills: show all from repo, mark assigned_to from the precomputed
+        # agent definitions map. No per-skill repository reads in UI refresh.
         all_skills = rs.list_all("skill", uid, conversation_id=conv_id)
         skills_out = []
         for s in all_skills:
             sname = s["name"]
-            assigned_to = []
-            for aname, acfg in conv_agent_cfgs.items():
-                _def_name = acfg.get("definition") or aname
-                _agent_def = rs.get_any("agent", _def_name, uid) or {}
-                if sname in (_agent_def.get("assigned_skills") or []):
-                    assigned_to.append(aname)
+            assigned_to = assigned_by_skill.get(sname, [])
             skills_out.append({
                 "name": sname,
                 "description": s.get("description", ""),
@@ -686,47 +760,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             result["flows"] = flows
         except Exception:
             result["flows"] = []
-        # Flow templates (Flows Repository on disk under data/repository/flows/).
-        # Walks global + caller's user scope; each flow lives at
-        # <scope>/<package>/<flow_name>/{latest.json, versions/X.Y.Z.json}.
-        try:
-            from core.paths import REPOSITORY_DIR
-            templates = []
-            roots = [("global", REPOSITORY_DIR / "flows" / "global")]
-            if user_id:
-                roots.append(("user",
-                              REPOSITORY_DIR / "flows" / "users" / user_id))
-            for scope_label, root in roots:
-                if not root.is_dir():
-                    continue
-                for latest in root.rglob("latest.json"):
-                    flow_dir = latest.parent
-                    try:
-                        ptr = json.loads(latest.read_text(encoding="utf-8"))
-                        version = (ptr.get("version") or "").strip()
-                        if not version:
-                            continue
-                        vfile = flow_dir / "versions" / f"{version}.json"
-                        if not vfile.is_file():
-                            continue
-                        raw = json.loads(vfile.read_text(encoding="utf-8"))
-                        templates.append({
-                            "id": raw.get("id") or flow_dir.name,
-                            "name": raw.get("name") or flow_dir.name,
-                            "version": version,
-                            "description": raw.get("description") or "",
-                            "scope": raw.get("scope") or scope_label,
-                            "tasks_count": len(raw.get("tasks", {}) or {}),
-                            "services_count": len(raw.get("services", {}) or {}),
-                        })
-                    except Exception as _e:
-                        logger.debug("list_resources flow_templates: skip %s: %s",
-                                     latest, _e)
-            templates.sort(key=lambda t: (t["scope"], t["name"]))
-            result["flow_templates"] = templates
-        except Exception as e:
-            logger.debug("list_resources flow_templates failed: %s", e)
-            result["flow_templates"] = []
+        # Flow template discovery can walk many files. Keep /api/ui fast by
+        # returning cache immediately and refreshing it off the request path.
+        result["flow_templates"] = _get_flow_templates_cached(user_id)
         # Include user role so frontend can enable admin features
         _user_role = flowfile.get_attribute("http.auth.roles") or "viewer"
         result["user_role"] = _user_role

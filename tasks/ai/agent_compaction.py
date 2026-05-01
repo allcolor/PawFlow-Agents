@@ -274,6 +274,13 @@ class AgentCompactionMixin(AgentSummarizeMixin):
             conversation_id=conversation_id,
         )
         model = ctx.get("model") or None
+        _synth_call_kwargs = {
+            "call_user_id": ctx.get("user_id", ""),
+            "call_conversation_id": conversation_id,
+            "call_agent_name": ctx.get("active_agent_name", ""),
+            "call_event_cid": ctx.get("_event_cid", conversation_id),
+            "call_ephemeral_stream": False,
+        }
         for _attempt in range(2):
             try:
                 if use_streaming and token_callback:
@@ -282,6 +289,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                         temperature=ctx["temperature"],
                         max_tokens=ctx["max_tokens"],
                         tools=None, callback=token_callback,
+                        **_synth_call_kwargs,
                     )
                 else:
                     resp = client.complete(
@@ -289,6 +297,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                         temperature=ctx["temperature"],
                         max_tokens=ctx["max_tokens"],
                         tools=None,
+                        **_synth_call_kwargs,
                     )
                 messages.append(LLMMessage(role="assistant", content=resp.content,
                                             conversation_id=conversation_id))
@@ -426,6 +435,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         compact_instructions: str = "",
         force: bool = False,
         user_id: str = "",
+        budget_config: dict | None = None,
     ) -> List[LLMMessage]:
         """Iterative reduce-to-cap compaction. Output ≤ target_fraction × max.
 
@@ -470,11 +480,17 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     conversation_id[:8] if conversation_id else "?",
                     agent_name or "-", _tripped)
                 return messages
-        # Resolve token_multiplier once from the service config so every
-        # _estimate_tokens below returns real-tokenizer cost.
+        # Resolve budget-sensitive settings from the active agent LLM
+        # service, not necessarily from `client`: compaction often uses a
+        # separate summarizer client to write summaries, while the cap/gauge
+        # must follow the service whose context will receive the result.
+        _budget_cfg = (budget_config
+                       or getattr(client, "config", None)
+                       or getattr(client, "_config_ref", None)
+                       or getattr(getattr(client, "_client", None), "_config_ref", None)
+                       or {})
         from core.token_counter import resolve_token_multiplier
-        _tmul = resolve_token_multiplier(
-            getattr(client, "_config_ref", None))
+        _tmul = resolve_token_multiplier(_budget_cfg)
 
         # ── Phase -1: Advance the shared pyramid ──
         # The shared pyramid is the authoritative history asset, built
@@ -586,19 +602,12 @@ class AgentCompactionMixin(AgentSummarizeMixin):
         #      enforced ≤ 40% of max at service install time; runtime falls
         #      back to the formula if somehow that bound is exceeded here.
         #   2. legacy fraction (`target_fraction`, default 0.25 × max).
-        # `client` here is typically the LLMConnectionService (which exposes
-        # the user-edited config via `.config`), not the inner LLMClient. Fall
-        # back to `client._config_ref` for the raw-LLMClient call sites, then
-        # to `client._client._config_ref` (service.client.config_ref) so all
-        # three shapes resolve. Earlier version only looked at `_config_ref`
-        # and silently missed services, leaving every compact on the legacy
-        # 25% fraction.
-        _cfg_ref = (getattr(client, "config", None)
-                    or getattr(client, "_config_ref", None)
-                    or getattr(getattr(client, "_client", None), "_config_ref", None)
-                    or {})
+        # `_budget_cfg` is the active service budget config. Do not read the
+        # summarizer config here: otherwise a Codex appserver compact can use
+        # the summarizer's legacy 25% cap instead of the agent service's
+        # explicit `compact_target_tokens`.
         try:
-            _abs_cap = int(_cfg_ref.get("compact_target_tokens", 0) or 0)
+            _abs_cap = int(_budget_cfg.get("compact_target_tokens", 0) or 0)
         except (TypeError, ValueError):
             _abs_cap = 0
         if _abs_cap > 0 and _abs_cap <= int(max_tokens * 0.4):

@@ -332,26 +332,67 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         else:
             store.invalidate_claude_sessions(conv_id)
 
-    def _ctx_max_tokens(agent_name=""):
-        """Get max_context_size from the summarizer service.
-
-        Compaction is always driven by the summarizer_service (not the
-        agent's main LLM), so the context limit we size against is the
-        summarizer's — not whichever model happens to be answering the
-        user.
-        """
-        flow_default = int(self.config.get("max_context_size", 64000))
+    def _ctx_llm_service_config(conv_id, agent_name=""):
+        """Return the llm_service config associated with the selected agent."""
+        _name = _ctx_agent_name(agent_name)
+        if not _name:
+            return {}
         try:
-            _sc, _sc_max, _ = self._get_summarizer_client(user_id)
-            if _sc_max:
-                return int(_sc_max)
-            if _sc:
-                v = int((getattr(_sc, 'config', {}) or {}).get("max_context_size", 0))
-                if v:
-                    return v
+            from core.conv_agent_config import get_agent_config
+            llm_service = (get_agent_config(conv_id, _name).get("llm_service")
+                           or "")
+            if not llm_service:
+                return {}
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            svc = reg.resolve(llm_service, user_id=user_id, conv_id=conv_id)
+            if svc:
+                return dict(getattr(svc, "config", {}) or {})
+            sdef = reg.resolve_definition(
+                llm_service, user_id=user_id, conv_id=conv_id)
+            return dict(getattr(sdef, "config", {}) or {}) if sdef else {}
         except Exception:
-            pass
-        return flow_default
+            logger.exception(
+                "Failed to resolve llm_service config for compact agent %s",
+                _name)
+            return {}
+
+    def _ctx_real_context_size(conv_id, agent_name=""):
+        """Return provider/CLI real context window when the client exposes it."""
+        _name = _ctx_agent_name(agent_name)
+        if not _name:
+            return 0
+        try:
+            from core.conv_agent_config import get_agent_config
+            llm_service = (get_agent_config(conv_id, _name).get("llm_service")
+                           or "")
+            if not llm_service:
+                return 0
+            from core.service_registry import ServiceRegistry
+            svc = ServiceRegistry.get_instance().resolve(
+                llm_service, user_id=user_id, conv_id=conv_id)
+            client = svc.get_client() if svc and hasattr(svc, "get_client") else None
+            if not client:
+                return 0
+            return int(
+                getattr(client, "_real_context_size", 0)
+                or getattr(client, "_context_window", 0)
+                or 0)
+        except Exception:
+            return 0
+
+    def _ctx_max_tokens(conv_id, agent_name=""):
+        """Get effective max from agent llm_service config capped by provider real window."""
+        flow_default = int(self.config.get("max_context_size", 64000))
+        cfg = _ctx_llm_service_config(conv_id, agent_name)
+        try:
+            configured = int((cfg or {}).get("max_context_size", 0) or 0)
+        except Exception:
+            configured = 0
+        from core.context_window import effective_context_window
+        return effective_context_window(
+            configured, _ctx_real_context_size(conv_id, agent_name),
+            fallback=flow_default)
 
     # ── /context (improved) ──
     if action == "view_context":
@@ -377,7 +418,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "No context data"}).encode())
             return [flowfile]
         msgs = self._deserialize_messages(source_data, conversation_id=conv_id)
-        max_ctx = _ctx_max_tokens(_ctx_agent)
+        max_ctx = _ctx_max_tokens(conv_id, _ctx_agent)
 
         # Category breakdown
         system_tokens = 0
@@ -616,7 +657,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 "error": "No summarizer_service configured — compaction needs one.",
             }).encode())
             return [flowfile]
-        _compact_max = _ctx_max_tokens(_ctx_agent)
+        _compact_budget_config = _ctx_llm_service_config(conv_id, _ctx_agent)
+        _compact_max = _ctx_max_tokens(conv_id, _ctx_agent)
         _compact_source = source_data
         _compact_conv = conv_id
         _compact_agent_name = _ctx_agent
@@ -639,6 +681,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 compact_instructions=_compact_instructions,
                 force=True,
                 user_id=user_id,
+                budget_config=_compact_budget_config,
             )
             after_tokens = self._estimate_tokens(compacted)
             # CC session invalidation (extra clear + jsonl+companion purge on disk)

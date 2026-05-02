@@ -39,6 +39,26 @@ def test_relay_action_grep_accepts_glob_in_path(tmp_path):
     assert [row["path"] for row in results] == ["pkg/mod.py"]
 
 
+def test_relay_action_grep_accepts_space_separated_paths(tmp_path):
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    (left / "a.py").write_text("needle = 'left'\n", encoding="utf-8")
+    (right / "b.py").write_text("needle = 'right'\n", encoding="utf-8")
+
+    results = action_grep(str(tmp_path), f"{left} {right}", {
+        "regex": "needle",
+        "include": "*.py",
+        "recursive": True,
+    })
+
+    assert [row["path"] for row in results] == [
+        f"{left}/a.py",
+        f"{right}/b.py",
+    ]
+
+
 def test_relay_action_grep_include_alias_is_recursive(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()

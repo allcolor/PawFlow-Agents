@@ -245,6 +245,11 @@ class AgentLoopTask(
         inst = cls._live_instance
         if inst:
             inst.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
+            try:
+                from tasks.ai.actions.cancel_interrupt import _clear_force_stop_relaunch_state
+                _clear_force_stop_relaunch_state(conversation_id, agent_name)
+            except Exception:
+                logger.debug("force-stop relaunch cleanup failed", exc_info=True)
             _key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
             with inst._active_contexts_lock:
                 _cc = inst._active_claude_client.get(_key)
@@ -811,6 +816,11 @@ class AgentLoopTask(
             # Second interrupt within cooldown = escalate to force stop
             logger.info(f"[agent:{conversation_id[:8]}] repeat interrupt → escalating to force stop")
             self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
+            try:
+                from tasks.ai.actions.cancel_interrupt import _clear_force_stop_relaunch_state
+                _clear_force_stop_relaunch_state(conversation_id, agent_name)
+            except Exception:
+                logger.debug("force-stop relaunch cleanup failed", exc_info=True)
             # Force kill Claude Code subprocess if applicable
             _esc_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
             with self._active_contexts_lock:

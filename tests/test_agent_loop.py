@@ -119,6 +119,29 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert func["name"] == "search"
         assert json.loads(func["arguments"]) == {"q": "test"}
 
+    def test_openai_omits_image_blocks_when_service_vision_disabled(self):
+        client = LLMClient(provider="openai", config={
+            "api_key": "test-key",
+            "supports_vision": False,
+        })
+        messages = [LLMMessage(
+            role="user",
+            content=[
+                {"type": "text", "text": "describe"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+            conversation_id="test_conv",
+        )]
+
+        result = client._build_openai_messages(
+            messages, user_id="u", conversation_id="test_conv")
+
+        parts = result[0]["content"]
+        assert parts[0] == {"type": "text", "text": "describe"}
+        assert parts[1]["type"] == "text"
+        assert "supports_vision is disabled" in parts[1]["text"]
+        assert all(part.get("type") != "image_url" for part in parts)
+
     def test_openai_tool_result_message(self):
         # Tool message must follow an assistant message with matching tool_calls
         assistant_msg = LLMMessage(
@@ -1295,6 +1318,33 @@ class TestRandomThought(unittest.TestCase):
         # Cancel compound key
         assert sched.cancel("conv1::thought::assistant") is True
         assert sched.get("conv1::thought::assistant") is None
+
+    def test_poll_scheduler_cancel_for_conversation_keeps_non_pending_work(self):
+        """Force stop cleanup removes pending wakes without disabling tasks/thoughts."""
+        from core.poll_scheduler import PollScheduler
+        import time
+        sched = PollScheduler.instance()
+        when = time.time() + 3600
+        sched.schedule("conv1", when, key="conv1::pending::assistant",
+                       reason="[pending] safety-net wake")
+        sched.schedule("conv1", when, key="conv1::pending::abc12345",
+                       reason="[pending] active retry")
+        sched.schedule("conv1", when, key="conv1::thought::assistant",
+                       reason="[random_thought] watchdog reschedule")
+        sched.schedule("conv1", when, key="conv1::task::t_123",
+                       reason="[agent_task:t_123] watchdog reschedule")
+
+        removed = sched.cancel_for_conversation(
+            "conv1",
+            key_prefixes=["conv1::pending::"],
+            reason_prefixes=["[pending]"],
+        )
+
+        assert removed == 2
+        assert sched.get("conv1::pending::assistant") is None
+        assert sched.get("conv1::pending::abc12345") is None
+        assert sched.get("conv1::thought::assistant") is not None
+        assert sched.get("conv1::task::t_123") is not None
 
     def _setup_agent(self, conv_id):
         """Configure an active agent for the conversation."""

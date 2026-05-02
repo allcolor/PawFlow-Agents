@@ -352,6 +352,10 @@ class LLMConnectionService(BaseService):
                 "type": "string", "default": "",
                 "description": "Fallback model (used when primary fails)",
             },
+            "supports_vision": {
+                "type": "boolean", "default": True,
+                "description": "Send image attachments to this API provider as native vision input",
+            },
             "timeout": {
                 "type": "integer", "default": 0,
                 "description": "Request timeout in seconds (0 = no timeout)",
@@ -487,6 +491,7 @@ class LLMConnectionService(BaseService):
                     "base_url":      {"visible": True},
                     "max_retries":   {"visible": True},
                     "fallback_model": {"visible": True},
+                    "supports_vision": {"visible": True},
                 }
             },
             {
@@ -497,6 +502,7 @@ class LLMConnectionService(BaseService):
                     "base_url":      {"visible": True, "description": "Anthropic-compatible endpoint (empty = api.anthropic.com)"},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
+                    "supports_vision": {"visible": False},
                     "max_concurrent": {"visible": False},
                     "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
@@ -513,6 +519,7 @@ class LLMConnectionService(BaseService):
                     "base_url":      {"visible": False},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
+                    "supports_vision": {"visible": False},
                     "max_concurrent": {"visible": False},
                     "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},
@@ -529,6 +536,7 @@ class LLMConnectionService(BaseService):
                     "base_url":      {"visible": False},
                     "max_retries":   {"visible": False},
                     "fallback_model": {"visible": False},
+                    "supports_vision": {"visible": False},
                     "max_concurrent": {"visible": False},
                     "timeout":       {"default": 0},
                     "docker_image":  {"visible": True},

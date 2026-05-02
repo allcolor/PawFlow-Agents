@@ -50,6 +50,16 @@ def test_enqueue_drain_roundtrip(fake_store):
     assert q.drain() == []
 
 
+def test_clear_drops_pending_without_replay(fake_store):
+    q = PendingQueue.for_agent("c1", "claude")
+    q.enqueue(_msg("stop me", "m1", 1), source="http")
+    q.enqueue(_msg("also stop", "m2", 2), source="http")
+
+    assert q.clear("force_stop") == 2
+    assert q.peek_count() == 0
+    assert q.drain() == []
+
+
 def test_unstamped_message_rejected(fake_store):
     q = PendingQueue.for_agent("c1", "claude")
     # Missing msg_id → rejected

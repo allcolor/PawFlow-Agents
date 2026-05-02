@@ -156,7 +156,7 @@ Example: `allowed_paths=src,docs` + `denied_paths=src/secret` → can read `src/
 
 ### Advanced
 - `search(path, pattern, recursive)` — Find files by glob pattern
-- `grep(path, regex, recursive)` — Search file contents by regex
+- `grep(path, regex, recursive)` — Search file contents by regex. A space-separated `path` containing multiple existing roots scans each root.
 - `find_replace(path, pattern, replacement)` — Regex replace in a file
 
 ### Git (relay + server backends only)

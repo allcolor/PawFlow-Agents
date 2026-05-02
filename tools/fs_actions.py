@@ -412,6 +412,16 @@ def _grep_split_glob_path(path: str) -> tuple[str, str]:
     return base, "/".join(glob_parts)
 
 
+def _grep_candidate_paths(path: str) -> list[Path]:
+    p = Path(path)
+    if p.exists():
+        return [p]
+    parts = [Path(part) for part in str(path).split() if part]
+    if len(parts) > 1 and all(part.exists() for part in parts):
+        return parts
+    return [p]
+
+
 def _grep_effective_globs(glob_pattern: Any, recursive: bool) -> list[str]:
     """Normalize include/glob filters.
 
@@ -452,7 +462,8 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     with _w.catch_warnings():
         _w.simplefilter("ignore", FutureWarning)
         compiled = re.compile(regex, re.IGNORECASE)
-    p = Path(path)
+    paths = _grep_candidate_paths(path)
+    multiple_roots = len(paths) > 1
     results = []
 
     def _scan_file(fpath: Path, display_name: str):
@@ -474,23 +485,31 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
                 if len(results) >= 200:
                     return
 
-    if p.is_file():
-        _scan_file(p, p.name)
-        return results
-
     scan_patterns = glob_patterns or ["**/*" if recursive else "*"]
     seen = set()
-    for scan_pattern in scan_patterns:
-        for fpath in p.glob(scan_pattern):
-            if fpath in seen:
-                continue
-            seen.add(fpath)
-            if not fpath.is_file():
-                continue
-            # Skip any path whose parents include an ignored dir.
-            if any(part in _GREP_SKIP_DIRS for part in fpath.parts):
-                continue
-            _scan_file(fpath, str(fpath.relative_to(p)).replace("\\", "/"))
+    for p in paths:
+        if p.is_file():
+            display = str(p).replace("\\", "/") if multiple_roots else p.name
+            _scan_file(p, display)
+            if len(results) >= 200:
+                break
+            continue
+        for scan_pattern in scan_patterns:
+            for fpath in p.glob(scan_pattern):
+                if fpath in seen:
+                    continue
+                seen.add(fpath)
+                if not fpath.is_file():
+                    continue
+                # Skip any path whose parents include an ignored dir.
+                if any(part in _GREP_SKIP_DIRS for part in fpath.parts):
+                    continue
+                rel = str(fpath.relative_to(p)).replace("\\", "/")
+                root_label = str(p).replace("\\", "/")
+                display = f"{root_label}/{rel}" if multiple_roots else rel
+                _scan_file(fpath, display)
+                if len(results) >= 200:
+                    break
             if len(results) >= 200:
                 break
         if len(results) >= 200:

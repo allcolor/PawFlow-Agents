@@ -165,6 +165,17 @@ def test_codex_app_server_hands_context_compaction_to_pawflow():
     assert "handing compaction to PawFlow" in src
 
 
+def test_codex_app_server_uses_completed_message_as_text_source_of_truth():
+    src = inspect.getsource(LLMCodexAppServerMixin._stream_codex_app_server)
+    assert 'item.get("type") in ("message", "agentMessage")' in src
+    assert "assistant delta/final mismatch" in src
+    assert "turn_text_parts = [final_text]" in src
+    assert "turn_text_is_final = True" in src
+    assert "dropping non-final assistant delta text" in src
+    assert "final_text_parts.append(final_text)" in src
+    assert '"".join(final_text_parts).strip() or "".join(text_parts).strip()' in src
+
+
 def test_codex_live_sweeper_does_not_evict_active_turn():
     from core.codex_live_registry import CodexLiveRegistry
 

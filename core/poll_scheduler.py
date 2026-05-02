@@ -132,6 +132,39 @@ class PollScheduler:
                 return True
         return False
 
+    def cancel_for_conversation(
+        self,
+        conversation_id: str,
+        key_prefixes: Optional[List[str]] = None,
+        reason_prefixes: Optional[List[str]] = None,
+    ) -> int:
+        """Cancel selected schedules for one conversation.
+
+        Prefix filters keep force stop from disabling unrelated task or
+        random-thought schedules.
+        """
+        if not conversation_id:
+            return 0
+        with self._lock:
+            removed = []
+            for key, entry in list(self._schedules.items()):
+                if entry.get("conversation_id") != conversation_id:
+                    continue
+                reason = entry.get("reason", "") or ""
+                key_match = (not key_prefixes or any(
+                    key.startswith(prefix) for prefix in key_prefixes))
+                reason_match = (not reason_prefixes or any(
+                    reason.startswith(prefix) for prefix in reason_prefixes))
+                if key_match and reason_match:
+                    removed.append(key)
+            for key in removed:
+                del self._schedules[key]
+            if removed:
+                self._save()
+        for key in removed:
+            logger.info("[poll_scheduler] Cancelled: %s", key)
+        return len(removed)
+
     def list_loops(self, conversation_id: str = "") -> list:
         """List active recurring loops, optionally filtered by conversation."""
         with self._lock:

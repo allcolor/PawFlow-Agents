@@ -473,6 +473,15 @@ class LLMClient(
         return self.DEFAULT_MODELS.get(self.provider, "")
 
     @property
+    def supports_vision(self) -> bool:
+        raw = self._cfg("supports_vision", True)
+        if isinstance(raw, bool):
+            return raw
+        if raw is None or raw == "":
+            return True
+        return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+    @property
     def timeout(self):
         raw = self._cfg("timeout", None)
         if raw in (None, "", 0, "0"):

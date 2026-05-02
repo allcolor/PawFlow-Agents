@@ -263,7 +263,13 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
 
     @staticmethod
     def _codex_app_payload_text(payload: dict) -> str:
+        if not isinstance(payload, dict):
+            return ""
         content = payload.get("content") if isinstance(payload, dict) else None
+        direct_text = (payload.get("text") or payload.get("message")
+                       or payload.get("output_text") or "")
+        if isinstance(direct_text, str) and direct_text:
+            return direct_text
         if isinstance(content, str):
             return content
         parts = []
@@ -579,6 +585,8 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         active_key = (user_id, conv_id, agent_name, time.time())
         text_parts: List[str] = []
         turn_text_parts: List[str] = []
+        turn_text_is_final = False
+        final_text_parts: List[str] = []
         thinking_parts: List[str] = []
         stream_uniq = f"codexapp-{uuid.uuid4().hex[:8]}"
         stream_tc_names: Dict[str, str] = {}
@@ -588,11 +596,19 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         self._codex_app_sent_preempt_texts = []
 
         def _flush_text():
-            nonlocal turn_text_parts
+            nonlocal turn_text_parts, turn_text_is_final
             if not turn_text_parts:
+                return
+            if not turn_text_is_final:
+                logger.warning(
+                    "[codex-app] dropping non-final assistant delta text; waiting for completed item (delta_len=%d)",
+                    len("".join(turn_text_parts)),
+                )
+                turn_text_parts = []
                 return
             text = "".join(turn_text_parts).strip()
             turn_text_parts = []
+            turn_text_is_final = False
             if text and turn_callback:
                 try:
                     if thinking_parts:
@@ -768,6 +784,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     if delta:
                         text_parts.append(delta)
                         turn_text_parts.append(delta)
+                        turn_text_is_final = False
                         if callback:
                             callback(delta)
                     continue
@@ -780,6 +797,21 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
 
                 if method == "item/completed":
                     item = params.get("item", {}) or {}
+                    if (item.get("type") in ("message", "agentMessage")
+                            and item.get("role", "assistant") == "assistant"):
+                        final_text = self._codex_app_payload_text(item).strip()
+                        if final_text:
+                            delta_text = "".join(turn_text_parts).strip()
+                            if delta_text and delta_text != final_text:
+                                logger.warning(
+                                    "[codex-app] assistant delta/final mismatch; "
+                                    "using completed item as source of truth "
+                                    "delta_len=%d final_len=%d",
+                                    len(delta_text), len(final_text))
+                            turn_text_parts = [final_text]
+                            turn_text_is_final = True
+                            final_text_parts.append(final_text)
+                        continue
                     if item.get("type") == "reasoning":
                         summary = item.get("summary") or []
                         content = item.get("content") or []
@@ -885,7 +917,7 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     raise LLMClientError(f"codex app-server error: {params.get('error') or params}")
 
             _flush_text()
-            content = "".join(text_parts).strip()
+            content = "".join(final_text_parts).strip() or "".join(text_parts).strip()
             return LLMResponse(
                 content=content,
                 model=model,

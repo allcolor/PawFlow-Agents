@@ -331,7 +331,8 @@ When the agent calls `update_plan(status="done")`:
 When a step completes, the executing agent is force-stopped to prevent it from running ahead. This is done by:
 1. Bumping the conversation generation counter (agent loop detects staleness).
 2. Setting the interrupt flag.
-3. Killing any Claude Code subprocess if applicable.
+3. Killing any CLI provider subprocess or live app-server container if applicable.
+4. Clearing the stopped agent's pending queue, pending PollScheduler wakeups, and cancel checkpoint so force stop cannot replay queued work or relaunch the agent.
 
 ---
 

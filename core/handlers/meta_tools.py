@@ -10,6 +10,11 @@ import logging
 from typing import Dict, Any
 
 from core.tool_handler import ToolHandler
+from core.tool_json import (
+    missing_required_arguments,
+    parse_tool_arguments,
+    tool_argument_parse_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -328,15 +333,12 @@ class UseToolHandler(ToolHandler):
         if tool_args is None:
             tool_args = {}
         # LLM sometimes sends arguments as JSON string instead of dict
-        # (can be double-encoded -- keep parsing until we get a dict)
-        for _ in range(3):  # max 3 levels of JSON encoding
-            if isinstance(tool_args, str):
-                try:
-                    tool_args = json.loads(tool_args)
-                except (json.JSONDecodeError, TypeError):
-                    return f"Error: invalid arguments format for '{tool_name}' -- expected JSON object, got string: {tool_args[:200]}"
-            else:
-                break
+        # (can be double-encoded -- keep parsing until we get a dict).
+        tool_args = parse_tool_arguments(tool_args, tool_name=tool_name,
+                                         provider="use_tool", log=logger)
+        parse_error = tool_argument_parse_error(tool_args)
+        if parse_error:
+            return parse_error
         if not isinstance(tool_args, dict):
             return f"Error: arguments for '{tool_name}' must be a JSON object, got {type(tool_args).__name__}"
         tool_name = _canonical_tool_name(tool_name)
@@ -359,15 +361,12 @@ class UseToolHandler(ToolHandler):
             if nested_args is None:
                 nested_args = {}
 
-            for _ in range(3):
-                if isinstance(nested_args, str):
-                    try:
-                        nested_args = json.loads(nested_args)
-                    except (json.JSONDecodeError, TypeError):
-                        return (f"Error: invalid arguments format for '{nested_name}' -- "
-                                f"expected JSON object, got string: {nested_args[:200]}")
-                else:
-                    break
+            nested_args = parse_tool_arguments(
+                nested_args, tool_name=nested_name,
+                provider="use_tool", log=logger)
+            parse_error = tool_argument_parse_error(nested_args)
+            if parse_error:
+                return parse_error
             if not isinstance(nested_args, dict):
                 return (f"Error: arguments for '{nested_name}' must be a JSON object, "
                         f"got {type(nested_args).__name__}")
@@ -399,4 +398,8 @@ class UseToolHandler(ToolHandler):
                     return (f"Error: unknown argument(s) {unknown} for tool '{tool_name}'. "
                             f"Valid arguments: {valid}. "
                             f"Use get_tool_schema(tool_name='{tool_name}') to see full schema.")
+            missing = missing_required_arguments(schema, tool_args)
+            if missing:
+                return (f"Error: missing required argument(s) {missing} for tool '{tool_name}'. "
+                        f"Use get_tool_schema(tool_name='{tool_name}') to see full schema.")
         return self._registry.execute(tool_name, tool_args)

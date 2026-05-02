@@ -266,6 +266,12 @@ def _autoclose_truncated_json(s: str, max_appends: int = 4) -> str:
     return s + suffix if suffix else s
 
 
+try:
+    from core.tool_json import autoclose_truncated_json as _shared_autoclose_truncated_json
+except Exception:
+    _shared_autoclose_truncated_json = _autoclose_truncated_json
+
+
 def _log(msg):
     global _log_file
     sys.stderr.write(f"[mcp-bridge] {msg}\n")
@@ -608,7 +614,7 @@ def main():
                                 _at_end = (
                                     getattr(_je, "pos", -1) >= len(tool_args) - 4)
                                 if _trunc_like and _at_end:
-                                    _patched = _autoclose_truncated_json(tool_args)
+                                    _patched = _shared_autoclose_truncated_json(tool_args)
                                     if _patched != tool_args:
                                         try:
                                             tool_args = json.loads(_patched)

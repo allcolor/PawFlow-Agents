@@ -278,6 +278,36 @@ class TestMetaToolAliases(unittest.TestCase):
         assert result == "read-ok"
         assert received == {"path": "/workspace/cli.py", "start_line": 1}
 
+    def test_use_tool_rejects_missing_required_argument_before_execution(self):
+        from core.handlers.meta_tools import UseToolHandler
+
+        called = False
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                nonlocal called
+                called = True
+                return "read-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="read",
+            schema={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "read",
+            "arguments": {},
+        })
+
+        assert "missing required argument" in result
+        assert "path" in result
+        assert called is False
+
     def test_nested_mcp_pawflow_use_tool_is_unwrapped(self):
         from core.handlers.meta_tools import UseToolHandler
 

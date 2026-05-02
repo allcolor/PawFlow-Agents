@@ -156,12 +156,15 @@ class LLMOpenaiMixin:
 
             # Build tool calls
             tool_calls = []
+            from core.tool_json import parse_tool_arguments
             for idx in sorted(tool_calls_map.keys()):
                 tc = tool_calls_map[idx]
-                try:
-                    args = json.loads(tc["arguments_str"]) if tc["arguments_str"] else {}
-                except json.JSONDecodeError:
-                    args = {}
+                args = parse_tool_arguments(
+                    tc["arguments_str"],
+                    tool_name=tc["name"],
+                    provider="openai",
+                    log=logger,
+                )
                 tool_calls.append(LLMToolCall(id=tc["id"], name=tc["name"], arguments=args))
 
             content = "".join(content_parts)
@@ -265,6 +268,13 @@ class LLMOpenaiMixin:
         if _img_count:
             logger.info("build_openai_messages: %d image part(s) in context", _img_count)
 
+        def _vision_disabled_text(block: dict) -> dict:
+            name = block.get("filename") or block.get("file_id") or "attachment"
+            return {
+                "type": "text",
+                "text": f"[Image {name} omitted: LLM service supports_vision is disabled.]",
+            }
+
         # Sanitize: collect tool_call IDs from assistant messages, drop orphan tool messages
         valid_tc_ids: set = set()
         for m in messages:
@@ -289,11 +299,14 @@ class LLMOpenaiMixin:
                     img_parts = []
                     for p in m.content:
                         if p.get("type") == "image_url":
-                            img_parts.append(p)
+                            img_parts.append(p if self.supports_vision else _vision_disabled_text(p))
                         elif p.get("type") == "image_ref":
-                            img_parts.append(self._resolve_image_ref(
-                                p, user_id=user_id,
-                                conversation_id=conversation_id))
+                            if self.supports_vision:
+                                img_parts.append(self._resolve_image_ref(
+                                    p, user_id=user_id,
+                                    conversation_id=conversation_id))
+                            else:
+                                img_parts.append(_vision_disabled_text(p))
                     if img_parts:
                         api_messages.append({
                             "role": "user",
@@ -329,9 +342,14 @@ class LLMOpenaiMixin:
                             "text": f"[Document: {part.get('filename', 'file')}]\n{part.get('text', '')}",
                         })
                     elif pt == "image_ref":
-                        parts.append(self._resolve_image_ref(
-                            part, user_id=user_id,
-                            conversation_id=conversation_id))
+                        if self.supports_vision:
+                            parts.append(self._resolve_image_ref(
+                                part, user_id=user_id,
+                                conversation_id=conversation_id))
+                        else:
+                            parts.append(_vision_disabled_text(part))
+                    elif pt == "image_url":
+                        parts.append(part if self.supports_vision else _vision_disabled_text(part))
                     elif pt == "file_ref":
                         parts.append({"type": "text", "text": f"[file: {part.get('filename', '?')}]"})
                     else:
@@ -410,12 +428,15 @@ class LLMOpenaiMixin:
 
         # Parse tool calls if present
         tool_calls = []
+        from core.tool_json import parse_tool_arguments
         for tc in message.get("tool_calls", []):
             func = tc.get("function", {})
-            try:
-                args = json.loads(func.get("arguments", "{}"))
-            except (json.JSONDecodeError, TypeError):
-                args = {}
+            args = parse_tool_arguments(
+                func.get("arguments", "{}"),
+                tool_name=func.get("name", ""),
+                provider="openai",
+                log=logger,
+            )
             tool_calls.append(LLMToolCall(
                 id=tc.get("id", ""),
                 name=func.get("name", ""),

@@ -229,11 +229,14 @@ class ToolRegistry:
                 args = result
             # Unwrap JSON string (MCP bridge double-encoding)
             if isinstance(args, str):
-                try:
-                    import json as _json_uw
-                    args = _json_uw.loads(args)
-                except (ValueError, TypeError):
-                    pass
+                from core.tool_json import parse_tool_arguments
+                args = parse_tool_arguments(args, tool_name=name,
+                                            provider="tool_registry",
+                                            log=logger)
+            from core.tool_json import tool_argument_parse_error
+            _parse_error = tool_argument_parse_error(args)
+            if _parse_error:
+                return _parse_error
             # Normalize CC-native argument names to PawFlow names
             # (drop-in compat with Claude Code built-in tool signatures)
             if isinstance(args, dict):
@@ -266,12 +269,17 @@ class ToolRegistry:
                     _schema = _schema_with_local(handler)
                 except Exception:
                     _schema = handler.parameters_schema
+                from core.tool_json import missing_required_arguments
                 _known = set((_schema.get("properties") or {}).keys())
                 if _known:
                     _unknown = [k for k in args if k not in _known and not k.startswith("_")]
                     if _unknown:
                         return (f"Error: unknown argument(s) {_unknown} for tool '{name}'. "
                                 f"Valid arguments: {sorted(_known)}")
+                _missing = missing_required_arguments(_schema, args)
+                if _missing:
+                    return (f"Error: missing required argument(s) {_missing} for tool '{name}'. "
+                            f"Valid arguments: {sorted(_known)}")
             # Execute
             result = handler.execute(args)
             # Run post-hooks (specific then wildcard)

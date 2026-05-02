@@ -128,6 +128,37 @@ class PendingQueue:
 
     def drain(self) -> List[Dict]:
         """Remove and return all pending messages. Atomic (read + truncate)."""
+        entries = self._read_and_truncate()
+        if entries:
+            # Diagnostic: log age of each drained entry. Fresh entries
+            # (<60s) are normal — messages that arrived during the just-
+            # ended turn. Stale entries (>300s) indicate a leak where an
+            # intermediate drain should have fired but didn't.
+            import time as _t
+            _now = _t.time()
+            _ages = []
+            for _e in entries:
+                _enq = _e.get("_pending_enqueued_at")
+                if isinstance(_enq, (int, float)):
+                    _ages.append(int(_now - _enq))
+            _age_summary = ",".join(f"{a}s" for a in _ages) if _ages else "?"
+            logger.info("[pending-queue] drained %d message(s) from %s/%s "
+                        "(ages=%s)",
+                        len(entries), self.conv_id[:8],
+                        self.agent_name or "_shared", _age_summary)
+        return entries
+
+    def clear(self, reason: str = "") -> int:
+        """Drop queued work without replaying it, used by force stop."""
+        removed = len(self._read_and_truncate())
+        if removed:
+            logger.info("[pending-queue] cleared %d message(s) from %s/%s%s",
+                        removed, self.conv_id[:8],
+                        self.agent_name or "_shared",
+                        f" ({reason})" if reason else "")
+        return removed
+
+    def _read_and_truncate(self) -> List[Dict]:
         if self._path is None or not self._path.exists():
             return []
         with self._lock:
@@ -151,23 +182,6 @@ class PendingQueue:
             with open(tmp, "w", encoding="utf-8") as _fh:
                 pass
             tmp.replace(self._path)
-        if entries:
-            # Diagnostic: log age of each drained entry. Fresh entries
-            # (<60s) are normal — messages that arrived during the just-
-            # ended turn. Stale entries (>300s) indicate a leak where an
-            # intermediate drain should have fired but didn't.
-            import time as _t
-            _now = _t.time()
-            _ages = []
-            for _e in entries:
-                _enq = _e.get("_pending_enqueued_at")
-                if isinstance(_enq, (int, float)):
-                    _ages.append(int(_now - _enq))
-            _age_summary = ",".join(f"{a}s" for a in _ages) if _ages else "?"
-            logger.info("[pending-queue] drained %d message(s) from %s/%s "
-                        "(ages=%s)",
-                        len(entries), self.conv_id[:8],
-                        self.agent_name or "_shared", _age_summary)
         return entries
 
     def discard_msg_ids(self, msg_ids, sources=None) -> int:

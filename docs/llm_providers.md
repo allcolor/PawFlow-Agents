@@ -99,6 +99,10 @@ For local or compatible endpoints, change `base_url`:
 }
 ```
 
+## Anthropic-Compatible Vision
+
+The Anthropic provider accepts direct Anthropic services and compatible endpoints such as DeepSeek. The `supports_vision` setting on OpenAI and Anthropic API services is the user-controlled capability flag: when enabled, PawFlow resolves `image_ref` attachments and multimodal `see` tool results into native image blocks; when disabled, PawFlow sends only a text note and never transmits image bytes to that provider. For Anthropic payloads, PawFlow logs the number of image blocks included.
+
 ## Claude Code
 
 Claude Code can authenticate with an Anthropic API key or with its normal CLI login state.

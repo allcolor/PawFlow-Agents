@@ -27,10 +27,15 @@ logger = logging.getLogger(__name__)
 
 
 _SECURITY_HEADERS = {
+    # The chat UI pulls rxjs from jsDelivr and highlight.js (script + theme
+    # CSS) from cdnjs. Both CDN origins are whitelisted explicitly so the
+    # default 'self'-only policy doesn't break the page on first load.
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+        "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' "
+        "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
         "img-src 'self' data: blob:; "
         "media-src 'self' data: blob:; "
         "connect-src 'self' ws: wss:; "

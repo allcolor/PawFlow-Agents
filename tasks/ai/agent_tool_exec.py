@@ -108,6 +108,17 @@ class AgentToolExecMixin:
                     f"Stop and explain to the user what you've tried so far, "
                     f"and ask if they want you to continue."
                 )
+            from core.tool_json import tool_argument_parse_error
+            parse_error = tool_argument_parse_error(tc.arguments)
+            if parse_error:
+                logger.error(
+                    "Rejecting malformed tool call from provider: tool=%s args=%s",
+                    tc.name, tc.arguments,
+                )
+                return tc, parse_error
+            if not tc.name or tc.name.startswith("$"):
+                logger.error("Rejecting invalid provider tool name: %r args=%s", tc.name, tc.arguments)
+                return tc, f"Error: invalid tool name {tc.name!r}. Emit a real tool name from the provided schema."
             # Build agent key for per-agent permissions
             # For tasks: agent_name::task::task_id (derived from conversation_id)
             _agent_key = agent_name

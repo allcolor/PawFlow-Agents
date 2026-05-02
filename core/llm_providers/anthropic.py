@@ -196,7 +196,7 @@ class LLMAnthropicMixin:
                                     tool_input = block.get("input")
                                     tool_input_str = (
                                         json.dumps(tool_input, ensure_ascii=False)
-                                        if isinstance(tool_input, dict) else "")
+                                        if isinstance(tool_input, dict) and tool_input else "")
                                 else:
                                     current_block_type = block_type
                                     if block_type == "text":
@@ -222,10 +222,13 @@ class LLMAnthropicMixin:
 
                             elif evt_type == "content_block_stop":
                                 if current_tool:
-                                    try:
-                                        args = json.loads(tool_input_str) if tool_input_str else {}
-                                    except json.JSONDecodeError:
-                                        args = {}
+                                    from core.tool_json import parse_tool_arguments
+                                    args = parse_tool_arguments(
+                                        tool_input_str,
+                                        tool_name=current_tool["name"],
+                                        provider="anthropic",
+                                        log=logger,
+                                    )
                                     tool_calls.append(LLMToolCall(
                                         id=current_tool["id"],
                                         name=current_tool["name"],
@@ -302,6 +305,13 @@ class LLMAnthropicMixin:
         system_text = ""
         api_messages: List[Dict[str, Any]] = []
 
+        def _vision_disabled_block(part: dict) -> Dict[str, Any]:
+            name = part.get("filename") or part.get("file_id") or "attachment"
+            return {
+                "type": "text",
+                "text": f"[Image {name} omitted: LLM service supports_vision is disabled.]",
+            }
+
         def _tool_result_content(m) -> Any:
             tool_content: Any = m.content
             if isinstance(m.content, list):
@@ -311,6 +321,9 @@ class LLMAnthropicMixin:
                     if part.get("type") == "text":
                         blocks.append({"type": "text", "text": part["text"]})
                     elif part.get("type") == "image_url":
+                        if not self.supports_vision:
+                            blocks.append(_vision_disabled_block(part))
+                            continue
                         url = part.get("image_url", {}).get("url", "")
                         if url.startswith("data:"):
                             header, _, b64data = url.partition(",")
@@ -322,6 +335,9 @@ class LLMAnthropicMixin:
                         else:
                             blocks.append({"type": "image", "source": {"type": "url", "url": url}})
                     elif part.get("type") == "image_ref":
+                        if not self.supports_vision:
+                            blocks.append(_vision_disabled_block(part))
+                            continue
                         from core.file_store import FileStore
                         import base64 as _b64
                         _fid = part.get("file_id", "")
@@ -332,8 +348,16 @@ class LLMAnthropicMixin:
                             _fid,
                             user_id=user_id,
                             conversation_id=conversation_id)
+                        logger.info(
+                            "Loaded image from FileStore for Anthropic vision: %s (%d bytes)",
+                            _fid, len(_data),
+                        )
                         _data_b64 = _b64.b64encode(_data).decode("ascii")
                         mime = part.get("mime_type", _ct) or "image/png"
+                        blocks.append({
+                            "type": "text",
+                            "text": f"Attached image {_fname} is provided below for visual analysis.",
+                        })
                         blocks.append({
                             "type": "image",
                             "source": {"type": "base64", "media_type": mime, "data": _data_b64},
@@ -390,6 +414,9 @@ class LLMAnthropicMixin:
                     if part.get("type") == "text":
                         content_blocks.append({"type": "text", "text": part["text"]})
                     elif part.get("type") == "image_url":
+                        if not self.supports_vision:
+                            content_blocks.append(_vision_disabled_block(part))
+                            continue
                         url = part.get("image_url", {}).get("url", "")
                         if url.startswith("data:"):
                             # Parse data URI: data:image/png;base64,XXXX
@@ -410,6 +437,9 @@ class LLMAnthropicMixin:
                                 "source": {"type": "url", "url": url},
                             })
                     elif part.get("type") == "image_ref":
+                        if not self.supports_vision:
+                            content_blocks.append(_vision_disabled_block(part))
+                            continue
                         from core.file_store import FileStore
                         import base64 as _b64
                         _fid = part.get("file_id", "")
@@ -420,8 +450,16 @@ class LLMAnthropicMixin:
                             _fid,
                             user_id=user_id,
                             conversation_id=conversation_id)
+                        logger.info(
+                            "Loaded image from FileStore for Anthropic vision: %s (%d bytes)",
+                            _fid, len(_data),
+                        )
                         _data_b64 = _b64.b64encode(_data).decode("ascii")
                         mime = part.get("mime_type", _ct) or "image/png"
+                        content_blocks.append({
+                            "type": "text",
+                            "text": f"Attached image {_fname} is provided below for visual analysis.",
+                        })
                         content_blocks.append({
                             "type": "image",
                             "source": {"type": "base64", "media_type": mime, "data": _data_b64},
@@ -449,7 +487,28 @@ class LLMAnthropicMixin:
                 else:
                     api_messages.append({"role": m.role, "content": m.content or ""})
             i += 1
+        image_blocks_sent = self._count_anthropic_image_blocks(api_messages)
+        if image_blocks_sent:
+            logger.info(
+                "Anthropic payload includes image blocks: count=%d provider=anthropic",
+                image_blocks_sent,
+            )
         return system_text, api_messages
+
+    @staticmethod
+    def _count_anthropic_image_blocks(api_messages: List[Dict[str, Any]]) -> int:
+        """Count Anthropic image blocks without inspecting their base64 payload."""
+        count = 0
+        stack: List[Any] = [api_messages]
+        while stack:
+            value = stack.pop()
+            if isinstance(value, list):
+                stack.extend(value)
+            elif isinstance(value, dict):
+                if value.get("type") == "image":
+                    count += 1
+                stack.extend(value.values())
+        return count
 
     def _apply_anthropic_cache_control(self, api_messages: List[Dict[str, Any]]) -> None:
         """Add cache_control breakpoints to maximize KV cache hits.
@@ -578,10 +637,16 @@ class LLMAnthropicMixin:
         tool_calls = []
         for block in content_blocks:
             if isinstance(block, dict) and block.get("type") == "tool_use":
+                from core.tool_json import parse_tool_arguments
                 tool_calls.append(LLMToolCall(
                     id=block.get("id", ""),
                     name=block.get("name", ""),
-                    arguments=block.get("input", {}),
+                    arguments=parse_tool_arguments(
+                        block.get("input", {}),
+                        tool_name=block.get("name", ""),
+                        provider="anthropic",
+                        log=logger,
+                    ),
                 ))
 
         usage = data.get("usage", {})

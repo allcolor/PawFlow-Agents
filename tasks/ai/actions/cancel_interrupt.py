@@ -34,6 +34,60 @@ def _kill_live_cli_sessions(conv_id: str, agent_name: str, reason: str) -> int:
     return total
 
 
+def _clear_force_stop_relaunch_state(conv_id: str, agent_name: str,
+                                     store=None) -> None:
+    """Remove queued replay state so force stop cannot relaunch itself."""
+    if not conv_id:
+        return
+    try:
+        if store is None:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+    except Exception:
+        store = None
+    agents = set()
+    if agent_name:
+        agents.add(agent_name.lower())
+    elif store is not None:
+        try:
+            active = store.get_extra(conv_id, "active_resources") or {}
+            active_agent = (active.get("agent", "") or "").lower()
+            if active_agent:
+                agents.add(active_agent)
+        except Exception:
+            logger.debug("force-stop active agent lookup failed", exc_info=True)
+        if not agents:
+            try:
+                conv_dir = store._conv_dir(conv_id)
+                for sub in conv_dir.iterdir():
+                    if sub.is_dir() and (sub / "pending.jsonl").exists():
+                        if sub.name != "_shared":
+                            agents.add(sub.name.lower())
+            except Exception:
+                logger.debug("force-stop pending queue scan failed", exc_info=True)
+    try:
+        from core.pending_queue import PendingQueue
+        for agent in sorted(agents):
+            PendingQueue.for_agent(conv_id, agent).clear("force_stop")
+    except Exception:
+        logger.debug("force-stop pending queue cleanup failed", exc_info=True)
+    try:
+        from core.poll_scheduler import PollScheduler
+        PollScheduler.instance().cancel_for_conversation(
+            conv_id,
+            key_prefixes=[f"{conv_id}::pending::"],
+            reason_prefixes=["[pending]"],
+        )
+    except Exception:
+        logger.debug("force-stop schedule cleanup failed", exc_info=True)
+    try:
+        if store is not None:
+            for agent in sorted(agents):
+                store.set_extra(conv_id, f"cancel_checkpoint:{agent}", None)
+    except Exception:
+        logger.debug("force-stop cancel checkpoint cleanup failed", exc_info=True)
+
+
 def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
     """Handle cancel interrupt actions. Returns [flowfile] or None."""
     # Resolve to the execution instance — self may be the actions-only
@@ -134,6 +188,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         _exec.cancel_agent(conv_id, agent_name=agent_name)
+        _clear_force_stop_relaunch_state(conv_id, agent_name, store)
         # Cancel in-flight tool calls for this agent
         try:
             from services.tool_relay_service import ToolRelayService

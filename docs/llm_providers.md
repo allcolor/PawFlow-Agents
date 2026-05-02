@@ -101,6 +101,23 @@ For local or compatible endpoints, change `base_url`:
 
 OpenAI-compatible providers receive the lazy meta-tools `get_tool_schema` and `use_tool`. The provider-facing `use_tool` schema uses `arguments_json`, a JSON object encoded as a string, instead of a nested free-form `arguments` object. The handler still accepts `arguments` internally for compatibility, but the exposed schema avoids the PawFlow bug where compatible backends repeatedly produced `{}` for nested tool arguments. The OpenAI provider logs tool calls whose `arguments` field is omitted or empty so tool-call regressions are visible.
 
+OpenAI-compatible services also support `extra_body`, a JSON object merged into the chat-completions request body after PawFlow builds its standard fields. This is intended for endpoint-specific options such as OpenRouter routing:
+
+```json
+{
+  "extra_body": {
+    "provider": {
+      "order": ["Fireworks", "Together", "DeepInfra"],
+      "allow_fallbacks": false
+    },
+    "transforms": ["middle-out"],
+    "include_reasoning": true
+  }
+}
+```
+
+Protected request keys such as `model`, `messages`, `tools`, `stream`, token limits, and API credentials are ignored if present in `extra_body`. Docker execution fields (`docker_image`, `docker_cpu_limit`, `docker_memory_limit`) and `effort` are CLI-provider settings and are hidden for direct API providers (`openai`, `anthropic`).
+
 ## Anthropic-Compatible Vision
 
 The Anthropic provider accepts direct Anthropic services and compatible endpoints such as DeepSeek. The `supports_vision` setting on OpenAI and Anthropic API services is the user-controlled capability flag: when enabled, PawFlow resolves `image_ref` attachments and multimodal `see` tool results into native image blocks; when disabled, PawFlow sends only a text note and never transmits image bytes to that provider. For Anthropic payloads, PawFlow logs the number of image blocks included.

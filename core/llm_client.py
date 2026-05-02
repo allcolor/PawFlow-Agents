@@ -520,6 +520,35 @@ class LLMClient(
     def prompt_cache_retention(self):
         return self._cfg("prompt_cache_retention", "")
 
+    @property
+    def extra_body(self) -> Dict[str, Any]:
+        """Provider-specific OpenAI-compatible request body additions."""
+        raw = self._cfg("extra_body", {})
+        if raw in (None, ""):
+            return {}
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("Ignoring invalid llm extra_body JSON string")
+                return {}
+        if not isinstance(raw, dict):
+            logger.warning("Ignoring llm extra_body because it is not an object")
+            return {}
+        protected = {
+            "api_key", "authorization", "messages", "model", "tools",
+            "stream", "stream_options", "temperature", "max_tokens",
+            "max_completion_tokens", "prompt_cache_key",
+            "prompt_cache_retention",
+        }
+        result: Dict[str, Any] = {}
+        for key, value in raw.items():
+            if str(key).lower() in protected:
+                logger.warning("Ignoring protected llm extra_body key: %s", key)
+                continue
+            result[key] = value
+        return result
+
     @staticmethod
     def _parse_context_overflow(error_text: str) -> Optional[int]:
         """Parse context length overflow from error message.

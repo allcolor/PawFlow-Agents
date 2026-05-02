@@ -116,6 +116,13 @@ class AgentActionsMixin:
         reply_conversation_id = body.get("_reply_conversation_id", "") or reply_conversation_id or conversation_id
         call_id = body.get("_call_id", "") or call_id
 
+        if action == "load_history":
+            for handler in _ACTION_HANDLERS:
+                result = handler(self, action, body, store, user_id, flowfile)
+                if result is not None:
+                    return result
+            return None
+
         # No reply bus available → run synchronously and return the payload
         # in the HTTP response. System clients (relay, CLI, registration
         # bootstraps) call /api/ui without a chat conversation context, so

@@ -142,6 +142,56 @@ class TestLLMConnectionService:
 
         assert captured["response_format"] == {"type": "json_object"}
 
+    def test_openai_extra_body_is_merged_and_protected_keys_are_ignored(self):
+        svc = LLMConnectionService({
+            "provider": "openai",
+            "api_key": "test-key",
+            "base_url": "https://openrouter.ai/api/v1",
+            "default_model": "qwen/qwen3-4b",
+            "extra_body": {
+                "provider": {
+                    "order": ["Fireworks", "Together"],
+                    "allow_fallbacks": False,
+                },
+                "transforms": ["middle-out"],
+                "include_reasoning": True,
+                "model": "must-not-override",
+            },
+        })
+        svc.connect()
+
+        captured = {}
+
+        def mock_post(path, body, headers):
+            captured["path"] = path
+            captured.update(body)
+            return OPENAI_RESPONSE
+
+        with patch.object(svc._client, "_http_post", side_effect=mock_post):
+            svc.complete(messages=[LLMMessage("user", "Hi", conversation_id="test_conv")])
+
+        assert captured["path"] == "/chat/completions"
+        assert captured["model"] == "qwen/qwen3-4b"
+        assert captured["provider"] == {
+            "order": ["Fireworks", "Together"],
+            "allow_fallbacks": False,
+        }
+        assert captured["transforms"] == ["middle-out"]
+        assert captured["include_reasoning"] is True
+
+    def test_llm_service_rules_hide_cli_fields_for_api_providers(self):
+        rules = LLMConnectionService({}).get_parameter_rules()
+
+        api_rule = next(r for r in rules if r["when"] == {"provider": ["openai", "anthropic"]})
+        assert api_rule["set"]["docker_image"]["visible"] is False
+        assert api_rule["set"]["docker_cpu_limit"]["visible"] is False
+        assert api_rule["set"]["docker_memory_limit"]["visible"] is False
+        assert api_rule["set"]["effort"]["visible"] is False
+        assert api_rule["set"]["extra_body"]["visible"] is False
+
+        openai_rule = next(r for r in rules if r["when"] == {"provider": ["openai"]})
+        assert openai_rule["set"]["extra_body"]["visible"] is True
+
     def test_missing_api_key_raises(self):
         svc = LLMConnectionService({"provider": "openai", "api_key": ""})
         with pytest.raises(Exception):

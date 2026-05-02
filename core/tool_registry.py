@@ -282,6 +282,13 @@ class ToolRegistry:
                     args = _normalize_tool_args(name, args, _schema_with_local(handler))
                 except Exception:
                     pass
+            if name == "use_tool" and isinstance(args, dict) and "arguments" in args and "arguments_json" not in args:
+                args = dict(args)
+                raw_use_tool_args = args.pop("arguments")
+                args["arguments_json"] = (
+                    raw_use_tool_args if isinstance(raw_use_tool_args, str)
+                    else json.dumps(raw_use_tool_args)
+                )
             # Validate: reject unknown arguments so the LLM learns
             if isinstance(args, dict) and hasattr(handler, 'parameters_schema'):
                 try:

@@ -461,6 +461,14 @@ class LLMConnectionService(BaseService):
                 "type": "integer", "default": 50000,
                 "description": "Max chars for tool results in LLM context (0 = default 50000)",
             },
+            "extra_body": {
+                "type": "object", "default": {},
+                "description": (
+                    "Extra JSON object merged into OpenAI-compatible request bodies. "
+                    "Use for OpenRouter routing/provider options such as provider, "
+                    "transforms, route, or include_reasoning."
+                ),
+            },
             "docker_image": {
                 "type": "string", "default": "pawflow-claude-code:latest",
                 "description": "Docker image for containerized execution",
@@ -492,6 +500,17 @@ class LLMConnectionService(BaseService):
                     "max_retries":   {"visible": True},
                     "fallback_model": {"visible": True},
                     "supports_vision": {"visible": True},
+                    "docker_image":  {"visible": False},
+                    "docker_cpu_limit": {"visible": False},
+                    "docker_memory_limit": {"visible": False},
+                    "effort":        {"visible": False},
+                    "extra_body":    {"visible": False},
+                }
+            },
+            {
+                "when": {"provider": ["openai"]},
+                "set": {
+                    "extra_body":    {"visible": True},
                 }
             },
             {
@@ -509,6 +528,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True},
+                    "extra_body":    {"visible": False},
                 }
             },
             {
@@ -526,6 +546,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": True, "description": "Codex app-server reasoning effort (low/medium/high/xhigh/max)"},
+                    "extra_body":    {"visible": False},
                 }
             },
             {
@@ -543,6 +564,7 @@ class LLMConnectionService(BaseService):
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
                     "effort":        {"visible": False},
+                    "extra_body":    {"visible": False},
                 }
             },
         ]

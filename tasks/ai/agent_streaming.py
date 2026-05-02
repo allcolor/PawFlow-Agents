@@ -422,6 +422,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             reason=f"[pending] {_pending_count2} queued msg(s) after idle",
                             user_id=ctx.get("user_id", ""),
                             delay=0.0,
+                            even_if_active=True,
                         )
                 except Exception:
                     logger.debug("exception suppressed", exc_info=True)

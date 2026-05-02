@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 class LLMOpenaiMixin:
     """OpenAI provider methods: complete, stream, message building."""
 
+    @staticmethod
+    def _chat_completions_endpoint(base_url: str) -> str:
+        """Return the endpoint suffix without duplicating a base /v1 path."""
+        path = urlparse(base_url or "").path.rstrip("/")
+        return "/chat/completions" if path.endswith("/v1") else "/v1/chat/completions"
+
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback,
                         thinking_callback=None, *,
                         call_user_id: str = "",
@@ -53,11 +59,16 @@ class LLMOpenaiMixin:
         # local servers may not support stream_options)
         if not self.base_url or "api.openai.com" in self.base_url:
             body["stream_options"] = {"include_usage": True}
+        extra_body = self.extra_body
+        if extra_body:
+            body.update(extra_body)
 
         parsed = urlparse(self.base_url)
         host = parsed.hostname
         port = parsed.port
-        full_path = (parsed.path.rstrip("/") + "/v1/chat/completions").replace("//", "/")
+        full_path = (
+            parsed.path.rstrip("/") + self._chat_completions_endpoint(self.base_url)
+        ).replace("//", "/")
 
         if parsed.scheme == "https":
             ctx = ssl.create_default_context()
@@ -421,9 +432,12 @@ class LLMOpenaiMixin:
         _pcr = self.prompt_cache_retention or None
         if _pcr:
             body["prompt_cache_retention"] = _pcr
+        extra_body = self.extra_body
+        if extra_body:
+            body.update(extra_body)
 
         data = self._http_post(
-            "/v1/chat/completions",
+            self._chat_completions_endpoint(self.base_url),
             body,
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
         )

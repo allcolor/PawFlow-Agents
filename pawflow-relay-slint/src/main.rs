@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use slint::{CloseRequestResponse, ComponentHandle, Timer, TimerMode};
+use slint::{CloseRequestResponse, ComponentHandle, Timer};
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -381,7 +381,7 @@ fn start_tray_event_pump() -> Option<Timer> {
         return None;
     }
     let timer = Timer::default();
-    timer.start(TimerMode::Repeated, Duration::from_millis(100), || {
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(100), || {
         while gtk::events_pending() {
             gtk::main_iteration_do(false);
         }

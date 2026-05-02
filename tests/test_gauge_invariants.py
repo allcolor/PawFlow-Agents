@@ -685,10 +685,11 @@ def test_final_drain_only_suppresses_proven_text_preempt_rescue_messages():
     http_msg._pending_source = "http"
     http_msg._pending_enqueued_at = 100.0
 
-    assert _preempt_rescue_requires_retrigger(text_rescue, 101.0) is False
-    assert _preempt_rescue_requires_retrigger(text_rescue, 99.0) is True
-    assert _preempt_rescue_requires_retrigger(image_rescue, 101.0) is True
-    assert _preempt_rescue_requires_retrigger(http_msg, 101.0) is True
+    assert _preempt_rescue_requires_retrigger(text_rescue, 101.0, "claude-code") is False
+    assert _preempt_rescue_requires_retrigger(text_rescue, 101.0, "codex-app-server") is False
+    assert _preempt_rescue_requires_retrigger(text_rescue, 99.0, "claude-code") is True
+    assert _preempt_rescue_requires_retrigger(image_rescue, 101.0, "claude-code") is True
+    assert _preempt_rescue_requires_retrigger(http_msg, 101.0, "claude-code") is True
 
 
 def test_provider_compact_discards_pending_messages_already_in_compacted_context():

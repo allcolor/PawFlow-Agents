@@ -41,11 +41,11 @@ def _strip_context_ack(text: str) -> str:
     return text
 
 
-def _preempt_rescue_requires_retrigger(message, provider_completed_at: float) -> bool:
+def _preempt_rescue_requires_retrigger(message, provider_completed_at: float, provider: str = "") -> bool:
     """Return True when a drained preempt rescue still needs a real turn.
 
-    A provider may prove that a text steer was answered inline, but that does
-    not prove PawFlow's full queued message was consumed. Multimodal queued
+    Providers can suppress a text rescue only when their session log shows the
+    preempt text before the completed provider response. Multimodal queued
     content is rebuilt only during PendingQueue drain, so it must always run
     through a normal PawFlow turn.
     """
@@ -2276,7 +2276,7 @@ class AgentCoreMixin:
             _unhandled_user_msgs = [
                 m for m in _new_user_msgs
                 if _preempt_rescue_requires_retrigger(
-                    m, _provider_response_completed_at)
+                    m, _provider_response_completed_at, _client_provider)
             ]
             if _new_user_msgs and (not _had_preempts or _unhandled_user_msgs):
                 logger.info("[agent:%s] %d truly new message(s) arrived during last turn — re-triggering",

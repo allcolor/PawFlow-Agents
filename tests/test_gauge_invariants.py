@@ -376,9 +376,13 @@ def test_context_editor_loaded_rows_show_scrollable_full_message():
 
 def test_empty_assistant_no_tools_never_persists_blank_message():
     tool_exec_src = Path("tasks/ai/agent_tool_exec.py").read_text(encoding="utf-8")
+    agent_core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     serialization_src = Path("tasks/ai/agent_serialization.py").read_text(encoding="utf-8")
     assert "if final.strip():" in tool_exec_src
     assert "forced-synthesis path" in tool_exec_src
+    assert "provider thinking block must still reach history/SSE" in agent_core_src
+    assert "if not _resp_text and _has_thinking:" in agent_core_src
+    assert "if not _need_more_retried:" in agent_core_src
     assert "role == \"assistant\" and not str(content).strip()" in serialization_src
 
 

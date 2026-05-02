@@ -2002,10 +2002,12 @@ class AgentCoreMixin:
                             emitter.stop_heartbeat(_iter_hb)
                             break
                         _has_thinking = bool(getattr(response, 'thinking', ''))
-                        # Empty response with thinking = LLM is stuck in reasoning
-                        # Give it one more chance with explicit instruction
-                        if not _resp_text and _has_thinking and not _need_more_retried:
-                            logger.warning(f"[agent:{conversation_id[:8]}] thinking-only response (no text/tools), nudging")
+                        # Empty response with thinking = preserve the thinking
+                        # first. The visible answer may be produced by the
+                        # nudge or the later forced-synthesis path, but every
+                        # provider thinking block must still reach history/SSE.
+                        if not _resp_text and _has_thinking:
+                            logger.warning(f"[agent:{conversation_id[:8]}] thinking-only response (no text/tools)")
                             _append(LLMMessage(role="assistant", content="",
                                                thinking=response.thinking or "",
                                                thinking_signature=getattr(response, "thinking_signature", "") or "",
@@ -2013,13 +2015,14 @@ class AgentCoreMixin:
                                                                     tok_cache_creation=response.cache_creation_tokens,
                                                                     tok_cache_read=response.cache_read_tokens),
                                                conversation_id=conversation_id))
-                            _append(LLMMessage(role="user", content=(
-                                "[System: You produced reasoning but no visible response or tool calls. "
-                                "You MUST either call a tool or provide a text response to the user. "
-                                "Do not just think — act or respond.]"),
-                                conversation_id=conversation_id))
-                            _need_more_retried = True
-                            continue
+                            if not _need_more_retried:
+                                _append(LLMMessage(role="user", content=(
+                                    "[System: You produced reasoning but no visible response or tool calls. "
+                                    "You MUST either call a tool or provide a text response to the user. "
+                                    "Do not just think — act or respond.]"),
+                                    conversation_id=conversation_id))
+                                _need_more_retried = True
+                                continue
                         _src_no_tools = _agent_source(response.tokens_in, response.tokens_out, response.model,
                                                       tok_cache_creation=response.cache_creation_tokens,
                                                       tok_cache_read=response.cache_read_tokens)

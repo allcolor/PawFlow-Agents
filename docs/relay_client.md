@@ -8,6 +8,8 @@ PawFlow relay lifecycle is separate from PawFlow clients.
 
 This separation keeps PawCode and the VS Code extension equivalent to the webchat: they do not create, start, stop, or own relays.
 
+Server-side relay sessions track in-flight reverse filesystem requests per WebSocket connection. When a relay disconnects or is removed from the pool, those pending request tasks are cancelled so stale connections cannot retain writers, loops, or queued FUSE work.
+
 ## CLI
 
 The standalone relay client is exposed as `pawflow-relay` when installed from the Python package, or as `python -m pawflow_relay` from a checkout.

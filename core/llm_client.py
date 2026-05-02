@@ -345,6 +345,9 @@ class LLMClient(
 
     DEFAULT_MODELS = _load_default_models()
 
+    _circuit_lock = threading.Lock()
+    _circuit_state: Dict[str, Dict[str, Any]] = {}
+
     # Regex for parsing <tool_call>...</tool_call> tags from claude-code responses
     TOOL_CALL_RE = re.compile(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', re.DOTALL)
 
@@ -573,6 +576,62 @@ class LLMClient(
         return any(marker in lower for marker in permanent_markers)
 
     @staticmethod
+    def _is_circuit_breaker_error(error_text: str) -> bool:
+        if LLMClient._is_permanent_request_error(error_text):
+            return False
+        return bool(re.search(
+            r'\b(429|500|502|503|529)\b|rate_limit|overloaded|timeout|reset|api_error|server_error',
+            error_text or "",
+            re.IGNORECASE,
+        ))
+
+    def _circuit_key(self, model: str) -> str:
+        return "|".join((self.provider or "", self.base_url or "", model or ""))
+
+    def _circuit_threshold(self) -> int:
+        return max(1, int(self._cfg("circuit_breaker_failures", 3) or 3))
+
+    def _circuit_cooldown_s(self) -> float:
+        return max(1.0, float(self._cfg("circuit_breaker_cooldown", 60) or 60))
+
+    def _circuit_before_call(self, model: str) -> None:
+        key = self._circuit_key(model)
+        now = time.time()
+        with self._circuit_lock:
+            st = self._circuit_state.get(key)
+            if not st:
+                return
+            open_until = float(st.get("open_until", 0) or 0)
+            if open_until > now:
+                remaining = int(open_until - now) + 1
+                raise LLMClientError(
+                    f"LLM circuit open for {self.provider}/{model}; retry in {remaining}s")
+            if open_until and not st.get("half_open"):
+                st["half_open"] = True
+                logger.warning("LLM circuit half-open for %s/%s", self.provider, model)
+
+    def _circuit_after_success(self, model: str) -> None:
+        key = self._circuit_key(model)
+        with self._circuit_lock:
+            if key in self._circuit_state:
+                logger.info("LLM circuit closed after successful call: %s/%s", self.provider, model)
+            self._circuit_state.pop(key, None)
+
+    def _circuit_after_failure(self, model: str, error_text: str) -> None:
+        if not self._is_circuit_breaker_error(error_text):
+            return
+        key = self._circuit_key(model)
+        with self._circuit_lock:
+            st = self._circuit_state.setdefault(key, {"failures": 0, "open_until": 0.0, "half_open": False})
+            st["failures"] = int(st.get("failures", 0) or 0) + 1
+            if st.get("half_open") or st["failures"] >= self._circuit_threshold():
+                st["open_until"] = time.time() + self._circuit_cooldown_s()
+                st["half_open"] = False
+                logger.warning(
+                    "LLM circuit opened for %s/%s after %d failure(s)",
+                    self.provider, model, st["failures"])
+
+    @staticmethod
     def _parse_retry_after(error_text: str) -> float:
         """Parse retry delay from error message. Returns seconds to wait (default 2.0).
 
@@ -701,6 +760,7 @@ class LLMClient(
         model = model or self.default_model
 
         def _do_complete(mdl):
+            self._circuit_before_call(mdl)
             start = time.time()
             if self.provider == "openai":
                 result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools,
@@ -751,6 +811,7 @@ class LLMClient(
             if not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)
+            self._circuit_after_success(mdl)
             return result
 
         last_error = None
@@ -804,6 +865,7 @@ class LLMClient(
                 if is_529:
                     overloaded_attempts += 1
                     if overloaded_attempts >= max_overloaded:
+                        self._circuit_after_failure(model, err_str)
                         # 529 cap reached — try fallback model
                         if self.fallback_model and self.fallback_model != model:
                             logger.warning(
@@ -841,6 +903,7 @@ class LLMClient(
                     continue
 
                 # All retries exhausted — try fallback model if configured
+                self._circuit_after_failure(model, err_str)
                 if self.fallback_model and self.fallback_model != model:
                     logger.warning(
                         "Primary model '%s' failed after %d attempts, trying fallback '%s'",
@@ -898,6 +961,7 @@ class LLMClient(
         model = model or self.default_model
 
         def _do_stream(mdl):
+            self._circuit_before_call(mdl)
             start = time.time()
             if self.provider == "openai":
                 result = self._stream_openai(messages, mdl, temperature, max_tokens, tools, callback,
@@ -948,6 +1012,7 @@ class LLMClient(
             if not result.tokens_out and result.content:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)
+            self._circuit_after_success(mdl)
             return result
 
         last_error = None
@@ -1031,6 +1096,7 @@ class LLMClient(
                 if is_529:
                     overloaded_attempts += 1
                     if overloaded_attempts >= max_overloaded:
+                        self._circuit_after_failure(model, err_str)
                         if self.fallback_model and self.fallback_model != model:
                             logger.warning(
                                 "Overloaded (529): %d/%d attempts exhausted on '%s', trying fallback '%s'",
@@ -1075,6 +1141,7 @@ class LLMClient(
                     continue
 
                 # Final attempt failed — try fallback model
+                self._circuit_after_failure(model, err_str)
                 if self.fallback_model and self.fallback_model != model:
                     logger.warning("Streaming '%s' failed, trying fallback '%s'",
                                    model, self.fallback_model)

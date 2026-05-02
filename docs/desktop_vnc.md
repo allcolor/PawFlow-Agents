@@ -30,6 +30,14 @@ Examples:
 
 The browser opens a noVNC session connected through PawFlow's VNC proxy.
 
+## Runtime Supervision
+
+Docker desktop sessions are supervised by the relay worker. After `start_desktop`,
+a lightweight healthcheck thread watches the essential processes: Xvfb, x11vnc,
+and websockify. If one dies, the relay clears the desktop state and terminates
+remaining child processes so `desktop_status` cannot keep reporting a stale
+`running=true` session.
+
 ## `screen` Tool
 
 The `screen` tool routes through the relay. It can operate on the Docker virtual screen or the user's local screen depending on the `local` flag.

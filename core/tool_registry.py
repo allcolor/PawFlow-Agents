@@ -19,6 +19,8 @@ import json
 import logging
 import http.client
 import ssl
+import threading
+import time
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 
@@ -139,10 +141,36 @@ class ToolRegistry:
     """Registry of available tool handlers."""
 
     _live_registry: Optional["ToolRegistry"] = None  # for dynamic tool access
+    _metrics_lock = threading.Lock()
+    _metrics: Dict[str, Dict[str, float]] = {}
 
     def __init__(self):
         self._handlers: Dict[str, ToolHandler] = {}
         self._hooks: Dict[str, List] = {}  # "pre:tool_name" or "post:tool_name" or "pre:*" / "post:*"
+
+    @classmethod
+    def reset_metrics(cls):
+        with cls._metrics_lock:
+            cls._metrics.clear()
+
+    @classmethod
+    def _record_metric(cls, name: str, ok: bool, duration_ms: float):
+        with cls._metrics_lock:
+            m = cls._metrics.setdefault(name, {
+                "calls": 0, "successes": 0, "errors": 0,
+                "total_duration_ms": 0.0, "avg_duration_ms": 0.0,
+                "max_duration_ms": 0.0,
+            })
+            m["calls"] += 1
+            m["successes" if ok else "errors"] += 1
+            m["total_duration_ms"] += duration_ms
+            m["avg_duration_ms"] = m["total_duration_ms"] / max(1, m["calls"])
+            m["max_duration_ms"] = max(m["max_duration_ms"], duration_ms)
+
+    @classmethod
+    def get_metrics(cls) -> Dict[str, Dict[str, float]]:
+        with cls._metrics_lock:
+            return {name: dict(stats) for name, stats in cls._metrics.items()}
 
     def register_hook(self, event: str, callback):
         """Register a pre/post hook. Event format: 'pre:tool_name', 'post:tool_name', 'pre:*', 'post:*'."""
@@ -186,10 +214,12 @@ class ToolRegistry:
 
     def execute(self, name: str, arguments: Dict[str, Any]) -> str:
         """Execute a tool by name. Returns result text or error."""
-        handler = self._handlers.get(name)
-        if not handler:
-            return f"Error: unknown tool '{name}'"
+        start = time.time()
+        ok = False
         try:
+            handler = self._handlers.get(name)
+            if not handler:
+                return f"Error: unknown tool '{name}'"
             # Run pre-hooks (specific then wildcard)
             args = arguments
             for hook in self._hooks.get(f"pre:{name}", []) + self._hooks.get("pre:*", []):
@@ -277,10 +307,13 @@ class ToolRegistry:
                     )
                 except Exception:
                     result = result[:_max] + f"\n\n[... truncated — {len(result):,} chars total]"
+            ok = True
             return result
         except Exception as e:
             logger.error(f"Tool '{name}' execution failed: {e}")
             return f"Error executing tool '{name}': {e}"
+        finally:
+            self._record_metric(name, ok, (time.time() - start) * 1000)
 
 
 

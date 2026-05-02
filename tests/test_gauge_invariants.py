@@ -38,6 +38,9 @@ _AGENT_CORE_PY = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
 _CONTEXT_OPS_PY = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
 _CONTEXT_EDITOR_JS = Path(
     "tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
+_AGENT_ACTIONS_PY = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
+_AGENT_POLLER_PY = Path("tasks/ai/agent_poller.py").read_text(encoding="utf-8")
+_FILESYSTEM_SERVICE_PY = Path("services/filesystem_service.py").read_text(encoding="utf-8")
 
 
 def test_set_context_usage_blocks_demote_to_zero():
@@ -307,13 +310,16 @@ def test_list_active_uses_stored_context_usage_without_live_token_count():
         _active_contexts_lock=threading.Lock())
 
     class _Store:
-        def get_extra(self, _cid, key, **_kwargs):
+        def get_extra(self, *_args, **_kwargs):
+            raise AssertionError("list_active must not hit disk-backed get_extra")
+
+        def get_extra_snapshot(self, _cid, key, default=None):
             if key == "context_usage":
                 return {"assistant": {
                     "source": "message_meta", "max": 10000,
                     "used": 9300, "pct": 0.93,
                 }}
-            return {}
+            return default
 
     ff = FlowFile()
     with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec), \
@@ -336,6 +342,46 @@ def test_list_active_uses_stored_context_usage_without_live_token_count():
     assert row["context_usage"]["max"] == 10000
     assert row["context_usage"]["used"] == 9300
     assert row["context_usage"]["pct"] == 0.93
+
+
+def test_ui_polling_paths_use_cache_only_context_usage():
+    list_resources_block = _extract_action_block(
+        Path("tasks/ai/actions/agent_resource.py").read_text(encoding="utf-8"),
+        'if action == "list_resources":')
+    assert 'get_extra_snapshot(conv_id, "context_usage", {})' in list_resources_block
+    assert 'get_extra(conv_id, "context_usage")' not in list_resources_block
+
+    list_active_block = _extract_action_block(
+        Path("tasks/ai/actions/usage.py").read_text(encoding="utf-8"),
+        'if action == "list_active":')
+    assert 'get_extra_snapshot(conv_id, "context_usage", {})' in list_active_block
+    assert 'get_extra(conv_id, "context_usage")' not in list_active_block
+
+
+def test_idle_polling_cannot_stack_unbounded_work():
+    assert "_syncActiveSub" in _ACTIVE_AGENTS_JS
+    assert "_SYNC_ACTIVE_STALE_MS" in _ACTIVE_AGENTS_JS
+    assert "if (now - _syncActiveStartedAt < _SYNC_ACTIVE_STALE_MS) return" in _ACTIVE_AGENTS_JS
+    assert "_MAX_BG_ACTIONS" in _AGENT_ACTIONS_PY
+    assert "_BG_ACTION_SEMAPHORE.acquire(blocking=False)" in _AGENT_ACTIONS_PY
+
+
+def test_poller_watchdogs_are_throttled():
+    assert "PAWFLOW_AGENT_WATCHDOG_INTERVAL_SECONDS" in _AGENT_POLLER_PY
+    assert "_last_task_watchdog" in _AGENT_POLLER_PY
+    assert "_last_thought_watchdog" in _AGENT_POLLER_PY
+    ensure_block = _AGENT_POLLER_PY[
+        _AGENT_POLLER_PY.index("def _ensure_tasks_scheduled"):
+        _AGENT_POLLER_PY.index("def _ensure_thoughts_scheduled")]
+    assert 'all_tasks = _cache.get("extras", {}).get("agent_tasks") or {}' in ensure_block
+    assert 'get_extra_cached(cid, "agent_tasks")' not in ensure_block
+
+
+def test_relay_connection_tasks_are_tracked_and_cancelled():
+    assert "relay_tasks = set()" in _FILESYSTEM_SERVICE_PY
+    assert "task.add_done_callback(relay_tasks.discard)" in _FILESYSTEM_SERVICE_PY
+    assert "task.cancel()" in _FILESYSTEM_SERVICE_PY
+    assert '"tasks": relay_tasks' in _FILESYSTEM_SERVICE_PY
 
 
 def test_runtime_context_agent_follows_resolved_active_agent():
@@ -717,6 +763,14 @@ def test_agent_background_llm_calls_pass_provider_agnostic_scope():
         assert marker in Path(path).read_text(encoding="utf-8")
 
 
+def test_relay_desktop_has_periodic_healthcheck():
+    src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
+    assert "def _desktop_is_healthy" in src
+    assert "def _start_desktop_watchdog" in src
+    assert "desktop-healthcheck" in src
+    assert "healthcheck failed" in src
+
+
 def test_bg_bucket_runs_as_independent_background_work():
     """Background pyramid jobs write buckets/memories, not the active agent
     context, so they must not yield just because the foreground agent is
@@ -820,3 +874,9 @@ def _extract_function_body(src: str, fname: str) -> str:
             depth -= 1
         i += 1
     return src[start:i - 1]
+
+
+def _extract_action_block(src: str, marker: str) -> str:
+    start = src.index(marker)
+    next_marker = src.find('\n    if action == "', start + len(marker))
+    return src[start:next_marker if next_marker != -1 else len(src)]

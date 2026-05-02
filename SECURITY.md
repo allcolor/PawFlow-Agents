@@ -15,6 +15,19 @@ If you find a divergence, the code wins.
 Each layer is independent: removing one downgrades the deployment but
 does not silently weaken the others.
 
+## HTTP hardening and global rate limits
+
+The shared HTTP listener adds security headers to every normal response:
+`Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, and `Permissions-Policy`. The CSP remains compatible with
+PawFlow's current inline webchat scripts/styles while blocking object embeds
+and restricting frame ancestors to same-origin.
+
+A process-local sliding-window limiter protects login/gateway routes and API
+routes before route dispatch. This is separate from capability-token failure
+limits: capability limits protect guessed resource URLs, while the listener
+limit protects global login/API pressure.
+
 ## Capability tokens (per-route)
 
 - Module: `core/capability_auth.py` (storage), `core/capability_routes.py` (HTTP/WS adapters).

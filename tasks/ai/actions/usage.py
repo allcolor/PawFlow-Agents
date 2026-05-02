@@ -125,7 +125,13 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         # panel can render the gauge immediately on page reload, without
         # waiting for loadResources() to populate window._contextUsage.
         from core.conversation_store import ConversationStore as _CS_active
-        _ctx_usage_map = _CS_active.instance().get_extra(conv_id, "context_usage") or {}
+        _store_active = _CS_active.instance()
+        _ctx_usage_map = (
+            _store_active.get_extra_snapshot(conv_id, "context_usage", {})
+            if hasattr(_store_active, "get_extra_snapshot") else {}
+        ) or {}
+        if not isinstance(_ctx_usage_map, dict):
+            _ctx_usage_map = {}
 
         # list_active is on the UI poll path. Never tokenize live contexts
         # here: active turns can hold very large message lists, and this action
@@ -195,8 +201,10 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             active.extend(active_by_key.values())
         # Also include scheduled tasks (active but between turns)
         try:
-            from core.conversation_store import ConversationStore
-            all_tasks = ConversationStore.instance().get_extra(conv_id, "agent_tasks") or {}
+            all_tasks = (
+                _store_active.get_extra_snapshot(conv_id, "agent_tasks", {})
+                if hasattr(_store_active, "get_extra_snapshot") else {}
+            ) or {}
             _active_task_ids = {a["task_id"] for a in active if a.get("task_id")}
             for tid, task in all_tasks.items():
                 if tid not in _active_task_ids and task.get("status") == "active":

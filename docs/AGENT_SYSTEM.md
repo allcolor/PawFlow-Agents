@@ -417,6 +417,13 @@ Instead of sending all tool schemas to the LLM (which can consume thousands of t
 
 This reduces the constant token overhead from ~7000 tokens to ~200 tokens, making it practical for smaller context LLMs.
 
+### Tool Metrics
+
+`ToolRegistry` records process-local metrics for every dispatch, including unknown
+or blocked tools: call count, successes, errors, total duration, average duration,
+and max duration. These counters are intentionally in-memory operational metrics;
+they do not alter conversation history or tool results.
+
 ### Tool Result Size Limit
 
 Tool results are capped at `tool_result_max_chars` (default: 50,000 chars), configurable per LLM service or agent. This prevents a single large tool result from blowing up the context.

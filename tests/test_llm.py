@@ -1,6 +1,7 @@
 """Tests for LLM Connection Service and InferLLM Task."""
 
 import json
+import time
 import pytest
 from unittest.mock import patch, MagicMock
 from http.client import HTTPResponse
@@ -10,7 +11,7 @@ from tasks import register_all_tasks
 register_all_tasks()
 
 from core import FlowFile, TaskFactory, ServiceFactory
-from core.llm_client import LLMClient
+from core.llm_client import LLMClient, LLMClientError
 from services.llm_connection import LLMConnectionService, LLMMessage, LLMResponse
 
 
@@ -183,6 +184,28 @@ class TestLLMConnectionService:
         assert client._is_permanent_request_error("model_not_found") is True
         assert client._is_permanent_request_error("HTTP 429 rate_limit") is False
         assert client._is_permanent_request_error("HTTP 500 server_error") is False
+
+    def test_global_circuit_breaker_opens_and_half_opens(self):
+        client = LLMClient(provider="openai", config={
+            "base_url": "https://example.invalid",
+            "default_model": "m",
+            "circuit_breaker_failures": 2,
+            "circuit_breaker_cooldown": 1,
+        })
+        LLMClient._circuit_state.clear()
+
+        client._circuit_after_failure("m", "HTTP 529 overloaded")
+        client._circuit_before_call("m")
+        client._circuit_after_failure("m", "HTTP 529 overloaded")
+        with pytest.raises(LLMClientError, match="circuit open"):
+            client._circuit_before_call("m")
+
+        key = client._circuit_key("m")
+        LLMClient._circuit_state[key]["open_until"] = time.time() - 1
+        client._circuit_before_call("m")
+        assert LLMClient._circuit_state[key]["half_open"] is True
+        client._circuit_after_success("m")
+        assert key not in LLMClient._circuit_state
 
     def test_default_models_are_loaded_from_system_config(self):
         src = open("core/llm_client.py", encoding="utf-8").read()

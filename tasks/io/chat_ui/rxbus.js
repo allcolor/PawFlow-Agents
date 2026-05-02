@@ -152,8 +152,11 @@ function action$(actionName, params = {}, opts = {}) {
   const _callId = Math.random().toString(36).slice(2) + Date.now().toString(36);
   body._call_id = _callId;
   body._reply_conversation_id = _uiActionConversationId();
-  _pendingActions++;
-  _updateLoadingState();
+  const _trackPending = !opts.silent;
+  if (_trackPending) {
+    _pendingActions++;
+    _updateLoadingState();
+  }
 
   // UI commands go to /api/ui (dedicated task slot, isolated from
   // agent execution). Derive from API (/api/agent) by swapping the
@@ -217,8 +220,10 @@ function action$(actionName, params = {}, opts = {}) {
     }),
     catchError(err => of({ error: err.message || String(err) })),
     tap(() => {
-      _pendingActions = Math.max(0, _pendingActions - 1);
-      _updateLoadingState();
+      if (_trackPending) {
+        _pendingActions = Math.max(0, _pendingActions - 1);
+        _updateLoadingState();
+      }
     }),
   );
 }

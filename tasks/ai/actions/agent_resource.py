@@ -523,7 +523,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         # this action is called from the UI refresh path and must not read or
         # tokenize large agent contexts synchronously. Agent turns and compact
         # already persist this cache via message_meta/context_usage updates.
-        context_usage_map = store.get_extra(conv_id, "context_usage") or {} if conv_id else {}
+        context_usage_map = (
+            store.get_extra_snapshot(conv_id, "context_usage", {})
+            if conv_id and hasattr(store, "get_extra_snapshot") else {}
+        )
         if not isinstance(context_usage_map, dict):
             context_usage_map = {}
 

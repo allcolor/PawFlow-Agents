@@ -58,6 +58,21 @@ Common fields:
 
 For context windows, the rule is strict: if the provider API/CLI reports the context window, that value is authoritative. Otherwise `max_context_size` from the LLM service is authoritative. If neither exists, the service is misconfigured and should fail loudly instead of using a hidden default.
 
+## Circuit Breaker
+
+`LLMClient` keeps a process-wide circuit breaker keyed by provider, base URL,
+and model. Transient upstream failures such as 429/5xx/529/timeouts increment
+the circuit; permanent auth/config failures do not. After the configured failure
+threshold, calls fail fast until the cooldown expires, then one half-open call is
+allowed. A successful half-open call closes the circuit; a failed one reopens it.
+
+Optional service fields:
+
+| Field | Default | Description |
+|---|---:|---|
+| `circuit_breaker_failures` | `3` | Consecutive transient failures before opening. |
+| `circuit_breaker_cooldown` | `60` | Seconds to fail fast before half-open. |
+
 ## Direct API Example
 
 ```json

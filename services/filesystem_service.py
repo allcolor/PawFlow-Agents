@@ -389,6 +389,7 @@ class RelayService(BaseService):
         # because StreamWriter implementations (e.g. _SockWriter on
         # Windows) can have __slots__ and refuse new attributes.
         send_lock = asyncio.Lock()
+        relay_tasks = set()
         try:
             opcode, payload = await _ws_recv_frame(reader)
             if opcode != 0x01:
@@ -413,9 +414,9 @@ class RelayService(BaseService):
             async with send_lock:
                 await _ws_send_frame(writer, json.dumps({
                     'type': 'registered', 'relay_id': relay_id}).encode())
-            service._set_relay(reader, writer, loop, send_lock)
+            service._set_relay(reader, writer, loop, send_lock, relay_tasks)
             self._spawn_ctx_sync(reg_info, relay_id)
-            await self._relay_main_loop(reader, writer, service, send_lock)
+            await self._relay_main_loop(reader, writer, service, send_lock, relay_tasks)
         except Exception as e:
             _err_str = str(e)
             # Peer-initiated close is the nominal end of a relay session:
@@ -437,6 +438,10 @@ class RelayService(BaseService):
                 service._clear_relay(reader=reader)
             except Exception as e:
                 logger.debug('_clear_relay failed: %s', e, exc_info=True)
+            if relay_tasks:
+                for task in list(relay_tasks):
+                    task.cancel()
+                relay_tasks.clear()
             try:
                 writer.close()
             except Exception as e:
@@ -460,7 +465,7 @@ class RelayService(BaseService):
         threading.Thread(target=_fetch_ctx_and_sync, daemon=True,
                          name=f'relay-ctx-{relay_id}').start()
 
-    async def _relay_main_loop(self, reader, writer, service, send_lock):
+    async def _relay_main_loop(self, reader, writer, service, send_lock, relay_tasks):
         import asyncio
         KEEPALIVE = 120
         while True:
@@ -481,9 +486,9 @@ class RelayService(BaseService):
             if opcode != 0x01:
                 continue
             msg = json.loads(payload.decode('utf-8'))
-            await self._dispatch_relay_msg(msg, writer, service, send_lock)
+            await self._dispatch_relay_msg(msg, writer, service, send_lock, relay_tasks)
 
-    async def _dispatch_relay_msg(self, msg, writer, service, send_lock):
+    async def _dispatch_relay_msg(self, msg, writer, service, send_lock, relay_tasks):
         import asyncio
         mtype = msg.get('type')
         if mtype == 'relay_request':
@@ -494,8 +499,10 @@ class RelayService(BaseService):
             # op (and any concurrent terminal/exec frame) queues up
             # behind it. The send back is serialized via send_lock so
             # concurrent tasks can't interleave frames.
-            asyncio.create_task(
+            task = asyncio.create_task(
                 service._handle_relay_request(msg, writer, send_lock))
+            relay_tasks.add(task)
+            task.add_done_callback(relay_tasks.discard)
             return
         if mtype in ('result', 'error'):
             service._resolve_pending(msg)
@@ -632,11 +639,12 @@ class RelayService(BaseService):
 
     # ── Relay connection management ──
 
-    def _set_relay(self, reader, writer, loop, send_lock):
+    def _set_relay(self, reader, writer, loop, send_lock, relay_tasks=None):
         """Add a relay connection to the pool."""
         with self._relay_pool_lock:
             self._relay_pool.append({"reader": reader, "writer": writer,
-                                      "loop": loop, "send_lock": send_lock})
+                                      "loop": loop, "send_lock": send_lock,
+                                      "tasks": relay_tasks})
             count = len(self._relay_pool)
         logger.info("Relay pool: %d connection(s) for '%s'", count, self._service_id)
         # Notify all SSE clients to refresh resources (relay status changed)
@@ -653,12 +661,23 @@ class RelayService(BaseService):
 
     def _clear_relay(self, reader=None):
         """Remove a connection from the pool (by reader), or all if None."""
+        removed = []
         with self._relay_pool_lock:
             if reader:
-                self._relay_pool = [c for c in self._relay_pool if c["reader"] is not reader]
+                kept = []
+                for conn in self._relay_pool:
+                    if conn["reader"] is reader:
+                        removed.append(conn)
+                    else:
+                        kept.append(conn)
+                self._relay_pool = kept
             else:
+                removed = list(self._relay_pool)
                 self._relay_pool.clear()
             alive = len(self._relay_pool)
+        for conn in removed:
+            for task in list(conn.get("tasks") or ()):
+                task.cancel()
         if alive == 0:
             with self._pending_lock:
                 for rid, (evt, holder) in self._pending.items():

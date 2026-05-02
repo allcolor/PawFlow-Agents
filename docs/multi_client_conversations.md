@@ -50,7 +50,11 @@ The web chat does not rely on synchronous `/api/ui` responses for action payload
 
 The UI action bus is separate from the active conversation SSE stream because the web chat may close and reopen the conversation stream while rendering history. System clients that do not provide a reply bus, such as relay registration or CLI bootstrap calls, can still receive an inline HTTP result.
 
+UI background actions are bounded by `PAWFLOW_MAX_BG_ACTIONS` (default `32`). Polling actions such as `list_active` also avoid overlapping browser requests; a stale poll is unsubscribed before a replacement starts.
+
 ## Concurrent Messages
+
+The agent task/thought watchdog repairs missing scheduler entries after restarts or rare races. It scans the conversation store at most once per `PAWFLOW_AGENT_WATCHDOG_INTERVAL_SECONDS` (default `300`) instead of every poll tick.
 
 If a client sends a message while an agent is running:
 

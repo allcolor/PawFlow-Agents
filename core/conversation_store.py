@@ -2120,6 +2120,24 @@ class ConversationStore:
                 return self._repair_context_usage_from_transcript_locked(cid, data) or default
             return data.get(key, default)
 
+    def get_extra_snapshot(self, cid: str, key: str,
+                           default: Any = None) -> Any:
+        """Return a cache-only extra snapshot without disk IO or repair.
+
+        UI polling paths use this to stay O(1). If the conversation cache is
+        not warm yet, callers get ``default`` instead of forcing a transcript
+        scan or waiting behind a writer lock.
+        """
+        key = self._canon_extra_key(key)
+        with self._cache_lock:
+            value = ((self._cache.get(cid) or {}).get("extras") or {}).get(
+                key, default)
+        if isinstance(value, dict):
+            return dict(value)
+        if isinstance(value, list):
+            return list(value)
+        return value
+
     def get_extra(self, cid: str, key: str, default: Any = None,
                   user_id: str = "") -> Any:
         if not self.exists(cid):

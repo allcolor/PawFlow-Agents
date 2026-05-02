@@ -12,7 +12,8 @@ import pytest
 from services.http_listener_service import (
     HTTPListenerService, PendingRequest, RouteRegistry,
     RouteConflictError, RouteEntry, _emit_timing_summary,
-    _request_action_label,
+    _request_action_label, _SECURITY_HEADERS, _GlobalRateLimiter,
+    _rate_limit_policy,
 )
 from services.http_auth_service import HTTPAuthService, AuthValidationResult
 from tasks.io.http_receiver import HTTPReceiverTask
@@ -77,6 +78,22 @@ def test_sse_timing_summary_uses_respond_not_stream_lifetime(caplog):
     assert "respond→send" not in logged
     assert "total=128" not in logged
 
+
+
+def test_security_headers_and_global_rate_limit_policy_are_present():
+    assert "Content-Security-Policy" in _SECURITY_HEADERS
+    assert "X-Frame-Options" in _SECURITY_HEADERS
+    assert _rate_limit_policy("/auth/login")[0] == "login"
+    assert _rate_limit_policy("/_gateway")[0] == "login"
+    assert _rate_limit_policy("/api/ui")[0] == "api"
+    assert _rate_limit_policy("/health") is None
+
+    limiter = _GlobalRateLimiter()
+    assert limiter.allow("ip", "api", 2, 60.0)[0] is True
+    assert limiter.allow("ip", "api", 2, 60.0)[0] is True
+    ok, retry_after = limiter.allow("ip", "api", 2, 60.0)
+    assert ok is False
+    assert retry_after > 0
 
 
 def test_request_action_label_extracts_api_ui_action_only():

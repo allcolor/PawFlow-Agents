@@ -29,6 +29,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -359,6 +360,63 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     mock = MockHandler()
 
     from pawflow_relay.ws_frame import ws_send as _ws_frame_send, ws_recv as _ws_frame_recv
+
+    def _desktop_is_healthy():
+        procs = getattr(_execute_command, '_desktop_procs', None)
+        if not procs:
+            return False
+        essential = getattr(_execute_command, '_desktop_essential_procs', None) or procs
+        return all(p.poll() is None for p in essential)
+
+    def _desktop_cleanup(reason=""):
+        stop = getattr(_execute_command, '_desktop_watchdog_stop', None)
+        if stop:
+            stop.set()
+        procs = getattr(_execute_command, '_desktop_procs', None) or []
+        for p in procs:
+            try:
+                if p.poll() is None:
+                    p.terminate()
+            except Exception:
+                pass
+        for p in procs:
+            try:
+                if p.poll() is None:
+                    p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        _execute_command._desktop_procs = None
+        _execute_command._desktop_essential_procs = None
+        _execute_command._desktop_vnc_port = None
+        _execute_command._desktop_novnc_port = None
+        _execute_command._desktop_display = None
+        _execute_command._desktop_watchdog_stop = None
+        _execute_command._desktop_watchdog_thread = None
+        if "DISPLAY" in os.environ:
+            del os.environ["DISPLAY"]
+        if reason:
+            sys.stderr.write(f"[FSRelay] Desktop stopped: {reason}\n")
+
+    def _start_desktop_watchdog(procs):
+        stop = threading.Event()
+        _execute_command._desktop_watchdog_stop = stop
+
+        def _watchdog():
+            while not stop.wait(5):
+                if getattr(_execute_command, '_desktop_procs', None) is not procs:
+                    return
+                if not _desktop_is_healthy():
+                    _desktop_cleanup("healthcheck failed")
+                    return
+
+        t = threading.Thread(target=_watchdog, daemon=True, name="desktop-healthcheck")
+        _execute_command._desktop_watchdog_thread = t
+        t.start()
 
     def _execute_command(msg, on_output=None):
         action = msg.get("action", "")
@@ -756,20 +814,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 return {"ok": False, "error": "Exec not allowed"}
             # Idempotent: if already running, return existing info
             if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
-                _essential = getattr(_execute_command, '_desktop_essential_procs', None) or _execute_command._desktop_procs
-                _alive = all(p.poll() is None for p in _essential)
-                if _alive:
+                if _desktop_is_healthy():
                     return {"ok": True, "data": {
                         "vnc_port": _execute_command._desktop_vnc_port,
                         "novnc_port": _execute_command._desktop_novnc_port,
                         "display": _execute_command._desktop_display,
                         "already_running": True
                     }}
-                else:
-                    for p in _execute_command._desktop_procs:
-                        try: p.kill()
-                        except: pass
-                    _execute_command._desktop_procs = None
+                _desktop_cleanup("stale desktop process")
 
             _resolution = msg.get("resolution", "1280x800")
             _depth = msg.get("depth", 24)
@@ -895,6 +947,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _execute_command._desktop_vnc_port = _vnc_port
                 _execute_command._desktop_novnc_port = _novnc_port
                 _execute_command._desktop_display = _display
+                _start_desktop_watchdog(_procs)
                 sys.stderr.write(f"[FSRelay] Desktop started: display={_display} vnc={_vnc_port} novnc={_novnc_port} audio={_audio_port} res={_resolution}\n")
                 return {"ok": True, "data": {
                     "vnc_port": _vnc_port, "novnc_port": _novnc_port,
@@ -908,32 +961,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         if action == "stop_desktop":
             if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
-                for p in _execute_command._desktop_procs:
-                    if p.poll() is None:
-                        p.terminate()
-                for p in _execute_command._desktop_procs:
-                    try: p.wait(timeout=5)
-                    except subprocess.TimeoutExpired: p.kill()
-                _execute_command._desktop_procs = None
-                _execute_command._desktop_vnc_port = None
-                _execute_command._desktop_novnc_port = None
-                _execute_command._desktop_display = None
-                if "DISPLAY" in os.environ:
-                    del os.environ["DISPLAY"]
-                sys.stderr.write("[FSRelay] Desktop stopped\n")
+                _desktop_cleanup("requested")
                 return {"ok": True}
             return {"ok": True, "data": {"was_running": False}}
 
         if action == "desktop_status":
-            _running = False
-            if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
-                # Check only essential processes (Xvfb, x11vnc, websockify)
-                # startxfce4 and dbus may exit normally after spawning children
-                _essential = getattr(_execute_command, '_desktop_essential_procs', None)
-                if _essential:
-                    _running = all(p.poll() is None for p in _essential)
-                else:
-                    _running = any(p.poll() is None for p in _execute_command._desktop_procs)
+            _running = _desktop_is_healthy()
+            if getattr(_execute_command, '_desktop_procs', None) and not _running:
+                _desktop_cleanup("healthcheck failed")
             _local_running = False
             if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
                 _local_running = all(p.poll() is None for p in _execute_command._local_desktop_procs)

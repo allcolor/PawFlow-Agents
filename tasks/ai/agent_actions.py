@@ -4,6 +4,7 @@ Routes action requests to sub-modules in tasks/ai/actions/.
 """
 import json
 import logging
+import os
 import threading
 import time
 from typing import Dict, Any, List, Optional
@@ -32,6 +33,9 @@ from tasks.ai.actions.gemini_live import _handle_gemini_live
 from tasks.ai.actions.command_dispatch import _handle_command_dispatch
 
 logger = logging.getLogger(__name__)
+
+_MAX_BG_ACTIONS = int(os.getenv("PAWFLOW_MAX_BG_ACTIONS", "32") or "32")
+_BG_ACTION_SEMAPHORE = threading.BoundedSemaphore(max(1, _MAX_BG_ACTIONS))
 
 
 _ACTION_HANDLERS = [
@@ -188,6 +192,31 @@ class AgentActionsMixin:
         from core import FlowFile as _FF
         _bg_ff = _FF(content=flowfile.get_content(), attributes=dict(flowfile.attributes))
 
+        def _publish_error(message: str):
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                payload = {
+                    "action": action, "error": message,
+                    "conversation_id": conversation_id,
+                }
+                if call_id:
+                    payload["_callId"] = call_id
+                ConversationEventBus.instance().publish_event(
+                    reply_conversation_id, "command_result", payload)
+            except Exception:
+                logger.debug("failed to publish action error", exc_info=True)
+
+        if not _BG_ACTION_SEMAPHORE.acquire(blocking=False):
+            logger.warning("[bg-cmd] dropping %s: too many background actions", action)
+            _publish_error("Too many UI actions are already running")
+            from tasks.ai.agent_streaming import SERVER_START_TIME
+            flowfile.set_content(json.dumps({
+                "status": "accepted", "action": action,
+                "_callId": call_id,
+                "server_start_time": SERVER_START_TIME,
+            }).encode())
+            return [flowfile]
+
         def _bg():
             try:
                 for handler in _ACTION_HANDLERS:
@@ -212,18 +241,9 @@ class AgentActionsMixin:
                         return
             except Exception as e:
                 logger.error("[bg-cmd] %s failed: %s", action, e, exc_info=True)
-                try:
-                    from core.conversation_event_bus import ConversationEventBus
-                    payload = {
-                        "action": action, "error": str(e),
-                        "conversation_id": conversation_id,
-                    }
-                    if call_id:
-                        payload["_callId"] = call_id
-                    ConversationEventBus.instance().publish_event(
-                        reply_conversation_id, "command_result", payload)
-                except Exception:
-                    pass
+                _publish_error(str(e))
+            finally:
+                _BG_ACTION_SEMAPHORE.release()
 
         threading.Thread(target=_bg, daemon=True,
                          name=f"cmd-{action}-{(conversation_id or reply_conversation_id)[:8]}").start()

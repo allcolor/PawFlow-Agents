@@ -145,6 +145,18 @@ class TestExecute(unittest.TestCase):
         assert "Error executing tool" in result
         assert "boom" in result
 
+    def test_execute_records_tool_metrics(self):
+        ToolRegistry.reset_metrics()
+        reg = ToolRegistry()
+        reg.register(MockHandler(result="hello"))
+        assert reg.execute("mock_tool", {"input": "test"}) == "hello"
+        reg.execute("missing", {})
+        metrics = ToolRegistry.get_metrics()
+        assert metrics["mock_tool"]["calls"] == 1
+        assert metrics["mock_tool"]["successes"] == 1
+        assert metrics["mock_tool"]["avg_duration_ms"] >= 0
+        assert metrics["missing"]["errors"] == 1
+
 
 class TestCCAliases(unittest.TestCase):
     """CC argument aliases rewrite file_path→path, include→glob, filesystem→source."""

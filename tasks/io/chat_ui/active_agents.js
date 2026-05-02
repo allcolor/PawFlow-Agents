@@ -299,16 +299,31 @@ function updateActivePanel() {
 
 // ── Server poll — single source of truth ──
 let _syncActiveTimer = null;
+let _syncActiveSub = null;
+let _syncActiveStartedAt = 0;
+const _SYNC_ACTIVE_STALE_MS = 10000;
 function startActiveSync() {
   if (_syncActiveTimer) return;
   _syncActiveTimer = setInterval(syncActiveFromServer, 3000);
 }
 function stopActiveSync() {
   if (_syncActiveTimer) { clearInterval(_syncActiveTimer); _syncActiveTimer = null; }
+  if (_syncActiveSub) { try { _syncActiveSub.unsubscribe(); } catch (_) {} }
+  _syncActiveSub = null;
+  _syncActiveStartedAt = 0;
 }
 function syncActiveFromServer() {
   if (!conversationId) return;
-  action$('list_active').subscribe(data => {
+  const now = Date.now();
+  if (_syncActiveSub) {
+    if (now - _syncActiveStartedAt < _SYNC_ACTIVE_STALE_MS) return;
+    try { _syncActiveSub.unsubscribe(); } catch (_) {}
+    _syncActiveSub = null;
+  }
+  _syncActiveStartedAt = now;
+  _syncActiveSub = action$('list_active', {}, { silent: true }).subscribe(data => {
+    _syncActiveSub = null;
+    _syncActiveStartedAt = 0;
     if (data.error) return;  // silent — network may be down
     const serverActive = data.active || [];
     const hasActiveForCurrentConv = serverActive.length > 0;

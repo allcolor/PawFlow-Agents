@@ -5,6 +5,7 @@ All methods access self (AgentLoopTask instance).
 """
 import json
 import logging
+import os
 import threading
 import time
 from typing import Dict, Any, List, Optional
@@ -14,6 +15,9 @@ from core import FlowFile
 from core.llm_client import LLMMessage
 
 logger = logging.getLogger(__name__)
+
+_WATCHDOG_INTERVAL_SECONDS = int(
+    os.getenv("PAWFLOW_AGENT_WATCHDOG_INTERVAL_SECONDS", "300") or "300")
 
 
 def _check_task_limits(task: dict, task_id: str) -> str:
@@ -102,20 +106,28 @@ class AgentPollerMixin:
         if _dt_ckpt > 0.05: logger.warning(f"[poller-timing] checkpoint: {_dt_ckpt*1000:.0f}ms")
         _pt1 = time.time()
         _pt1 = time.time()
-        # Watchdog: ensure active tasks always have a pending schedule
-        try:
-            self._ensure_tasks_scheduled()
-        except Exception as _wt_err:
-            logger.warning(f"Task watchdog failed: {_wt_err}")
+        # Watchdog scans every conversation, so it must not run on every
+        # poll tick while the server is idle. Startup reschedule already
+        # covers restart recovery; this periodic pass repairs rare races.
+        _now_watchdog = time.time()
+        _last_task_watchdog = getattr(self, "_last_task_watchdog", 0)
+        if _now_watchdog - _last_task_watchdog >= _WATCHDOG_INTERVAL_SECONDS:
+            self._last_task_watchdog = _now_watchdog
+            try:
+                self._ensure_tasks_scheduled()
+            except Exception as _wt_err:
+                logger.warning(f"Task watchdog failed: {_wt_err}")
 
         _dt_tasks = time.time() - _pt1
         if _dt_tasks > 0.05: logger.warning(f"[poller-timing] ensure_tasks: {_dt_tasks*1000:.0f}ms")
         _pt2 = time.time()
-        # Watchdog: ensure enabled autoconv thoughts have a pending schedule
-        try:
-            self._ensure_thoughts_scheduled()
-        except Exception as _wt_err:
-            logger.warning(f"Thought watchdog failed: {_wt_err}")
+        _last_thought_watchdog = getattr(self, "_last_thought_watchdog", 0)
+        if _now_watchdog - _last_thought_watchdog >= _WATCHDOG_INTERVAL_SECONDS:
+            self._last_thought_watchdog = _now_watchdog
+            try:
+                self._ensure_thoughts_scheduled()
+            except Exception as _wt_err:
+                logger.warning(f"Thought watchdog failed: {_wt_err}")
 
         _dt_thoughts = time.time() - _pt2
         if _dt_thoughts > 0.05: logger.warning(f"[poller-timing] ensure_thoughts: {_dt_thoughts*1000:.0f}ms")
@@ -847,7 +859,7 @@ class AgentPollerMixin:
             _cache = store._load_cache(cid)
             if "agent_tasks" not in _cache.get("extra_keys", set()):
                 continue
-            all_tasks = store.get_extra_cached(cid, "agent_tasks") or {}
+            all_tasks = _cache.get("extras", {}).get("agent_tasks") or {}
             if not isinstance(all_tasks, dict):
                 continue
             for tid, task in all_tasks.items():

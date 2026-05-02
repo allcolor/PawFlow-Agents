@@ -25,6 +25,61 @@ from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
+
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' data: blob:; "
+        "connect-src 'self' ws: wss:; "
+        "frame-src 'self' http: https:; "
+        "frame-ancestors 'self'; "
+        "object-src 'none'; base-uri 'self'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "SAMEORIGIN",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
+class _GlobalRateLimiter:
+    """Small in-memory sliding-window limiter for login and API routes."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._hits: Dict[Tuple[str, str], List[float]] = {}
+
+    def allow(self, key: str, bucket: str, limit: int, window_s: float) -> Tuple[bool, float]:
+        now = time.time()
+        cutoff = now - window_s
+        with self._lock:
+            hits = [ts for ts in self._hits.get((key, bucket), []) if ts > cutoff]
+            if len(hits) >= limit:
+                retry_after = max(1.0, window_s - (now - hits[0]))
+                self._hits[(key, bucket)] = hits
+                return False, retry_after
+            hits.append(now)
+            self._hits[(key, bucket)] = hits
+            return True, 0.0
+
+    def reset(self):
+        with self._lock:
+            self._hits.clear()
+
+
+_GLOBAL_RATE_LIMITER = _GlobalRateLimiter()
+
+
+def _rate_limit_policy(path: str) -> Optional[Tuple[str, int, float]]:
+    if path.startswith("/auth") or path == "/_gateway":
+        return ("login", 30, 60.0)
+    if path.startswith("/api/"):
+        return ("api", 600, 60.0)
+    return None
+
 # ---------------------------------------------------------------------------
 # Pending request — correlation between HTTP handler thread and flow
 # ---------------------------------------------------------------------------
@@ -294,6 +349,33 @@ class _RequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         logger.debug(f"HTTP: {format % args}")
 
+    def _header_sent(self, name: str) -> bool:
+        prefix = (name.lower() + ":").encode("latin-1")
+        return any(bytes(line).lower().startswith(prefix)
+                   for line in getattr(self, "_headers_buffer", []))
+
+    def end_headers(self):
+        for name, value in _SECURITY_HEADERS.items():
+            if not self._header_sent(name):
+                self.send_header(name, value)
+        super().end_headers()
+
+    def _check_global_rate_limit(self, path: str) -> bool:
+        policy = _rate_limit_policy(path)
+        if not policy:
+            return True
+        bucket, limit, window_s = policy
+        ip = self.client_address[0] if self.client_address else "unknown"
+        ok, retry_after = _GLOBAL_RATE_LIMITER.allow(ip, bucket, limit, window_s)
+        if ok:
+            return True
+        self.send_response(429)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Retry-After", str(int(retry_after)))
+        self.end_headers()
+        self.wfile.write(b'{"error": "Too Many Requests"}')
+        return False
+
     def _handle(self):
         method = self.command
         path = self.path.split('?', 1)[0]
@@ -307,6 +389,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(b'{"ok":true}')
+            return
+
+        if not self._check_global_rate_limit(path):
             return
 
         # Match route upfront to know if it's public (skip auth/gateway)

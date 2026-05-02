@@ -29,6 +29,14 @@ from core.llm_providers import (
 
 logger = logging.getLogger(__name__)
 
+_BUILTIN_MODEL_DEFAULTS = {
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-opus-4-6",
+    "claude-code": "claude-opus-4-6",
+    "codex-app-server": "gpt-5.4",
+    "gemini": "gemini-2.5-pro",
+}
+
 
 def _load_default_models() -> Dict[str, str]:
     path = Path(os.getenv(
@@ -39,11 +47,12 @@ def _load_default_models() -> Dict[str, str]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         logger.warning("default models config unavailable at %s: %s", path, exc)
-        return {}
+        return dict(_BUILTIN_MODEL_DEFAULTS)
     if not isinstance(data, dict):
         logger.warning("default models config must be an object: %s", path)
-        return {}
-    return {str(k): str(v) for k, v in data.items() if k and v}
+        return dict(_BUILTIN_MODEL_DEFAULTS)
+    configured = {str(k): str(v) for k, v in data.items() if k and v}
+    return configured or dict(_BUILTIN_MODEL_DEFAULTS)
 
 
 @dataclass

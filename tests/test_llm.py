@@ -265,6 +265,14 @@ class TestLLMConnectionService:
         assert LLMClient.DEFAULT_MODELS == configured
         assert set(configured) >= {"openai", "anthropic", "claude-code", "codex-app-server", "gemini"}
 
+    def test_default_models_fall_back_when_system_config_is_missing(self, monkeypatch, tmp_path):
+        from core.llm_client import _load_default_models
+
+        monkeypatch.setenv("PAWFLOW_DEFAULT_MODELS_FILE", str(tmp_path / "missing.json"))
+        defaults = _load_default_models()
+        assert set(defaults) >= {"openai", "anthropic", "claude-code", "codex-app-server", "gemini"}
+        assert defaults["claude-code"]
+
 
 class TestInferLLMTask:
 

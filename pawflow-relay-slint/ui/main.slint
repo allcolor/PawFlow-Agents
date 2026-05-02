@@ -1,4 +1,4 @@
-import { CheckBox, ComboBox, LineEdit } from "std-widgets.slint";
+import { CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 
 component ActionButton inherits Rectangle {
     in property <string> text;
@@ -7,24 +7,49 @@ component ActionButton inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
 
-    height: 32px;
-    border-radius: 4px;
+    height: 34px;
+    border-radius: 5px;
     border-width: 1px;
-    border-color: root.enabled ? (root.primary ? #2d88f0 : root.danger ? #bd3c50 : #2b4166) : #23324a;
-    background: root.enabled ? (root.primary ? #1f73d8 : root.danger ? #9e2f42 : #13223a) : #101827;
+    border-color: !root.enabled ? #26334a : root.primary ? #3b92ff : root.danger ? #d74c63 : #385176;
+    background: !root.enabled ? #121a2a :
+        touch.pressed ? (root.primary ? #155fb5 : root.danger ? #842638 : #0e1a2d) :
+        touch.has-hover ? (root.primary ? #2c83ef : root.danger ? #b93c52 : #1a2d4a) :
+        (root.primary ? #1f73d8 : root.danger ? #9e2f42 : #13223a);
+
+    animate background { duration: 90ms; }
+    animate border-color { duration: 90ms; }
 
     Text {
         text: root.text;
-        color: root.enabled ? #f4f8ff : #5f6f8c;
+        color: root.enabled ? #f4f8ff : #64728b;
         font-size: 12px;
-        font-weight: root.primary || root.danger ? 700 : 500;
+        font-weight: root.primary || root.danger ? 700 : 600;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
 
-    TouchArea {
+    touch := TouchArea {
         enabled: root.enabled;
         clicked => { root.clicked(); }
+    }
+}
+
+component SectionHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> action-text: "";
+    callback action-clicked();
+
+    height: 28px;
+    HorizontalLayout {
+        alignment: center;
+        Text { text: root.title; color: #8fa4c8; font-size: 11px; font-weight: 800; }
+        Rectangle { horizontal-stretch: 1; }
+        if root.action-text != "" : ActionButton {
+            width: 24px;
+            height: 24px;
+            text: root.action-text;
+            clicked => { root.action-clicked(); }
+        }
     }
 }
 
@@ -33,38 +58,62 @@ component TreeItem inherits Rectangle {
     in property <string> meta;
     in property <bool> selected: false;
     in property <bool> running: false;
+    in property <int> level: 0;
     callback clicked();
 
     height: 38px;
-    border-radius: 4px;
+    border-radius: 5px;
     border-width: 1px;
-    border-color: root.selected ? #2a63a8 : #0b1424;
-    background: root.selected ? #142947 : #0b1424;
+    border-color: root.selected ? #3479cc : item-touch.has-hover ? #263d5f : #0b1424;
+    background: root.selected ? #142947 : item-touch.pressed ? #0d1a2c : item-touch.has-hover ? #101e33 : #0b1424;
+
+    animate background { duration: 90ms; }
+    animate border-color { duration: 90ms; }
 
     HorizontalLayout {
-        padding-left: 8px;
+        padding-left: 8px + root.level * 14px;
         padding-right: 8px;
         spacing: 8px;
         alignment: center;
 
+        Text { text: root.level > 0 ? "└" : ""; color: #566d91; font-size: 14px; }
         Rectangle {
             width: 7px;
             height: 7px;
             border-radius: 4px;
-            background: root.running ? #23b3ff : #71829e;
+            background: root.running ? #22c55e : #71829e;
         }
-        Text { text: root.title; color: #f2f6ff; font-size: 13px; font-weight: 600; }
+        Text {
+            text: root.title;
+            color: #f2f6ff;
+            font-size: 13px;
+            font-weight: 650;
+            overflow: elide;
+        }
         Rectangle { horizontal-stretch: 1; }
-        Text { text: root.meta; color: #88a0c4; font-size: 11px; }
+        Text { text: root.meta; color: #88a0c4; font-size: 11px; overflow: elide; }
     }
 
-    TouchArea { clicked => { root.clicked(); } }
+    item-touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+component FieldLabel inherits Text {
+    color: #a8b9d8;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+component PanelCard inherits Rectangle {
+    background: #101b2d;
+    border-color: #22395e;
+    border-width: 1px;
+    border-radius: 6px;
 }
 
 export component AppWindow inherits Window {
     title: "PawFlow Relay Desktop";
-    width: 1320px;
-    height: 820px;
+    preferred-width: 1180px;
+    preferred-height: 760px;
     background: #050a13;
 
     in-out property <int> active-panel: 0;
@@ -107,6 +156,7 @@ export component AppWindow inherits Window {
     callback delete-relay();
     callback build-image();
     callback clear-logs();
+    callback browse-workspace-path();
     callback show-relay-panel();
     callback show-server-panel();
     callback show-image-panel();
@@ -116,75 +166,75 @@ export component AppWindow inherits Window {
         spacing: 0px;
 
         Rectangle {
-            width: 224px;
+            width: 260px;
             background: #0b1424;
             border-color: #203452;
             border-width: 1px;
 
             VerticalLayout {
-                padding: 12px;
-                spacing: 14px;
+                padding: 14px;
+                spacing: 12px;
 
                 HorizontalLayout {
                     spacing: 10px;
                     alignment: center;
                     Rectangle {
-                        width: 28px;
-                        height: 28px;
-                        border-radius: 6px;
+                        width: 32px;
+                        height: 32px;
+                        border-radius: 7px;
                         background: #1f73d8;
-                        Text { text: "P"; color: white; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: "P"; color: white; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     VerticalLayout {
-                        spacing: 0px;
-                        Text { text: "PawFlow Relay"; color: #f2f6ff; font-size: 14px; font-weight: 700; }
-                        Text { text: "Client relay manager"; color: #8fa4c8; font-size: 11px; }
+                        spacing: 1px;
+                        Text { text: "PawFlow Relay"; color: #f2f6ff; font-size: 14px; font-weight: 800; }
+                        Text { text: "Desktop relay manager"; color: #8fa4c8; font-size: 11px; }
                     }
                 }
 
                 Rectangle { height: 1px; background: #203452; }
 
-                HorizontalLayout {
-                    alignment: center;
-                    Text { text: "SERVERS"; color: #9fb4d6; font-size: 11px; font-weight: 700; }
-                    Rectangle { horizontal-stretch: 1; }
-                    ActionButton { width: 22px; height: 22px; text: "+"; clicked => { root.show-server-panel(); } }
-                }
-                TreeItem {
-                    title: root.server-row-name;
-                    meta: root.server-row-meta;
-                    selected: root.active-panel == 1;
-                    running: false;
-                    clicked => { root.show-server-panel(); }
-                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    viewport-width: 232px;
+                    Rectangle {
+                        width: 232px;
+                        height: 420px;
+                        background: transparent;
+                        VerticalLayout {
+                            spacing: 8px;
+                            SectionHeader { title: "SERVERS"; action-text: "+"; action-clicked => { root.show-server-panel(); } }
+                            TreeItem {
+                                title: root.server-row-name;
+                                meta: root.server-row-meta;
+                                selected: root.active-panel == 1;
+                                level: 1;
+                                clicked => { root.show-server-panel(); }
+                            }
+                            Text { text: root.server-list; color: #7184a5; font-size: 10px; wrap: word-wrap; }
 
-                HorizontalLayout {
-                    alignment: center;
-                    Text { text: "RELAYS"; color: #9fb4d6; font-size: 11px; font-weight: 700; }
-                    Rectangle { horizontal-stretch: 1; }
-                    ActionButton { width: 22px; height: 22px; text: "+"; clicked => { root.show-relay-panel(); } }
-                }
-                TreeItem {
-                    title: root.relay-row-name;
-                    meta: root.relay-row-meta;
-                    selected: root.active-panel == 0;
-                    running: root.relay-row-meta == "running";
-                    clicked => { root.show-relay-panel(); }
-                }
+                            SectionHeader { title: "RELAYS"; action-text: "+"; action-clicked => { root.show-relay-panel(); } }
+                            TreeItem {
+                                title: root.relay-row-name;
+                                meta: root.relay-row-meta;
+                                selected: root.active-panel == 0;
+                                running: root.relay-row-meta == "running";
+                                level: 1;
+                                clicked => { root.show-relay-panel(); }
+                            }
+                            Text { text: root.relay-list; color: #7184a5; font-size: 10px; wrap: word-wrap; }
 
-                HorizontalLayout {
-                    alignment: center;
-                    Text { text: "TOOLS"; color: #9fb4d6; font-size: 11px; font-weight: 700; }
-                    Rectangle { horizontal-stretch: 1; }
+                            SectionHeader { title: "TOOLS"; }
+                            TreeItem {
+                                title: "Image builder";
+                                meta: "docker";
+                                selected: root.active-panel == 2;
+                                level: 1;
+                                clicked => { root.show-image-panel(); }
+                            }
+                        }
+                    }
                 }
-                TreeItem {
-                    title: "Image builder";
-                    meta: "docker";
-                    selected: root.active-panel == 2;
-                    clicked => { root.show-image-panel(); }
-                }
-
-                Rectangle { vertical-stretch: 1; }
             }
         }
 
@@ -193,157 +243,178 @@ export component AppWindow inherits Window {
             spacing: 0px;
 
             Rectangle {
-                height: 62px;
+                height: 82px;
                 background: #0f192a;
                 border-color: #203452;
                 border-width: 1px;
 
                 HorizontalLayout {
-                    padding-left: 18px;
-                    padding-right: 18px;
+                    padding-left: 22px;
+                    padding-right: 22px;
                     spacing: 16px;
                     alignment: center;
 
                     VerticalLayout {
-                        spacing: 2px;
-                        Text { text: root.active-panel == 0 ? root.relay-name : root.active-panel == 1 ? root.server-name : "Build Relay Image"; color: #f2f6ff; font-size: 17px; font-weight: 700; }
-                        Text { text: root.active-panel == 0 ? root.workspace-path : root.active-panel == 1 ? root.server-url : root.catalog-text; color: #8fa4c8; font-size: 11px; }
+                        spacing: 4px;
+                        Text {
+                            text: root.active-panel == 0 ? root.relay-name : root.active-panel == 1 ? root.server-name : "Build Relay Image";
+                            color: #f2f6ff;
+                            font-size: 19px;
+                            font-weight: 800;
+                        }
+                        Text {
+                            text: root.active-panel == 0 ? root.workspace-path : root.active-panel == 1 ? root.server-url : root.catalog-text;
+                            color: #8fa4c8;
+                            font-size: 11px;
+                            overflow: elide;
+                        }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: root.summary-text; color: #b8c9e8; font-size: 12px; }
-                    Text { text: root.status-text; color: #64d89d; font-weight: 700; }
-                    ActionButton { width: 72px; text: "Refresh"; primary: true; clicked => { root.refresh-state(); } }
+                    Rectangle {
+                        height: 24px;
+                        width: 72px;
+                        border-radius: 12px;
+                        background: root.status-text == "Ready" ? #143822 : #3a2b12;
+                        Text { text: root.status-text; color: root.status-text == "Ready" ? #64d89d : #ffd27a; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    ActionButton { width: 78px; text: "Refresh"; primary: true; clicked => { root.refresh-state(); } }
                 }
             }
 
             Rectangle {
                 background: #050a13;
+                vertical-stretch: 1;
 
                 VerticalLayout {
-                    padding: 16px;
-                    spacing: 0px;
+                    padding: 18px;
+                    spacing: 14px;
 
-                    Rectangle {
+                    PanelCard {
                         visible: root.active-panel == 0;
-                        width: 690px;
-                        height: 390px;
-                        background: #101b2d;
-                        border-color: #22395e;
-                        border-width: 1px;
-                        border-radius: 6px;
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
 
                         VerticalLayout {
                             padding: 16px;
-                            spacing: 10px;
-                            Text { text: "Relay settings"; color: #f2f6ff; font-size: 18px; font-weight: 700; }
-                            Text { text: "Edit the workspace share or control the relay process."; color: #8fa4c8; font-size: 12px; }
+                            spacing: 12px;
+                            Text { text: "Relay settings"; color: #f2f6ff; font-size: 18px; font-weight: 800; }
+                            Text { text: "Workspace share, permissions, and relay process controls."; color: #8fa4c8; font-size: 12px; }
 
                             HorizontalLayout {
-                                spacing: 10px;
-                                VerticalLayout { spacing: 5px; Text { text: "Name"; color: #a8b9d8; font-size: 12px; } LineEdit { text <=> root.relay-name; } }
-                                VerticalLayout { spacing: 5px; Text { text: "Server"; color: #a8b9d8; font-size: 12px; } LineEdit { text <=> root.relay-server; } }
+                                spacing: 12px;
+                                VerticalLayout { spacing: 5px; FieldLabel { text: "Name"; } LineEdit { text <=> root.relay-name; } }
+                                VerticalLayout { spacing: 5px; FieldLabel { text: "Server"; } LineEdit { text <=> root.relay-server; } }
                             }
 
-                            Text { text: "Path"; color: #a8b9d8; font-size: 12px; }
-                            LineEdit { text <=> root.workspace-path; }
-
-                            HorizontalLayout {
-                                spacing: 10px;
-                                VerticalLayout { spacing: 5px; Text { text: "Mode"; color: #a8b9d8; font-size: 12px; } ComboBox { current-value <=> root.relay-mode; model: ["rw", "ro"]; } }
-                                VerticalLayout { spacing: 5px; Text { text: "Docker image"; color: #a8b9d8; font-size: 12px; } LineEdit { text <=> root.docker-image; } }
+                            VerticalLayout {
+                                spacing: 5px;
+                                FieldLabel { text: "Workspace path"; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    LineEdit { text <=> root.workspace-path; horizontal-stretch: 1; }
+                                    ActionButton { width: 78px; text: "Browse"; clicked => { root.browse-workspace-path(); } }
+                                }
                             }
 
                             HorizontalLayout {
-                                spacing: 16px;
+                                spacing: 12px;
+                                VerticalLayout { spacing: 5px; FieldLabel { text: "Mode"; } ComboBox { current-value <=> root.relay-mode; model: ["rw", "ro"]; } }
+                                VerticalLayout { spacing: 5px; FieldLabel { text: "Docker image"; } LineEdit { text <=> root.docker-image; } }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 18px;
                                 CheckBox { text: "Allow exec"; checked <=> root.allow-exec; }
-                                CheckBox { text: "Allow remote desktop"; checked <=> root.allow-remote-desktop; }
-                                CheckBox { text: "Allow local access"; checked <=> root.allow-local-access; }
+                                CheckBox { text: "Remote desktop"; checked <=> root.allow-remote-desktop; }
+                                CheckBox { text: "Local host access"; checked <=> root.allow-local-access; }
                             }
 
                             HorizontalLayout {
                                 spacing: 8px;
-                                ActionButton { width: 48px; text: "Save"; primary: true; clicked => { root.save-relay(); } }
-                                ActionButton { width: 56px; text: "Start"; clicked => { root.start-relay(); } }
-                                ActionButton { width: 52px; text: "Stop"; clicked => { root.stop-relay(); } }
-                                ActionButton { width: 92px; text: "Delete Relay"; danger: true; clicked => { root.delete-relay(); } }
+                                ActionButton { width: 58px; text: "Save"; primary: true; clicked => { root.save-relay(); } }
+                                ActionButton { width: 62px; text: "Start"; clicked => { root.start-relay(); } }
+                                ActionButton { width: 58px; text: "Stop"; clicked => { root.stop-relay(); } }
+                                ActionButton { width: 104px; text: "Delete Relay"; danger: true; clicked => { root.delete-relay(); } }
                             }
+
+                            Rectangle { vertical-stretch: 1; }
                         }
                     }
 
-                    Rectangle {
+                    PanelCard {
                         visible: root.active-panel == 1;
-                        width: 610px;
-                        height: 330px;
-                        background: #101b2d;
-                        border-color: #22395e;
-                        border-width: 1px;
-                        border-radius: 6px;
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
 
                         VerticalLayout {
                             padding: 16px;
-                            spacing: 10px;
-                            Text { text: "Server profile"; color: #f2f6ff; font-size: 18px; font-weight: 700; }
-                            Text { text: "Edit connection details, login, or remove this server profile."; color: #8fa4c8; font-size: 12px; }
-                            Text { text: "Name"; color: #a8b9d8; font-size: 12px; }
+                            spacing: 12px;
+                            Text { text: "Server profile"; color: #f2f6ff; font-size: 18px; font-weight: 800; }
+                            Text { text: "Connection details and login state for the selected PawFlow server."; color: #8fa4c8; font-size: 12px; }
+                            FieldLabel { text: "Name"; }
                             LineEdit { text <=> root.server-name; }
-                            Text { text: "URL"; color: #a8b9d8; font-size: 12px; }
+                            FieldLabel { text: "URL"; }
                             LineEdit { text <=> root.server-url; }
-                            Text { text: "Gateway key"; color: #a8b9d8; font-size: 12px; }
+                            FieldLabel { text: "Gateway key"; }
                             LineEdit { text <=> root.gateway-key; input-type: password; }
                             HorizontalLayout {
                                 spacing: 8px;
-                                ActionButton { width: 48px; text: "Save"; primary: true; clicked => { root.save-server(); } }
-                                ActionButton { width: 104px; text: "Login / Status"; clicked => { root.login-server(); } }
-                                ActionButton { width: 98px; text: "Delete Server"; danger: true; clicked => { root.delete-server(); } }
+                                ActionButton { width: 58px; text: "Save"; primary: true; clicked => { root.save-server(); } }
+                                ActionButton { width: 112px; text: "Login / Status"; clicked => { root.login-server(); } }
+                                ActionButton { width: 110px; text: "Delete Server"; danger: true; clicked => { root.delete-server(); } }
                             }
+                            Rectangle { vertical-stretch: 1; }
                         }
                     }
 
-                    Rectangle {
+                    PanelCard {
                         visible: root.active-panel == 2;
-                        width: 690px;
-                        height: 300px;
-                        background: #101b2d;
-                        border-color: #22395e;
-                        border-width: 1px;
-                        border-radius: 6px;
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
 
                         VerticalLayout {
                             padding: 16px;
-                            spacing: 10px;
-                            Text { text: "Relay image builder"; color: #f2f6ff; font-size: 18px; font-weight: 700; }
+                            spacing: 12px;
+                            Text { text: "Relay image builder"; color: #f2f6ff; font-size: 18px; font-weight: 800; }
                             Text { text: root.catalog-text; color: #8fa4c8; font-size: 12px; wrap: word-wrap; }
                             HorizontalLayout {
-                                spacing: 10px;
-                                VerticalLayout { spacing: 5px; Text { text: "Image name"; color: #a8b9d8; font-size: 12px; } LineEdit { text <=> root.image-name; } }
-                                VerticalLayout { spacing: 5px; Text { text: "Preset"; color: #a8b9d8; font-size: 12px; } ComboBox { current-value <=> root.image-profile; model: ["client-minimal", "client-full", "server-full", ""]; } }
+                                spacing: 12px;
+                                VerticalLayout { spacing: 5px; FieldLabel { text: "Image name"; } LineEdit { text <=> root.image-name; } }
+                                VerticalLayout { spacing: 5px; FieldLabel { text: "Preset"; } ComboBox { current-value <=> root.image-profile; model: ["client-minimal", "client-full", "server-full", ""]; } }
                             }
-                            Text { text: "Extra features (comma separated)"; color: #a8b9d8; font-size: 12px; }
+                            FieldLabel { text: "Extra features (comma separated)"; }
                             LineEdit { text <=> root.image-features; }
                             ActionButton { width: 132px; text: "Build Image"; primary: true; clicked => { root.build-image(); } }
+                            FieldLabel { text: "Local Docker images"; }
+                            ScrollView {
+                                vertical-stretch: 1;
+                                Text { text: root.docker-list; color: #d8e5ff; font-family: "Consolas"; font-size: 11px; wrap: word-wrap; }
+                            }
                         }
                     }
-
-                    Rectangle { vertical-stretch: 1; }
                 }
             }
 
             Rectangle {
-                height: 148px;
+                height: 190px;
                 background: #0b1424;
                 border-color: #203452;
                 border-width: 1px;
-                clip: true;
 
                 VerticalLayout {
                     padding: 10px;
-                    spacing: 6px;
+                    spacing: 7px;
                     HorizontalLayout {
-                        Text { text: "Logs"; color: #f2f6ff; font-size: 12px; font-weight: 700; }
+                        Text { text: "Relay log"; color: #f2f6ff; font-size: 12px; font-weight: 800; }
                         Rectangle { horizontal-stretch: 1; }
-                        ActionButton { width: 50px; text: "Clear"; primary: true; clicked => { root.clear-logs(); } }
+                        Text { text: "stdout/stderr from relay and Docker commands"; color: #7184a5; font-size: 11px; }
+                        ActionButton { width: 54px; height: 26px; text: "Clear"; primary: true; clicked => { root.clear-logs(); } }
                     }
-                    Text { text: root.logs; color: #d8e5ff; font-family: "Consolas"; font-size: 11px; wrap: word-wrap; }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        Text { text: root.logs; color: #d8e5ff; font-family: "Consolas"; font-size: 11px; wrap: word-wrap; }
+                    }
                 }
             }
         }

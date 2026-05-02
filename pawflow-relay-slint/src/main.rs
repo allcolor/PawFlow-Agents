@@ -1,14 +1,23 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use serde_json::Value;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
+
+use slint::{CloseRequestResponse, ComponentHandle, Timer, TimerMode};
+use tray_icon::{
+    menu::{Menu, MenuEvent, MenuItem},
+    Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
+};
 
 slint::include_modules!();
 
@@ -22,11 +31,14 @@ fn main() -> Result<(), slint::PlatformError> {
     wire_server_actions(&ui, Arc::clone(&relays));
     wire_relay_actions(&ui, Arc::clone(&relays));
     wire_image_actions(&ui, Arc::clone(&relays));
+    wire_path_picker(&ui);
     wire_log_actions(&ui);
     wire_navigation(&ui);
+    let _tray_state = schedule_tray_setup(&ui);
 
     refresh_ui(&ui.as_weak(), &relays);
-    ui.run()
+    ui.show()?;
+    slint::run_event_loop_until_quit()
 }
 
 fn wire_refresh(ui: &AppWindow, relays: RelayProcesses) {
@@ -44,7 +56,9 @@ fn wire_server_actions(ui: &AppWindow, relays: RelayProcesses) {
     let ui_weak = ui.as_weak();
     let relays_for_save = Arc::clone(&relays);
     ui.on_save_server(move || {
-        let Some(ui) = ui_weak.upgrade() else { return; };
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
         let name = ui.get_server_name().to_string();
         let url = ui.get_server_url().to_string();
         let gateway_key = ui.get_gateway_key().to_string();
@@ -66,7 +80,9 @@ fn wire_server_actions(ui: &AppWindow, relays: RelayProcesses) {
     let ui_weak = ui.as_weak();
     let relays_for_login = Arc::clone(&relays);
     ui.on_login_server(move || {
-        let Some(ui) = ui_weak.upgrade() else { return; };
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
         let name = ui.get_server_name().to_string();
         let ui_weak = ui.as_weak();
         let relays = Arc::clone(&relays_for_login);
@@ -86,7 +102,9 @@ fn wire_server_actions(ui: &AppWindow, relays: RelayProcesses) {
     let ui_weak = ui.as_weak();
     let relays_for_delete = Arc::clone(&relays);
     ui.on_delete_server(move || {
-        let Some(ui) = ui_weak.upgrade() else { return; };
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
         let name = ui.get_server_name().to_string();
         let ui_weak = ui.as_weak();
         let relays = Arc::clone(&relays_for_delete);
@@ -108,7 +126,9 @@ fn wire_relay_actions(ui: &AppWindow, relays: RelayProcesses) {
     let ui_weak = ui.as_weak();
     let relays_for_save = Arc::clone(&relays);
     ui.on_save_relay(move || {
-        let Some(ui) = ui_weak.upgrade() else { return; };
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
         let config = RelayConfig::from_ui(&ui);
         let ui_weak = ui.as_weak();
         let relays = Arc::clone(&relays_for_save);
@@ -116,7 +136,10 @@ fn wire_relay_actions(ui: &AppWindow, relays: RelayProcesses) {
             match add_workspace(&config) {
                 Ok(_) => append_log(&ui, &format!("[relay:{}] saved\n", config.name)),
                 Err(err) => {
-                    append_log(&ui, &format!("[relay:{}] save failed: {err}\n", config.name));
+                    append_log(
+                        &ui,
+                        &format!("[relay:{}] save failed: {err}\n", config.name),
+                    );
                     set_status(&ui, "Relay save failed");
                     return;
                 }
@@ -128,7 +151,9 @@ fn wire_relay_actions(ui: &AppWindow, relays: RelayProcesses) {
     let ui_weak = ui.as_weak();
     let relays_for_start = Arc::clone(&relays);
     ui.on_start_relay(move || {
-        let Some(ui) = ui_weak.upgrade() else { return; };
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
         let name = ui.get_relay_name().to_string();
         let ui_weak = ui.as_weak();
         let relays = Arc::clone(&relays_for_start);
@@ -148,7 +173,9 @@ fn wire_relay_actions(ui: &AppWindow, relays: RelayProcesses) {
     let ui_weak = ui.as_weak();
     let relays_for_stop = Arc::clone(&relays);
     ui.on_stop_relay(move || {
-        let Some(ui) = ui_weak.upgrade() else { return; };
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
         let name = ui.get_relay_name().to_string();
         let ui_weak = ui.as_weak();
         let relays = Arc::clone(&relays_for_stop);
@@ -168,7 +195,9 @@ fn wire_relay_actions(ui: &AppWindow, relays: RelayProcesses) {
     let ui_weak = ui.as_weak();
     let relays_for_delete = Arc::clone(&relays);
     ui.on_delete_relay(move || {
-        let Some(ui) = ui_weak.upgrade() else { return; };
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
         let name = ui.get_relay_name().to_string();
         let ui_weak = ui.as_weak();
         let relays = Arc::clone(&relays_for_delete);
@@ -190,7 +219,9 @@ fn wire_relay_actions(ui: &AppWindow, relays: RelayProcesses) {
 fn wire_image_actions(ui: &AppWindow, relays: RelayProcesses) {
     let ui_weak = ui.as_weak();
     ui.on_build_image(move || {
-        let Some(ui) = ui_weak.upgrade() else { return; };
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
         let image_name = ui.get_image_name().to_string();
         let profile = ui.get_image_profile().to_string();
         let features = ui.get_image_features().to_string();
@@ -207,6 +238,36 @@ fn wire_image_actions(ui: &AppWindow, relays: RelayProcesses) {
             }
             refresh_ui(&ui, &relays);
         });
+    });
+}
+
+fn wire_path_picker(ui: &AppWindow) {
+    let ui_weak = ui.as_weak();
+    ui.on_browse_workspace_path(move || {
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
+        let current = ui.get_workspace_path().to_string();
+        let ui_weak = ui.as_weak();
+        run_background(
+            ui_weak,
+            "Choosing folder...",
+            move |ui| match choose_folder(&current) {
+                Ok(Some(path)) => {
+                    let path_for_log = path.clone();
+                    let _ = ui.upgrade_in_event_loop(move |ui| {
+                        ui.set_workspace_path(path.into());
+                        ui.set_status_text("Ready".into());
+                    });
+                    append_log(&ui, &format!("[folder] selected {path_for_log}\n"));
+                }
+                Ok(None) => set_status(&ui, "Ready"),
+                Err(err) => {
+                    append_log(&ui, &format!("[folder] picker failed: {err}\n"));
+                    set_status(&ui, "Folder picker failed");
+                }
+            },
+        );
     });
 }
 
@@ -232,6 +293,138 @@ fn wire_navigation(ui: &AppWindow) {
     ui.on_show_image_panel(move || {
         let _ = ui_weak.upgrade_in_event_loop(|ui| ui.set_active_panel(2));
     });
+}
+
+struct TrayState {
+    _icon: TrayIcon,
+    _event_pump: Option<Timer>,
+}
+
+fn schedule_tray_setup(ui: &AppWindow) -> Rc<RefCell<Option<TrayState>>> {
+    let tray_state = Rc::new(RefCell::new(None));
+    let tray_state_for_timer = Rc::clone(&tray_state);
+    let ui_weak = ui.as_weak();
+    Timer::single_shot(Duration::from_millis(0), move || {
+        let Some(ui) = ui_weak.upgrade() else {
+            return;
+        };
+        match setup_tray(&ui) {
+            Ok(state) => *tray_state_for_timer.borrow_mut() = Some(state),
+            Err(err) => append_log(&ui.as_weak(), &format!("[tray] unavailable: {err}\n")),
+        }
+    });
+    tray_state
+}
+
+fn setup_tray(ui: &AppWindow) -> Result<TrayState, String> {
+    let tray_menu = Menu::new();
+    let show_item = MenuItem::with_id("show", "Show PawFlow Relay", true, None);
+    let quit_item = MenuItem::with_id("quit", "Quit", true, None);
+    tray_menu
+        .append(&show_item)
+        .map_err(|err| err.to_string())?;
+    tray_menu
+        .append(&quit_item)
+        .map_err(|err| err.to_string())?;
+
+    let ui_weak = ui.as_weak();
+    ui.window().on_close_requested(move || {
+        if let Some(ui) = ui_weak.upgrade() {
+            let _ = ui.hide();
+            ui.set_status_text("Running in system tray".into());
+            append_log(
+                &ui.as_weak(),
+                "[tray] window hidden; use the tray icon to restore it\n",
+            );
+        }
+        CloseRequestResponse::KeepWindowShown
+    });
+
+    let ui_weak = ui.as_weak();
+    TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| match event {
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        }
+        | TrayIconEvent::DoubleClick {
+            button: MouseButton::Left,
+            ..
+        } => restore_window(&ui_weak),
+        _ => {}
+    }));
+
+    let ui_weak = ui.as_weak();
+    MenuEvent::set_event_handler(Some(move |event: MenuEvent| match event.id.as_ref() {
+        "show" => restore_window(&ui_weak),
+        "quit" => {
+            let _ = slint::quit_event_loop();
+        }
+        _ => {}
+    }));
+
+    let icon = TrayIconBuilder::new()
+        .with_menu(Box::new(tray_menu))
+        .with_tooltip("PawFlow Relay Desktop")
+        .with_icon(pawflow_tray_icon()?)
+        .build()
+        .map_err(|err| err.to_string())?;
+    Ok(TrayState {
+        _icon: icon,
+        _event_pump: start_tray_event_pump(),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn start_tray_event_pump() -> Option<Timer> {
+    if !gtk::is_initialized_main_thread() && gtk::init().is_err() {
+        return None;
+    }
+    let timer = Timer::default();
+    timer.start(TimerMode::Repeated, Duration::from_millis(100), || {
+        while gtk::events_pending() {
+            gtk::main_iteration_do(false);
+        }
+    });
+    Some(timer)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn start_tray_event_pump() -> Option<Timer> {
+    None
+}
+
+fn restore_window(ui: &slint::Weak<AppWindow>) {
+    let ui = ui.clone();
+    let _ = ui.upgrade_in_event_loop(|ui| {
+        let _ = ui.show();
+        ui.window().set_minimized(false);
+        ui.set_status_text("Ready".into());
+    });
+}
+
+fn pawflow_tray_icon() -> Result<Icon, String> {
+    const SIZE: u32 = 32;
+    let mut rgba = vec![0; (SIZE * SIZE * 4) as usize];
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as i32 - 16;
+            let dy = y as i32 - 16;
+            let inside_badge = dx * dx + dy * dy <= 15 * 15;
+            let p_stem = (9..=13).contains(&x) && (8..=24).contains(&y);
+            let p_bowl = (13..=22).contains(&x) && (8..=16).contains(&y);
+            let p_cutout = (15..=20).contains(&x) && (11..=14).contains(&y);
+            let is_glyph = p_stem || (p_bowl && !p_cutout);
+            let offset = ((y * SIZE + x) * 4) as usize;
+            if inside_badge {
+                rgba[offset] = if is_glyph { 255 } else { 31 };
+                rgba[offset + 1] = if is_glyph { 255 } else { 115 };
+                rgba[offset + 2] = if is_glyph { 255 } else { 216 };
+                rgba[offset + 3] = 255;
+            }
+        }
+    }
+    Icon::from_rgba(rgba, SIZE, SIZE).map_err(|err| err.to_string())
 }
 
 #[derive(Clone, Debug)]
@@ -329,8 +522,16 @@ fn load_display_state(relays: &RelayProcesses) -> Result<DisplayState, String> {
     prune_exited_relays(relays);
     let state = get_relay_state()?;
     let running = running_names(relays);
-    let servers = state.get("servers").and_then(Value::as_array).cloned().unwrap_or_default();
-    let workspaces = state.get("workspaces").and_then(Value::as_array).cloned().unwrap_or_default();
+    let servers = state
+        .get("servers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let workspaces = state
+        .get("workspaces")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let docker_state = list_docker_images();
     let catalog = load_image_catalog();
     let server_summary = primary_server_summary(&servers);
@@ -420,17 +621,26 @@ fn login_server(name: &str, ui: &slint::Weak<AppWindow>) -> Result<(), String> {
     run_streamed_command(cmd, &format!("server:{name}"), ui).map(|_| ())
 }
 
-fn start_relay(name: &str, relays: &RelayProcesses, ui: &slint::Weak<AppWindow>) -> Result<(), String> {
+fn start_relay(
+    name: &str,
+    relays: &RelayProcesses,
+    ui: &slint::Weak<AppWindow>,
+) -> Result<(), String> {
     prune_exited_relays(relays);
     {
-        let guard = relays.lock().map_err(|_| "relay process lock poisoned".to_string())?;
+        let guard = relays
+            .lock()
+            .map_err(|_| "relay process lock poisoned".to_string())?;
         if guard.contains_key(name) {
             return Ok(());
         }
     }
 
     let mut cmd = base_python_module_command();
-    cmd.arg("start").arg(name).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.arg("start")
+        .arg(name)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|err| err.to_string())?;
     if let Some(stdout) = child.stdout.take() {
         let ui = ui.clone();
@@ -443,13 +653,17 @@ fn start_relay(name: &str, relays: &RelayProcesses, ui: &slint::Weak<AppWindow>)
         thread::spawn(move || stream_reader(ui, stderr, label));
     }
 
-    let mut guard = relays.lock().map_err(|_| "relay process lock poisoned".to_string())?;
+    let mut guard = relays
+        .lock()
+        .map_err(|_| "relay process lock poisoned".to_string())?;
     guard.insert(name.to_string(), child);
     Ok(())
 }
 
 fn stop_relay(name: &str, relays: &RelayProcesses) -> Result<(), String> {
-    let mut guard = relays.lock().map_err(|_| "relay process lock poisoned".to_string())?;
+    let mut guard = relays
+        .lock()
+        .map_err(|_| "relay process lock poisoned".to_string())?;
     if let Some(mut child) = guard.remove(name) {
         child.kill().map_err(|err| err.to_string())?;
     }
@@ -463,12 +677,17 @@ fn build_relay_image(
     ui: &slint::Weak<AppWindow>,
 ) -> Result<(), String> {
     validate_docker_image_name(image_name)?;
-    let build_root = env::temp_dir().join("pawflow-relay-slint").join("relay-image-builds");
+    let build_root = env::temp_dir()
+        .join("pawflow-relay-slint")
+        .join("relay-image-builds");
     let out_dir = build_root.join(safe_image_build_name(image_name));
     let _ = fs::remove_dir_all(&out_dir);
     fs::create_dir_all(&build_root).map_err(|err| err.to_string())?;
 
-    append_log(ui, &format!("[image-build] generating context for {image_name}\n"));
+    append_log(
+        ui,
+        &format!("[image-build] generating context for {image_name}\n"),
+    );
     let mut generate = Command::new(python_command());
     apply_python_command_env(&mut generate);
     generate
@@ -496,6 +715,93 @@ fn build_relay_image(
     Ok(())
 }
 
+fn choose_folder(current: &str) -> Result<Option<String>, String> {
+    if cfg!(windows) {
+        choose_folder_windows(current)
+    } else {
+        choose_folder_unix(current)
+    }
+}
+
+fn choose_folder_windows(current: &str) -> Result<Option<String>, String> {
+    let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = 'Select PawFlow workspace folder'
+$dialog.ShowNewFolderButton = $true
+if ($args.Count -gt 0 -and $args[0] -and (Test-Path -LiteralPath $args[0])) { $dialog.SelectedPath = $args[0] }
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Write-Output $dialog.SelectedPath }
+"#;
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-STA",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+            current,
+        ])
+        .output()
+        .map_err(|err| err.to_string())?;
+    folder_output(output)
+}
+
+fn choose_folder_unix(current: &str) -> Result<Option<String>, String> {
+    let candidates: Vec<(&str, Vec<String>)> = vec![
+        (
+            "zenity",
+            vec![
+                "--file-selection".into(),
+                "--directory".into(),
+                "--filename".into(),
+                current.into(),
+            ],
+        ),
+        (
+            "kdialog",
+            vec!["--getexistingdirectory".into(), current.into()],
+        ),
+    ];
+    for (program, args) in candidates {
+        if command_exists(program) {
+            let output = Command::new(program)
+                .args(args)
+                .output()
+                .map_err(|err| err.to_string())?;
+            return folder_output(output);
+        }
+    }
+    Err("No folder picker found. Install zenity/kdialog or type the path manually.".into())
+}
+
+fn command_exists(program: &str) -> bool {
+    let Some(paths) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&paths).any(|dir| dir.join(program).exists())
+}
+
+fn folder_output(output: std::process::Output) -> Result<Option<String>, String> {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if output.status.success() {
+        if stdout.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(stdout))
+        }
+    } else if stdout.is_empty() && stderr.is_empty() {
+        Ok(None)
+    } else {
+        Err(non_empty(
+            stderr,
+            stdout,
+            format!("folder picker exited {}", output.status),
+        ))
+    }
+}
+
 fn run_python_json(source: &str, args: &[&str]) -> Result<Value, String> {
     let mut cmd = Command::new(python_command());
     apply_python_command_env(&mut cmd);
@@ -507,9 +813,14 @@ fn run_python_json(source: &str, args: &[&str]) -> Result<Value, String> {
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() {
-        return Err(non_empty(stderr, stdout, format!("Python exited {}", output.status)));
+        return Err(non_empty(
+            stderr,
+            stdout,
+            format!("Python exited {}", output.status),
+        ));
     }
-    serde_json::from_str(stdout.trim()).map_err(|err| format!("Invalid JSON from Python: {err}\n{stdout}"))
+    serde_json::from_str(stdout.trim())
+        .map_err(|err| format!("Invalid JSON from Python: {err}\n{stdout}"))
 }
 
 fn base_python_module_command() -> Command {
@@ -528,7 +839,13 @@ fn apply_python_command_env(cmd: &mut Command) {
 fn python_command() -> String {
     env::var("PAWFLOW_RELAY_PYTHON")
         .or_else(|_| env::var("PYTHON"))
-        .unwrap_or_else(|_| if cfg!(windows) { "py".into() } else { "python3".into() })
+        .unwrap_or_else(|_| {
+            if cfg!(windows) {
+                "py".into()
+            } else {
+                "python3".into()
+            }
+        })
 }
 
 fn manifest_root() -> PathBuf {
@@ -536,7 +853,9 @@ fn manifest_root() -> PathBuf {
 }
 
 fn executable_root() -> Option<PathBuf> {
-    env::current_exe().ok().and_then(|path| path.parent().map(Path::to_path_buf))
+    env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
 }
 
 fn repo_root() -> PathBuf {
@@ -586,7 +905,10 @@ fn python_path() -> String {
     let delimiter = if cfg!(windows) { ";" } else { ":" };
     let mut roots = vec![runtime_root(), repo_root()];
     roots.dedup();
-    let mut parts: Vec<String> = roots.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+    let mut parts: Vec<String> = roots
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
     if let Ok(existing) = env::var("PYTHONPATH") {
         if !existing.is_empty() {
             parts.push(existing);
@@ -644,10 +966,18 @@ fn run_docker_capture(args: &[&str]) -> Result<String, String> {
         if output.status.success() {
             Ok(stdout)
         } else {
-            Err(non_empty(stderr, stdout, format!("wsl docker exited {}", output.status)))
+            Err(non_empty(
+                stderr,
+                stdout,
+                format!("wsl docker exited {}", output.status),
+            ))
         }
     } else {
-        Err(non_empty(stderr, stdout, format!("docker exited {}", output.status)))
+        Err(non_empty(
+            stderr,
+            stdout,
+            format!("docker exited {}", output.status),
+        ))
     }
 }
 
@@ -662,7 +992,10 @@ fn run_docker(args: &[&str], label: &str, ui: &slint::Weak<AppWindow>) -> Result
             Ok(())
         }
         Err(err) if cfg!(windows) && docker_connect_error(&err) => {
-            append_log(ui, "[docker] Windows Docker unavailable; trying WSL docker\n");
+            append_log(
+                ui,
+                "[docker] Windows Docker unavailable; trying WSL docker\n",
+            );
             let mut cmd = Command::new("wsl.exe");
             cmd.args(wsl_base_args()).arg("docker").args(args);
             run_streamed_command(cmd, label, ui).map(|_| ())
@@ -671,14 +1004,21 @@ fn run_docker(args: &[&str], label: &str, ui: &slint::Weak<AppWindow>) -> Result
     }
 }
 
-fn run_docker_build(image_name: &str, context_dir: &Path, ui: &slint::Weak<AppWindow>) -> Result<(), String> {
+fn run_docker_build(
+    image_name: &str,
+    context_dir: &Path,
+    ui: &slint::Weak<AppWindow>,
+) -> Result<(), String> {
     let context = context_dir.to_string_lossy().to_string();
     let mut cmd = Command::new(docker_command());
     cmd.args(["build", "-t", image_name, &context]);
     match run_streamed_command(cmd, "image-build", ui) {
         Ok(_) => Ok(()),
         Err(err) if cfg!(windows) && docker_connect_error(&err) => {
-            append_log(ui, "[docker] Windows Docker unavailable; trying WSL docker\n");
+            append_log(
+                ui,
+                "[docker] Windows Docker unavailable; trying WSL docker\n",
+            );
             let wsl_context = wsl_path(context_dir)?;
             let mut cmd = Command::new("wsl.exe");
             cmd.args(wsl_base_args())
@@ -690,7 +1030,11 @@ fn run_docker_build(image_name: &str, context_dir: &Path, ui: &slint::Weak<AppWi
     }
 }
 
-fn run_streamed_command(mut cmd: Command, label: &str, ui: &slint::Weak<AppWindow>) -> Result<String, String> {
+fn run_streamed_command(
+    mut cmd: Command,
+    label: &str,
+    ui: &slint::Weak<AppWindow>,
+) -> Result<String, String> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|err| err.to_string())?;
     let stdout = child.stdout.take();
@@ -702,13 +1046,17 @@ fn run_streamed_command(mut cmd: Command, label: &str, ui: &slint::Weak<AppWindo
         let ui = ui.clone();
         let label = label.to_string();
         let output = Arc::clone(&output);
-        handles.push(thread::spawn(move || stream_and_capture(ui, stdout, label, output)));
+        handles.push(thread::spawn(move || {
+            stream_and_capture(ui, stdout, label, output)
+        }));
     }
     if let Some(stderr) = stderr {
         let ui = ui.clone();
         let label = label.to_string();
         let output = Arc::clone(&output);
-        handles.push(thread::spawn(move || stream_and_capture(ui, stderr, label, output)));
+        handles.push(thread::spawn(move || {
+            stream_and_capture(ui, stderr, label, output)
+        }));
     }
 
     let status = child.wait().map_err(|err| err.to_string())?;
@@ -719,7 +1067,11 @@ fn run_streamed_command(mut cmd: Command, label: &str, ui: &slint::Weak<AppWindo
     if status.success() {
         Ok(captured)
     } else {
-        Err(non_empty(captured, String::new(), format!("command exited {status}")))
+        Err(non_empty(
+            captured,
+            String::new(),
+            format!("command exited {status}"),
+        ))
     }
 }
 
@@ -766,7 +1118,9 @@ where
 }
 
 fn prune_exited_relays(relays: &RelayProcesses) {
-    let Ok(mut guard) = relays.lock() else { return; };
+    let Ok(mut guard) = relays.lock() else {
+        return;
+    };
     let mut exited = Vec::new();
     for (name, child) in guard.iter_mut() {
         match child.try_wait() {
@@ -794,7 +1148,9 @@ fn load_image_catalog() -> Result<Value, String> {
 
 fn relay_image_catalog_path() -> Result<PathBuf, String> {
     first_existing_path(&[
-        runtime_root().join("config").join("relay_image_catalog.json"),
+        runtime_root()
+            .join("config")
+            .join("relay_image_catalog.json"),
         repo_root().join("config").join("relay_image_catalog.json"),
     ])
     .ok_or_else(|| "Relay image catalog not found".to_string())
@@ -802,7 +1158,9 @@ fn relay_image_catalog_path() -> Result<PathBuf, String> {
 
 fn relay_image_generator_path() -> Result<PathBuf, String> {
     first_existing_path(&[
-        runtime_root().join("scripts").join("generate-relay-image.py"),
+        runtime_root()
+            .join("scripts")
+            .join("generate-relay-image.py"),
         repo_root().join("scripts").join("generate-relay-image.py"),
     ])
     .ok_or_else(|| "Relay image generator not found".to_string())
@@ -843,7 +1201,11 @@ fn primary_server_summary(servers: &[Value]) -> ServerSummary {
     let logged = truthy(server.get("session_token")) || truthy(server.get("logged_in"));
     ServerSummary {
         row_name: name.clone(),
-        row_meta: if logged { "logged in".into() } else { "login needed".into() },
+        row_meta: if logged {
+            "logged in".into()
+        } else {
+            "login needed".into()
+        },
         name,
         url,
     }
@@ -866,7 +1228,11 @@ fn primary_relay_summary(workspaces: &[Value], running: &[String]) -> RelaySumma
     let path = value_str(workspace, "path");
     let mode = optional_value_str(workspace, "mode").unwrap_or_else(|| "rw".into());
     let docker_image = value_str(workspace, "docker_image");
-    let status = if running.iter().any(|item| item == &name) { "running" } else { "stopped" };
+    let status = if running.iter().any(|item| item == &name) {
+        "running"
+    } else {
+        "stopped"
+    };
     RelaySummary {
         row_name: name.clone(),
         row_meta: status.into(),
@@ -890,7 +1256,11 @@ fn format_servers(servers: &[Value]) -> String {
             let user = value_str(server, "username");
             let logged = truthy(server.get("session_token")) || truthy(server.get("logged_in"));
             let status = if logged { "logged in" } else { "login needed" };
-            let user_suffix = if user.is_empty() { String::new() } else { format!(" as {user}") };
+            let user_suffix = if user.is_empty() {
+                String::new()
+            } else {
+                format!(" as {user}")
+            };
             format!("{name}\n  {url}\n  {status}{user_suffix}")
         })
         .collect::<Vec<_>>()
@@ -908,7 +1278,11 @@ fn format_workspaces(workspaces: &[Value], running: &[String]) -> String {
             let server = value_str(workspace, "server");
             let path = value_str(workspace, "path");
             let mode = optional_value_str(workspace, "mode").unwrap_or_else(|| "rw".into());
-            let status = if running.iter().any(|item| item == &name) { "running" } else { "stopped" };
+            let status = if running.iter().any(|item| item == &name) {
+                "running"
+            } else {
+                "stopped"
+            };
             format!("{name} ({status})\n  {server} / {mode}\n  {path}")
         })
         .collect::<Vec<_>>()
@@ -918,7 +1292,11 @@ fn format_workspaces(workspaces: &[Value], running: &[String]) -> String {
 fn format_docker_state(state: &Result<Value, String>) -> String {
     match state {
         Ok(value) => {
-            let images = value.get("images").and_then(Value::as_array).cloned().unwrap_or_default();
+            let images = value
+                .get("images")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             if images.is_empty() {
                 return "No local Docker images found".into();
             }
@@ -928,7 +1306,11 @@ fn format_docker_state(state: &Result<Value, String>) -> String {
                 .map(|image| {
                     let name = value_str(image, "name");
                     let size = value_str(image, "size");
-                    if size.is_empty() { name } else { format!("{name} ({size})") }
+                    if size.is_empty() {
+                        name
+                    } else {
+                        format!("{name} ({size})")
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -940,8 +1322,16 @@ fn format_docker_state(state: &Result<Value, String>) -> String {
 fn format_catalog_state(state: &Result<Value, String>) -> String {
     match state {
         Ok(value) => {
-            let features = value.get("features").and_then(Value::as_object).map(|map| map.len()).unwrap_or(0);
-            let profiles = value.get("profiles").and_then(Value::as_object).map(|map| map.len()).unwrap_or(0);
+            let features = value
+                .get("features")
+                .and_then(Value::as_object)
+                .map(|map| map.len())
+                .unwrap_or(0);
+            let profiles = value
+                .get("profiles")
+                .and_then(Value::as_object)
+                .map(|map| map.len())
+                .unwrap_or(0);
             format!("Catalog loaded: {profiles} presets, {features} features. Use comma-separated feature ids for custom builds.")
         }
         Err(err) => format!("Catalog unavailable: {err}"),
@@ -953,7 +1343,10 @@ fn value_str(value: &Value, key: &str) -> String {
 }
 
 fn optional_value_str(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(Value::as_str).map(ToString::to_string)
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
 }
 
 fn truthy(value: Option<&Value>) -> bool {
@@ -979,7 +1372,11 @@ fn validate_docker_image_name(image_name: &str) -> Result<(), String> {
         && image_name
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '/' | '-' | ':'))
-        && image_name.chars().next().map(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit()).unwrap_or(false);
+        && image_name
+            .chars()
+            .next()
+            .map(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+            .unwrap_or(false);
     if valid {
         Ok(())
     } else {
@@ -990,10 +1387,20 @@ fn validate_docker_image_name(image_name: &str) -> Result<(), String> {
 fn safe_image_build_name(image_name: &str) -> String {
     let sanitized: String = image_name
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-') { ch } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-') {
+                ch
+            } else {
+                '-'
+            }
+        })
         .collect();
     let trimmed = sanitized.trim_matches('-');
-    if trimmed.is_empty() { "relay-image".into() } else { trimmed.into() }
+    if trimmed.is_empty() {
+        "relay-image".into()
+    } else {
+        trimmed.into()
+    }
 }
 
 fn docker_command() -> String {
@@ -1020,7 +1427,11 @@ fn wsl_path(path: &Path) -> Result<String, String> {
     if output.status.success() {
         Ok(stdout)
     } else {
-        Err(non_empty(stderr, stdout, format!("wslpath exited {}", output.status)))
+        Err(non_empty(
+            stderr,
+            stdout,
+            format!("wslpath exited {}", output.status),
+        ))
     }
 }
 
@@ -1036,7 +1447,11 @@ fn docker_connect_error(message: &str) -> bool {
 }
 
 fn bool_arg(value: bool) -> &'static str {
-    if value { "true" } else { "false" }
+    if value {
+        "true"
+    } else {
+        "false"
+    }
 }
 
 fn non_empty(first: String, second: String, fallback: String) -> String {

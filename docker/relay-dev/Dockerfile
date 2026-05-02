@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     file less man-db chrony \
     libffi-dev libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
     libncurses-dev libgdbm-dev liblzma-dev tk-dev uuid-dev \
+    libfontconfig1-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev \
     fuse3 libfuse3-dev \
     && rm -rf /var/lib/apt/lists/*
 

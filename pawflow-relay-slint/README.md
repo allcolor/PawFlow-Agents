@@ -13,10 +13,11 @@ The Slint app covers the same relay-manager surfaces as the Electron app:
 - relay permissions: read/write mode, exec, remote desktop, local host access;
 - Docker image inventory;
 - relay image builder using `config/relay_image_catalog.json` and `scripts/generate-relay-image.py`;
-- stdout/stderr log streaming for relay and image build processes;
-- embedded Python runtime lookup via `PAWFLOW_RELAY_RUNTIME_ROOT` or a local `runtime/` directory.
-
-Tray integration remains the last desktop-shell parity item before replacing the Electron path.
+- stdout/stderr log streaming for relay and image build processes in a persistent bottom log panel;
+- native folder selection for relay workspace paths (`Browse` button; PowerShell picker on Windows, `zenity`/`kdialog` on Linux);
+- responsive Slint layout with hover/pressed states on sidebar entries and action buttons;
+- embedded Python runtime lookup via `PAWFLOW_RELAY_RUNTIME_ROOT` or a local `runtime/` directory;
+- cross-platform tray icon with click/menu restore and a `Quit` action. Closing the window hides it while the relay desktop process remains alive for tray restore.
 
 ## Run from the repository
 
@@ -26,7 +27,7 @@ python scripts/prepare-runtime.py --repo-root .. --out runtime
 cargo run
 ```
 
-Set `PAWFLOW_RELAY_PYTHON` to choose the Python executable. If unset, the app uses `py` on Windows and `python3` elsewhere. Building from source also requires Rust/Cargo on the same OS where you run the package command. On Windows, install Rust from `https://rustup.rs/`, then reopen PowerShell so `cargo` is in `PATH`.
+Set `PAWFLOW_RELAY_PYTHON` to choose the Python executable. If unset, the app uses `py` on Windows and `python3` elsewhere. Building from source also requires Rust/Cargo on the same OS where you run the package command. On Linux, install the native Slint/tray build packages: `libfontconfig1-dev`, `libxkbcommon-dev`, `libgtk-3-dev`, and `libayatana-appindicator3-dev`. On Windows, install Rust from `https://rustup.rs/`, then reopen PowerShell so `cargo` is in `PATH`.
 
 ## Build a local portable package
 

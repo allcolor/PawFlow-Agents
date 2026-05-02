@@ -821,6 +821,7 @@ function tryServerCommand(text) {
       return;
     }
     if (data.help) { addMsg('system', data.help); return; }
+    if (data.output) { addMsg('system', data.output); }
     if (data.message) { addMsg('system', data.message); }
     if (data.error) { addMsg('system', '\u26a0 ' + data.error); }
     if (data.conversation_id && data.ok && data.source) {

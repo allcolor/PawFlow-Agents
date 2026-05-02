@@ -53,7 +53,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential libfontconfig1-dev libxkbcommon-dev
+          sudo apt-get install -y --no-install-recommends build-essential libfontconfig1-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev
 
       - name: Prepare embedded runtime
         run: python pawflow-relay-slint/scripts/prepare-runtime.py --repo-root . --out pawflow-relay-slint/runtime

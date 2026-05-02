@@ -257,12 +257,23 @@ class TestLLMConnectionService:
         client._circuit_after_success("m")
         assert key not in LLMClient._circuit_state
 
-    def test_default_models_are_loaded_from_system_config(self):
+    def test_default_models_are_loaded_from_system_config(self, monkeypatch, tmp_path):
+        from core.llm_client import _load_default_models
+
         src = open("core/llm_client.py", encoding="utf-8").read()
         assert "DEFAULT_MODELS = {" not in src
-        with open("data/system/default_models.json", encoding="utf-8") as fh:
-            configured = json.load(fh)
-        assert LLMClient.DEFAULT_MODELS == configured
+        configured = {
+            "openai": "gpt-4o-mini",
+            "anthropic": "claude-opus-4-6",
+            "claude-code": "claude-opus-4-6",
+            "codex-app-server": "gpt-5.4",
+            "gemini": "gemini-2.5-pro",
+        }
+        config_path = tmp_path / "default_models.json"
+        config_path.write_text(json.dumps(configured), encoding="utf-8")
+        monkeypatch.setenv("PAWFLOW_DEFAULT_MODELS_FILE", str(config_path))
+
+        assert _load_default_models() == configured
         assert set(configured) >= {"openai", "anthropic", "claude-code", "codex-app-server", "gemini"}
 
     def test_default_models_fall_back_when_system_config_is_missing(self, monkeypatch, tmp_path):

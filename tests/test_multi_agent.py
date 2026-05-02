@@ -114,6 +114,29 @@ class TestAgentResult:
 
 
 class TestSingleAgentExecution:
+    def test_sub_agent_tool_execution_records_registry_metrics(self):
+        """Sub-agent tool calls must go through ToolRegistry.execute."""
+        ToolRegistry.reset_metrics()
+        registry = make_registry(EchoToolHandler())
+        executor = SubAgentExecutor(make_client_mock([]), registry)
+
+        result = executor._execute_tool(
+            LLMToolCall(id="call_echo", name="echo", arguments={"text": "hi"}),
+            {h.name: h for h in registry.list_tools()},
+        )
+
+        assert result == "Echo: hi"
+        missing = executor._execute_tool(
+            LLMToolCall(id="call_missing", name="missing", arguments={}),
+            {h.name: h for h in registry.list_tools()},
+        )
+
+        assert "unknown tool" in missing
+        metrics = ToolRegistry.get_metrics()
+        assert metrics["echo"]["calls"] == 1
+        assert metrics["echo"]["successes"] == 1
+        assert metrics["missing"]["errors"] == 1
+
     def test_simple_response(self):
         """Agent gets a direct response (no tool calls)."""
         client = make_client_mock([simple_response("Hello world")])

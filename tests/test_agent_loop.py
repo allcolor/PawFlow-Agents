@@ -237,6 +237,32 @@ class TestOpenAIToolCallParsing(unittest.TestCase):
         assert resp.finish_reason == "tool_calls"
 
     @patch.object(LLMClient, '_http_post')
+    def test_parse_tool_call_missing_arguments_logs_warning(self, mock_post):
+        mock_post.return_value = {
+            "choices": [{
+                "message": {
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_empty",
+                        "type": "function",
+                        "function": {"name": "use_tool"},
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "model": "gpt-4o",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+
+        client = LLMClient(provider="openai", config={"api_key": "test"})
+        with self.assertLogs("core.llm_providers.openai", level="WARNING") as logs:
+            resp = client.complete([LLMMessage(role="user", content="hi", conversation_id="test_conv")])
+
+        assert resp.tool_calls[0].name == "use_tool"
+        assert resp.tool_calls[0].arguments == {}
+        assert "omitted arguments field" in "\n".join(logs.output)
+
+    @patch.object(LLMClient, '_http_post')
     def test_parse_text_response_no_tool_calls(self, mock_post):
         mock_post.return_value = {
             "choices": [{

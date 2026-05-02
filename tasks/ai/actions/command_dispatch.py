@@ -283,6 +283,11 @@ HELP: Dict[str, Dict[str, str]] = {
         "short": "List available tools",
         "detail": "List all tools available to the current agent.",
     },
+    "/tool-metrics": {
+        "usage": "/tool-metrics",
+        "short": "Show tool execution metrics",
+        "detail": "Show per-tool call counts, errors, latency, and the latest error.",
+    },
     "/call": {
         "usage": '/call tool_name(key=value, ...) or /call tool_name {"key": "value"}',
         "short": "Call a tool directly",
@@ -901,6 +906,9 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     if cmd == "/tools":
         return {"action": "list_tools", **base}
+
+    if cmd == "/tool-metrics":
+        return {"action": "tool_metrics", **base}
 
     if cmd == "/call":
         return {"action": "user_tool_call", "call_text": arg, **base}

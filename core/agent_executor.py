@@ -1090,7 +1090,7 @@ class SubAgentExecutor:
         """Execute a single tool call with per-agent approval gate."""
         handler = handlers.get(tc.name)
         if handler is None:
-            return f"Error: unknown tool '{tc.name}'"
+            return self._registry.execute(tc.name, tc.arguments)
         # Set agent identity for ownership tracking (ManageResourceHandler)
         if agent_name and hasattr(handler, 'set_agent_name'):
             handler.set_agent_name(agent_name)
@@ -1114,11 +1114,7 @@ class SubAgentExecutor:
                             return f"Error: Tool '{tc.name}' was {approval} by the user."
             except Exception as e:
                 logger.debug("Sub-agent approval check failed: %s", e)
-        try:
-            return handler.execute(tc.arguments)
-        except Exception as e:
-            logger.warning("Tool '%s' error in sub-agent: %s", tc.name, e)
-            return f"Error executing {tc.name}: {e}"
+        return self._registry.execute(tc.name, tc.arguments)
 
     def _force_synthesis(
         self, messages: List[LLMMessage], model: str,

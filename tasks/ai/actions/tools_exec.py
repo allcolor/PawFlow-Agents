@@ -208,6 +208,27 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "tool_metrics":
+        metrics = ToolRegistry.get_metrics()
+        rows = []
+        for name, stats in sorted(metrics.items()):
+            calls = int(stats.get("calls", 0) or 0)
+            errors = int(stats.get("errors", 0) or 0)
+            successes = int(stats.get("successes", 0) or 0)
+            avg_ms = float(stats.get("avg_duration_ms", 0.0) or 0.0)
+            max_ms = float(stats.get("max_duration_ms", 0.0) or 0.0)
+            last_ms = float(stats.get("last_duration_ms", 0.0) or 0.0)
+            rows.append(
+                f"{name}: calls={calls} ok={successes} errors={errors} "
+                f"avg={avg_ms:.1f}ms max={max_ms:.1f}ms last={last_ms:.1f}ms"
+            )
+            last_error = str(stats.get("last_error", "") or "")
+            if last_error:
+                rows.append(f"  last_error={last_error[:220]}")
+        output = "Tool metrics\n" + ("\n".join(rows) if rows else "No tool calls recorded yet.")
+        flowfile.set_content(json.dumps({"output": output, "metrics": metrics}, ensure_ascii=False).encode())
+        return [flowfile]
+
     # â”€â”€ User tool call â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     if action == "get_tool_schemas":

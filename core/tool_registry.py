@@ -142,7 +142,7 @@ class ToolRegistry:
 
     _live_registry: Optional["ToolRegistry"] = None  # for dynamic tool access
     _metrics_lock = threading.Lock()
-    _metrics: Dict[str, Dict[str, float]] = {}
+    _metrics: Dict[str, Dict[str, Any]] = {}
 
     def __init__(self):
         self._handlers: Dict[str, ToolHandler] = {}
@@ -154,21 +154,34 @@ class ToolRegistry:
             cls._metrics.clear()
 
     @classmethod
-    def _record_metric(cls, name: str, ok: bool, duration_ms: float):
+    def _record_metric(cls, name: str, ok: bool, duration_ms: float,
+                       error: str = ""):
+        tool_name = name or "(missing)"
+        now = time.time()
         with cls._metrics_lock:
-            m = cls._metrics.setdefault(name, {
+            m = cls._metrics.setdefault(tool_name, {
                 "calls": 0, "successes": 0, "errors": 0,
                 "total_duration_ms": 0.0, "avg_duration_ms": 0.0,
-                "max_duration_ms": 0.0,
+                "min_duration_ms": 0.0, "max_duration_ms": 0.0,
+                "last_duration_ms": 0.0, "last_at": 0.0,
+                "last_ok": False, "last_error": "",
             })
             m["calls"] += 1
             m["successes" if ok else "errors"] += 1
             m["total_duration_ms"] += duration_ms
             m["avg_duration_ms"] = m["total_duration_ms"] / max(1, m["calls"])
+            m["min_duration_ms"] = (
+                duration_ms if m["calls"] == 1
+                else min(m["min_duration_ms"], duration_ms)
+            )
             m["max_duration_ms"] = max(m["max_duration_ms"], duration_ms)
+            m["last_duration_ms"] = duration_ms
+            m["last_at"] = now
+            m["last_ok"] = ok
+            m["last_error"] = "" if ok else str(error or "")[:500]
 
     @classmethod
-    def get_metrics(cls) -> Dict[str, Dict[str, float]]:
+    def get_metrics(cls) -> Dict[str, Dict[str, Any]]:
         with cls._metrics_lock:
             return {name: dict(stats) for name, stats in cls._metrics.items()}
 
@@ -216,16 +229,23 @@ class ToolRegistry:
         """Execute a tool by name. Returns result text or error."""
         start = time.time()
         ok = False
+        metric_error = ""
+
+        def _fail(message: str) -> str:
+            nonlocal metric_error
+            metric_error = message
+            return message
+
         try:
             handler = self._handlers.get(name)
             if not handler:
-                return f"Error: unknown tool '{name}'"
+                return _fail(f"Error: unknown tool '{name}'")
             # Run pre-hooks (specific then wildcard)
             args = arguments
             for hook in self._hooks.get(f"pre:{name}", []) + self._hooks.get("pre:*", []):
                 result = hook(name, args)
                 if result is None:
-                    return f"Error: tool '{name}' blocked by pre-hook"
+                    return _fail(f"Error: tool '{name}' blocked by pre-hook")
                 args = result
             # Unwrap JSON string (MCP bridge double-encoding)
             if isinstance(args, str):
@@ -236,7 +256,7 @@ class ToolRegistry:
             from core.tool_json import tool_argument_parse_error
             _parse_error = tool_argument_parse_error(args)
             if _parse_error:
-                return _parse_error
+                return _fail(_parse_error)
             # Normalize CC-native argument names to PawFlow names
             # (drop-in compat with Claude Code built-in tool signatures)
             if isinstance(args, dict):
@@ -274,12 +294,14 @@ class ToolRegistry:
                 if _known:
                     _unknown = [k for k in args if k not in _known and not k.startswith("_")]
                     if _unknown:
-                        return (f"Error: unknown argument(s) {_unknown} for tool '{name}'. "
-                                f"Valid arguments: {sorted(_known)}")
+                        return _fail(
+                            f"Error: unknown argument(s) {_unknown} for tool '{name}'. "
+                            f"Valid arguments: {sorted(_known)}")
                 _missing = missing_required_arguments(_schema, args)
                 if _missing:
-                    return (f"Error: missing required argument(s) {_missing} for tool '{name}'. "
-                            f"Valid arguments: {sorted(_known)}")
+                    return _fail(
+                        f"Error: missing required argument(s) {_missing} for tool '{name}'. "
+                        f"Valid arguments: {sorted(_known)}")
             # Execute
             result = handler.execute(args)
             # Run post-hooks (specific then wildcard)
@@ -315,13 +337,20 @@ class ToolRegistry:
                     )
                 except Exception:
                     result = result[:_max] + f"\n\n[... truncated — {len(result):,} chars total]"
-            ok = True
+            if isinstance(result, str) and result.startswith("Error:"):
+                metric_error = result
+            else:
+                ok = True
             return result
         except Exception as e:
+            metric_error = f"Error executing tool '{name}': {e}"
             logger.error(f"Tool '{name}' execution failed: {e}")
-            return f"Error executing tool '{name}': {e}"
+            return metric_error
         finally:
-            self._record_metric(name, ok, (time.time() - start) * 1000)
+            self._record_metric(
+                name, ok, (time.time() - start) * 1000,
+                error=metric_error,
+            )
 
 
 

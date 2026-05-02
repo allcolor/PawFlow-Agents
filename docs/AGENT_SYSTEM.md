@@ -414,16 +414,22 @@ Agents can override the relay per call with `relay="<service-id>"`. The meta-too
 
 Instead of sending all tool schemas to the LLM (which can consume thousands of tokens), PawFlow uses two meta-tools:
 - `get_tool_schema()` -- The agent calls this to discover available tools.
-- `use_tool(tool_name, arguments)` -- The agent calls this to execute any tool.
+- `use_tool(tool_name, arguments_json)` -- The provider-facing execution contract. `arguments_json` is a JSON object string matching the target tool schema.
+
+`UseToolHandler` still accepts legacy/internal `arguments` objects for compatibility, but the exposed schema deliberately avoids nested free-form objects because some OpenAI-compatible backends drop them and repeatedly call tools with `{}`.
 
 This reduces the constant token overhead from ~7000 tokens to ~200 tokens, making it practical for smaller context LLMs.
 
 ### Tool Metrics
 
 `ToolRegistry` records process-local metrics for every dispatch, including unknown
-or blocked tools: call count, successes, errors, total duration, average duration,
-and max duration. These counters are intentionally in-memory operational metrics;
-they do not alter conversation history or tool results.
+or blocked tools: call count, successes, errors, total duration, average/min/max
+and last duration, last status, last timestamp, and the latest error text. Returned
+`Error:` tool results are counted as metric errors even when no Python exception is
+raised. Sub-agent tool execution also goes through the registry so it is counted
+with normal agent, `/call`, and MCP bridge executions. `/tool-metrics` exposes the
+process-local snapshot for operators. These counters are intentionally in-memory
+operational metrics; they do not alter conversation history or tool results.
 
 ### Tool Result Size Limit
 

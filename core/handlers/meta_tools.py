@@ -280,20 +280,21 @@ class UseToolHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Execute any registered tool by name, passing arguments as a JSON object.\n"
+            "Execute any registered tool by name, passing tool arguments as a JSON string.\n"
             "This is the execution half of the lazy tool discovery pattern.\n\n"
             "IMPORTANT: Always call get_tool_schema first to learn the tool's\n"
             "parameter schema. Passing unknown or mistyped arguments will return an\n"
             "error listing the valid parameter names.\n\n"
             "Parameters:\n"
-            "  tool_name  -- exact name of the tool to execute.\n"
-            "  arguments  -- JSON object of arguments matching the tool's schema.\n\n"
+            "  tool_name      -- exact name of the tool to execute.\n"
+            "  arguments_json -- JSON object string matching the target tool schema,\n"
+            "                    for example '{\"path\": \"/workspace\"}'.\n\n"
             "The tool executes with the same permissions and context as a direct\n"
             "tool call. Results are returned as-is from the underlying handler.\n\n"
             "You cannot call get_tool_schema or use_tool recursively through this\n"
             "tool -- they must be called as top-level tool calls.\n\n"
             "Workflow: get_tool_schema(tool_name='X') -> read the schema ->\n"
-            "use_tool(tool_name='X', arguments={...})."
+            "use_tool(tool_name='X', arguments_json='{...}')."
         )
 
     @property
@@ -302,9 +303,12 @@ class UseToolHandler(ToolHandler):
             "type": "object",
             "properties": {
                 "tool_name": {"type": "string", "description": "Name of the tool to execute"},
-                "arguments": {"type": "object", "description": "Arguments to pass to the tool"},
+                "arguments_json": {
+                    "type": "string",
+                    "description": "Required JSON object string with the target tool arguments, e.g. '{\"path\": \"/workspace\"}'. Use '{}' for tools with no arguments.",
+                },
             },
-            "required": ["tool_name", "arguments"],
+            "required": ["tool_name", "arguments_json"],
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
@@ -326,6 +330,8 @@ class UseToolHandler(ToolHandler):
                      or arguments.get("tool")
                      or "")
         tool_args = arguments.get("arguments")
+        if tool_args is None:
+            tool_args = arguments.get("arguments_json")
         if tool_args is None:
             tool_args = arguments.get("params")
         if tool_args is None:
@@ -354,6 +360,8 @@ class UseToolHandler(ToolHandler):
                            or tool_args.get("tool")
                            or "")
             nested_args = tool_args.get("arguments")
+            if nested_args is None:
+                nested_args = tool_args.get("arguments_json")
             if nested_args is None:
                 nested_args = tool_args.get("params")
             if nested_args is None:
@@ -400,6 +408,17 @@ class UseToolHandler(ToolHandler):
                             f"Use get_tool_schema(tool_name='{tool_name}') to see full schema.")
             missing = missing_required_arguments(schema, tool_args)
             if missing:
+                hint = f"Use get_tool_schema(tool_name='{tool_name}') to see full schema."
+                if not tool_args:
+                    hint += (
+                        " Got empty arguments; if this is an OpenAI-compatible backend "
+                        "dropping nested objects, call use_tool with arguments_json as a "
+                        "JSON object string instead."
+                    )
+                    logger.warning(
+                        "use_tool received empty arguments for %s with required=%s",
+                        tool_name, missing,
+                    )
                 return (f"Error: missing required argument(s) {missing} for tool '{tool_name}'. "
-                        f"Use get_tool_schema(tool_name='{tool_name}') to see full schema.")
+                        f"{hint}")
         return self._registry.execute(tool_name, tool_args)

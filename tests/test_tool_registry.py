@@ -155,7 +155,23 @@ class TestExecute(unittest.TestCase):
         assert metrics["mock_tool"]["calls"] == 1
         assert metrics["mock_tool"]["successes"] == 1
         assert metrics["mock_tool"]["avg_duration_ms"] >= 0
+        assert metrics["mock_tool"]["last_duration_ms"] >= 0
+        assert metrics["mock_tool"]["last_ok"] is True
         assert metrics["missing"]["errors"] == 1
+        assert metrics["missing"]["last_ok"] is False
+        assert "unknown tool" in metrics["missing"]["last_error"]
+
+    def test_execute_counts_error_result_as_metric_error(self):
+        ToolRegistry.reset_metrics()
+        reg = ToolRegistry()
+        reg.register(MockHandler(name="soft_error", result="Error: invalid args"))
+        assert reg.execute("soft_error", {}) == "Error: invalid args"
+        metrics = ToolRegistry.get_metrics()
+        assert metrics["soft_error"]["calls"] == 1
+        assert metrics["soft_error"]["successes"] == 0
+        assert metrics["soft_error"]["errors"] == 1
+        assert metrics["soft_error"]["last_ok"] is False
+        assert metrics["soft_error"]["last_error"] == "Error: invalid args"
 
 
 class TestCCAliases(unittest.TestCase):
@@ -277,6 +293,74 @@ class TestMetaToolAliases(unittest.TestCase):
 
         assert result == "read-ok"
         assert received == {"path": "/workspace/cli.py", "start_line": 1}
+
+    def test_use_tool_accepts_arguments_json_string(self):
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "glob-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="glob",
+            schema={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string"},
+                    "path": {"type": "string"},
+                },
+                "required": ["pattern"],
+            },
+        ))
+
+        use_tool = UseToolHandler(reg)
+        schema = use_tool.parameters_schema
+        assert "arguments_json" in schema["properties"]
+        assert "arguments" not in schema["properties"]
+        assert schema["required"] == ["tool_name", "arguments_json"]
+
+        result = use_tool.execute({
+            "tool_name": "glob",
+            "arguments_json": '{"pattern": "*.py", "path": "/workspace"}',
+        })
+
+        assert result == "glob-ok"
+        assert received == {"pattern": "*.py", "path": "/workspace"}
+
+    def test_nested_use_tool_accepts_arguments_json_string(self):
+        from core.handlers.meta_tools import UseToolHandler
+
+        received = {}
+
+        class CapturingHandler(MockHandler):
+            def execute(inner_self, arguments):
+                received.update(arguments)
+                return "glob-ok"
+
+        reg = ToolRegistry()
+        reg.register(CapturingHandler(
+            name="glob",
+            schema={
+                "type": "object",
+                "properties": {"pattern": {"type": "string"}},
+                "required": ["pattern"],
+            },
+        ))
+
+        result = UseToolHandler(reg).execute({
+            "tool_name": "use_tool",
+            "arguments": {
+                "tool_name": "glob",
+                "arguments_json": '{"pattern": "*.md"}',
+            },
+        })
+
+        assert result == "glob-ok"
+        assert received == {"pattern": "*.md"}
 
     def test_use_tool_rejects_missing_required_argument_before_execution(self):
         from core.handlers.meta_tools import UseToolHandler

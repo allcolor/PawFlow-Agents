@@ -159,6 +159,11 @@ class LLMOpenaiMixin:
             from core.tool_json import parse_tool_arguments
             for idx in sorted(tool_calls_map.keys()):
                 tc = tool_calls_map[idx]
+                if not tc.get("arguments_str"):
+                    logger.warning(
+                        "[openai] streamed tool call for %s had empty arguments",
+                        tc.get("name") or "<unknown>",
+                    )
                 args = parse_tool_arguments(
                     tc["arguments_str"],
                     tool_name=tc["name"],
@@ -431,8 +436,19 @@ class LLMOpenaiMixin:
         from core.tool_json import parse_tool_arguments
         for tc in message.get("tool_calls", []):
             func = tc.get("function", {})
+            raw_args = func.get("arguments")
+            if raw_args is None:
+                logger.warning(
+                    "[openai] tool call for %s omitted arguments field",
+                    func.get("name") or "<unknown>",
+                )
+            elif raw_args == "":
+                logger.warning(
+                    "[openai] tool call for %s had empty arguments",
+                    func.get("name") or "<unknown>",
+                )
             args = parse_tool_arguments(
-                func.get("arguments", "{}"),
+                raw_args,
                 tool_name=func.get("name", ""),
                 provider="openai",
                 log=logger,

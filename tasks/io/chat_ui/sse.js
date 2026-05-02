@@ -106,6 +106,9 @@ function connectSSE(cid, onReady, opts) {
       addMsg(data.role, data.content, {
         source: data.source, msg_id: data.msg_id,
       });
+      if (typeof _noteLiveHistoryAppend === 'function') {
+        _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
+      }
       scrollBottom();
     }
   });
@@ -769,7 +772,9 @@ function connectSSE(cid, onReady, opts) {
     }
     // Finalize thinking block before showing tool call
     finalizeThinking(data.agent_name || '');
-    if (data.message_count) serverMsgCount = data.message_count;
+    if (typeof _noteLiveHistoryAppend === 'function') {
+      _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
+    }
     console.log('[SSE] tool_call received:', data.tool, data.agent_name, data.llm_service, JSON.stringify(data.arguments || {}).substring(0, 200));
     // Finalize streaming for THIS agent before showing tool call
     const tcAgent = data.agent_name || '';
@@ -837,6 +842,9 @@ function connectSSE(cid, onReady, opts) {
       bumpContextEstimate(data.agent_name, resLen);
     }
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
+    if (typeof _noteLiveHistoryAppend === 'function') {
+      _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
+    }
     // Suppress delegate tool_result — the delegate block shows the response
     const tcId = data.tc_id || '';
     if (tcId && _delegateGroups['__tc__' + tcId]) return;
@@ -1135,8 +1143,10 @@ function connectSSE(cid, onReady, opts) {
     });
     trackAgentDone(doneAgent);
     console.log('[SSE done]', doneAgent, data.response ? data.response.substring(0, 100) : '(empty)');
-    // Sync message count to prevent poll from re-fetching these messages
-    if (data.message_count) serverMsgCount = data.message_count;
+    // Sync message count/offset to prevent poll and load-more overlap.
+    if (typeof _noteLiveHistoryAppend === 'function') {
+      _noteLiveHistoryAppend(data.message_count, 0);
+    }
     // Remove ONLY this agent's streaming chunks (not other agents').
     // Use both the tracked chunks AND a DOM scan, because tool_call
     // events may have cleared the JS references while leaving DOM elements.
@@ -1415,7 +1425,9 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('broadcast_done', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    if (data.message_count) serverMsgCount = data.message_count;
+    if (typeof _noteLiveHistoryAppend === 'function') {
+      _noteLiveHistoryAppend(data.message_count, 0);
+    }
     sending = false;
     document.getElementById('sendBtn').disabled = false;
     document.getElementById('stopBtn').style.display = 'none';

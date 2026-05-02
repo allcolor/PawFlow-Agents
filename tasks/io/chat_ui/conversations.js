@@ -138,6 +138,7 @@ function _clearConvState() {
   document.getElementById('messages').innerHTML = '';
   _expectingClear = false;
   _seenMsgIds.clear();
+  if (typeof _liveCountedMsgIds !== 'undefined' && _liveCountedMsgIds.clear) _liveCountedMsgIds.clear();
   if (typeof _selectedMsgIds !== 'undefined' && _selectedMsgIds.clear) _selectedMsgIds.clear();
   serverMsgCount = 0;
   _histTaskBlocks = {};
@@ -310,6 +311,35 @@ function _renderHistory(data) {
   document.getElementById('input').focus();
 }
 
+function _noteLiveHistoryAppend(messageCount, rawDelta, msgId) {
+  if (msgId && typeof _liveCountedMsgIds !== 'undefined') {
+    if (_liveCountedMsgIds.has(msgId)) return;
+    _liveCountedMsgIds.add(msgId);
+  }
+  const delta = rawDelta === undefined ? 1 : (Number(rawDelta) || 0);
+  const nextCount = Number(messageCount || 0) || 0;
+  if (nextCount > 0) {
+    if (serverMsgCount > 0 && nextCount > serverMsgCount) {
+      currentOffset += nextCount - serverMsgCount;
+    } else if (!serverMsgCount) {
+      currentOffset += delta;
+    }
+    serverMsgCount = Math.max(serverMsgCount || 0, nextCount);
+  } else {
+    currentOffset += delta;
+    if (serverMsgCount) serverMsgCount += delta;
+  }
+  if (hasMoreMessages) _updateLoadMoreBanner();
+}
+
+function _placeLoadMoreBanner(banner) {
+  const container = document.getElementById('messages');
+  if (!container || !banner) return;
+  if (container.firstChild !== banner) {
+    container.insertBefore(banner, container.firstChild);
+  }
+}
+
 function _updateLoadMoreBanner() {
   let banner = document.getElementById('loadMoreBanner');
   if (hasMoreMessages) {
@@ -318,9 +348,8 @@ function _updateLoadMoreBanner() {
       banner.id = 'loadMoreBanner';
       banner.className = 'load-more-banner';
       banner.onclick = loadMoreMessages;
-      const container = document.getElementById('messages');
-      container.insertBefore(banner, container.firstChild);
     }
+    _placeLoadMoreBanner(banner);
     const shown = document.querySelectorAll('#messages > .msg').length;
     const total = serverMsgCount || '?';
     banner.innerHTML = '&#x25B2; Load more messages (showing ' + shown + ' of ' + total + ')';
@@ -331,16 +360,19 @@ function _updateLoadMoreBanner() {
 
 function loadMoreMessages() {
   if (loadingMore || !conversationId || !hasMoreMessages) return;
+  _updateLoadMoreBanner();
   loadingMore = true;
   const container = document.getElementById('messages');
   const banner = document.getElementById('loadMoreBanner');
   if (banner) banner.innerHTML = 'Loading...';
   const prevHeight = container.scrollHeight;
   const nextOffset = currentOffset;
+  const requestConversationId = conversationId;
 
-  action$('load_history', { conversation_id: conversationId, limit: displayWindow, offset: nextOffset })
+  action$('load_history', { conversation_id: requestConversationId, limit: displayWindow, offset: nextOffset })
     .subscribe(data => {
-      if (data.error) { loadingMore = false; return; }
+      if (requestConversationId !== conversationId) { loadingMore = false; return; }
+      if (data.error) { loadingMore = false; _updateLoadMoreBanner(); return; }
       hasMoreMessages = data.has_more || false;
       currentOffset += data.raw_count || (data.messages || []).length;
       const insertPoint = banner ? banner.nextSibling : container.firstChild;
@@ -404,11 +436,11 @@ function _recoverConversation(cid) {
       if (newMsgs.length === 0) return;
       console.log('[poll] recovering', newMsgs.length, 'new messages');
       if (newMsgs.length > 50) {
-        // Too many missed — just update count, don't try to render them all
-        serverMsgCount = data.message_count || serverMsgCount;
+        // Too many missed — just update count/offset, don't try to render them all
+        _noteLiveHistoryAppend(data.message_count, newMsgs.length);
         return;
       }
-      serverMsgCount = data.message_count || serverMsgCount;
+      _noteLiveHistoryAppend(data.message_count, newMsgs.length);
       const msgContainer = document.getElementById('messages');
       let rendered = 0;
       for (const m of newMsgs) {

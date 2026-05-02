@@ -14,6 +14,7 @@ Tests cover:
 
 import json
 import queue
+import tempfile
 import threading
 import time
 import unittest
@@ -344,6 +345,72 @@ class TestAgentLoopStreaming(unittest.TestCase):
         assert body["status"] == "accepted"
         assert body["conversation_id"] == "test-conv-123"
         assert results[0].get_attribute("agent.streaming") == "true"
+
+    def test_streaming_wakes_pending_after_active_cleanup(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        from core.pending_queue import PendingQueue
+        from core.poll_scheduler import PollScheduler
+
+        conversation_id = "test-conv-pending"
+        agent_name = "deepseek"
+        agent_key = f"{conversation_id}:{agent_name}"
+
+        class _FakeStore:
+            def __init__(self, root):
+                self._store_dir = root / "convs"
+
+            def _conv_dir(self, cid, user_id=""):
+                path = self._store_dir / "u" / cid
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_store = _FakeStore(root)
+            with patch("core.conversation_store.ConversationStore.instance",
+                       return_value=fake_store), \
+                    patch.object(_paths, "POLL_SCHEDULE_FILE",
+                                 root / "poll_schedule.json"):
+                PendingQueue.drop_cache()
+                PollScheduler.reset()
+                task = AgentLoopTask({"api_key": "k", "streaming": True})
+                task._conv_generation[agent_key] = 0
+                with task._active_lock:
+                    task._active_conversations[conversation_id] = 1
+                    task._user_active_conversations.add(conversation_id)
+                with task._active_contexts_lock:
+                    task._active_turns[agent_key] = {
+                        "conversation_id": conversation_id,
+                        "agent_name": agent_name,
+                    }
+
+                def _enqueue_during_cleanup(ctx, cid, bus):
+                    PendingQueue.for_agent(cid, agent_name).enqueue({
+                        "role": "user",
+                        "content": "arrived at done",
+                        "msg_id": "m1",
+                        "ts": 1234.5,
+                    }, source="http")
+
+                task._streaming_agent_loop_inner = _enqueue_during_cleanup
+                task._streaming_agent_loop({
+                    "active_agent_name": agent_name,
+                    "user_id": "u1",
+                    "_gen_key": agent_key,
+                    "_generation": 0,
+                    "_active_turn_key": agent_key,
+                }, conversation_id, ConversationEventBus.instance())
+
+                assert conversation_id not in task._active_conversations
+                assert agent_key not in task._active_turns
+                wake = PollScheduler.instance().get(
+                    f"{conversation_id}::pending::{agent_name}")
+                assert wake is not None
+                assert wake["reason"] == "[pending] 1 queued msg(s) after idle"
+                assert wake["recheck_at"] <= time.time() + 1
+
+        PendingQueue.drop_cache()
+        PollScheduler.reset()
 
     def test_streaming_config_dispatches(self):
         from tasks.ai.agent_loop import AgentLoopTask

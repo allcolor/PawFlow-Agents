@@ -655,6 +655,7 @@ class AgentCoreMixin:
                                 "tool": _raw_tool_name,
                                 "result": _preview,
                                 "tc_id": getattr(msg, 'tool_call_id', ''),
+                                "msg_id": getattr(msg, "msg_id", ""),
                                 "agent_name": _agent, "llm_service": _svc,
                             }})
                     _agent_for_route = ctx.get("active_agent_name", "") or ""

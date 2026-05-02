@@ -401,21 +401,30 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _bg.pop_completed(conversation_id, t["tc_id"])
             except Exception:
                 logger.debug("exception suppressed", exc_info=True)
-            # Final safety net: wake if PendingQueue has anything before we exit
+            # Remove this turn from active tracking before scheduling pending
+            # wakes. Otherwise the poller can consume the wake while the current
+            # thread is still cleaning up, reschedule it as "active", and leave a
+            # just-enqueued user message stuck until another external event.
             _agent_n2 = ctx.get("active_agent_name", "") or ""
-            try:
-                from core.pending_queue import PendingQueue
-                if PendingQueue.for_agent(conversation_id, _agent_n2).peek_count():
-                    from tasks.ai.agent_loop import AgentLoopTask
-                    AgentLoopTask.wake_agent(
-                        conversation_id, _agent_n2,
-                        reason="[pending] safety-net wake",
-                        user_id=ctx.get("user_id", ""),
-                        even_if_active=True,
-                    )
-            except Exception:
-                logger.debug("exception suppressed", exc_info=True)
+            _gen_key2 = ctx.get("_gen_key", conversation_id)
+            _generation2 = ctx.get("_generation", 0)
+            _was_interrupted2 = not self._is_current_generation(_gen_key2, _generation2)
             self._decrement_active(conversation_id, ctx)
+            if not _was_interrupted2:
+                try:
+                    from core.pending_queue import PendingQueue
+                    _pending_count2 = PendingQueue.for_agent(
+                        conversation_id, _agent_n2).peek_count()
+                    if _pending_count2:
+                        from tasks.ai.agent_loop import AgentLoopTask
+                        AgentLoopTask.wake_agent(
+                            conversation_id, _agent_n2,
+                            reason=f"[pending] {_pending_count2} queued msg(s) after idle",
+                            user_id=ctx.get("user_id", ""),
+                            delay=0.0,
+                        )
+                except Exception:
+                    logger.debug("exception suppressed", exc_info=True)
 
     def _streaming_agent_loop_inner(self, ctx: Dict, conversation_id: str, bus) -> None:
         """Create StreamEmitter, delegate to _run_agent_loop, handle finally cleanup."""
@@ -486,11 +495,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             use_conv_store = ctx.get("use_conv_store", False)
 
             _was_interrupted = not self._is_current_generation(gen_key, my_generation)
-            _is_cc = ctx.get("_is_claude_code", False)
             # PendingQueue is the single source of truth for pending work.
-            # If anything is in it at end of turn (because the drain_pending
-            # call was skipped on this code path, e.g. error exit), schedule
-            # a wake so it's picked up.
+            # The outer streaming wrapper schedules a fresh wake after active
+            # tracking is removed, so this block must not wake the poller while
+            # the current thread is still visible as active.
             _agent_n = ctx.get("active_agent_name", "") or ""
             try:
                 from core.pending_queue import PendingQueue
@@ -499,17 +507,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             except Exception:
                 _pending_count = 0
             if _pending_count and not _was_interrupted:
-                try:
-                    from tasks.ai.agent_loop import AgentLoopTask
-                    AgentLoopTask.wake_agent(
-                        conversation_id, _agent_n,
-                        reason=f"[pending] {_pending_count} queued msg(s)",
-                        user_id=ctx.get("user_id", ""),
-                        delay=1.0,
-                        even_if_active=True,
-                    )
-                except Exception:
-                    logger.debug("exception suppressed", exc_info=True)
+                ctx["_pending_wake_after_idle"] = _pending_count
 
             # Auto-reschedule random thoughts
             _was_cancelled = not self._is_current_generation(gen_key, my_generation)

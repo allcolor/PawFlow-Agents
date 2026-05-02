@@ -293,8 +293,12 @@ async function send() {
     const cid = data.conversation_id || conversationId;
     if (cid && cid !== conversationId) {
       conversationId = cid;
-      // Sync message count from server to prevent poll from re-fetching the user message
-      serverMsgCount = data.message_count || 1;
+      // Sync message count/offset from server to prevent poll/load-more overlap.
+      if (typeof _noteLiveHistoryAppend === 'function') {
+        _noteLiveHistoryAppend(data.message_count, 1);
+      } else {
+        serverMsgCount = data.message_count || 1;
+      }
       connectSSE(cid);  // Start/reconnect SSE for this conversation
       startPollTimer();
       updateDeleteBtn();
@@ -303,7 +307,9 @@ async function send() {
 
     // If streaming mode: events come via SSE, don't show response here
     if (data.status === 'accepted') {
-      if (data.message_count) serverMsgCount = data.message_count;
+      if (typeof _noteLiveHistoryAppend === 'function') {
+        _noteLiveHistoryAppend(data.message_count, 1);
+      } else if (data.message_count) serverMsgCount = data.message_count;
       document.getElementById('status').textContent = t('thinking');
       document.getElementById('stopBtn').style.display = '';
       // SSE will handle the rest
@@ -312,7 +318,9 @@ async function send() {
 
     // Message queued — agent is busy, message will be picked up at next checkpoint
     if (data.status === 'queued') {
-      if (data.message_count) serverMsgCount = data.message_count;
+      if (typeof _noteLiveHistoryAppend === 'function') {
+        _noteLiveHistoryAppend(data.message_count, 1);
+      } else if (data.message_count) serverMsgCount = data.message_count;
       sending = false;
       // Agent is already working — the message is persisted and will be injected
       return;

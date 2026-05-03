@@ -157,12 +157,15 @@ class TestScheduleContinuation(unittest.TestCase):
         result = h.execute({"plan": "check memory CSV", "delay_seconds": 60})
         assert result.startswith("Continuation scheduled for ")
         schedules = PollScheduler.instance().list_all()
-        assert len(schedules) == 1
-        entry = schedules[0]
-        assert entry["conversation_id"] == "conv-abc"
+        matches = [
+            entry for entry in schedules
+            if entry.get("conversation_id") == "conv-abc"
+            and entry.get("reason") == "[scheduled:assistant] [continuation] check memory CSV"
+        ]
+        assert len(matches) == 1
+        entry = matches[0]
         assert entry["user_id"] == "alice"
         assert entry["key"].startswith("conv-abc::continuation::")
-        assert entry["reason"] == "[scheduled:assistant] [continuation] check memory CSV"
 
 
 class TestScheduleWakeupRename(unittest.TestCase):

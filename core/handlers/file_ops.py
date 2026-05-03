@@ -112,13 +112,15 @@ class CreateFileHandler(ToolHandler):
 
 
 class ScheduleContinuationHandler(ToolHandler):
-    """Signal that the agent wants to continue working after a pause.
+    """Schedule a persistent continuation for the current conversation.
 
-    When the agent calls this tool, the agent loop will:
-    1. Let the LLM finish its current response (status update to the user)
-    2. Wait the specified delay
-    3. Inject the plan as a system message and start a new round
+    The continuation is persisted through PollScheduler so it works from API
+    tool calls, MCP/direct tool calls, and across server restarts.
     """
+
+    _conversation_id: str = ""
+    _user_id: str = ""
+    _agent_name: str = ""
 
     @property
     def name(self) -> str:
@@ -150,11 +152,47 @@ class ScheduleContinuationHandler(ToolHandler):
             "required": ["plan"],
         }
 
+    def set_conversation_id(self, conversation_id: str) -> None:
+        self._conversation_id = conversation_id
+
+    def set_user_id(self, user_id: str) -> None:
+        self._user_id = user_id
+
+    def set_agent_name(self, agent_name: str) -> None:
+        self._agent_name = agent_name
+
     def execute(self, arguments: Dict[str, Any]) -> str:
+        from datetime import datetime, timezone as tz
+        import hashlib
+        from core.poll_scheduler import PollScheduler
+
         plan = arguments.get("plan", "")
         delay = int(arguments.get("delay_seconds", 3))
+        delay = max(1, delay)
+        if not self._conversation_id:
+            return (
+                "Error: no conversation context — cannot schedule continuation. "
+                f"Plan was: {plan}"
+            )
+
+        reason = f"[continuation] {plan}"
+        if self._agent_name:
+            reason = f"[scheduled:{self._agent_name}] {reason}"
+        key_src = f"{self._conversation_id}:{self._agent_name}:{plan}"
+        key = (
+            f"{self._conversation_id}::continuation::"
+            f"{hashlib.sha1(key_src.encode('utf-8', 'ignore')).hexdigest()[:8]}"
+        )
+        recheck_at = PollScheduler.instance().schedule_delay(
+            self._conversation_id,
+            delay,
+            user_id=self._user_id,
+            reason=reason,
+            key=key,
+        )
+        dt_str = datetime.fromtimestamp(recheck_at, tz=tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         return (
-            f"Continuation scheduled. Plan: {plan}. "
+            f"Continuation scheduled for {dt_str}. Plan: {plan}. "
             f"Resuming in {delay}s. Now give the user a status update "
             f"about what you've found so far and what you'll do next."
         )

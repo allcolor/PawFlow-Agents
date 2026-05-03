@@ -120,7 +120,7 @@ Use `get_tool_schema(tool_name)` for the exact native selector names and require
 | `notify_user` | Notify the user. |
 | `PushNotification` | Send a push notification event. |
 | `ScheduleWakeup` | Schedule an agent wakeup. |
-| `schedule_continuation` | Schedule continuation of work. |
+| `schedule_continuation` | Persist a delayed continuation wake-up for the current conversation. |
 | `read_parent_context` | Read parent task/agent context. |
 | `read_history` | Read conversation history. |
 | `compact_result` | Return a compaction result. |

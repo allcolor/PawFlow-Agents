@@ -219,6 +219,18 @@ class StreamEmitter(AgentEmitter):
             "conversation_id": self.conversation_id,
         })
 
+    def on_interrupted(self, result: AgentResult) -> None:
+        if self._use_conv_store and self.conversation_id:
+            try:
+                from core.conversation_writer import ConversationWriter
+                ConversationWriter.for_conversation(
+                    self.conversation_id).flush(timeout=30.0)
+            except Exception as _fw_err:
+                logger.warning(
+                    "[agent:%s] interrupt writer flush failed: %s",
+                    self.conversation_id[:8], _fw_err)
+        self.on_done(result)
+
     def on_cancelled(self, result: AgentResult, ctx: dict) -> None:
         # Flush the writer queue BEFORE publishing done. Cancel can fire
         # mid-turn with multiple tool_call/tool_result messages still

@@ -139,6 +139,32 @@ class TestPushNotificationHandler(unittest.TestCase):
         assert r.startswith("Notification delivered")
 
 
+class TestScheduleContinuation(unittest.TestCase):
+
+    def test_requires_conversation_context(self):
+        from core.handlers.file_ops import ScheduleContinuationHandler
+        h = ScheduleContinuationHandler()
+        result = h.execute({"plan": "check memory", "delay_seconds": 60})
+        assert result.startswith("Error: no conversation context")
+
+    def test_persists_poll_scheduler_entry(self):
+        from core.handlers.file_ops import ScheduleContinuationHandler
+        from core.poll_scheduler import PollScheduler
+        h = ScheduleContinuationHandler()
+        h.set_conversation_id("conv-abc")
+        h.set_user_id("alice")
+        h.set_agent_name("assistant")
+        result = h.execute({"plan": "check memory CSV", "delay_seconds": 60})
+        assert result.startswith("Continuation scheduled for ")
+        schedules = PollScheduler.instance().list_all()
+        assert len(schedules) == 1
+        entry = schedules[0]
+        assert entry["conversation_id"] == "conv-abc"
+        assert entry["user_id"] == "alice"
+        assert entry["key"].startswith("conv-abc::continuation::")
+        assert entry["reason"] == "[scheduled:assistant] [continuation] check memory CSV"
+
+
 class TestScheduleWakeupRename(unittest.TestCase):
     """The handler is now called ScheduleWakeup (was schedule_recheck).
     Same semantics, same infra, new name matching the CC built-in.

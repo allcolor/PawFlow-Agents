@@ -830,8 +830,6 @@ class AgentCoreMixin:
 
         try:
             for current_round in range(1, max_rounds + 1):
-                continuation_plan = None
-                continuation_delay = 3
                 for _ in iter(lambda: iteration < ctx["max_iterations"], False):
                     emitter.check_cancelled()
                     emitter.drain_pending(messages, _append, iteration)
@@ -1054,8 +1052,9 @@ class AgentCoreMixin:
 
                     emitter.check_cancelled()
 
-                    # Interrupt check
-                    if emitter.check_interrupt():
+                    def _run_interrupt_turn():
+                        nonlocal response_content, total_tokens_in, total_tokens_out
+                        nonlocal total_cache_read, total_cache_write, final_model
                         logger.info(f"[agent:{conversation_id[:8]}] interrupted — injecting user STOP command")
                         _append(LLMMessage(
                             role="user",
@@ -1070,15 +1069,16 @@ class AgentCoreMixin:
                             "call_event_cid": ctx.get("_event_cid", conversation_id),
                             "call_ephemeral_stream": False,
                         }
+                        _interrupt_messages = _with_provider_system_prompt(self._compact(
+                            copy.deepcopy(messages), compact_client,
+                            ctx.get("max_context_size", 64000),
+                            target_fraction=0.25,
+                            conversation_id=conversation_id,
+                            agent_name=ctx.get("active_agent_name") or "",
+                            user_id=user_id,
+                            budget_config=getattr(ctx.get("resolved_svc"), "config", None)))
                         _irpt_resp = client.complete_stream(
-                            messages=_with_provider_system_prompt(self._compact(
-                                copy.deepcopy(messages), compact_client,
-                                ctx.get("max_context_size", 64000),
-                                target_fraction=0.25,
-                                conversation_id=conversation_id,
-                                agent_name=ctx.get("active_agent_name") or "",
-                                user_id=user_id,
-                                budget_config=getattr(ctx.get("resolved_svc"), "config", None))),
+                            messages=_interrupt_messages,
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],
@@ -1086,14 +1086,7 @@ class AgentCoreMixin:
                             callback=emitter.get_token_callback(False),
                             **_interrupt_call_kwargs,
                         ) if emitter.is_streaming else client.complete(
-                            messages=_with_provider_system_prompt(self._compact(
-                                copy.deepcopy(messages), compact_client,
-                                ctx.get("max_context_size", 64000),
-                                target_fraction=0.25,
-                                conversation_id=conversation_id,
-                                agent_name=ctx.get("active_agent_name") or "",
-                                user_id=user_id,
-                                budget_config=getattr(ctx.get("resolved_svc"), "config", None))),
+                            messages=_interrupt_messages,
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],
@@ -1111,6 +1104,10 @@ class AgentCoreMixin:
                         total_cache_write += getattr(_irpt_resp, 'cache_creation_tokens', 0)
                         final_model = _irpt_resp.model
                         raise _InterruptComplete()
+
+                    # Interrupt check before starting a new provider request.
+                    if emitter.check_interrupt():
+                        _run_interrupt_turn()
 
                     # Force-fit guard (skip for claude-code — it manages its own context)
                     if not ctx.get("_is_claude_code"):
@@ -1526,6 +1523,12 @@ class AgentCoreMixin:
                             total_cache_read, total_cache_write)
                         response = _llm_call(_call_context)
                         _provider_response_completed_at = time.time()
+                        if emitter.check_interrupt():
+                            logger.info(
+                                "[agent:%s] interrupt arrived during provider request — "
+                                "discarding current turn and running STOP turn",
+                                conversation_id[:8])
+                            _run_interrupt_turn()
                     except AgentCancelled:
                         raise
                     except CCCompactDetected:
@@ -2081,9 +2084,10 @@ class AgentCoreMixin:
                         tools_called.append(tc.name)
                         ctx["_last_tool"] = tc.name
                         emitter.check_cancelled()  # check after each tool
-                        if tc.name == "schedule_continuation":
-                            continuation_plan = tc.arguments.get("plan", "Continue")
-                            continuation_delay = int(tc.arguments.get("delay_seconds", 3))
+                        # schedule_continuation persists its wake-up in the
+                        # handler itself. Do not also sleep/re-enter inline here;
+                        # that would duplicate the continuation and would not
+                        # survive server restarts.
                         # Wrap tool output in an untrusted-content envelope so
                         # any instructions embedded in file contents, web pages,
                         # grep matches, etc. are read as data, not as orders.
@@ -2196,21 +2200,7 @@ class AgentCoreMixin:
                             logger.debug("exception suppressed", exc_info=True)
                     break
 
-                # Continuation
-                if continuation_plan and current_round < max_rounds:
-                    _append(LLMMessage(
-                        role="user",
-                        content=(
-                            f"[System: Automatic continuation — round {current_round + 1}]\n"
-                            f"Continue with your plan: {continuation_plan}\n"
-                            f"Build on your previous findings. When done, provide a final synthesis. "
-                            f"If you still have more work, call schedule_continuation again."),
-                        conversation_id=conversation_id))
-                    response_content = ""
-                    time.sleep(continuation_delay)
-                    continue
-                else:
-                    break
+                break
 
             # Empty response synthesis (skip for claude-code / codex-app-server / gemini —
             # these CLI providers run turn_callback which already persisted

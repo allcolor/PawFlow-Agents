@@ -56,7 +56,8 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "builder', 'prune', '-f'" in main
     assert "nodeIntegration: false" in main
     assert "contextIsolation: true" in main
-    assert "process.platform === 'win32' ? 'py' : 'python3'" in main
+    assert "process.platform === 'win32' ? 'python' : 'python3'" in main
+    assert "process.platform === 'win32' ? 'py' : 'python3'" not in main
     assert "function runtimeRoot()" in main
     assert "PAWFLOW_RELAY_RUNTIME_ROOT" in main
     assert "roots.join(path.delimiter)" in main

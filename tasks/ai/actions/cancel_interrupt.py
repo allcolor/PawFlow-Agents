@@ -148,6 +148,8 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             for _cc_key, client in _cc_clients:
                 if client and hasattr(client, 'cancel_claude_code'):
                     client.cancel_claude_code(force=True)
+                if client and hasattr(client, 'abort'):
+                    client.abort()
 
             # 3b. Mark the SubAgentExecutor task as cancelled so its
             #     iteration loop breaks at the next check.
@@ -208,6 +210,8 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
         for _cc_key, client in _cc_clients:
             if client and hasattr(client, 'cancel_claude_code'):
                 client.cancel_claude_code(force=True)
+            if client and hasattr(client, 'abort'):
+                client.abort()
         # Kill the thread and force UI cleanup
         _killed = 0
         for t in threading.enumerate():

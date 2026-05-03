@@ -597,15 +597,23 @@ def test_live_badge_requires_reused_live_process():
     assert reused_data["active"][0]["codex_reuse_count"] == 1
 
 
-def test_interrupt_uses_live_stop_or_silent_api_cancel():
-    """Interrupt is live steering for steerable providers, silent cancel for APIs."""
-    src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
-    assert "send_user_message(SOFT_INTERRUPT_USER_COMMAND)" in src
-    assert "Interrupt means \"stop the current loop\" only" in src
-    assert "STOP user message queued" not in src
-    assert "source=\"interrupt\"" not in src
-    assert "interrupt-synth" not in src
-    assert "resp = client.complete_stream(" not in src
+def test_interrupt_uses_live_stop_or_graceful_api_stop_turn():
+    """Interrupt steers live providers; APIs run one STOP turn then end."""
+    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
+    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
+    assert "send_user_message(SOFT_INTERRUPT_USER_COMMAND)" in loop_src
+    assert "Do NOT bump generation here; that is force-stop semantics" in loop_src
+    assert "self._conv_interrupt[_key] = True" in loop_src
+    assert "interrupt cancels active loop" not in loop_src
+    assert "def _run_interrupt_turn():" in core_src
+    assert "discarding current turn and running STOP turn" in core_src
+    assert "tools=None" in core_src
+    assert "def on_interrupted(self, result: AgentResult)" in emitter_src
+    assert "self.on_done(result)" in emitter_src
+    assert "STOP user message queued" not in loop_src
+    assert "source=\"interrupt\"" not in loop_src
+    assert "interrupt-synth" not in loop_src
 
 
 def test_api_tool_execution_registers_kill_hooks_for_ui_kill():
@@ -838,12 +846,18 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     provider/tool callbacks before they can persist or publish messages.
     """
     cancel_src = Path("tasks/ai/actions/cancel_interrupt.py").read_text(encoding="utf-8")
+    loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    openai_src = Path("core/llm_providers/openai.py").read_text(encoding="utf-8")
     assert "def _kill_live_cli_sessions" in cancel_src
     assert "CodexLiveRegistry" in cancel_src
     assert "GeminiLiveRegistry" in cancel_src
     assert "LiveSessionRegistry" in cancel_src
     assert "_kill_live_cli_sessions(conv_id, agent_name, \"force_stop\")" in cancel_src
+    assert "client.abort()" in cancel_src
+    assert "client.abort()" in loop_src
+    assert "self._abort.is_set()" in openai_src
+    assert "raise AgentCancelled()" in openai_src
     assert "emitter.check_cancelled()\n            # Sync msg_id" in core_src
     assert "emitter.check_cancelled()\n                        _cc_turn_count" in core_src
 

@@ -231,7 +231,7 @@ For a fuller agent-facing catalog, including internal/control tools, see
 | `tool.web_search` | Search the web |
 | `tool.fetch` | Fetch a web page with anti-bot handling |
 | `tool.share_file` | Create and share a file |
-| `tool.schedule_continuation` | Schedule a continuation for later |
+| `tool.schedule_continuation` | Persist a delayed continuation wake-up for the current conversation |
 | `tool.local_files` | Manage local files on the filesystem |
 | `tool.generate_image` | Generate an image via an image model |
 | `tool.edit_image` | Edit one or more existing images via the image model (requires a model that declares an `edit_image` operation in `pixazo_catalog.json`, e.g. `nano-banana`). |

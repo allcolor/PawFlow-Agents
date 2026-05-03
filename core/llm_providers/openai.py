@@ -25,6 +25,10 @@ class LLMOpenaiMixin:
                         call_conversation_id: str = ""):
         """OpenAI streaming: reads SSE chunks from the API."""
         from core.llm_client import LLMClientError, LLMResponse, LLMToolCall
+        from tasks.ai.agent_exceptions import AgentCancelled
+
+        if getattr(self, "_abort", None) and self._abort.is_set():
+            raise AgentCancelled()
 
         body = {
             "model": model,
@@ -100,7 +104,11 @@ class LLMOpenaiMixin:
 
             buffer = ""
             while True:
+                if getattr(self, "_abort", None) and self._abort.is_set():
+                    raise AgentCancelled()
                 chunk = response.read(4096)
+                if getattr(self, "_abort", None) and self._abort.is_set():
+                    raise AgentCancelled()
                 if not chunk:
                     break
                 buffer += chunk.decode("utf-8", errors="replace")
@@ -113,6 +121,8 @@ class LLMOpenaiMixin:
                     if line == "data: [DONE]":
                         break
                     if line.startswith("data: "):
+                        if getattr(self, "_abort", None) and self._abort.is_set():
+                            raise AgentCancelled()
                         try:
                             data = json.loads(line[6:])
 
@@ -395,6 +405,10 @@ class LLMOpenaiMixin:
                           *, call_user_id: str = "", call_conversation_id: str = ""):
         """Send a non-streaming completion to an OpenAI-compatible API."""
         from core.llm_client import LLMResponse, LLMToolCall
+        from tasks.ai.agent_exceptions import AgentCancelled
+
+        if getattr(self, "_abort", None) and self._abort.is_set():
+            raise AgentCancelled()
 
         body = {
             "model": model,

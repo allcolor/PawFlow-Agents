@@ -735,6 +735,8 @@ class AgentLoopTask(
         for _cc_key, client in _cc_clients:
             if client and hasattr(client, 'cancel_claude_code'):
                 client.cancel_claude_code(force=_force)
+            if client and hasattr(client, 'abort'):
+                client.abort()
         # Also cancel thought threads and schedules for this agent
         from core.poll_scheduler import PollScheduler
         scheduler = PollScheduler.instance()
@@ -827,6 +829,8 @@ class AgentLoopTask(
                 _cc_client = self._active_claude_client.get(_esc_key)
             if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
                 _cc_client.cancel_claude_code(force=True)
+            if _cc_client and hasattr(_cc_client, 'abort'):
+                _cc_client.abort()
             # Force cleanup
             from core.conversation_store import ConversationStore as _CS_int
             from core.conversation_event_bus import ConversationEventBus as _CEB_int
@@ -868,12 +872,32 @@ class AgentLoopTask(
             return
 
         # LLM API streams are not transport-bidirectional once the HTTP request
-        # is in flight. Interrupt means "stop the current loop" only: do not
-        # inject a synthetic STOP user message into the transcript/context.
+        # is in flight. Mark the active loop for a graceful interrupt turn:
+        # the loop discards the current API turn at the next safe boundary,
+        # sends the STOP user message once, persists that assistant reply, then
+        # exits. Do NOT bump generation here; that is force-stop semantics.
+        _interrupt_keys = set()
+        _prefix = f"{conversation_id}:"
+        _agent_l = (agent_name or "").lower()
+        with self._active_contexts_lock:
+            for _ctx_key, _ctx in self._active_contexts.items():
+                if not (_ctx_key == conversation_id or _ctx_key.startswith(_prefix)):
+                    continue
+                if _agent_l and _agent_l not in _ctx_key.lower():
+                    continue
+                if isinstance(_ctx, dict):
+                    _interrupt_keys.add(_ctx.get("_gen_key") or _ctx_key)
+                else:
+                    _interrupt_keys.add(_ctx_key)
+        if not _interrupt_keys:
+            _interrupt_keys.add(f"{conversation_id}:{agent_name}" if agent_name else conversation_id)
+        with self._interrupt_lock:
+            for _key in _interrupt_keys:
+                self._conv_interrupt[_key] = True
         logger.info(
-            f"[agent:{conversation_id[:8]}] interrupt cancels active loop "
-            f"for non-steerable provider '{agent_name or 'agent'}'")
-        self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
+            f"[agent:{conversation_id[:8]}] interrupt scheduled graceful STOP "
+            f"for non-steerable provider '{agent_name or 'agent'}' "
+            f"keys={sorted(_interrupt_keys)}")
         return
 
 

@@ -4,6 +4,7 @@ from pathlib import Path
 
 _GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 _AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+_AGENT_EMITTER = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
 _AGENT_ACTIONS = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_COMPACTION = Path("tasks/ai/agent_compaction.py").read_text(
     encoding="utf-8")
@@ -194,3 +195,34 @@ def test_list_resources_does_not_resolve_services_on_ui_refresh():
     assert "resolve_definition(\n                                llm_service" not in block
     assert "effective_context_window(" not in block
     assert "get_client()" not in block
+
+
+def test_compact_threshold_accepts_fractional_ui_values():
+    """LLM API services may store compact_threshold_pct as 0.8, not 80."""
+    helper = _AGENT_CORE[
+        _AGENT_CORE.index("def _compact_threshold_fraction"):
+        _AGENT_CORE.index("def _agent_compact_threshold_fraction")]
+    assert "if value < 1:" in helper
+    assert "return value" in helper
+    assert "return value / 100.0" in helper
+    assert "_compact_threshold_fraction(" in _AGENT_CORE
+
+
+def test_streaming_api_publishes_live_context_usage_before_done():
+    """HTTP/API providers must update the gauge while the turn is active."""
+    assert "def _context_usage_payload" in _AGENT_EMITTER
+    assert "def _publish_context_usage" in _AGENT_EMITTER
+    stream_start = _AGENT_EMITTER.index("class StreamEmitter")
+    iter_start = _AGENT_EMITTER.index("def on_iteration_start", stream_start)
+    iter_end = _AGENT_EMITTER.index("def on_iteration_end", iter_start)
+    iter_block = _AGENT_EMITTER[iter_start:iter_end]
+    assert 'self._publish_context_usage("iteration_start")' in iter_block
+    heartbeat_start = _AGENT_EMITTER.index("def start_heartbeat", stream_start)
+    heartbeat_end = _AGENT_EMITTER.index("def stop_heartbeat", heartbeat_start)
+    heartbeat_block = _AGENT_EMITTER[heartbeat_start:heartbeat_end]
+    assert 'emitter._publish_context_usage("heartbeat")' in heartbeat_block
+    done_start = _AGENT_EMITTER.index("def on_done", stream_start)
+    done_end = _AGENT_EMITTER.index("def on_error", done_start)
+    done_block = _AGENT_EMITTER[done_start:done_end]
+    assert 'self._publish_context_usage("done")' in done_block
+    assert '_usage_payload = self._context_usage_payload("done")' in done_block

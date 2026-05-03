@@ -118,6 +118,68 @@ class StreamEmitter(AgentEmitter):
             "containerized": _prov == "claude-code",
         }
 
+    def _context_usage_payload(self, reason: str = "") -> Optional[Dict[str, Any]]:
+        """Compute live PawFlow context usage for message_meta/done events."""
+        if not self._agent_name:
+            return None
+        messages = self.ctx.get("messages") or []
+        if not messages:
+            return None
+        _client = self.ctx.get("client")
+        _cw_map = (getattr(_client, '_cc_context_window_by_stream', None)
+                   if _client else None) or {}
+        _cw_key = (self.conversation_id or "", self._agent_name or "")
+        from core.context_window import effective_context_window
+        _ctx_max = effective_context_window(
+            self.ctx.get("max_context_size", 0), _cw_map.get(_cw_key, 0),
+            fallback=0)
+        if _ctx_max <= 0:
+            return None
+        try:
+            from core.token_counter import resolve_token_multiplier
+            from tasks.ai.context_usage_cache import context_usage_from_cache
+            _tmul = resolve_token_multiplier(
+                getattr(self.ctx.get("resolved_svc"), "config", None))
+            usage = context_usage_from_cache(
+                messages, _ctx_max, self.ctx.get("_context_usage_cache"),
+                source=reason or "stream_context",
+                token_multiplier=_tmul)
+            self.ctx["_context_usage_cache"] = usage
+        except Exception:
+            logger.debug("stream context usage estimate failed", exc_info=True)
+            return None
+        used = int(usage.get("used", 0) or 0)
+        if used <= 0:
+            return None
+        payload = {
+            "agent_name": self._agent_name or "",
+            "source": self._agent_source(),
+            "context_used": used,
+            "context_max": int(usage.get("max", 0) or 0),
+            "context_pct": float(usage.get("pct", 0.0) or 0.0),
+            "context_source": usage.get("source", ""),
+            "context_message_count": usage.get("message_count", 0),
+            "context_cache_mode": usage.get("cache_mode", ""),
+            "context_cache": usage,
+            "live": True,
+        }
+        return payload
+
+    def _publish_context_usage(self, reason: str = "") -> None:
+        payload = self._context_usage_payload(reason)
+        if not payload:
+            return
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            usage_map = store.get_extra(self.event_cid, "context_usage") or {}
+            usage_map = dict(usage_map)
+            usage_map[self._agent_name] = dict(payload.get("context_cache") or {})
+            store.set_extra(self.event_cid, "context_usage", usage_map)
+        except Exception:
+            logger.debug("stream context_usage persist failed", exc_info=True)
+        self._emit("message_meta", payload)
+
     # ── Lifecycle ──────────────────────────────────────────────────────
 
     def on_loop_start(self, ctx: dict) -> None:
@@ -159,6 +221,7 @@ class StreamEmitter(AgentEmitter):
                 "round": round_num,
                 "agent_name": self._agent_name or "",
             })
+            self._publish_context_usage("iteration_start")
 
     def on_iteration_end(self, iteration, round_num, max_iterations,
                          max_rounds, tools_called):
@@ -176,24 +239,21 @@ class StreamEmitter(AgentEmitter):
         # Use all_msg_ids from the full turn (survives flush)
         _all_ids = result.all_msg_ids or []
         _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
-        # Context fill: include cache tokens (dominant for CC with prompt caching).
-        # tokens_in alone is input-only and tiny; real context usage is
-        # input + cache_creation + cache_read (per-call, Anthropic semantics).
-        _ctx_used = (int(result.tokens_in or 0)
-                     + int(getattr(result, 'cache_creation_tokens', 0) or 0)
-                     + int(getattr(result, 'cache_read_tokens', 0) or 0))
-        # Effective context window: min(PawFlow configured budget,
-        # provider-reported real window) when both are known. This lets users
-        # compact below the model hard limit intentionally.
-        _client = self.ctx.get("client")
-        _cw_map = (getattr(_client, '_cc_context_window_by_stream', None)
-                   if _client else None) or {}
-        _cw_key = (self.conversation_id or "", self._agent_name or "")
-        from core.context_window import effective_context_window
-        _ctx_max = effective_context_window(
-            self.ctx.get("max_context_size", 0), _cw_map.get(_cw_key, 0),
-            fallback=0)
-        _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
+        # Context fill must match PawFlow's active context, not provider
+        # usage deltas. API providers often report only the current request,
+        # while the UI gauge represents the next prompt PawFlow will send.
+        self._publish_context_usage("done")
+        _usage_payload = self._context_usage_payload("done")
+        if _usage_payload:
+            _ctx_used = int(_usage_payload.get("context_used", 0) or 0)
+            _ctx_max = int(_usage_payload.get("context_max", 0) or 0)
+            _ctx_pct = float(_usage_payload.get("context_pct", 0.0) or 0.0)
+        else:
+            _ctx_used = (int(result.tokens_in or 0)
+                         + int(getattr(result, 'cache_creation_tokens', 0) or 0)
+                         + int(getattr(result, 'cache_read_tokens', 0) or 0))
+            _ctx_max = int(self.ctx.get("max_context_size", 0) or 0)
+            _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
         self._emit("done", {
             "response": result.response_content,
             "msg_id": _last_id,
@@ -359,6 +419,7 @@ class StreamEmitter(AgentEmitter):
                     evt["task_id"] = _tid
                     evt["task_iteration"] = _ctx.get("_task_iteration", 0)
                 bus.publish_event(cid, "thinking", evt)
+                emitter._publish_context_usage("heartbeat")
 
         t = threading.Thread(target=heartbeat, daemon=True)
         t.start()

@@ -390,6 +390,29 @@ class AgentCoreMixin:
 
         _auto_compact_state = {"running": False}
 
+        def _compact_threshold_fraction(raw_value) -> float:
+            """Normalize compact_threshold_pct to a 0..1 fraction.
+
+            Accept both the documented percent form (80 or "80%") and the
+            common UI/API fractional form (0.8). Values <= 0 disable proactive
+            compaction.
+            """
+            try:
+                if isinstance(raw_value, str):
+                    raw = raw_value.strip()
+                    if raw.endswith("%"):
+                        raw = raw[:-1].strip()
+                    value = float(raw or 0)
+                else:
+                    value = float(raw_value or 0)
+            except (TypeError, ValueError):
+                return 0.0
+            if value <= 0:
+                return 0.0
+            if value < 1:
+                return value
+            return value / 100.0
+
         def _agent_compact_threshold_fraction() -> float:
             try:
                 cfg = (
@@ -399,10 +422,10 @@ class AgentCoreMixin:
                     or getattr(getattr(client, "_client", None),
                                "_config_ref", None)
                     or {})
-                pct = int(cfg.get("compact_threshold_pct", 0) or 0)
-            except (TypeError, ValueError):
-                pct = 0
-            return (pct / 100.0) if pct > 0 else 0.0
+                raw_pct = cfg.get("compact_threshold_pct", 0)
+            except (AttributeError, TypeError):
+                raw_pct = 0
+            return _compact_threshold_fraction(raw_pct)
 
         def _maybe_auto_compact_after_append(msg: LLMMessage, reason: str) -> None:
             """Enforce compact_threshold_pct as a live invariant.
@@ -853,7 +876,8 @@ class AgentCoreMixin:
                     # large — the summarizer is just the tool used to
                     # shrink it.
                     #
-                    # `compact_threshold_pct` is in [0, 100]:
+                    # `compact_threshold_pct` accepts percent values
+                    # (80 / "80%") and UI/API fractional values (0.8):
                     #   0   = no proactive PawFlow compact (defer entirely to
                     #         the CLI's mechanism — e.g. CC's compact_boundary,
                     #         or for codex/gemini, no auto-compact at all).
@@ -861,7 +885,7 @@ class AgentCoreMixin:
                     #         BEFORE the next LLM call. For CC this is
                     #         additive on top of compact_boundary — first
                     #         trigger to fire wins.
-                    _compact_pct = 0
+                    _trigger_frac = 0.0
                     try:
                         _agent_client_cfg = (
                             getattr(ctx.get("resolved_svc"), "config", None)
@@ -870,11 +894,10 @@ class AgentCoreMixin:
                             or getattr(getattr(client, "_client", None),
                                        "_config_ref", None)
                             or {})
-                        _compact_pct = int(
-                            _agent_client_cfg.get("compact_threshold_pct", 0) or 0)
-                    except (TypeError, ValueError):
-                        _compact_pct = 0
-                    _trigger_frac = (_compact_pct / 100.0) if _compact_pct > 0 else 0.0
+                        _trigger_frac = _compact_threshold_fraction(
+                            _agent_client_cfg.get("compact_threshold_pct", 0))
+                    except (AttributeError, TypeError):
+                        _trigger_frac = 0.0
 
                     def _with_provider_system_prompt(stored_msgs):
                         prompt = ctx.get("_provider_system_prompt", "") or ""

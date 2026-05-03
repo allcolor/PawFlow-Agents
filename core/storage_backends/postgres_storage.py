@@ -1,8 +1,8 @@
 # PostgreSQL Storage
 
 """
-Implémentation du stockage PostgreSQL.
-Pour les environnements de production avec persistance fiable.
+PostgreSQL storage implementation.
+For production environments with reliable persistence.
 """
 
 import json
@@ -14,24 +14,24 @@ logger = logging.getLogger(__name__)
 
 
 class PostgresStorage:
-    """Stockage PostgreSQL pour environnements de production.
+    """PostgreSQL storage for production environments.
 
-    Stocke les flows, tasks et services dans des tables PostgreSQL.
-    Utilise psycopg2 pour les connexions.
+    Stores flows, tasks and services in PostgreSQL tables.
+    Uses psycopg2 for connections.
     """
 
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialiser le stockage PostgreSQL.
+        Initialize PostgreSQL storage.
 
         Args:
-            config: Configuration avec:
-                - host: hôte (défaut: localhost)
-                - port: port (défaut: 5432)
-                - database: nom de la base (défaut: pawflow)
-                - user: utilisateur (défaut: pawflow)
-                - password: mot de passe
-                - schema: schéma SQL (défaut: public)
+            config: Configuration with:
+                - host: host (default: localhost)
+                - port: port (default: 5432)
+                - database: database name (default: pawflow)
+                - user: user (default: pawflow)
+                - password: password
+                - schema: SQL schema (default: public)
         """
         self.host = config.get('host', 'localhost')
         self.port = config.get('port', 5432)
@@ -43,7 +43,7 @@ class PostgresStorage:
         self._init_database()
 
     def _get_connection(self):
-        """Obtenir une connexion PostgreSQL."""
+        """Get a PostgreSQL connection."""
         if self._conn is None or self._conn.closed:
             import psycopg2
             self._conn = psycopg2.connect(
@@ -57,7 +57,7 @@ class PostgresStorage:
         return self._conn
 
     def _init_database(self):
-        """Créer les tables si elles n'existent pas."""
+        """Create tables if they don't exist."""
         try:
             conn = self._get_connection()
             cur = conn.cursor()
@@ -99,7 +99,7 @@ class PostgresStorage:
                 self._conn.rollback()
 
     def save_flow(self, flow_id: str, config: Dict[str, Any]) -> bool:
-        """Sauvegarder un flux dans PostgreSQL."""
+        """Save a flow to PostgreSQL."""
         try:
             conn = self._get_connection()
             cur = conn.cursor()
@@ -123,7 +123,7 @@ class PostgresStorage:
             return False
 
     def load_flow(self, flow_id: str) -> Optional[Dict[str, Any]]:
-        """Charger un flux depuis PostgreSQL."""
+        """Load a flow from PostgreSQL."""
         try:
             conn = self._get_connection()
             cur = conn.cursor()
@@ -145,7 +145,7 @@ class PostgresStorage:
             return None
 
     def delete_flow(self, flow_id: str) -> bool:
-        """Supprimer un flux de PostgreSQL."""
+        """Delete a flow from PostgreSQL."""
         try:
             conn = self._get_connection()
             cur = conn.cursor()
@@ -166,7 +166,7 @@ class PostgresStorage:
             return False
 
     def list_flows(self) -> List[str]:
-        """Lister tous les flux dans PostgreSQL."""
+        """List all flows in PostgreSQL."""
         try:
             conn = self._get_connection()
             cur = conn.cursor()
@@ -181,7 +181,7 @@ class PostgresStorage:
             return []
 
     def save_task(self, task_type: str, config: Dict[str, Any]) -> bool:
-        """Sauvegarder une tâche dans PostgreSQL."""
+        """Save a task to PostgreSQL."""
         try:
             conn = self._get_connection()
             cur = conn.cursor()
@@ -202,7 +202,7 @@ class PostgresStorage:
             return False
 
     def load_service(self, service_type: str, config: Dict[str, Any]) -> bool:
-        """Sauvegarder un service dans PostgreSQL."""
+        """Save a service to PostgreSQL."""
         try:
             conn = self._get_connection()
             cur = conn.cursor()
@@ -223,7 +223,7 @@ class PostgresStorage:
             return False
 
     def close(self):
-        """Fermer la connexion."""
+        """Close the connection."""
         if self._conn and not self._conn.closed:
             self._conn.close()
             self._conn = None

@@ -1,8 +1,8 @@
 # FlowFile Module
 
 """
-Module FlowFile.
-Définit la classe FlowFile qui représente une unité de données.
+FlowFile Module.
+Defines the FlowFile class which represents a data unit.
 """
 
 from core import FlowFile, STANDARD_ATTRIBUTES

@@ -1,8 +1,8 @@
 # Flow Service
 
 """
-Service pour la gestion des flux.
-Couche d'abstraction entre le GUI et FlowParser/FlowValidator.
+Service for flow management.
+Abstraction layer between GUI and FlowParser/FlowValidator.
 """
 
 import json
@@ -17,92 +17,92 @@ logger = logging.getLogger(__name__)
 
 
 class FlowService:
-    """Service de gestion des flux."""
+    """Flow management service."""
 
     def __init__(self, storage_manager: Optional[StorageManager] = None):
         """
-        Initialiser le service.
+        Initialize the service.
 
         Args:
-            storage_manager: Gestionnaire de stockage (par défaut: FileSystem)
+            storage_manager: Storage manager (default: FileSystem)
         """
         self.storage_manager = storage_manager or StorageManager()
         self._initialized = False
 
     def initialize(self):
-        """Initialiser le service et enregistrer toutes les tâches/services."""
+        """Initialize the service and register all tasks/services."""
         if not self._initialized:
-            # Enregistrer toutes les tâches et services
+            # Register all tasks and services
             from tasks import register_all_tasks
 
             register_all_tasks()
 
             self._initialized = True
-            logger.info("FlowService initialisé")
+            logger.info("FlowService initialized")
 
     def parse(self, config: Dict[str, Any]) -> Flow:
         """
-        Parser un flux depuis une configuration.
+        Parse a flow from configuration.
 
         Args:
-            config: Configuration du flux
+            config: Flow configuration
 
         Returns:
-            Objet Flow parseé
+            Parsed Flow object
         """
         self.initialize()
         return FlowParser.parse(config)
 
     def parse_from_file(self, filepath: str) -> Flow:
         """
-        Parser un flux depuis un fichier JSON.
+        Parse a flow from a JSON file.
 
         Args:
-            filepath: Chemin vers le fichier JSON
+            filepath: Path to the JSON file
 
         Returns:
-            Objet Flow parseé
+            Parsed Flow object
         """
         self.initialize()
         return FlowParser.parse_from_file(filepath)
 
     def parse_from_json(self, json_string: str) -> Flow:
         """
-        Parser un flux depuis une chaîne JSON.
+        Parse a flow from a JSON string.
 
         Args:
-            json_string: Chaîne JSON
+            json_string: JSON string
 
         Returns:
-            Objet Flow parseé
+            Parsed Flow object
         """
         self.initialize()
         return FlowParser.parse_from_json(json_string)
 
     def validate(self, flow: Flow, strict: bool = True) -> List[str]:
         """
-        Valider un flux.
+        Validate a flow.
 
         Args:
-            flow: Flux à valider
-            strict: Mode strict (lève des erreurs) ou non
+            flow: Flow to validate
+            strict: Strict mode (raises errors) or not
 
         Returns:
-            Liste de messages d'erreur (vide si valide)
+            List of error messages (empty if valid)
         """
         self.initialize()
         return FlowValidator.validate(flow, strict)
 
     def save(self, flow: Flow, filepath: Optional[str] = None) -> str:
         """
-        Sauvegarder un flux.
+        Save a flow.
 
         Args:
-            flow: Flux à sauvegarder
-            filepath: Chemin optionnel (généré si non spécifié)
+            flow: Flow to save
+            filepath: Optional path (generated if not specified)
 
         Returns:
-            Chemin du fichier sauvegardé
+            Path of the saved file
         """
         self.initialize()
 
@@ -112,41 +112,41 @@ class FlowService:
             pkg_dir.mkdir(parents=True, exist_ok=True)
             filepath = str(pkg_dir / "latest.json")
 
-        # Créer le répertoire s'il n'existe pas
+        # Create directory if it doesn't exist
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
 
-        # Convertir le flow en dict
+        # Convert flow to dict
         config = self.flow_to_dict(flow)
 
-        # Sauvegarder
+        # Save
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"Flux sauvegardé: {filepath}")
+        logger.info(f"Flow saved: {filepath}")
         return filepath
 
     def load(self, filepath: str) -> Flow:
         """
-        Charger un flux depuis un fichier.
+        Load a flow from a file.
 
         Args:
-            filepath: Chemin du fichier
+            filepath: File path
 
         Returns:
-            Objet Flow chargé
+            Loaded Flow object
         """
         self.initialize()
         return self.parse_from_file(filepath)
 
     def list_flows(self, directory: str = "flows") -> List[str]:
         """
-        Lister tous les flux dans un répertoire.
+        List all flows in a directory.
 
         Args:
-            directory: Répertoire à scanner
+            directory: Directory to scan
 
         Returns:
-            Liste des chemins des fichiers JSON
+            List of JSON file paths
         """
         self.initialize()
         flows_dir = Path(directory)
@@ -156,31 +156,31 @@ class FlowService:
 
     def delete(self, filepath: str) -> bool:
         """
-        Supprimer un flux.
+        Delete a flow.
 
         Args:
-            filepath: Chemin du fichier à supprimer
+            filepath: File path to delete
 
         Returns:
-            True si succès
+            True if successful
         """
         try:
             Path(filepath).unlink()
-            logger.info(f"Flux supprimé: {filepath}")
+            logger.info(f"Flow deleted: {filepath}")
             return True
         except Exception as e:
-            logger.error(f"Erreur de suppression: {e}")
+            logger.error(f"Error deleting: {e}")
             return False
 
     def flow_to_dict(self, flow: Flow) -> Dict[str, Any]:
         """
-        Convertir un objet Flow en dictionnaire JSON.
+        Convert a Flow object to JSON dictionary.
 
         Args:
-            flow: Objet Flow
+            flow: Flow object
 
         Returns:
-            Dictionnaire JSON
+            JSON dictionary
         """
         return {
             "id": flow.id,
@@ -213,25 +213,25 @@ class FlowService:
 
     def dict_to_flow(self, config: Dict[str, Any]) -> Flow:
         """
-        Convertir un dictionnaire JSON en objet Flow.
+        Convert a JSON dictionary to Flow object.
 
         Args:
-            config: Dictionnaire de configuration
+            config: Configuration dictionary
 
         Returns:
-            Objet Flow
+            Flow object
         """
         return self.parse(config)
 
     def get_task_schema(self, task_type: str) -> Dict[str, Any]:
         """
-        Récupérer le schéma des paramètres d'une tâche.
+        Get the parameter schema for a task.
 
         Args:
-            task_type: Type de tâche
+            task_type: Task type
 
         Returns:
-            Schéma des paramètres
+            Parameter schema
         """
         self.initialize()
         try:
@@ -239,25 +239,25 @@ class FlowService:
             task_instance = task_class({})
             return task_instance.get_parameter_schema()
         except Exception as e:
-            logger.error(f"Erreur récupération schéma tâche {task_type}: {e}")
+            logger.error(f"Error retrieving task schema {task_type}: {e}")
             return {}
 
     def get_available_tasks(self) -> List[str]:
         """
-        Lister toutes les tâches disponibles.
+        List all available tasks.
 
         Returns:
-            Liste des types de tâches
+            List of task types
         """
         self.initialize()
         return TaskFactory.list_types()
 
     def get_available_services(self) -> List[str]:
         """
-        Lister tous les services disponibles.
+        List all available services.
 
         Returns:
-            Liste des types de services
+            List of service types
         """
         self.initialize()
         return ServiceFactory.list_types()

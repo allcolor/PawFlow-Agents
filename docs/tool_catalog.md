@@ -48,9 +48,10 @@ Use `get_tool_schema(tool_name)` for the exact native selector names and require
 When `PAWFLOW_USE_RTK` is set to a truthy value (`1`, `true`, `yes`, `on`) and
 the selected relay target has the `rtk` binary, PawFlow uses RTK for compatible
 relay-backed calls: `bash` and `run_tests` run `rtk rewrite <command>` before
-execution, while `read`, `grep`, and `glob` use `rtk read`, `rtk grep`, and
-`rtk find`. If the variable is not truthy, RTK is missing, or RTK cannot handle
-a request, PawFlow falls back to the native tool behavior unchanged.
+execution, while `read` uses `rtk read`. `grep` and `glob` stay native because
+RTK output does not preserve PawFlow's grep/glob response semantics reliably.
+If the variable is not truthy, RTK is missing, or RTK cannot handle a request,
+PawFlow falls back to the native tool behavior unchanged.
 
 ## Web and Search
 

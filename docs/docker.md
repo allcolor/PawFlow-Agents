@@ -299,10 +299,11 @@ Docker shells (`docker-*`) create a new container per command. For persistent co
 The `pawflow-relay-dev` image includes the `rtk` CLI. When `PAWFLOW_USE_RTK`
 is truthy (`1`, `true`, `yes`, `on`) and the selected relay target has the
 `rtk` binary, PawFlow uses RTK on compatible relay-backed tools: `bash` and
-`run_tests` run `rtk rewrite <command>` before execution, while `read`, `grep`,
-and `glob` use `rtk read`, `rtk grep`, and `rtk find`. If the variable is not
-truthy, RTK is unavailable, or RTK cannot handle a request, the native tool
-path runs unchanged.
+`run_tests` run `rtk rewrite <command>` before execution, while `read` uses
+`rtk read`. `grep` and `glob` stay on the native relay implementations because
+RTK output does not preserve PawFlow's grep/glob response semantics reliably.
+If the variable is not truthy, RTK is unavailable, or RTK cannot handle a
+request, the native tool path runs unchanged.
 
 ## 4. ExecuteScript Containerization
 

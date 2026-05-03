@@ -51,7 +51,8 @@ def test_read_uses_rtk_for_relay_text_output(monkeypatch):
     assert relay.commands[0][1] == "rtk read README.md --line-numbers --max-lines 20"
 
 
-def test_grep_uses_rtk_for_relay_search(monkeypatch):
+def test_grep_stays_native_even_when_rtk_is_enabled(monkeypatch):
+    """RTK grep does not preserve PawFlow grep output semantics reliably."""
     monkeypatch.setenv("PAWFLOW_USE_RTK", "true")
     relay = RtkFsRelay("compact grep\n")
     handler = _handler(GrepHandler, relay)
@@ -64,9 +65,9 @@ def test_grep_uses_rtk_for_relay_search(monkeypatch):
         "head_limit": 10,
     })
 
-    assert result == "compact grep\n"
-    assert relay.native_calls == []
-    assert relay.commands[0][1] == "rtk grep PAWFLOW_USE_RTK core --max 10 --line-numbers"
+    assert result == "native grep\n"
+    assert relay.commands == []
+    assert relay.native_calls[0][0] == "grep"
 
 
 def test_glob_stays_native_even_when_rtk_is_enabled(monkeypatch):

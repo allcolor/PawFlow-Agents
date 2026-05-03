@@ -120,38 +120,10 @@ class GrepHandler(BaseFsHandler):
         if svc is None:
             return self._no_target_error(source)
 
-        # Relay service: pass all CC params through
+        # Relay service: pass all CC params through. Keep grep native even
+        # when RTK is enabled: `rtk grep` emits abbreviated paths and output
+        # that does not preserve PawFlow's file:line/mode semantics reliably.
         try:
-            rtk_args = ["rtk", "grep", pattern, path, "--max", str(limit)]
-            if output_mode == "content" and show_line_numbers:
-                rtk_args.append("--line-numbers")
-            if file_type:
-                rtk_args.extend(["--file-type", file_type])
-            if output_mode == "files_with_matches":
-                rtk_args.append("-l")
-            elif output_mode == "count":
-                rtk_args.append("-c")
-            if case_insensitive:
-                rtk_args.append("-i")
-            if context_before:
-                rtk_args.extend(["-B", str(context_before)])
-            if context_after:
-                rtk_args.extend(["-A", str(context_after)])
-            if multiline:
-                rtk_args.extend(["-U", "--multiline-dotall"])
-            if not recursive:
-                rtk_args.append("--max-depth=1")
-            if glob_pattern:
-                for g in glob_pattern.replace(",", " ").split():
-                    if g.strip():
-                        rtk_args.extend(["--glob", g.strip()])
-            rtk_output = self._relay_exec_rtk(svc, ".", rtk_args, arguments)
-            if rtk_output is not None:
-                if offset:
-                    lines = rtk_output.strip().split("\n")
-                    rtk_output = "\n".join(lines[offset:])
-                return rtk_output or "(no matches)"
-
             _grep_kwargs = {}
             if glob_pattern:
                 _grep_kwargs["glob"] = glob_pattern

@@ -81,6 +81,7 @@ class LLMOpenaiMixin:
             conn = http.client.HTTPConnection(host, port, timeout=self.timeout)
 
         try:
+            self._active_http_conn = conn
             json_body = json.dumps(body).encode("utf-8")
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -244,6 +245,7 @@ class LLMOpenaiMixin:
                 cache_read_tokens=cached_tokens,
             )
         finally:
+            self._active_http_conn = None
             conn.close()
 
     def _resolve_image_ref(self, block: dict, *,

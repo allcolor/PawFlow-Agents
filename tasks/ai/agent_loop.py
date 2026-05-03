@@ -263,10 +263,15 @@ class AgentLoopTask(
                     getattr(_cc, 'cancel_claude_code', None)
                     or getattr(_cc, 'cancel_codex', None)
                     or getattr(_cc, 'cancel_gemini', None)
+                    or getattr(_cc, 'abort', None)
                 )
                 if _cancel_fn:
-                    _cancel_fn(force=True)
-                    _cc._cc_catchup_idx = 0
+                    if getattr(_cancel_fn, "__name__", "") == "abort":
+                        _cancel_fn()
+                    else:
+                        _cancel_fn(force=True)
+                    if hasattr(_cc, "_cc_catchup_idx"):
+                        _cc._cc_catchup_idx = 0
         try:
             from services.tool_relay_service import ToolRelayService
             ToolRelayService.cancel_agent(conversation_id, agent_name)

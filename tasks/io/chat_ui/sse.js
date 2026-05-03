@@ -375,7 +375,10 @@ function connectSSE(cid, onReady, opts) {
     if (data.agent_name && (data.context_max || 0) > 0
         && typeof setContextUsage === 'function') {
       setContextUsage(data.agent_name, {
-        used: data.context_used, max: data.context_max, pct: data.context_pct,
+        used: data.context_used,
+        max: data.context_max,
+        pct: data.context_pct,
+        updated_at: data.updated_at || data.ts,
       });
       if (typeof updateActivePanel === 'function') updateActivePanel();
     }
@@ -919,6 +922,7 @@ function connectSSE(cid, onReady, opts) {
             : ((Number(data.context_max) || 0) > 0
               ? (Number(data.context_used) || 0) / Number(data.context_max)
               : 0),
+          updated_at: data.updated_at || data.ts || (Date.now() / 1000),
         });
       }
       // Show TOTAL conversation msg count as the reference (what the
@@ -1114,7 +1118,10 @@ function connectSSE(cid, onReady, opts) {
     if (doneAgent && (data.context_max || 0) > 0
         && typeof setContextUsage === 'function') {
       setContextUsage(doneAgent, {
-        used: data.context_used, max: data.context_max, pct: data.context_pct,
+        used: data.context_used,
+        max: data.context_max,
+        pct: data.context_pct,
+        updated_at: data.updated_at || data.ts,
       });
     }
     // Finalize any open thinking block for this agent

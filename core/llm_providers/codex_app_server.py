@@ -341,6 +341,39 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
     def _codex_app_resume_text(self, messages) -> str:
         return self._codex_app_last_user_text(messages)
 
+    def _codex_app_abort_active(self, force: bool = True) -> None:
+        """Abort active app-server turns by killing their stdio process."""
+        active = getattr(self, "_codex_app_active", None)
+        if not isinstance(active, dict):
+            return
+        lock = getattr(self, "_codex_app_lock", None)
+        entries = []
+        if lock is None:
+            entries = list(active.values())
+        else:
+            with lock:
+                entries = list(active.values())
+        for state in entries:
+            proc = state.get("proc") if isinstance(state, dict) else None
+            if not proc:
+                continue
+            try:
+                if proc.poll() is None:
+                    if force:
+                        proc.kill()
+                    else:
+                        proc.terminate()
+            except Exception:
+                logger.debug("[codex-app] abort active proc failed", exc_info=True)
+
+    def cancel_codex(self, force: bool = True) -> None:
+        """Force-stop hook used by AgentLoopTask for Codex app-server."""
+        try:
+            self.abort()
+        except Exception:
+            logger.debug("[codex-app] abort flag failed", exc_info=True)
+        self._codex_app_abort_active(force=force)
+
     def _codex_app_send_user_message(self, text: str, attachments: list = None):
         """Preempt/steer entrypoint for active app-server turns.
 
@@ -421,6 +454,10 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
     ):
         """Stream one Codex app-server turn into PawFlow callbacks."""
         from core.llm_client import LLMClientError, LLMResponse
+        from tasks.ai.agent_exceptions import AgentCancelled
+
+        if getattr(self, "_abort", None) and self._abort.is_set():
+            raise AgentCancelled()
 
         user_id = call_user_id or getattr(self, "_user_id", "") or ""
         conv_id = call_conversation_id or getattr(self, "_conversation_id", "") or ""
@@ -768,7 +805,11 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
                     logger.debug("[codex-app-live] active register failed", exc_info=True)
 
             while True:
+                if getattr(self, "_abort", None) and self._abort.is_set():
+                    raise AgentCancelled()
                 msg = self._codex_app_read_message(proc)
+                if getattr(self, "_abort", None) and self._abort.is_set():
+                    raise AgentCancelled()
                 if msg is None:
                     break
                 if "id" in msg:
@@ -1026,11 +1067,19 @@ class LLMCodexAppServerMixin(CodexSessionMixin):
         proc.stdin.flush()
 
     def _codex_app_request(self, proc, method: str, params: Optional[dict] = None) -> dict:
+        from tasks.ai.agent_exceptions import AgentCancelled
+
+        if getattr(self, "_abort", None) and self._abort.is_set():
+            raise AgentCancelled()
         req_id = self._codex_app_next_id()
         self._codex_app_send(proc, {"method": method, "id": req_id,
                                     "params": params or {}})
         while True:
+            if getattr(self, "_abort", None) and self._abort.is_set():
+                raise AgentCancelled()
             msg = self._codex_app_read_message(proc)
+            if getattr(self, "_abort", None) and self._abort.is_set():
+                raise AgentCancelled()
             if msg is None:
                 raise _CodexAppServerProtocolError(
                     f"codex app-server exited before response to {method}")

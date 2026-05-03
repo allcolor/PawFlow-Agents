@@ -246,12 +246,17 @@ class AgentCoreMixin:
         # reason to exceed a smaller configured context budget.
         client._max_context_size = int(ctx.get("max_context_size", 0) or 0)
 
-        # Register active claude-code client for preempt (stdin injection)
+        # Register active LLM client for cancellation/preempt. CLI providers
+        # expose send_user_message for soft interrupts; API providers expose
+        # abort() so force-stop can break a blocking HTTP stream instead of
+        # merely hiding the UI row.
         _agent_name_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id
-        if hasattr(client, 'send_user_message') and conversation_id:
+        if conversation_id and (hasattr(client, 'send_user_message') or hasattr(client, 'abort')):
             with self._active_contexts_lock:
                 self._active_claude_client[_agent_name_key] = client
-            # Clear cancelled state from previous run
+        # Clear cancelled relay/tool state from previous run for every
+        # provider, not only CLI providers.
+        if conversation_id:
             try:
                 from services.tool_relay_service import ToolRelayService
                 ToolRelayService.uncancel_agent(
@@ -288,6 +293,17 @@ class AgentCoreMixin:
         _client_base_url = getattr(client, "base_url", "") or ""
         if not isinstance(_client_base_url, str):
             _client_base_url = ""
+        def _effective_context_window() -> int:
+            """Gauge denominator: min(configured max, provider runtime window)."""
+            _cw_map = getattr(client, '_cc_context_window_by_stream', None) or {}
+            _cw_key = (conversation_id or "",
+                       ctx.get("active_agent_name", "") or "")
+            from core.context_window import effective_context_window
+            return effective_context_window(
+                getattr(client, '_max_context_size', 0)
+                or ctx.get("max_context_size", 0) or 0,
+                _cw_map.get(_cw_key, 0), fallback=0)
+
         def _agent_source(tok_in=0, tok_out=0, model_override="",
                            tok_cache_creation=0, tok_cache_read=0):
             import re as _re
@@ -303,22 +319,11 @@ class AgentCoreMixin:
             if tok_in or tok_out:
                 src["tokens_in"] = tok_in
                 src["tokens_out"] = tok_out
-            # Context-fill policy: count PawFlow's active LLM context.
-            # Provider usage can be a resume/live delta (Codex/Gemini) and is
-            # therefore not a reliable gauge source. Keep provider tokens in
-            # tokens_in/tokens_out, but derive context_used from the same
-            # PawFlow message list that compaction uses.
-            #
-            # context_max is PawFlow's effective budget: min(configured,
-            # provider-reported) when both are known.
-            _cw_map = getattr(client, '_cc_context_window_by_stream', None) or {}
-            _cw_key = (conversation_id or "",
-                       ctx.get("active_agent_name", "") or "")
-            from core.context_window import effective_context_window
-            _ctx_max = effective_context_window(
-                getattr(client, '_max_context_size', 0)
-                or ctx.get("max_context_size", 0) or 0,
-                _cw_map.get(_cw_key, 0), fallback=0)
+            # Context gauge policy: provider-independent numerator.
+            # used = token_count(ctx["messages"]). max = effective context
+            # window, i.e. min(configured max_context_size, provider runtime
+            # window) when the provider reports one.
+            _ctx_max = _effective_context_window()
             _ctx_usage = None
             try:
                 from core.token_counter import resolve_token_multiplier
@@ -328,19 +333,11 @@ class AgentCoreMixin:
                 _ctx_usage = context_usage_from_cache(
                     messages, _ctx_max,
                     ctx.get("_context_usage_cache"),
-                    source="active_context",
+                    source="pawflow_context",
                     token_multiplier=_tmul)
                 ctx["_context_usage_cache"] = _ctx_usage
             except Exception:
-                logger.debug("context gauge estimate failed; falling back to provider usage", exc_info=True)
-                _ctx_used = int(tok_in) + int(tok_cache_creation) + int(tok_cache_read)
-                if _ctx_used > 0:
-                    _ctx_usage = {
-                        "used": _ctx_used,
-                        "max": _ctx_max,
-                        "pct": (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0,
-                        "source": "provider_fallback",
-                    }
+                logger.debug("context gauge estimate failed", exc_info=True)
             if _ctx_usage and int(_ctx_usage.get("used", 0) or 0) > 0:
                 src["context_used"] = int(_ctx_usage.get("used", 0) or 0)
                 src["context_max"] = int(_ctx_usage.get("max", 0) or 0)
@@ -510,6 +507,54 @@ class AgentCoreMixin:
                     logger.debug("auto compact error SSE failed", exc_info=True)
             finally:
                 _auto_compact_state["running"] = False
+
+        def _publish_live_context_usage(reason: str, msg_id: str = "") -> None:
+            """Publish the current PawFlow context gauge after a real append."""
+            if not emitter.is_streaming or not conversation_id:
+                return
+            try:
+                src = _agent_source()
+                if int(src.get("context_max", 0) or 0) <= 0:
+                    return
+                payload = {
+                    "agent_name": ctx.get("active_agent_name", "") or "",
+                    "source": src,
+                    "context_used": int(src.get("context_used", 0) or 0),
+                    "context_max": int(src.get("context_max", 0) or 0),
+                    "context_pct": float(src.get("context_pct", 0.0) or 0.0),
+                    "context_source": src.get("context_source", reason),
+                    "context_message_count": src.get("context_message_count", 0),
+                    "context_cache_mode": src.get("context_cache_mode", ""),
+                    "updated_at": time.time(),
+                    "live": True,
+                }
+                if msg_id:
+                    payload["msg_id"] = msg_id
+                try:
+                    from core.conversation_store import ConversationStore as _CS
+                    _store = _CS.instance()
+                    _pcid = ctx.get("_event_cid", conversation_id)
+                    _agent_for_persist = payload["agent_name"]
+                    if _agent_for_persist:
+                        _cu_map = _store.get_extra(_pcid, "context_usage") or {}
+                        _cu_entry = dict(src.get("context_cache") or {})
+                        _cu_entry.update({
+                            "used": payload["context_used"],
+                            "max": payload["context_max"],
+                            "pct": payload["context_pct"],
+                            "updated_at": payload["updated_at"],
+                        })
+                        _cu_map[_agent_for_persist] = _cu_entry
+                        _store.set_extra(_pcid, "context_usage", _cu_map)
+                except Exception:
+                    logger.error(
+                        "[_append] live context_usage persist failed",
+                        exc_info=True)
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    ctx.get("_event_cid", conversation_id), "message_meta", payload)
+            except Exception:
+                logger.error("[_append] live context_usage publish failed", exc_info=True)
 
         def _append(msg: LLMMessage):
             # FORCE STOP is a hard barrier. Provider/tool callbacks can still
@@ -709,6 +754,8 @@ class AgentCoreMixin:
                         ConversationWriter.for_conversation(_parent_cid).enqueue_message(
                             _mirror, agent_name=_agent_for_route,
                             user_id=user_id)
+                    _publish_live_context_usage(
+                        f"append_{msg.role}", getattr(msg, "msg_id", "") or "")
                 except Exception as _persist_err:
                     # HARD INVARIANT: visible ⇒ persisted. A failure to enqueue
                     # means the message was (or will be) shown to the user but

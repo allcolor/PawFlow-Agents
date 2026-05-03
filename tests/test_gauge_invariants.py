@@ -1,17 +1,9 @@
-"""Lock the two monotonic invariants on the chat-UI context gauge:
+"""Lock the chat-UI context gauge invariants.
 
-  1. The gauge can only land on 0% on a brand-new empty conversation.
-     A 0 update on an agent that already had a non-zero reading must
-     be rejected.
-  2. The gauge can only DECREASE when a compact has just happened
-     for that agent. Otherwise an unsolicited drop is rejected.
-
-The rules live in `tasks/io/chat_ui/active_agents.js` (see the
-`setContextUsage` body). We don't have a JS test runner in this repo,
-so this test executes the actual JS source against a tiny stub
-browser environment using the `js2py` interpreter when available;
-otherwise it falls back to a structural check that the rule
-comments and conditions are still present.
+Real server gauge updates are authoritative and may move up or down. A
+post-compact decrease must not be blocked by stale UI state. Client-side
+estimates are derived from the last real baseline, while older server polls
+are rejected by timestamp when available.
 """
 
 from __future__ import annotations
@@ -51,27 +43,25 @@ def test_set_context_usage_blocks_demote_to_zero():
         "Rule 1 (no demote-to-zero) is missing from setContextUsage")
 
 
-def test_set_context_usage_blocks_decrease_without_compact():
-    """setContextUsage must short-circuit when realUsed < cached AND
-    no compact is pending."""
+def test_set_context_usage_accepts_real_decrease_and_rejects_stale_timestamp():
+    """Real server values may decrease after compact; only stale dated
+    payloads should be rejected."""
     body = _extract_function_body(_ACTIVE_AGENTS_JS, "setContextUsage")
-    assert "realUsed < cachedUsed" in body, (
-        "Rule 2 (no decrease without compact) is missing")
-    assert "_compactPending" in body, (
-        "setContextUsage must consult window._compactPending")
+    assert "incomingAt && cachedAt && incomingAt < cachedAt" in body
+    assert "realUsed < cachedUsed" not in body
 
 
-def test_compact_pending_consumed_after_accepted_decrease():
-    """After an accepted decrease the pending flag must be cleared so a
-    second decrease without a fresh compact is rejected."""
+def test_compact_pending_is_consumed_but_not_required_for_decrease():
+    """Compact events still clear their marker, but the marker must not be
+    required for accepting real server decreases."""
     body = _extract_function_body(_ACTIVE_AGENTS_JS, "setContextUsage")
-    assert "delete window._compactPending[key]" in body, (
-        "Compact-pending flag must be consumed on accepted update")
+    assert "delete window._compactPending[key]" in body
+    assert "!window._compactPending[key]" not in body
 
 
 def test_compact_progress_done_marks_compact_pending():
-    """The SSE `compact_progress stage=done` listener must call
-    markCompactJustHappened so the next message_meta drop is allowed."""
+    """The SSE `compact_progress stage=done` listener keeps the compact
+    marker for UI bookkeeping while applying the authoritative gauge."""
     # Locate the stage==='done' branch and ensure it calls
     # markCompactJustHappened with the agent name.
     assert "markCompactJustHappened(agent)" in _SSE_JS, (
@@ -190,11 +180,12 @@ def test_active_poll_hydration_uses_setcontextusage():
     assert "window._contextUsage[" not in outside_setter
 
 
-def test_active_panel_prefers_newer_context_cache():
-    """The active-agent row must not display an older polled gauge when the
-    shared context cache already has a newer monotonic value."""
+def test_active_panel_uses_context_cache_as_source_of_truth():
+    """The active-agent row must render the shared context cache even when
+    it is lower than a stale activeInteractions mirror after compact."""
     body = _extract_function_body(_ACTIVE_AGENTS_JS, "updateActivePanel")
-    assert "(cached.used || 0) > ctxUsed" in body
+    assert "(cached.used || 0) > ctxUsed" not in body
+    assert "if (cached && cached.max)" in body
     assert "ctxUsed = cached.used || 0" in body
 
 
@@ -214,9 +205,21 @@ def test_list_active_does_not_surface_idle_live_only_rows():
 def test_message_meta_context_used_comes_from_pawflow_context_not_provider_delta():
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     agent_source = src[src.index("def _agent_source") : src.index("# SpawnAgentsHandler source tracking")]
-    assert "Provider usage can be a resume/live delta" in agent_source
+    assert "used = token_count(ctx[\"messages\"])" in agent_source
+    assert "effective context" in agent_source
     assert "context_usage_from_cache" in agent_source
+    assert "source=\"pawflow_context\"" in agent_source
     assert 'src["tokens_in"] = tok_in' in agent_source
+
+
+def test_context_gauge_publishes_after_each_visible_append():
+    """The live gauge must move during tool loops, not only at heartbeat/done."""
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    assert "def _publish_live_context_usage" in src
+    append_body = src[src.index("def _append(msg: LLMMessage)") : src.index("# Repair orphan tool_calls")]
+    assert "messages.append(msg)" in append_body
+    assert "_publish_live_context_usage(" in append_body
+    assert "append_{msg.role}" in append_body
 
 
 def test_context_usage_cache_counts_suffix_then_resets():
@@ -849,15 +852,31 @@ def test_force_stop_kills_cli_processes_and_blocks_late_appends():
     loop_src = Path("tasks/ai/agent_loop.py").read_text(encoding="utf-8")
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     openai_src = Path("core/llm_providers/openai.py").read_text(encoding="utf-8")
+    codex_app_src = Path("core/llm_providers/codex_app_server.py").read_text(encoding="utf-8")
     assert "def _kill_live_cli_sessions" in cancel_src
     assert "CodexLiveRegistry" in cancel_src
     assert "GeminiLiveRegistry" in cancel_src
     assert "LiveSessionRegistry" in cancel_src
+    anthropic_src = Path("core/llm_providers/anthropic.py").read_text(encoding="utf-8")
+    llm_client_src = Path("core/llm_client.py").read_text(encoding="utf-8")
     assert "_kill_live_cli_sessions(conv_id, agent_name, \"force_stop\")" in cancel_src
     assert "client.abort()" in cancel_src
-    assert "client.abort()" in loop_src
+    assert "or getattr(_cc, 'abort', None)" in loop_src
+    assert "or getattr(_cc, 'cancel_codex', None)" in loop_src
+    assert "hasattr(client, 'send_user_message') or hasattr(client, 'abort')" in core_src
+    assert "ToolRelayService.uncancel_agent(" in core_src
+    assert "self._active_http_conn = conn" in openai_src
+    assert "self._active_http_conn = conn" in anthropic_src
+    assert "conn.close()" in llm_client_src
     assert "self._abort.is_set()" in openai_src
+    assert "self._abort.is_set()" in anthropic_src
+    assert "self._abort.is_set()" in codex_app_src
+    assert "_codex_app_abort_active" in codex_app_src
+    assert "proc.kill()" in codex_app_src
+    assert "Codex app-server abort failed" in llm_client_src
     assert "raise AgentCancelled()" in openai_src
+    assert "raise AgentCancelled()" in anthropic_src
+    assert "raise AgentCancelled()" in codex_app_src
     assert "emitter.check_cancelled()\n            # Sync msg_id" in core_src
     assert "emitter.check_cancelled()\n                        _cc_turn_count" in core_src
 

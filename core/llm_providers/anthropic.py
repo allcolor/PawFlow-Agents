@@ -47,6 +47,10 @@ class LLMAnthropicMixin:
                            *, call_user_id: str = "", call_conversation_id: str = ""):
         """Anthropic streaming: reads SSE events from the API."""
         from core.llm_client import LLMClientError, LLMResponse, LLMToolCall
+        from tasks.ai.agent_exceptions import AgentCancelled
+
+        if getattr(self, "_abort", None) and self._abort.is_set():
+            raise AgentCancelled()
 
         system_text, api_messages = self._build_anthropic_messages(
             messages,
@@ -105,6 +109,7 @@ class LLMAnthropicMixin:
             conn = http.client.HTTPConnection(host, port, timeout=self.timeout)
 
         try:
+            self._active_http_conn = conn
             json_body = json.dumps(body).encode("utf-8")
             headers = {
                 "x-api-key": self.api_key,
@@ -155,7 +160,11 @@ class LLMAnthropicMixin:
 
             buffer = ""
             while True:
+                if getattr(self, "_abort", None) and self._abort.is_set():
+                    raise AgentCancelled()
                 chunk = response.read(4096)
+                if getattr(self, "_abort", None) and self._abort.is_set():
+                    raise AgentCancelled()
                 if not chunk:
                     break
                 buffer += chunk.decode("utf-8", errors="replace")
@@ -166,6 +175,8 @@ class LLMAnthropicMixin:
                     if not line or line.startswith(":"):
                         continue
                     if line.startswith("data: "):
+                        if getattr(self, "_abort", None) and self._abort.is_set():
+                            raise AgentCancelled()
                         try:
                             data = json.loads(line[6:])
                             evt_type = data.get("type", "")
@@ -283,6 +294,7 @@ class LLMAnthropicMixin:
                 thinking_signature=thinking_signature,
             )
         finally:
+            self._active_http_conn = None
             conn.close()
 
     def _build_anthropic_messages(self, messages, *,

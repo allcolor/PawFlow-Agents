@@ -357,6 +357,7 @@ async function _renderResourcesData(data) {
             used: a.context_usage.used || 0,
             max: a.context_usage.max || 0,
             pct: a.context_usage.pct || 0,
+            updated_at: a.context_usage.updated_at || 0,
           });
         }
         liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + (a.scope||'') + '\',\'' + (a.autoconv||'') + '\');return false;">'

@@ -367,6 +367,7 @@ class LLMClient(
         self._on_tokens = None
         # Abort signal — set from another thread to cancel the current LLM call
         self._abort = threading.Event()
+        self._active_http_conn = None
 
     def clone_for_call(self) -> "LLMClient":
         """Return a fresh LLMClient instance sharing this one's config but
@@ -967,6 +968,17 @@ class LLMClient(
     def abort(self):
         """Signal the current LLM call to abort (thread-safe)."""
         self._abort.set()
+        if getattr(self, "provider", "") == "codex-app-server":
+            try:
+                self._codex_app_abort_active(force=True)
+            except Exception:
+                logger.debug("Codex app-server abort failed", exc_info=True)
+        conn = getattr(self, "_active_http_conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                logger.debug("LLM abort connection close failed", exc_info=True)
 
     def reset_abort(self):
         """Clear the abort signal before a new call."""

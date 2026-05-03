@@ -577,8 +577,7 @@ class AgentActionsMixin:
             respond freely.
 
         Returns immediately with an ack. The background thread:
-        1. Cancels the target for destructive ops; `compact` keeps active API
-           loops alive and updates their in-memory context after persistence.
+        1. Cancels the specific agent (or all agents if whole-conv)
         2. Acquires the context op lock (scoped)
         3. Runs fn()
         4. Publishes SSE done/error
@@ -586,45 +585,9 @@ class AgentActionsMixin:
         """
         from core.conversation_event_bus import ConversationEventBus
         bus = ConversationEventBus.instance()
-        def _refresh_active_context_from_store(result_agent: str):
-            """Adopt compacted context in any currently running agent loop."""
-            if op_name != "compact" or not conv_id:
-                return
-            target_agent = "" if result_agent in ("", "shared") else result_agent
-            try:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                if target_agent:
-                    data = store.load_agent_context(conv_id, target_agent)
-                    active_keys = [f"{conv_id}:{target_agent}"]
-                else:
-                    data = store.load_context(conv_id) or store.load(conv_id)
-                    active_keys = [conv_id]
-                if not data:
-                    return
-                refreshed = self._deserialize_messages(
-                    data, conversation_id=conv_id)
-                with self._active_contexts_lock:
-                    for key in active_keys:
-                        active_ctx = self._active_contexts.get(key)
-                        if not active_ctx:
-                            continue
-                        active_msgs = active_ctx.get("messages")
-                        if isinstance(active_msgs, list):
-                            active_msgs[:] = refreshed
-                            active_ctx.pop("_context_usage_cache", None)
-                            active_ctx.pop("_auto_compact_usage_cache", None)
-                            logger.info(
-                                "[compact] refreshed active context %s (%d messages)",
-                                key, len(refreshed))
-            except Exception:
-                logger.warning(
-                    "[compact] failed to refresh active context after compact",
-                    exc_info=True)
 
         def _bg():
-            if op_name != "compact":
-                self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
+            self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
             if not self._acquire_context_op(conv_id, agent_name,
                                              timeout=60.0):
                 bus.publish_event(conv_id, "compact_progress", {
@@ -637,8 +600,7 @@ class AgentActionsMixin:
                     "stage": "start", "detail": op_name,
                     "agent": agent_name or "",
                 })
-                _agent = result.get("agent", "") or agent_name
-                _refresh_active_context_from_store(_agent)
+                result = fn()
                 _agent = result.get("agent", "") or agent_name
                 if _agent and _agent != "shared":
                     self._clear_claude_session(conv_id, _agent)

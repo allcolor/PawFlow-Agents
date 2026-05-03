@@ -1,8 +1,8 @@
 # Core Storage Module
 
 """
-Abstract storage module for PawFlow.
-Provides a unified interface for different storage backends.
+Module de stockage abstrait pour PawFlow.
+Fournit une interface unifiée pour différents backends de stockage.
 """
 
 from abc import ABC, abstractmethod
@@ -14,60 +14,60 @@ logger = logging.getLogger(__name__)
 
 
 class StorageInterface(ABC):
-    """Abstract interface for all storage managers."""
+    """Interface abstraite pour tous les gestionnaires de stockage."""
 
     @abstractmethod
     def save_flow(self, flow_id: str, config: Dict[str, Any]) -> bool:
-        """Save a flow."""
+        """Sauvegarder un flux."""
         pass
 
     @abstractmethod
     def load_flow(self, flow_id: str) -> Optional[Dict[str, Any]]:
-        """Load a flow."""
+        """Charger un flux."""
         pass
 
     @abstractmethod
     def delete_flow(self, flow_id: str) -> bool:
-        """Delete a flow."""
+        """Supprimer un flux."""
         pass
 
     @abstractmethod
     def list_flows(self) -> List[str]:
-        """List all flows."""
+        """Lister tous les flux."""
         pass
 
     @abstractmethod
     def save_version(
         self, flow_id: str, config: Dict[str, Any], version: str
     ) -> bool:
-        """Save a version of a flow."""
+        """Sauvegarder une version d'un flux."""
         pass
 
     @abstractmethod
     def get_version(self, flow_id: str, version: str) -> Optional[Dict[str, Any]]:
-        """Retrieve a specific version of a flow."""
+        """Récupérer une version spécifique d'un flux."""
         pass
 
     @abstractmethod
     def get_versions(self, flow_id: str) -> List[str]:
-        """List all versions of a flow."""
+        """Lister toutes les versions d'un flux."""
         pass
 
 
 class StorageManager:
     """
-    Unified storage manager.
+    Gestionnaire de stockage unifié.
 
-    Provides a unified interface for different storage backends.
-    Supports: FileSystem, SQLite, Git, PostgreSQL.
+    Fournit une interface unifiée pour différents backends de stockage.
+    Supporte: FileSystem, SQLite, Git, PostgreSQL.
     """
 
     def __init__(self, storage: Optional[StorageInterface] = None):
         """
-        Initialize the StorageManager.
+        Initialiser le StorageManager.
 
         Args:
-            storage: Storage implementation (default: FileSystemStorage)
+            storage: Implémentation de stockage (par défaut: FileSystemStorage)
         """
         from core.storage_backends.filesystem_storage import FilesystemStorage
 
@@ -75,7 +75,7 @@ class StorageManager:
         self._initialized = False
 
     def initialize(self):
-        """Initialize storage."""
+        """Initialiser le stockage."""
         if not self._initialized:
             self._storage.save_flow = self._wrap_storage_method(
                 self._storage.save_flow
@@ -83,34 +83,34 @@ class StorageManager:
             self._initialized = True
 
     def _wrap_storage_method(self, method):
-        """Wrapper for error handling and logging."""
+        """Wrappage pour gestion d'erreurs et logging."""
 
         def wrapped(*args, **kwargs):
             try:
                 return method(*args, **kwargs)
             except Exception as e:
-                logger.error(f"Storage error: {e}")
+                logger.error(f"Erreur dans le stockage: {e}")
                 raise
 
         return wrapped
 
-    # Base storage methods
+    # Méthodes de stockage de base
 
     def save_flow(self, flow_id: str, config: Dict[str, Any]) -> bool:
         """
-        Save a flow.
+        Sauvegarder un flux.
 
         Args:
-            flow_id: Flow ID
-            config: Flow configuration
+            flow_id: ID du flux
+            config: Configuration du flux
 
         Returns:
-            True if successful
+            True si succès
         """
         self.initialize()
 
         try:
-            # Add metadata
+            # Ajouter métadonnées
             if "metadata" not in config:
                 config["metadata"] = {}
 
@@ -119,114 +119,114 @@ class StorageManager:
 
             return self._storage.save_flow(flow_id, config)
         except Exception as e:
-            logger.error(f"Error saving flow {flow_id}: {e}")
+            logger.error(f"Erreur de sauvegarde du flux {flow_id}: {e}")
             return False
 
     def load_flow(self, flow_id: str) -> Optional[Dict[str, Any]]:
         """
-        Load a flow.
+        Charger un flux.
 
         Args:
-            flow_id: Flow ID
+            flow_id: ID du flux
 
         Returns:
-            Flow configuration or None
+            Configuration du flux ou None
         """
         try:
             return self._storage.load_flow(flow_id)
         except Exception as e:
-            logger.error(f"Error loading flow {flow_id}: {e}")
+            logger.error(f"Erreur de chargement du flux {flow_id}: {e}")
             return None
 
     def delete_flow(self, flow_id: str) -> bool:
         """
-        Delete a flow.
+        Supprimer un flux.
 
         Args:
-            flow_id: Flow ID
+            flow_id: ID du flux
 
         Returns:
-            True if successful
+            True si succès
         """
         try:
             return self._storage.delete_flow(flow_id)
         except Exception as e:
-            logger.error(f"Error deleting flow {flow_id}: {e}")
+            logger.error(f"Erreur de suppression du flux {flow_id}: {e}")
             return False
 
     def list_flows(self) -> List[str]:
         """
-        List all flows.
+        Lister tous les flux.
 
         Returns:
-            List of flow IDs
+            Liste des IDs de flux
         """
         try:
             return self._storage.list_flows()
         except Exception as e:
-            logger.error(f"Error listing flows: {e}")
+            logger.error(f"Erreur de liste des flux: {e}")
             return []
 
-    # Versioning methods
+    # Méthodes de versionning
 
     def save_version(
         self, flow_id: str, config: Dict[str, Any], version: str
     ) -> bool:
         """
-        Save a version of a flow.
+        Sauvegarder une version d'un flux.
 
         Args:
-            flow_id: Flow ID
-            config: Flow configuration
-            version: Version number
+            flow_id: ID du flux
+            config: Configuration du flux
+            version: Numéro de version
 
         Returns:
-            True if successful
+            True si succès
         """
         try:
-            # Add version metadata
+            # Ajouter métadonnées de version
             version_config = config.copy()
             version_config["metadata"] = config.get("metadata", {})
             version_config["metadata"]["version"] = version
             version_config["metadata"]["saved_at"] = datetime.now().isoformat()
 
-            # Store with a version ID
+            # Stocker avec un ID de version
             version_id = f"{flow_id}_v{version}"
             return self._storage.save_flow(version_id, version_config)
         except Exception as e:
-            logger.error(f"Error saving version {flow_id} v{version}: {e}")
+            logger.error(f"Erreur de sauvegarde de version {flow_id} v{version}: {e}")
             return False
 
     def get_version(self, flow_id: str, version: str) -> Optional[Dict[str, Any]]:
         """
-        Retrieve a specific version of a flow.
+        Récupérer une version spécifique d'un flux.
 
         Args:
-            flow_id: Flow ID
-            version: Version number
+            flow_id: ID du flux
+            version: Numéro de version
 
         Returns:
-            Flow configuration or None
+            Configuration du flux ou None
         """
         try:
             version_id = f"{flow_id}_v{version}"
             return self._storage.load_flow(version_id)
         except Exception as e:
-            logger.error(f"Error retrieving version {flow_id} v{version}: {e}")
+            logger.error(f"Erreur de récupération de version {flow_id} v{version}: {e}")
             return None
 
     def get_versions(self, flow_id: str) -> List[str]:
         """
-        List all versions of a flow.
+        Lister toutes les versions d'un flux.
 
         Args:
-            flow_id: Flow ID
+            flow_id: ID du flux
 
         Returns:
-            List of version numbers
+            Liste des numéros de version
         """
         try:
-            # Extract versions from flow IDs
+            # Extraire les versions depuis les IDs de flux
             all_flows = self.list_flows()
             versions = []
 
@@ -237,18 +237,18 @@ class StorageManager:
 
             return sorted(versions, key=lambda x: self._version_sort_key(x))
         except Exception as e:
-            logger.error(f"Error retrieving versions for {flow_id}: {e}")
+            logger.error(f"Erreur de récupération des versions {flow_id}: {e}")
             return []
 
     def _version_sort_key(self, version: str) -> tuple:
         """
-        Sort key for versions (supports semver).
+        Clé de tri pour les versions (supporte semver).
 
         Args:
-            version: Version to sort
+            version: Version à trier
 
         Returns:
-            Tuple for sorting
+            Tuple pour le tri
         """
         try:
             parts = version.split(".")
@@ -258,38 +258,38 @@ class StorageManager:
 
     def restore_version(self, flow_id: str, version: str) -> bool:
         """
-        Restore a version of a flow.
+        Restaurer une version d'un flux.
 
         Args:
-            flow_id: Flow ID
-            version: Version number to restore
+            flow_id: ID du flux
+            version: Numéro de version à restaurer
 
         Returns:
-            True if successful
+            True si succès
         """
         try:
             version_data = self.get_version(flow_id, version)
             if version_data:
-                # Remove version suffix for the save
+                # Retirer le suffixe de version pour le save
                 version_data["metadata"] = version_data.get("metadata", {})
                 version_data["metadata"]["restored_from"] = version
                 return self.save_flow(flow_id, version_data)
             return False
         except Exception as e:
-            logger.error(f"Error restoring version {flow_id} v{version}: {e}")
+            logger.error(f"Erreur de restauration de version {flow_id} v{version}: {e}")
             return False
 
-    # Search methods
+    # Méthodes de recherche
 
     def search_flows(self, query: str) -> List[Dict[str, Any]]:
         """
-        Search flows by text.
+        Rechercher des flux par texte.
 
         Args:
-            query: Search text
+            query: Texte de recherche
 
         Returns:
-            List of matching flows
+            Liste des flux correspondants
         """
         try:
             flows = self.list_flows()
@@ -298,7 +298,7 @@ class StorageManager:
             for flow_id in flows:
                 flow_data = self.load_flow(flow_id)
                 if flow_data:
-                    # Search in name, description, author
+                    # Recherche dans le nom, description, author
                     searchable = " ".join(
                         str(flow_data.get(k, ""))
                         for k in ["name", "description", "author", "id"]
@@ -309,26 +309,26 @@ class StorageManager:
 
             return results
         except Exception as e:
-            logger.error(f"Search error: {e}")
+            logger.error(f"Erreur de recherche: {e}")
             return []
 
-    # Utility methods
+    # Méthodes utilitaires
 
     def backup_flow(self, flow_id: str, backup_path: str) -> bool:
         """
-        Save a backup copy of a flow.
+        Sauvegarder une copie de sauvegarde d'un flux.
 
         Args:
-            flow_id: Flow ID
-            backup_path: Backup path
+            flow_id: ID du flux
+            backup_path: Chemin de sauvegarde
 
         Returns:
-            True if successful
+            True si succès
         """
         try:
             flow_data = self.load_flow(flow_id)
             if flow_data:
-                # Save to the backup path
+                # Sauvegarder dans le chemin de backup
                 backup_config = {
                     "backup_of": flow_id,
                     "backed_up_at": datetime.now().isoformat(),
@@ -337,18 +337,18 @@ class StorageManager:
                 return self._storage.save_flow(backup_path, backup_config)
             return False
         except Exception as e:
-            logger.error(f"Error backing up flow {flow_id}: {e}")
+            logger.error(f"Erreur de backup du flux {flow_id}: {e}")
             return False
 
     def get_flow_stats(self, flow_id: str) -> Dict[str, Any]:
         """
-        Get statistics for a flow.
+        Récupérer les statistiques d'un flux.
 
         Args:
-            flow_id: Flow ID
+            flow_id: ID du flux
 
         Returns:
-            Statistics dictionary
+            Dictionnaire de statistiques
         """
         try:
             flow_data = self.load_flow(flow_id)
@@ -364,25 +364,25 @@ class StorageManager:
                 "saved_at": flow_data.get("metadata", {}).get("saved_at"),
             }
         except Exception as e:
-            logger.error(f"Error getting stats for flow {flow_id}: {e}")
+            logger.error(f"Erreur de statistiques du flux {flow_id}: {e}")
             return {}
 
     def set_storage(self, storage: StorageInterface):
         """
-        Change the storage backend.
+        Changer le backend de stockage.
 
         Args:
-            storage: New storage implementation
+            storage: Nouvelle implémentation de stockage
         """
         self._storage = storage
         self._initialized = False
-        logger.info(f"Storage backend changed: {type(storage).__name__}")
+        logger.info(f"Backend de stockage changé: {type(storage).__name__}")
 
     def get_storage_type(self) -> str:
         """
-        Get the current storage type.
+        Récupérer le type de stockage actuel.
 
         Returns:
-            Storage type name
+            Nom du type de stockage
         """
         return type(self._storage).__name__

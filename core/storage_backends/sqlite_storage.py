@@ -1,7 +1,7 @@
 # SQLite Storage
 
 """
-SQLite storage implementation.
+Implémentation du stockage SQLite.
 """
 
 import sqlite3
@@ -11,31 +11,31 @@ from datetime import datetime
 
 
 class SqliteStorage:
-    """SQLite storage."""
+    """Stockage SQLite."""
     
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialize SQLite storage.
+        Initialiser le stockage SQLite.
         
         Args:
-            config: Configuration with:
-                - database: path to the database
+            config: Configuration avec:
+                - database: chemin vers la base de données
         """
         self.database = config.get('database', './pawflow.db')
         self._init_database()
     
     def _get_connection(self) -> sqlite3.Connection:
-        """Get a database connection."""
+        """Obtenir une connexion à la base de données."""
         conn = sqlite3.connect(self.database)
         conn.row_factory = sqlite3.Row
         return conn
     
     def _init_database(self):
-        """Initialize the database."""
+        """Initialiser la base de données."""
         conn = self._get_connection()
         cursor = conn.cursor()
         
-        # Flows table
+        # Table des flux
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS flows (
                 id TEXT PRIMARY KEY,
@@ -45,7 +45,7 @@ class SqliteStorage:
             )
         ''')
         
-        # Tasks table
+        # Table des tâches
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +55,7 @@ class SqliteStorage:
             )
         ''')
         
-        # Services table
+        # Table des services
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS services (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,7 +69,7 @@ class SqliteStorage:
         conn.close()
     
     def save_flow(self, flow_id: str, config: Dict[str, Any]) -> bool:
-        """Save a flow."""
+        """Sauvegarder un flux."""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -87,11 +87,11 @@ class SqliteStorage:
             return True
         
         except Exception as e:
-            print(f"Error saving flow {flow_id}: {e}")
+            print(f"Erreur lors de la sauvegarde du flux {flow_id}: {e}")
             return False
     
     def load_flow(self, flow_id: str) -> Optional[Dict[str, Any]]:
-        """Load a flow."""
+        """Charger un flux."""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -106,11 +106,11 @@ class SqliteStorage:
             return None
         
         except Exception as e:
-            print(f"Error loading flow {flow_id}: {e}")
+            print(f"Erreur lors du chargement du flux {flow_id}: {e}")
             return None
     
     def delete_flow(self, flow_id: str) -> bool:
-        """Delete a flow."""
+        """Supprimer un flux."""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -122,11 +122,11 @@ class SqliteStorage:
             return True
         
         except Exception as e:
-            print(f"Error deleting flow {flow_id}: {e}")
+            print(f"Erreur lors de la suppression du flux {flow_id}: {e}")
             return False
     
     def list_flows(self) -> List[str]:
-        """List all flows."""
+        """Lister tous les flux."""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -138,11 +138,11 @@ class SqliteStorage:
             return [row['id'] for row in rows]
         
         except Exception as e:
-            print(f"Error listing flows: {e}")
+            print(f"Erreur lors de la liste des flux: {e}")
             return []
     
     def save_task(self, task_type: str, config: Dict[str, Any]) -> bool:
-        """Save a custom task."""
+        """Sauvegarder une tâche custom."""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -160,11 +160,11 @@ class SqliteStorage:
             return True
         
         except Exception as e:
-            print(f"Error saving task {task_type}: {e}")
+            print(f"Erreur lors de la sauvegarde de la tâche {task_type}: {e}")
             return False
     
     def load_service(self, service_type: str, config: Dict[str, Any]) -> bool:
-        """Save a service."""
+        """Sauvegarder un service."""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -182,5 +182,5 @@ class SqliteStorage:
             return True
         
         except Exception as e:
-            print(f"Error saving service {service_type}: {e}")
+            print(f"Erreur lors de la sauvegarde du service {service_type}: {e}")
             return False

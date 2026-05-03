@@ -1,9 +1,9 @@
 # Git Storage
 
 """
-Git storage implementation.
-Uses a local Git repo to version flows.
-Each save creates an automatic commit.
+Implémentation du stockage Git.
+Utilise un repo Git local pour versionner les flux.
+Chaque save crée un commit automatique.
 """
 
 import json
@@ -18,23 +18,23 @@ logger = logging.getLogger(__name__)
 
 
 class GitStorage:
-    """Git storage with automatic versioning via commits.
+    """Stockage Git avec versioning automatique via commits.
 
-    Stores flows as JSON files in a Git repository.
-    Each save_flow/delete_flow creates a commit.
-    Git history provides versioning naturally.
+    Stocke les flows comme fichiers JSON dans un repo Git.
+    Chaque save_flow/delete_flow crée un commit.
+    L'historique Git fournit le versioning naturellement.
     """
 
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialize Git storage.
+        Initialiser le stockage Git.
 
         Args:
-            config: Configuration with:
-                - repository: path to local repository (default: '.')
-                - branch: branch to use (default: 'main')
-                - flows_dir: subdirectory for flows (default: 'flows')
-                - auto_commit: auto commit after save/delete (default: True)
+            config: Configuration avec:
+                - repository: chemin du repository local (défaut: '.')
+                - branch: branche à utiliser (défaut: 'main')
+                - flows_dir: sous-répertoire pour les flows (défaut: 'flows')
+                - auto_commit: commit automatique après save/delete (défaut: True)
         """
         self.repository = Path(config.get('repository', '.')).resolve()
         self.branch = config.get('branch', 'main')
@@ -48,7 +48,7 @@ class GitStorage:
         self._ensure_git_repo()
 
     def _ensure_git_repo(self):
-        """Initialize the Git repo if necessary."""
+        """Initialiser le repo Git si nécessaire."""
         git_dir = self.repository / '.git'
         if not git_dir.exists():
             self._run_git('init')
@@ -63,7 +63,7 @@ class GitStorage:
             logger.info(f"Git repo initialized at {self.repository}")
 
     def _run_git(self, *args, check: bool = True) -> subprocess.CompletedProcess:
-        """Run a git command."""
+        """Exécuter une commande git."""
         cmd = ['git', '-C', str(self.repository)] + list(args)
         try:
             result = subprocess.run(
@@ -88,7 +88,7 @@ class GitStorage:
             self._run_git('commit', '-m', message)
 
     def save_flow(self, flow_id: str, config: Dict[str, Any]) -> bool:
-        """Save a flow to Git."""
+        """Sauvegarder un flux dans Git."""
         try:
             if 'modified_at' not in config:
                 config['modified_at'] = datetime.now().isoformat()
@@ -105,7 +105,7 @@ class GitStorage:
             return False
 
     def load_flow(self, flow_id: str) -> Optional[Dict[str, Any]]:
-        """Load a flow from Git."""
+        """Charger un flux depuis Git."""
         try:
             filepath = self._flows_path / f"{flow_id}.json"
             if not filepath.exists():
@@ -117,7 +117,7 @@ class GitStorage:
             return None
 
     def delete_flow(self, flow_id: str) -> bool:
-        """Delete a flow from Git."""
+        """Supprimer un flux de Git."""
         try:
             filepath = self._flows_path / f"{flow_id}.json"
             if filepath.exists():
@@ -131,7 +131,7 @@ class GitStorage:
             return False
 
     def list_flows(self) -> List[str]:
-        """List all flows in Git."""
+        """Lister tous les flux dans Git."""
         try:
             flow_ids = []
             for f in sorted(self._flows_path.glob("*.json")):
@@ -142,7 +142,7 @@ class GitStorage:
             return []
 
     def save_task(self, task_type: str, config: Dict[str, Any]) -> bool:
-        """Save a task to Git."""
+        """Sauvegarder une tâche dans Git."""
         try:
             task_dir = self.repository / "tasks_config" / task_type
             task_dir.mkdir(parents=True, exist_ok=True)
@@ -156,7 +156,7 @@ class GitStorage:
             return False
 
     def load_service(self, service_type: str, config: Dict[str, Any]) -> bool:
-        """Save a service to Git."""
+        """Sauvegarder un service dans Git."""
         try:
             svc_dir = self.repository / "services_config" / service_type
             svc_dir.mkdir(parents=True, exist_ok=True)
@@ -172,7 +172,7 @@ class GitStorage:
     # -- Git-specific methods --
 
     def get_flow_history(self, flow_id: str) -> List[Dict[str, str]]:
-        """Retrieve modification history for a flow.
+        """Récupérer l'historique des modifications d'un flux.
 
         Returns:
             List of {"commit": hash, "date": iso, "message": msg}
@@ -198,7 +198,7 @@ class GitStorage:
             return []
 
     def get_flow_at_commit(self, flow_id: str, commit: str) -> Optional[Dict[str, Any]]:
-        """Retrieve a flow at a specific commit."""
+        """Récupérer un flux à un commit spécifique."""
         try:
             filepath = f"{self.flows_dir}/{flow_id}.json"
             result = self._run_git('show', f'{commit}:{filepath}', check=False)

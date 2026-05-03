@@ -72,8 +72,9 @@ runtime/docker/pawflow_sdk/pawflow.py
 ```
 
 The app calls the Python module from `runtime/` first, then falls back to the
-repository root for source development. Override the Python executable when
-needed:
+repository root for source development. On Windows it starts `python` directly
+instead of the `py.exe` launcher so the relay does not keep an extra launcher
+process alive. Override the Python executable when needed:
 
 ```bash
 PAWFLOW_RELAY_PYTHON=/path/to/python npm start

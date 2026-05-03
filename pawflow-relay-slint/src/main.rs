@@ -8,12 +8,16 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+#[cfg(windows)]
+use std::ffi::c_void;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use slint::{CloseRequestResponse, ComponentHandle, Timer};
+use slint::{CloseRequestResponse, ComponentHandle, ModelRc, Timer, VecModel};
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -22,6 +26,49 @@ use tray_icon::{
 slint::include_modules!();
 
 type RelayProcesses = Arc<Mutex<HashMap<String, Child>>>;
+
+fn maximize_app_window(ui: &AppWindow) {
+    ui.window().set_maximized(true);
+    maximize_native_window();
+}
+
+#[cfg(not(windows))]
+fn maximize_native_window() {}
+
+#[cfg(windows)]
+fn maximize_native_window() {
+    type Hwnd = *mut c_void;
+    type Lparam = isize;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn EnumWindows(callback: unsafe extern "system" fn(Hwnd, Lparam) -> i32, lparam: Lparam) -> i32;
+        fn GetWindowThreadProcessId(hwnd: Hwnd, process_id: *mut u32) -> u32;
+        fn IsWindowVisible(hwnd: Hwnd) -> i32;
+        fn ShowWindow(hwnd: Hwnd, command: i32) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcessId() -> u32;
+    }
+
+    unsafe extern "system" fn enum_window(hwnd: Hwnd, lparam: Lparam) -> i32 {
+        let current_pid = lparam as u32;
+        let mut window_pid = 0;
+        GetWindowThreadProcessId(hwnd, &mut window_pid);
+        if window_pid == current_pid && IsWindowVisible(hwnd) != 0 {
+            const SW_MAXIMIZE: i32 = 3;
+            ShowWindow(hwnd, SW_MAXIMIZE);
+            return 0;
+        }
+        1
+    }
+
+    unsafe {
+        EnumWindows(enum_window, GetCurrentProcessId() as Lparam);
+    }
+}
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
@@ -37,7 +84,15 @@ fn main() -> Result<(), slint::PlatformError> {
     let _tray_state = schedule_tray_setup(&ui);
 
     refresh_ui(&ui.as_weak(), &relays);
+    maximize_app_window(&ui);
     ui.show()?;
+    maximize_app_window(&ui);
+    let ui_weak = ui.as_weak();
+    Timer::single_shot(Duration::from_millis(50), move || {
+        if let Some(ui) = ui_weak.upgrade() {
+            maximize_app_window(&ui);
+        }
+    });
     slint::run_event_loop_until_quit()
 }
 
@@ -293,6 +348,15 @@ fn wire_navigation(ui: &AppWindow) {
     ui.on_show_image_panel(move || {
         let _ = ui_weak.upgrade_in_event_loop(|ui| ui.set_active_panel(2));
     });
+
+    let ui_weak = ui.as_weak();
+    ui.on_select_panel(move |panel| {
+        let _ = ui_weak.upgrade_in_event_loop(move |ui| {
+            if (0..=2).contains(&panel) {
+                ui.set_active_panel(panel);
+            }
+        });
+    });
 }
 
 struct TrayState {
@@ -461,6 +525,7 @@ struct DisplayState {
     relays: String,
     docker: String,
     catalog: String,
+    nav_rows: Vec<NavRow>,
     server_row_name: String,
     server_row_meta: String,
     relay_row_name: String,
@@ -491,6 +556,7 @@ fn refresh_ui(ui: &slint::Weak<AppWindow>, relays: &RelayProcesses) {
                 ui.set_relay_list(state.relays.into());
                 ui.set_docker_list(state.docker.into());
                 ui.set_catalog_text(state.catalog.into());
+                ui.set_nav_rows(ModelRc::new(Rc::new(VecModel::from(state.nav_rows))));
                 ui.set_server_row_name(state.server_row_name.into());
                 ui.set_server_row_meta(state.server_row_meta.into());
                 ui.set_relay_row_name(state.relay_row_name.into());
@@ -536,18 +602,20 @@ fn load_display_state(relays: &RelayProcesses) -> Result<DisplayState, String> {
     let catalog = load_image_catalog();
     let server_summary = primary_server_summary(&servers);
     let relay_summary = primary_relay_summary(&workspaces, &running);
+    let summary = format!(
+        "Servers: {} | Relays: {} | Running: {}",
+        servers.len(),
+        workspaces.len(),
+        running.len()
+    );
 
     Ok(DisplayState {
-        summary: format!(
-            "Servers: {} | Relays: {} | Running: {}",
-            servers.len(),
-            workspaces.len(),
-            running.len()
-        ),
+        summary: summary.clone(),
         servers: format_servers(&servers),
         relays: format_workspaces(&workspaces, &running),
         docker: format_docker_state(&docker_state),
         catalog: format_catalog_state(&catalog),
+        nav_rows: build_nav_rows(&servers, &workspaces, &running, &summary),
         server_row_name: server_summary.row_name,
         server_row_meta: server_summary.row_meta,
         relay_row_name: relay_summary.row_name,
@@ -732,7 +800,9 @@ $dialog.ShowNewFolderButton = $true
 if ($args.Count -gt 0 -and $args[0] -and (Test-Path -LiteralPath $args[0])) { $dialog.SelectedPath = $args[0] }
 if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Write-Output $dialog.SelectedPath }
 "#;
-    let output = Command::new("powershell.exe")
+    let mut cmd = Command::new("powershell.exe");
+    hide_command_window(&mut cmd);
+    let output = cmd
         .args([
             "-NoProfile",
             "-STA",
@@ -765,10 +835,9 @@ fn choose_folder_unix(current: &str) -> Result<Option<String>, String> {
     ];
     for (program, args) in candidates {
         if command_exists(program) {
-            let output = Command::new(program)
-                .args(args)
-                .output()
-                .map_err(|err| err.to_string())?;
+            let mut cmd = Command::new(program);
+            hide_command_window(&mut cmd);
+            let output = cmd.args(args).output().map_err(|err| err.to_string())?;
             return folder_output(output);
         }
     }
@@ -809,6 +878,7 @@ fn run_python_json(source: &str, args: &[&str]) -> Result<Value, String> {
     for arg in args {
         cmd.arg(arg);
     }
+    hide_command_window(&mut cmd);
     let output = cmd.output().map_err(|err| err.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -834,6 +904,7 @@ fn apply_python_command_env(cmd: &mut Command) {
     cmd.current_dir(command_root());
     cmd.env("PAWFLOW_RELAY_RUNTIME_ROOT", runtime_root());
     cmd.env("PYTHONPATH", python_path());
+    hide_command_window(cmd);
 }
 
 fn python_command() -> String {
@@ -946,16 +1017,17 @@ fn list_docker_images() -> Result<Value, String> {
 }
 
 fn run_docker_capture(args: &[&str]) -> Result<String, String> {
-    let output = Command::new(docker_command())
-        .args(args)
-        .output()
-        .map_err(|err| err.to_string())?;
+    let mut cmd = Command::new(docker_command());
+    hide_command_window(&mut cmd);
+    let output = cmd.args(args).output().map_err(|err| err.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if output.status.success() {
         Ok(stdout)
     } else if cfg!(windows) && docker_connect_error(&stderr) {
-        let output = Command::new("wsl.exe")
+        let mut cmd = Command::new("wsl.exe");
+        hide_command_window(&mut cmd);
+        let output = cmd
             .args(wsl_base_args())
             .arg("docker")
             .args(args)
@@ -983,6 +1055,7 @@ fn run_docker_capture(args: &[&str]) -> Result<String, String> {
 
 fn run_docker(args: &[&str], label: &str, ui: &slint::Weak<AppWindow>) -> Result<(), String> {
     let mut cmd = Command::new(docker_command());
+    hide_command_window(&mut cmd);
     cmd.args(args);
     match run_streamed_command(cmd, label, ui) {
         Ok(out) => {
@@ -997,6 +1070,7 @@ fn run_docker(args: &[&str], label: &str, ui: &slint::Weak<AppWindow>) -> Result
                 "[docker] Windows Docker unavailable; trying WSL docker\n",
             );
             let mut cmd = Command::new("wsl.exe");
+            hide_command_window(&mut cmd);
             cmd.args(wsl_base_args()).arg("docker").args(args);
             run_streamed_command(cmd, label, ui).map(|_| ())
         }
@@ -1011,6 +1085,7 @@ fn run_docker_build(
 ) -> Result<(), String> {
     let context = context_dir.to_string_lossy().to_string();
     let mut cmd = Command::new(docker_command());
+    hide_command_window(&mut cmd);
     cmd.args(["build", "-t", image_name, &context]);
     match run_streamed_command(cmd, "image-build", ui) {
         Ok(_) => Ok(()),
@@ -1021,6 +1096,7 @@ fn run_docker_build(
             );
             let wsl_context = wsl_path(context_dir)?;
             let mut cmd = Command::new("wsl.exe");
+            hide_command_window(&mut cmd);
             cmd.args(wsl_base_args())
                 .arg("docker")
                 .args(["build", "-t", image_name, &wsl_context]);
@@ -1035,6 +1111,7 @@ fn run_streamed_command(
     label: &str,
     ui: &slint::Weak<AppWindow>,
 ) -> Result<String, String> {
+    hide_command_window(&mut cmd);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|err| err.to_string())?;
     let stdout = child.stdout.take();
@@ -1185,6 +1262,108 @@ struct RelaySummary {
     path: String,
     mode: String,
     docker_image: String,
+}
+
+fn nav_row(
+    title: impl Into<String>,
+    meta: impl Into<String>,
+    level: i32,
+    panel: i32,
+    running: bool,
+    has_children: bool,
+    open: bool,
+) -> NavRow {
+    let title: String = title.into();
+    let meta: String = meta.into();
+    NavRow {
+        title: title.into(),
+        meta: meta.into(),
+        level,
+        panel,
+        running,
+        has_children,
+        open,
+    }
+}
+
+fn build_nav_rows(
+    servers: &[Value],
+    workspaces: &[Value],
+    running: &[String],
+    summary: &str,
+) -> Vec<NavRow> {
+    let mut rows = vec![nav_row("Servers", summary, 0, -1, false, true, true)];
+    if servers.is_empty() {
+        rows.push(nav_row("No server", "add profile", 1, 1, false, true, true));
+    }
+
+    for server in servers {
+        let name = value_str(server, "name");
+        let label = if name.is_empty() {
+            "Unnamed server".into()
+        } else {
+            name.clone()
+        };
+        let logged = truthy(server.get("session_token")) || truthy(server.get("logged_in"));
+        rows.push(nav_row(
+            label,
+            if logged { "logged in" } else { "login needed" },
+            1,
+            1,
+            false,
+            true,
+            true,
+        ));
+
+        let mut matched = 0;
+        for workspace in workspaces {
+            if value_str(workspace, "server") != name {
+                continue;
+            }
+            matched += 1;
+            let relay_name = value_str(workspace, "name");
+            let relay_running = running.iter().any(|item| item == &relay_name);
+            rows.push(nav_row(
+                if relay_name.is_empty() { "Unnamed relay" } else { &relay_name },
+                if relay_running { "running" } else { "stopped" },
+                2,
+                0,
+                relay_running,
+                false,
+                true,
+            ));
+        }
+        if matched == 0 {
+            rows.push(nav_row("No relay", "add relay", 2, 0, false, false, true));
+        }
+    }
+
+    let has_unassigned = workspaces.iter().any(|workspace| {
+        let server_name = value_str(workspace, "server");
+        !servers.iter().any(|server| value_str(server, "name") == server_name)
+    });
+    if has_unassigned {
+        rows.push(nav_row("Unassigned", "missing server", 1, 1, false, true, true));
+        for workspace in workspaces {
+            let server_name = value_str(workspace, "server");
+            if servers.iter().any(|server| value_str(server, "name") == server_name) {
+                continue;
+            }
+            let relay_name = value_str(workspace, "name");
+            let relay_running = running.iter().any(|item| item == &relay_name);
+            rows.push(nav_row(
+                if relay_name.is_empty() { "Unnamed relay" } else { &relay_name },
+                if relay_running { "running" } else { "stopped" },
+                2,
+                0,
+                relay_running,
+                false,
+                true,
+            ));
+        }
+    }
+
+    rows
 }
 
 fn primary_server_summary(servers: &[Value]) -> ServerSummary {
@@ -1407,6 +1586,14 @@ fn docker_command() -> String {
     env::var("PAWFLOW_RELAY_DOCKER").unwrap_or_else(|_| "docker".into())
 }
 
+fn hide_command_window(_cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        _cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 fn wsl_base_args() -> Vec<String> {
     match env::var("PAWFLOW_RELAY_WSL_DISTRO") {
         Ok(distro) if !distro.is_empty() => vec!["-d".into(), distro, "--".into()],
@@ -1415,7 +1602,9 @@ fn wsl_base_args() -> Vec<String> {
 }
 
 fn wsl_path(path: &Path) -> Result<String, String> {
-    let output = Command::new("wsl.exe")
+    let mut cmd = Command::new("wsl.exe");
+    hide_command_window(&mut cmd);
+    let output = cmd
         .args(wsl_base_args())
         .arg("wslpath")
         .arg("-a")

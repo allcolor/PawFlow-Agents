@@ -362,8 +362,17 @@ def test_idle_polling_cannot_stack_unbounded_work():
     assert "_syncActiveSub" in _ACTIVE_AGENTS_JS
     assert "_SYNC_ACTIVE_STALE_MS" in _ACTIVE_AGENTS_JS
     assert "if (now - _syncActiveStartedAt < _SYNC_ACTIVE_STALE_MS) return" in _ACTIVE_AGENTS_JS
+    assert "setInterval(syncActiveFromServer, 10000)" in _ACTIVE_AGENTS_JS
+    assert "document.hidden) return" in _ACTIVE_AGENTS_JS
     assert "_MAX_BG_ACTIONS" in _AGENT_ACTIONS_PY
     assert "_BG_ACTION_SEMAPHORE.acquire(blocking=False)" in _AGENT_ACTIONS_PY
+
+
+def test_webchat_fallback_poll_is_disabled_while_sse_is_healthy():
+    assert "function _sseIsHealthy()" in _SSE_JS
+    assert "if (_sseIsHealthy()) return" in _SSE_JS
+    assert "document.hidden && _sseIsHealthy()" in _SSE_JS
+    assert "}, 120000);" in _SSE_JS
 
 
 def test_poller_watchdogs_are_throttled():

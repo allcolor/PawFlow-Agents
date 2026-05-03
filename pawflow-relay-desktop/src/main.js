@@ -16,7 +16,7 @@ let tray = null;
 let isQuitting = false;
 
 function pythonCommand() {
-  return process.env.PAWFLOW_RELAY_PYTHON || process.env.PYTHON || (process.platform === 'win32' ? 'py' : 'python3');
+  return process.env.PAWFLOW_RELAY_PYTHON || process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
 }
 
 function appRoot() {

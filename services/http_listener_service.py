@@ -633,6 +633,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 logger.debug(f"Client disconnected during stream for {req.request_id}: {e}")
             except Exception as e:
                 logger.error(f"Stream error for {req.request_id}: {e}")
+            finally:
+                close_stream = getattr(req.response_stream, "close", None)
+                if callable(close_stream):
+                    try:
+                        close_stream()
+                    except Exception:
+                        logger.debug("exception suppressed", exc_info=True)
         elif req.response_body:
             self.wfile.write(req.response_body)
         req.mark("send")

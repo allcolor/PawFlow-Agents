@@ -1590,19 +1590,28 @@ function _scheduleSSEReconnect(cid) {
   }, delay);
 }
 
-// ── Fallback Poll (30s) ──────────────────────────────────────────
-// ── Fallback Poll (15s) ──────────────────────────────────────────────────────
+// ── Idle-safe fallback polling ─────────────────────────────────────
+function _sseIsHealthy() {
+  if (!eventSource || eventSource.readyState !== EventSource.OPEN) return false;
+  if (!lastSSEActivity) return false;
+  return Date.now() - lastSSEActivity <= 30000;
+}
+
 function startPollTimer() {
   stopPollTimer();
   pollTimer = setInterval(() => {
     if (!conversationId) return;
+    if (typeof document !== 'undefined' && document.hidden && _sseIsHealthy()) return;
+    if (_sseIsHealthy()) return;
     _recoverConversation(conversationId);
   }, 15000);
-  // Refresh resources panel every 30s (no-op if content unchanged)
+  // Resource refresh is a fallback hydration path, not a hot idle loop.
   if (!resourcesTimer) {
     resourcesTimer = setInterval(() => {
-      if (conversationId) loadResources();
-    }, 30000);
+      if (!conversationId) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      loadResources();
+    }, 120000);
   }
 }
 function stopPollTimer() {

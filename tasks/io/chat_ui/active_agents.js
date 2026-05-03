@@ -304,7 +304,7 @@ let _syncActiveStartedAt = 0;
 const _SYNC_ACTIVE_STALE_MS = 10000;
 function startActiveSync() {
   if (_syncActiveTimer) return;
-  _syncActiveTimer = setInterval(syncActiveFromServer, 3000);
+  _syncActiveTimer = setInterval(syncActiveFromServer, 10000);
 }
 function stopActiveSync() {
   if (_syncActiveTimer) { clearInterval(_syncActiveTimer); _syncActiveTimer = null; }
@@ -314,6 +314,7 @@ function stopActiveSync() {
 }
 function syncActiveFromServer() {
   if (!conversationId) return;
+  if (typeof document !== 'undefined' && document.hidden) return;
   const now = Date.now();
   if (_syncActiveSub) {
     if (now - _syncActiveStartedAt < _SYNC_ACTIVE_STALE_MS) return;

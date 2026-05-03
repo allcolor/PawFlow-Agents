@@ -15,9 +15,10 @@ The Slint app covers the same relay-manager surfaces as the Electron app:
 - relay image builder using `config/relay_image_catalog.json` and `scripts/generate-relay-image.py`;
 - stdout/stderr log streaming for relay and image build processes in a persistent bottom log panel;
 - native folder selection for relay workspace paths (`Browse` button; PowerShell picker on Windows, `zenity`/`kdialog` on Linux);
-- responsive Slint layout with hover/pressed states on sidebar entries and action buttons;
+- maximized responsive Slint layout with a `ListView`-backed sidebar tree (`Servers -> server -> relay`), expand/collapse controls, and hover/pressed states on sidebar entries and action buttons;
 - embedded Python runtime lookup via `PAWFLOW_RELAY_RUNTIME_ROOT` or a local `runtime/` directory;
-- cross-platform tray icon with click/menu restore and a `Quit` action. Closing the window hides it while the relay desktop process remains alive for tray restore.
+- cross-platform tray icon with click/menu restore and a `Quit` action. Closing the window hides it while the relay desktop process remains alive for tray restore;
+- Windows subprocess helpers use hidden windows so refresh, folder browsing, Docker, WSL, and Python calls do not flash terminal windows.
 
 ## Run from the repository
 

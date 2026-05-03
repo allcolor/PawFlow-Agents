@@ -614,6 +614,12 @@ class TestHandleHTTPResponseStreaming(unittest.TestCase):
         mock_svc.submit_response.assert_called_once()
         mock_svc.submit_stream_response.assert_not_called()
 
+    def test_http_listener_closes_stream_iterator_on_disconnect(self):
+        src = Path("services/http_listener_service.py").read_text(encoding="utf-8")
+        stream_block = src[src.index("if req.response_stream is not None:"):src.index("elif req.response_body:")]
+        assert 'getattr(req.response_stream, "close", None)' in stream_block
+        assert "close_stream()" in stream_block
+
 
 # ── PendingRequest streaming ────────────────────────────────────────
 

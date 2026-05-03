@@ -1,4 +1,14 @@
-import { CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { CheckBox, ComboBox, LineEdit, ListView, ScrollView } from "std-widgets.slint";
+
+export struct NavRow {
+    title: string,
+    meta: string,
+    level: int,
+    panel: int,
+    running: bool,
+    has_children: bool,
+    open: bool,
+}
 
 component ActionButton inherits Rectangle {
     in property <string> text;
@@ -59,39 +69,56 @@ component TreeItem inherits Rectangle {
     in property <bool> selected: false;
     in property <bool> running: false;
     in property <int> level: 0;
+    in property <bool> has-children: false;
+    in property <bool> open: true;
     callback clicked();
 
-    height: 38px;
-    border-radius: 5px;
-    border-width: 1px;
-    border-color: root.selected ? #3479cc : item-touch.has-hover ? #263d5f : #0b1424;
-    background: root.selected ? #142947 : item-touch.pressed ? #0d1a2c : item-touch.has-hover ? #101e33 : #0b1424;
+    height: 30px;
+    border-radius: 3px;
+    background: root.selected ? #14365f : item-touch.pressed ? #0d1a2c : item-touch.has-hover ? #101e33 : transparent;
 
     animate background { duration: 90ms; }
-    animate border-color { duration: 90ms; }
 
     HorizontalLayout {
-        padding-left: 8px + root.level * 14px;
+        width: 100%;
+        padding-left: 8px;
         padding-right: 8px;
-        spacing: 8px;
+        spacing: 5px;
         alignment: center;
 
-        Text { text: root.level > 0 ? "└" : ""; color: #566d91; font-size: 14px; }
+        Rectangle { width: root.level * 18px; }
+        Text {
+            text: root.has-children ? (root.open ? "⊟" : "⊞") : "";
+            color: #8fa4c8;
+            width: 18px;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
         Rectangle {
             width: 7px;
             height: 7px;
             border-radius: 4px;
-            background: root.running ? #22c55e : #71829e;
+            background: root.running ? #22c55e : root.has-children ? #8fa4c8 : #566d91;
         }
         Text {
             text: root.title;
-            color: #f2f6ff;
+            color: root.selected ? #ffffff : #d8e5ff;
             font-size: 13px;
-            font-weight: 650;
+            font-weight: root.has-children ? 700 : 600;
+            horizontal-stretch: 1;
             overflow: elide;
+            vertical-alignment: center;
         }
-        Rectangle { horizontal-stretch: 1; }
-        Text { text: root.meta; color: #88a0c4; font-size: 11px; overflow: elide; }
+        if root.meta != "" && !root.has-children : Text {
+            text: root.meta;
+            color: root.running ? #64d89d : #88a0c4;
+            font-size: 11px;
+            width: 54px;
+            overflow: elide;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
     }
 
     item-touch := TouchArea { clicked => { root.clicked(); } }
@@ -128,6 +155,13 @@ export component AppWindow inherits Window {
     in-out property <string> relay-row-name: "No relay";
     in-out property <string> relay-row-meta: "add relay";
     in-out property <string> logs: "[slint] Ready. Refresh to load PawFlow relay state.\n";
+    in-out property <bool> servers-open: true;
+    in-out property <bool> server-open: true;
+    in-out property <[NavRow]> nav-rows: [
+        { title: "Servers", meta: "Servers: 0 | Relays: 0 | Running: 0", level: 0, panel: -1, running: false, has_children: true, open: true },
+        { title: "No server", meta: "add profile", level: 1, panel: 1, running: false, has_children: true, open: true },
+        { title: "No relay", meta: "add relay", level: 2, panel: 0, running: false, has_children: false, open: true },
+    ];
 
     in-out property <string> server-name: "prod";
     in-out property <string> server-url: "http://localhost:9090";
@@ -160,8 +194,11 @@ export component AppWindow inherits Window {
     callback show-relay-panel();
     callback show-server-panel();
     callback show-image-panel();
+    callback select-panel(int);
 
     HorizontalLayout {
+        width: 100%;
+        height: 100%;
         padding: 0px;
         spacing: 0px;
 
@@ -194,56 +231,70 @@ export component AppWindow inherits Window {
 
                 Rectangle { height: 1px; background: #203452; }
 
-                ScrollView {
+                VerticalLayout {
                     vertical-stretch: 1;
-                    viewport-width: 232px;
-                    Rectangle {
-                        width: 232px;
-                        height: 420px;
-                        background: transparent;
-                        VerticalLayout {
-                            spacing: 8px;
-                            SectionHeader { title: "SERVERS"; action-text: "+"; action-clicked => { root.show-server-panel(); } }
-                            TreeItem {
-                                title: root.server-row-name;
-                                meta: root.server-row-meta;
-                                selected: root.active-panel == 1;
-                                level: 1;
-                                clicked => { root.show-server-panel(); }
-                            }
-                            Text { text: root.server-list; color: #7184a5; font-size: 10px; wrap: word-wrap; }
+                    spacing: 8px;
 
-                            SectionHeader { title: "RELAYS"; action-text: "+"; action-clicked => { root.show-relay-panel(); } }
-                            TreeItem {
-                                title: root.relay-row-name;
-                                meta: root.relay-row-meta;
-                                selected: root.active-panel == 0;
-                                running: root.relay-row-meta == "running";
-                                level: 1;
-                                clicked => { root.show-relay-panel(); }
-                            }
-                            Text { text: root.relay-list; color: #7184a5; font-size: 10px; wrap: word-wrap; }
-
-                            SectionHeader { title: "TOOLS"; }
-                            TreeItem {
-                                title: "Image builder";
-                                meta: "docker";
-                                selected: root.active-panel == 2;
-                                level: 1;
-                                clicked => { root.show-image-panel(); }
+                    SectionHeader { title: "BROWSER"; action-text: "+"; action-clicked => { root.show-server-panel(); } }
+                    ListView {
+                        vertical-stretch: 1;
+                        viewport-width: self.width;
+                        for row in root.nav-rows : TreeItem {
+                            width: 100%;
+                            visible: row.level == 0 || (root.servers-open && (row.level == 1 || (root.server-open && row.level >= 2)));
+                            title: row.title;
+                            meta: row.meta;
+                            selected: row.panel >= 0 && root.active-panel == row.panel;
+                            running: row.running;
+                            level: row.level;
+                            has-children: row.has-children;
+                            open: row.level == 0 ? root.servers-open : root.server-open;
+                            clicked => {
+                                if row.has-children {
+                                    if row.level == 0 {
+                                        root.servers-open = !root.servers-open;
+                                    } else {
+                                        root.server-open = !root.server-open;
+                                    }
+                                }
+                                if row.panel >= 0 {
+                                    root.select-panel(row.panel);
+                                }
                             }
                         }
                     }
+
+                    Rectangle { height: 10px; }
+                    SectionHeader { title: "TOOLS"; }
+                    TreeItem {
+                        width: 100%;
+                        title: "Image builder";
+                        meta: "docker";
+                        selected: root.active-panel == 2;
+                        running: false;
+                        level: 0;
+                        has-children: false;
+                        clicked => { root.show-image-panel(); }
+                    }
                 }
+
             }
         }
 
-        VerticalLayout {
-            padding: 0px;
-            spacing: 0px;
+        Rectangle {
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+            background: #050a13;
 
-            Rectangle {
+            VerticalLayout {
+                width: 100%;
+                height: 100%;
+                padding: 0px;
+                spacing: 0px;
+
+                Rectangle {
                 height: 82px;
+                horizontal-stretch: 1;
                 background: #0f192a;
                 border-color: #203452;
                 border-width: 1px;
@@ -284,14 +335,14 @@ export component AppWindow inherits Window {
 
             Rectangle {
                 background: #050a13;
+                horizontal-stretch: 1;
                 vertical-stretch: 1;
 
                 VerticalLayout {
                     padding: 18px;
                     spacing: 14px;
 
-                    PanelCard {
-                        visible: root.active-panel == 0;
+                    if root.active-panel == 0 : PanelCard {
                         horizontal-stretch: 1;
                         vertical-stretch: 1;
 
@@ -342,8 +393,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    PanelCard {
-                        visible: root.active-panel == 1;
+                    if root.active-panel == 1 : PanelCard {
                         horizontal-stretch: 1;
                         vertical-stretch: 1;
 
@@ -368,8 +418,7 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    PanelCard {
-                        visible: root.active-panel == 2;
+                    if root.active-panel == 2 : PanelCard {
                         horizontal-stretch: 1;
                         vertical-stretch: 1;
 
@@ -398,6 +447,7 @@ export component AppWindow inherits Window {
 
             Rectangle {
                 height: 190px;
+                horizontal-stretch: 1;
                 background: #0b1424;
                 border-color: #203452;
                 border-width: 1px;
@@ -417,6 +467,7 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
         }
     }
 }

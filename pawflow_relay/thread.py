@@ -28,6 +28,39 @@ def _make_relay_container_name(relay_id: str, purpose: str) -> str:
     return f"{_relay_container_prefix(relay_id)}-{purpose}-{secrets.token_hex(4)}"
 
 
+def _is_windows_drive_absolute_path(path: str) -> bool:
+    raw = str(path or "").replace("\\", "/")
+    return len(raw) >= 3 and raw[1] == ":" and raw[2] == "/"
+
+
+def _is_host_absolute_path(path: str) -> bool:
+    raw = str(path or "").replace("\\", "/")
+    return raw.startswith("/") or raw.startswith("//") or _is_windows_drive_absolute_path(raw)
+
+
+def _host_abs_path(raw_path: str, root_dir: str) -> str:
+    raw = str(raw_path or ".").replace("\\", "/")
+    if raw.startswith("fs://"):
+        parts = raw[5:].split("/", 1)
+        raw = parts[1] if len(parts) > 1 else "."
+    root = Path(root_dir).resolve()
+    if raw == "/workspace":
+        target = root
+    elif raw.startswith("/workspace/"):
+        target = root / raw[len("/workspace/"):]
+    elif _is_windows_drive_absolute_path(raw):
+        return raw
+    elif _is_host_absolute_path(raw):
+        target = Path(raw).resolve()
+    else:
+        target = (root / raw).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            raise ValueError(f"Path traversal blocked: {raw_path}")
+    return str(target)
+
+
 def _kill_relay_containers(relay_id: str) -> int:
     prefix = _relay_container_prefix(relay_id)
     try:
@@ -822,27 +855,7 @@ class RelayThread:
                 if not handler:
                     raise ValueError(f"Unknown action: {action}")
 
-                def _host_abs(raw_path: str) -> str:
-                    raw = str(raw_path or ".").replace("\\", "/")
-                    if raw.startswith("fs://"):
-                        parts = raw[5:].split("/", 1)
-                        raw = parts[1] if len(parts) > 1 else "."
-                    root = Path(self.directory).resolve()
-                    if raw == "/workspace":
-                        target = root
-                    elif raw.startswith("/workspace/"):
-                        target = root / raw[len("/workspace/"):]
-                    elif raw.startswith("/"):
-                        target = Path(raw).resolve()
-                    else:
-                        target = (root / raw).resolve()
-                    try:
-                        target.relative_to(root)
-                    except ValueError:
-                        raise ValueError(f"Path traversal blocked: {raw_path}")
-                    return str(target)
-
-                abs_path = _host_abs(req.get("path", "."))
+                abs_path = _host_abs_path(req.get("path", "."), self.directory)
                 if action == "exec":
                     result = handler(self.directory, abs_path, req, allow_exec=True)
                 else:

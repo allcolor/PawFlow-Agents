@@ -4,7 +4,7 @@ import pytest
 
 from pawflow_relay import manager
 from pawflow_relay.manager_cli import main as relay_cli_main
-from pawflow_relay.thread import RelayThread
+from pawflow_relay.thread import RelayThread, _host_abs_path
 
 
 def test_relay_manager_stores_servers_and_workspaces(monkeypatch, tmp_path):
@@ -68,6 +68,27 @@ def test_relay_manager_workspace_permission_flags(monkeypatch, tmp_path):
     assert share["allow_exec"] is False
     assert share["allow_remote_desktop"] is False
     assert share["allow_local"] is True
+
+
+def test_host_helper_relative_paths_remain_workspace_scoped(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    resolved = _host_abs_path("subdir", str(root))
+    assert Path(resolved) == root / "subdir"
+
+
+def test_host_helper_relative_traversal_is_blocked(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    with pytest.raises(ValueError, match="Path traversal blocked"):
+        _host_abs_path("../outside", str(root))
+
+
+def test_host_helper_accepts_windows_drive_absolute_path(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    resolved = _host_abs_path(r"C:\\", str(root))
+    assert resolved.startswith("C:")
 
 
 def test_relay_thread_full_reconnect_reinstalls_with_new_token(monkeypatch, tmp_path):

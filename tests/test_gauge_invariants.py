@@ -247,6 +247,20 @@ def test_frontend_context_pct_is_always_used_over_max():
     assert "usage.pct || usage.context_pct" not in setter
 
 
+def test_context_command_exposes_full_agent_context_usage():
+    context_src = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
+    ui_src = Path("tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
+    get_context = context_src[
+        context_src.index('if action == "get_context":'):
+        context_src.index('if action == "get_context_full":')]
+    assert "_usage_context_data = list(context_data)" in get_context
+    assert "context_usage_from_cache" in get_context
+    assert '"computed_from": "full_agent_context"' in get_context
+    assert '"context_usage": _context_usage' in get_context
+    assert "context gauge:" in ui_src
+    assert "used.toLocaleString() + ' / ' + max.toLocaleString()" in ui_src
+
+
 def test_context_usage_cache_counts_suffix_then_resets():
     from tasks.ai.context_usage_cache import context_usage_from_cache
 

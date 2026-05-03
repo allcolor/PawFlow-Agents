@@ -799,6 +799,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        _usage_context_data = None
 
         # Load paginated context (tail-first like load_page)
         if _ctx_agent == "transcript":
@@ -815,6 +816,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             context_data = _ctx_load(conv_id, "")
             if context_data is None:
                 context_data = []
+            _usage_context_data = list(context_data)
             total_count = len(context_data)
             end = len(context_data) - _offset
             start = max(0, end - _limit)
@@ -856,6 +858,9 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             private_ctx = store.load_agent_context(conv_id, _ctx_agent)
             diverged = private_ctx is not None
             context_data = private_ctx if private_ctx is not None else _ctx_load(conv_id, _ctx_agent)
+            if context_data is None:
+                context_data = []
+            _usage_context_data = list(context_data)
             total_count = len(context_data)
             # Paginate in-memory
             end = len(context_data) - _offset
@@ -884,6 +889,31 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         else:
             deserialized = self._deserialize_messages(context_data, conversation_id=conv_id)
             estimated = self._estimate_tokens(deserialized)
+        _context_usage = None
+        if _usage_context_data is not None:
+            try:
+                usage_messages = self._deserialize_messages(
+                    _usage_context_data, conversation_id=conv_id)
+                usage_max = int(_ctx_max_tokens(conv_id, _ctx_agent) or 0)
+                from core.token_counter import resolve_token_multiplier
+                from tasks.ai.context_usage_cache import context_usage_from_cache
+                usage_cfg = _ctx_llm_service_config(conv_id, _ctx_agent)
+                usage = context_usage_from_cache(
+                    usage_messages, usage_max,
+                    source="context_command",
+                    token_multiplier=resolve_token_multiplier(usage_cfg))
+                _context_usage = {
+                    "used": int(usage.get("used", 0) or 0),
+                    "max": int(usage.get("max", 0) or 0),
+                    "pct": float(usage.get("pct", 0.0) or 0.0),
+                    "source": usage.get("source", "context_command"),
+                    "message_count": usage.get("message_count", len(usage_messages)),
+                    "cache_mode": usage.get("cache_mode", "full"),
+                    "updated_at": usage.get("updated_at", 0),
+                    "computed_from": "full_agent_context",
+                }
+            except Exception:
+                logger.debug("context usage calculation failed", exc_info=True)
         # Classify messages for display
         display_msgs = []
         for m in context_data:
@@ -932,6 +962,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             "context": display_msgs,
             "message_count": total_count,
             "token_estimate": estimated,
+            "context_usage": _context_usage,
             "diverged": diverged,
             "agent_name": _ctx_agent or "",
             "agent_contexts": _agent_ctx_map,

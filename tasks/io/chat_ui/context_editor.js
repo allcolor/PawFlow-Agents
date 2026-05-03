@@ -432,6 +432,22 @@ function showContextOverlay(data) {
     : data.diverged
       ? '<span style="background:#5a3e00;color:#f4a261;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">' + t('contextDiverged') + '</span>'
       : '<span style="background:#1b4332;color:#52b788;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">' + t('contextSynced') + '</span>';
+  const usage = data.context_usage || null;
+  let usageHtml = '';
+  if (usage && usage.max) {
+    const used = Number(usage.used || 0);
+    const max = Number(usage.max || 0);
+    const pct = max > 0 ? used / max : 0;
+    const pctTxt = Math.round(pct * 1000) / 10;
+    const updated = usage.updated_at ? new Date(Number(usage.updated_at) * 1000).toLocaleTimeString() : '';
+    usageHtml = '<div style="margin:-4px 0 10px 0;padding:8px 10px;border:1px solid #26324a;border-radius:8px;background:#101827;color:#aeb7d8;font-size:12px;font-family:monospace">'
+      + 'context gauge: ' + used.toLocaleString() + ' / ' + max.toLocaleString()
+      + ' = ' + pctTxt + '%'
+      + ' · messages=' + (usage.message_count || data.message_count || 0)
+      + ' · source=' + _ctxEscape(usage.source || 'context_command')
+      + (updated ? ' · updated=' + _ctxEscape(updated) : '')
+      + '</div>';
+  }
   const roleColors = {system:'#6c6c8a',user:'#4fc3f7',assistant:'#4ecdc4',tool:'#f4a261'};
   let msgsHtml = '';
   if (!data.context || data.context.length === 0) {
@@ -472,6 +488,7 @@ function showContextOverlay(data) {
     + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + (_isReadonly ? 'Invalidate this runtime session' : 'Delete this context entirely') + '">\u{1F5D1} ' + (_isReadonly ? 'Invalidate' : 'Delete') + '</button>' : '')
     + '<button onclick="ctxClose()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'
+    + usageHtml
     + '<div id="ctx-msg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
     + '<div id="ctxSelectBar" style="display:none;padding:6px 0;align-items:center;gap:8px;justify-content:center">'
     + '<span style="color:#6c5ce7;font-size:12px">0 selected</span>'

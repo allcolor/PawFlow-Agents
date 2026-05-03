@@ -216,10 +216,35 @@ def test_context_gauge_publishes_after_each_visible_append():
     """The live gauge must move during tool loops, not only at heartbeat/done."""
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     assert "def _publish_live_context_usage" in src
+    publish_body = src[src.index("def _publish_live_context_usage") : src.index("def _append(msg: LLMMessage)")]
     append_body = src[src.index("def _append(msg: LLMMessage)") : src.index("# Repair orphan tool_calls")]
+    assert "_context_usage_suspended" in publish_body
     assert "messages.append(msg)" in append_body
     assert "_publish_live_context_usage(" in append_body
     assert "append_{msg.role}" in append_body
+
+
+def test_manual_compact_suspends_stale_live_gauge_until_refresh():
+    actions_src = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
+    emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
+    assert "def _set_context_usage_suspended" in actions_src
+    compact_block = actions_src[
+        actions_src.index("def _bg()") : actions_src.index("thread = threading.Thread")
+    ]
+    assert "_set_context_usage_suspended(agent_name, True)" in compact_block
+    assert "_refresh_active_context_from_store(_agent)" in compact_block
+    assert "_set_context_usage_suspended(_agent, False)" in compact_block
+    assert "_context_usage_suspended" in emitter_src
+    assert '"updated_at": float(usage.get("updated_at", 0.0) or 0.0)' in emitter_src
+
+
+def test_frontend_context_pct_is_always_used_over_max():
+    active_src = Path("tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
+    setter = active_src[
+        active_src.index("function setContextUsage") : active_src.index("// Bump the cached gauge")
+    ]
+    assert "const pct = newMax > 0 ? realUsed / newMax : 0;" in setter
+    assert "usage.pct || usage.context_pct" not in setter
 
 
 def test_context_usage_cache_counts_suffix_then_resets():
@@ -736,14 +761,22 @@ def test_api_summarizer_preserves_thinking_signature_across_tool_loop():
     assert "thinking_signature=getattr(response, \"thinking_signature\", \"\") or \"\"" in src
 
 
-def test_proactive_compact_threshold_uses_real_token_multiplier():
+def test_compact_threshold_uses_same_usage_source_as_gauge():
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    usage_block = src[
+        src.index("def _auto_compact_usage"):
+        src.index("def _maybe_auto_compact_after_append")]
     threshold_block = src[
         src.index("def _should_proactive_compact"):
         src.index("def _messages_changed")]
-    assert "resolve_token_multiplier" in threshold_block
-    assert "ctx.get(\"resolved_svc\")" in threshold_block
-    assert "token_multiplier=tmul" in threshold_block
+    pre_send_block = src[
+        src.index("if _trigger_frac > 0:", src.index("# Force-fit guard")):
+        src.index("if _pre_send_est > _max_ctx:")]
+    assert "context_usage_from_cache" in usage_block
+    assert "token_multiplier=tmul" in usage_block
+    assert "_auto_compact_usage(max_ctx" in threshold_block
+    assert "_auto_compact_usage(" in pre_send_block
+    assert "_pre_send_est >= _trigger_tokens" not in pre_send_block
 
 
 def test_ui_actions_have_no_sync_allowlist_and_use_reply_bus():

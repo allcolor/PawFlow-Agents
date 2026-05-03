@@ -60,8 +60,8 @@ function markCompactJustHappened(agentName) {
 function setContextUsage(agentName, usage) {
   if (!agentName || !usage) return;
   const key = agentKey(agentName);
-  const realUsed = usage.used || usage.context_used || 0;
-  const newMax = usage.max || usage.context_max || 0;
+  const realUsed = usage.used !== undefined ? usage.used : (usage.context_used || 0);
+  const newMax = usage.max !== undefined ? usage.max : (usage.context_max || 0);
   const cached = window._contextUsage[key];
   const cachedUsed = (cached && cached.used) || 0;
   const incomingAt = Number(usage.updated_at || usage.ts || 0) || 0;
@@ -81,7 +81,7 @@ function setContextUsage(agentName, usage) {
   if (window._compactPending[key]) {
     delete window._compactPending[key];
   }
-  const pct = usage.pct || usage.context_pct || (newMax > 0 ? realUsed / newMax : 0);
+  const pct = newMax > 0 ? realUsed / newMax : 0;
   window._contextUsage[key] = {
     used: realUsed,
     max: newMax,

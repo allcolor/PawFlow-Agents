@@ -424,6 +424,20 @@ class AgentCoreMixin:
                 raw_pct = 0
             return _compact_threshold_fraction(raw_pct)
 
+        def _auto_compact_usage(max_ctx: int, source: str):
+            """Return the same used/max pair as the live gauge."""
+            from core.token_counter import resolve_token_multiplier
+            from tasks.ai.context_usage_cache import context_usage_from_cache
+            tmul = resolve_token_multiplier(
+                getattr(ctx.get("resolved_svc"), "config", None))
+            usage = context_usage_from_cache(
+                messages, max_ctx,
+                ctx.get("_auto_compact_usage_cache") or ctx.get("_context_usage_cache"),
+                source=source,
+                token_multiplier=tmul)
+            ctx["_auto_compact_usage_cache"] = usage
+            return usage
+
         def _maybe_auto_compact_after_append(msg: LLMMessage, reason: str) -> None:
             """Enforce compact_threshold_pct as a live invariant.
 
@@ -447,16 +461,7 @@ class AgentCoreMixin:
                 return
             trigger_tokens = int(max_ctx * trigger_fraction)
             try:
-                from core.token_counter import resolve_token_multiplier
-                from tasks.ai.context_usage_cache import context_usage_from_cache
-                tmul = resolve_token_multiplier(
-                    getattr(ctx.get("resolved_svc"), "config", None))
-                usage = context_usage_from_cache(
-                    messages, max_ctx,
-                    ctx.get("_auto_compact_usage_cache") or ctx.get("_context_usage_cache"),
-                    source="auto_compact_threshold",
-                    token_multiplier=tmul)
-                ctx["_auto_compact_usage_cache"] = usage
+                usage = _auto_compact_usage(max_ctx, "auto_compact_threshold")
                 used = int(usage.get("used", 0) or 0)
             except Exception:
                 logger.debug("[compact] auto threshold estimate failed", exc_info=True)
@@ -511,6 +516,8 @@ class AgentCoreMixin:
         def _publish_live_context_usage(reason: str, msg_id: str = "") -> None:
             """Publish the current PawFlow context gauge after a real append."""
             if not emitter.is_streaming or not conversation_id:
+                return
+            if ctx.get("_context_usage_suspended"):
                 return
             try:
                 src = _agent_source()
@@ -1013,12 +1020,8 @@ class AgentCoreMixin:
                         trigger_tokens = int(max_ctx * _trigger_frac)
                         if trigger_tokens <= 0:
                             return False
-                        provider_view = _with_provider_system_prompt(stored_msgs)
-                        from core.token_counter import resolve_token_multiplier as _rtm
-                        tmul = _rtm(getattr(ctx.get("resolved_svc"), "config", None))
-                        used_tokens = self._estimate_tokens(
-                            provider_view, tool_defs=tool_defs,
-                            chars_per_token=cpt, token_multiplier=tmul)
+                        usage = _auto_compact_usage(max_ctx, "proactive_compact_threshold")
+                        used_tokens = int(usage.get("used", 0) or 0)
                         return used_tokens >= trigger_tokens
 
                     def _messages_changed(candidate, current):
@@ -1201,16 +1204,19 @@ class AgentCoreMixin:
                             f"{len(llm_context)} msgs, max={_max_ctx}")
                         if _trigger_frac > 0:
                             _trigger_tokens = int(_max_ctx * _trigger_frac)
-                            if _pre_send_est >= _trigger_tokens:
+                            _threshold_usage = _auto_compact_usage(
+                                _max_ctx, "pre_send_compact_threshold")
+                            _threshold_used = int(_threshold_usage.get("used", 0) or 0)
+                            if _threshold_used >= _trigger_tokens:
                                 logger.info(
-                                    "[compact] pre-send threshold crossed after injections: "
+                                    "[compact] pre-send threshold crossed: "
                                     "%d >= %d (%.0f%%)",
-                                    _pre_send_est, _trigger_tokens,
+                                    _threshold_used, _trigger_tokens,
                                     _trigger_frac * 100)
-                                # The final post-injection estimate has already
-                                # crossed the configured threshold. Force the
-                                # compact so _compact() cannot recompute a lower
-                                # pre-assembly estimate and silently skip.
+                                # The PawFlow context gauge crossed the configured
+                                # threshold. Force the compact so _compact() cannot
+                                # recompute a lower pre-assembly estimate and
+                                # silently skip.
                                 compacted_messages = self._compact(
                                     copy.deepcopy(messages), compact_client,
                                     _max_ctx,

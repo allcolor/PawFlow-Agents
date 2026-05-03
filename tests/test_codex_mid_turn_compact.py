@@ -61,14 +61,15 @@ def test_gemini_system_prompt_prefers_pawflow_mcp_over_builtins():
 def test_agent_core_rechecks_compact_threshold_after_context_injections():
     """Identity/date metadata can push the final prompt above the service
     compact threshold; the pre-send guard must compact before the LLM call."""
-    assert "pre-send threshold crossed after injections" in _AGENT_CORE
     guard_start = _AGENT_CORE.index("# Force-fit guard")
     call_start = _AGENT_CORE.index("# LLM call", guard_start)
     guard = _AGENT_CORE[guard_start:call_start]
     assert "_trigger_frac > 0" in guard
-    assert "_pre_send_est >= _trigger_tokens" in guard
+    assert "_auto_compact_usage(" in guard
+    assert "_threshold_used >= _trigger_tokens" in guard
     assert "self._compact(" in guard
     assert "force=True" in guard
+    assert "llm_context, _pre_inject_chars = _build_provider_context(messages)" in guard
 
 
 def test_api_pre_send_compact_replaces_active_messages_not_provider_view():

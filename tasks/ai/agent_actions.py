@@ -586,20 +586,36 @@ class AgentActionsMixin:
         from core.conversation_event_bus import ConversationEventBus
         bus = ConversationEventBus.instance()
 
+        def _matching_active_contexts(target_agent: str = ""):
+            target = "" if target_agent in ("", "shared", "ALL") else target_agent
+
+            def _agent_from_key(key: str) -> str | None:
+                if key == conv_id:
+                    return ""
+                prefix = conv_id + ":"
+                if key.startswith(prefix):
+                    return key[len(prefix):]
+                return None
+
+            with self._active_contexts_lock:
+                active_items = list(self._active_contexts.items())
+            for key, active_ctx in active_items:
+                active_agent = _agent_from_key(key)
+                if active_agent is None:
+                    continue
+                if target and active_agent != target:
+                    continue
+                yield active_agent, active_ctx
+
+        def _set_context_usage_suspended(target_agent: str, suspended: bool):
+            for _, active_ctx in _matching_active_contexts(target_agent):
+                active_ctx["_context_usage_suspended"] = bool(suspended)
+
         def _refresh_active_context_from_store(target_agent: str = ""):
             """Replace active in-memory messages with the compacted store view."""
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
-                target = "" if target_agent in ("", "shared", "ALL") else target_agent
-
-                def _agent_from_key(key: str) -> str | None:
-                    if key == conv_id:
-                        return ""
-                    prefix = conv_id + ":"
-                    if key.startswith(prefix):
-                        return key[len(prefix):]
-                    return None
 
                 def _load_context_for(agent: str):
                     if agent:
@@ -611,14 +627,7 @@ class AgentActionsMixin:
                         return data
                     return store.load(conv_id)
 
-                with self._active_contexts_lock:
-                    active_items = list(self._active_contexts.items())
-                for key, active_ctx in active_items:
-                    active_agent = _agent_from_key(key)
-                    if active_agent is None:
-                        continue
-                    if target and active_agent != target:
-                        continue
+                for active_agent, active_ctx in _matching_active_contexts(target_agent):
                     raw = _load_context_for(active_agent)
                     if not raw:
                         continue
@@ -629,6 +638,7 @@ class AgentActionsMixin:
                         active_msgs[:] = refreshed
                         active_ctx.pop("_context_usage_cache", None)
                         active_ctx.pop("_auto_compact_usage_cache", None)
+                        active_ctx["_context_usage_suspended"] = False
             except Exception:
                 logger.debug(
                     "active context refresh after compact failed",
@@ -649,6 +659,8 @@ class AgentActionsMixin:
                     "stage": "start", "detail": op_name,
                     "agent": agent_name or "",
                 })
+                if op_name == "compact":
+                    _set_context_usage_suspended(agent_name, True)
                 result = fn()
                 _agent = result.get("agent", "") or agent_name
                 if _agent and _agent != "shared":
@@ -658,6 +670,7 @@ class AgentActionsMixin:
                     self._clear_claude_session(conv_id, "")
                 if op_name == "compact":
                     _refresh_active_context_from_store(_agent)
+                    _set_context_usage_suspended(_agent, False)
                 else:
                     bus.publish_event(conv_id, "compact_progress", {
                         "stage": "done", **result,
@@ -668,6 +681,8 @@ class AgentActionsMixin:
                 })
                 logger.error("%s failed: %s", op_name, e, exc_info=True)
             finally:
+                if op_name == "compact":
+                    _set_context_usage_suspended(agent_name, False)
                 self._release_context_op(conv_id, agent_name)
 
         thread = threading.Thread(

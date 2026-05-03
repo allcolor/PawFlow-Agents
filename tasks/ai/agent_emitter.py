@@ -122,6 +122,8 @@ class StreamEmitter(AgentEmitter):
         """Compute live PawFlow context usage for message_meta/done events."""
         if not self._agent_name:
             return None
+        if self.ctx.get("_context_usage_suspended"):
+            return None
         messages = self.ctx.get("messages") or []
         if not messages:
             return None
@@ -161,6 +163,7 @@ class StreamEmitter(AgentEmitter):
             "context_message_count": usage.get("message_count", 0),
             "context_cache_mode": usage.get("cache_mode", ""),
             "context_cache": usage,
+            "updated_at": float(usage.get("updated_at", 0.0) or 0.0),
             "live": True,
         }
         return payload

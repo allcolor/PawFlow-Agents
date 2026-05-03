@@ -15,6 +15,13 @@ def test_tool_metrics_slash_command_parses_to_action():
     assert body["conversation_id"] == "conv1"
 
 
+def test_toolmetrics_alias_parses_to_action():
+    body = _parse_command("/toolmetrics", "conv1", "user1", "agent1")
+
+    assert body["action"] == "tool_metrics"
+    assert body["conversation_id"] == "conv1"
+
+
 def test_tool_metrics_action_returns_metrics_snapshot():
     ToolRegistry.reset_metrics()
     ToolRegistry._record_metric("read", True, 12.5)

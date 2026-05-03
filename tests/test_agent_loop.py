@@ -1138,6 +1138,52 @@ class TestContextActionsAsync(unittest.TestCase):
         finally:
             self._bus.unsubscribe(conv_id, writer)
 
+    def test_server_slash_command_redispatch_uses_command_result_action(self):
+        """Fallback slash commands must route back to action$('command')."""
+        import time
+        from core.conversation_event_bus import ConversationEventBus
+        from core.tool_registry import ToolRegistry
+
+        ToolRegistry.reset_metrics()
+        ToolRegistry._record_metric("read", True, 12.5)
+        reply_conv = "__ui__:cmd_metrics"
+        call_id = "call-tool-metrics"
+        writer = ConversationEventBus.instance().subscribe(reply_conv)
+
+        try:
+            ff = FlowFile(content=json.dumps({
+                "action": "command",
+                "text": "/tool-metrics",
+                "conversation_id": "cmd_metrics1",
+                "agent_name": "assistant",
+                "_reply_conversation_id": reply_conv,
+                "_call_id": call_id,
+            }).encode())
+            result = self._make_task().execute(ff)
+            ack = json.loads(result[0].get_content())
+            assert ack["status"] == "accepted"
+
+            event_data = None
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    item = writer._queue.get(timeout=0.1)
+                except Exception:
+                    continue
+                if hasattr(item, "event") and item.event == "command_result":
+                    event_data = item.data
+                    if isinstance(event_data, str):
+                        event_data = json.loads(event_data)
+                    break
+
+            assert event_data is not None, "No command_result event received"
+            assert event_data["action"] == "command"
+            assert event_data["_callId"] == call_id
+            payload = json.loads(event_data["result"])
+            assert "Tool metrics" in payload["output"]
+        finally:
+            ConversationEventBus.instance().unsubscribe(reply_conv, writer)
+
     def test_get_context_ack_and_result(self):
         """get_context returns ack immediately, then publishes result via bus."""
         from core.conversation_store import ConversationStore

@@ -11,7 +11,7 @@ All commands are typed in the chat input, prefixed with `/`. Commands are proces
 | `/msg` | Send message to a specific agent or task |
 | `/btw` | Side-channel question (no interruption) |
 | `/call` | Call a tool directly |
-| `/tool-metrics` | Show tool execution metrics |
+| `/tool-metrics` (`/toolmetrics`) | Show tool execution metrics |
 | `/task` | Create, assign, and manage agent tasks |
 | `/skill` | Manage skills |
 | `/memory` | Manage agent memories |
@@ -1034,6 +1034,7 @@ List all dynamic tools installed.
 
 ```
 /tool-metrics
+/toolmetrics
 ```
 
 Show per-tool execution counts, success/error totals, latency, and the most recent tool error recorded by the server.

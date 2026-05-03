@@ -95,18 +95,24 @@ class AgentActionsMixin:
         reply_conversation_id = body.get("_reply_conversation_id", "") or body.get("conversation_id", "")
         call_id = body.get("_call_id", "")
 
+        result_action = action
+
         # Unified command dispatch: parse /command text → action body → redispatch
         if action == "command":
             result = _handle_command_dispatch(self, action, body, store, user_id, flowfile)
             if result is not None:
                 if isinstance(result, dict) and result.get("_redispatch"):
                     # Re-dispatch with parsed action, preserving async reply metadata.
+                    # The command_result action must remain "command" because the
+                    # webchat subscriber is action$('command'); publishing the parsed
+                    # action would be filtered out and appear as a silent no-op.
                     body = result["body"]
                     if reply_conversation_id:
                         body["_reply_conversation_id"] = reply_conversation_id
                     if call_id:
                         body["_call_id"] = call_id
                     action = body["action"]
+                    result_action = "command"
                     flowfile = result["flowfile"]
                 else:
                     return self._return_action_result_async(
@@ -136,7 +142,8 @@ class AgentActionsMixin:
 
         return self._run_action_bg(
             action, body, store, user_id, flowfile, conversation_id,
-            reply_conversation_id=reply_conversation_id, call_id=call_id)
+            reply_conversation_id=reply_conversation_id, call_id=call_id,
+            result_action=result_action)
 
 
     def _return_action_result_async(self, action, result, reply_conversation_id,
@@ -191,8 +198,10 @@ class AgentActionsMixin:
 
 
     def _run_action_bg(self, action, body, store, user_id, flowfile, conversation_id,
-                       reply_conversation_id: str = "", call_id: str = ""):
+                       reply_conversation_id: str = "", call_id: str = "",
+                       result_action: str = ""):
         """Run an action in background. Return ack immediately, result via SSE."""
+        result_action = result_action or action
         import copy
         _body = copy.deepcopy(body)
         # Clone flowfile for bg thread — main thread will overwrite the original with ack
@@ -203,7 +212,7 @@ class AgentActionsMixin:
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 payload = {
-                    "action": action, "error": message,
+                    "action": result_action, "error": message,
                     "conversation_id": conversation_id,
                 }
                 if call_id:
@@ -238,7 +247,7 @@ class AgentActionsMixin:
                         # call site that issued it. The reply_conversation_id
                         # (UI bus) is only the SSE channel we deliver on.
                         payload = {
-                            "action": action, "result": _content,
+                            "action": result_action, "result": _content,
                             "conversation_id": conversation_id,
                         }
                         if call_id:

@@ -288,6 +288,11 @@ HELP: Dict[str, Dict[str, str]] = {
         "short": "Show tool execution metrics",
         "detail": "Show per-tool call counts, errors, latency, and the latest error.",
     },
+    "/toolmetrics": {
+        "usage": "/toolmetrics",
+        "short": "Show tool execution metrics",
+        "detail": "Alias for /tool-metrics.",
+    },
     "/call": {
         "usage": '/call tool_name(key=value, ...) or /call tool_name {"key": "value"}',
         "short": "Call a tool directly",
@@ -907,7 +912,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
     if cmd == "/tools":
         return {"action": "list_tools", **base}
 
-    if cmd == "/tool-metrics":
+    if cmd in ("/tool-metrics", "/toolmetrics"):
         return {"action": "tool_metrics", **base}
 
     if cmd == "/call":

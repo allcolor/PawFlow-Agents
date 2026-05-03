@@ -337,6 +337,16 @@ const HELP_DATA = {
     short: 'List available tools',
     detail: 'Shows all tools available to the AI agent in the current conversation, including builtins and custom tools.',
   },
+  '/tool-metrics': {
+    usage: '/tool-metrics',
+    short: 'Show tool execution metrics',
+    detail: 'Shows per-tool call counts, success/error totals, latency, and the latest server-side tool error. Alias: /toolmetrics.',
+  },
+  '/toolmetrics': {
+    usage: '/toolmetrics',
+    short: 'Show tool execution metrics',
+    detail: 'Alias for /tool-metrics.',
+  },
   '/usage': {
     usage: '/usage',
     short: 'Show token usage statistics',

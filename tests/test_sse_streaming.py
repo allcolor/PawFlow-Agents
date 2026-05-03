@@ -154,6 +154,19 @@ class TestSSEWriter(unittest.TestCase):
         assert writer.overflowed
         assert writer.queued_count <= 2
 
+    def test_typed_ping_is_throttled_separately_from_keepalive(self):
+        writer = SSEWriter()
+        closer = threading.Timer(0.24, writer.close)
+        closer.start()
+        try:
+            chunks = list(writer.iterate(timeout=0.05, ping_interval=0.15))
+        finally:
+            closer.cancel()
+        keepalives = [c for c in chunks if c == b": keepalive\n\n"]
+        typed_pings = [c for c in chunks if b"event: sse_ping" in c]
+        assert len(keepalives) >= 2
+        assert len(typed_pings) == 1
+
 
 # ── ConversationEventBus ────────────────────────────────────────────
 

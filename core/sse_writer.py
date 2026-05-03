@@ -46,6 +46,11 @@ class SSEEvent:
 
 
 _SENTINEL = object()
+_KEEPALIVE_CHUNK = b": keepalive\n\n"
+
+
+def _encode_sse_ping(ts: float) -> bytes:
+    return f"event: sse_ping\ndata: {{\"ts\":{ts:.3f}}}\n\n".encode("utf-8")
 
 
 class SSEWriter:
@@ -120,21 +125,28 @@ class SSEWriter:
     def queued_count(self) -> int:
         return self._queue.qsize()
 
-    def iterate(self, timeout: float = 1.0):
+    def iterate(self, timeout: float = 15.0, ping_interval: Optional[float] = None):
         """Yield encoded SSE bytes. Blocks until events or close.
 
-        Every `timeout` seconds without a real event we emit two signals:
-        a `: keepalive` comment (proxy/browser level) AND a typed
-        `sse_ping` event (JS level). The comment-only form does NOT
-        trigger any JS handler, so a silently half-open socket was
-        invisible to the client — the typed ping lets the UI run a
-        watchdog and force-reconnect when pings stop arriving.
+        `timeout` controls the cheap comment keepalive used by proxies and
+        browsers. Typed `sse_ping` events are only needed by JS watchdogs, so
+        they are emitted less often and encoded directly instead of allocating
+        an SSEEvent and dict on every idle tick.
 
         Args:
-            timeout: Max seconds to wait for each event before emitting
-                     the ping/keepalive pair.
+            timeout: Max seconds to wait for each event before emitting a
+                     comment keepalive.
+            ping_interval: Seconds between typed JS-visible pings. Defaults to
+                           PAWFLOW_SSE_PING_INTERVAL or 15 seconds.
         """
         import time as _time
+        if ping_interval is None:
+            try:
+                ping_interval = float(os.getenv("PAWFLOW_SSE_PING_INTERVAL", "15") or "15")
+            except ValueError:
+                ping_interval = 15.0
+        ping_interval = max(0.0, float(ping_interval or 0.0))
+        next_ping = _time.monotonic() + ping_interval if ping_interval else None
         while True:
             try:
                 item = self._queue.get(timeout=timeout)
@@ -144,6 +156,8 @@ class SSEWriter:
             except queue.Empty:
                 if self._closed.is_set():
                     return
-                yield b": keepalive\n\n"
-                yield SSEEvent(event="sse_ping",
-                               data={"ts": _time.time()}).encode()
+                yield _KEEPALIVE_CHUNK
+                now = _time.monotonic()
+                if next_ping is not None and now >= next_ping:
+                    yield _encode_sse_ping(_time.time())
+                    next_ping = now + ping_interval

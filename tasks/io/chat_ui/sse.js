@@ -1495,7 +1495,7 @@ function connectSSE(cid, onReady, opts) {
     }
   };
 
-  // Server emits `sse_ping` alongside the comment keepalive every 2s.
+  // Server emits `sse_ping` alongside the comment keepalive every ~15s.
   // The comment form is invisible to JS (SSE spec), the typed ping lets
   // us watchdog a silently half-open socket where EventSource never fires
   // onerror (laptop sleep, NAT eviction, proxy idle-kill).
@@ -1504,8 +1504,8 @@ function connectSSE(cid, onReady, opts) {
   });
 }
 
-// SSE liveness watchdog. Pings arrive every ~2s; if we haven't seen one
-// in 30s the stream is silently dead even if readyState still says OPEN.
+// SSE liveness watchdog. Pings arrive every ~15s; if we haven't seen one
+// in 45s the stream is silently dead even if readyState still says OPEN.
 // Close + reconnect forcefully so replay/_recoverConversation can catch
 // us up.
 var _sseWatchdogTimer = null;
@@ -1515,7 +1515,7 @@ function _startSSEWatchdog() {
     if (!eventSource || !conversationId) return;
     if (!lastSSEActivity) return;  // not yet connected
     const silentFor = Date.now() - lastSSEActivity;
-    if (silentFor > 30000) {
+    if (silentFor > 45000) {
       console.warn('[SSE] watchdog: no activity for', silentFor, 'ms — forcing reconnect');
       try { eventSource.close(); } catch (_) {}
       eventSource = null;
@@ -1594,7 +1594,7 @@ function _scheduleSSEReconnect(cid) {
 function _sseIsHealthy() {
   if (!eventSource || eventSource.readyState !== EventSource.OPEN) return false;
   if (!lastSSEActivity) return false;
-  return Date.now() - lastSSEActivity <= 30000;
+  return Date.now() - lastSSEActivity <= 45000;
 }
 
 function startPollTimer() {

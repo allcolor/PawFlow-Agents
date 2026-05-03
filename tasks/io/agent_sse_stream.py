@@ -81,7 +81,7 @@ class AgentSSEStreamTask(BaseTask):
             """Yield SSE bytes from the writer."""
             started = time.monotonic()
             try:
-                for chunk in writer.iterate(timeout=2.0):
+                for chunk in writer.iterate(timeout=15.0):
                     if timeout > 0 and time.monotonic() - started >= timeout:
                         logger.info("SSE stream lifetime reached for conv=%s client=%s",
                                     conversation_id[:8], client_id[:12])

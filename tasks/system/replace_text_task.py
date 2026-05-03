@@ -1,7 +1,7 @@
 # Replace Text Task Implementation
 
 """
-Tâche ReplaceText - Remplacer du texte dans le contenu.
+Task ReplaceText - Replace text in content.
 """
 
 import re
@@ -12,28 +12,28 @@ from core.base_task import BaseTask
 
 class ReplaceTextTask(BaseTask):
     """
-    Tâche pour remplacer du texte dans le contenu du FlowFile.
+    Task for replacing text in FlowFile content.
     
-    Supporte le remplacement de texte simple ou regex.
+    Supports plain text or regex replacement.
     """
     
     TYPE = "replace_text"
     VERSION = "1.0.0"
     NAME = "Remplacer du texte"
-    DESCRIPTION = "Remplacer du texte dans le contenu"
+    DESCRIPTION = "Replace text in content"
     ICON = "replace"
     
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialiser la tâche ReplaceText.
+        Initialize the ReplaceText task.
         
         Args:
             config: Configuration avec:
-                - search_pattern: Motif de recherche (requis)
-                - replacement: Texte de remplacement (requis)
-                - regex: Utiliser regex (par défaut: false)
-                - case_sensitive: Sensible à la casse (par défaut: true)
-                - multiline: Multi-lignes (par défaut: false)
+                - search_pattern: Search pattern (requis)
+                - replacement: Replacement text (requis)
+                - regex: Use regex (default: false)
+                - case_sensitive: Case sensitive (default: true)
+                - multiline: Multiline (default: false)
         """
         super().__init__(config)
         
@@ -43,11 +43,11 @@ class ReplaceTextTask(BaseTask):
         self.case_sensitive = self.config.get('case_sensitive', True)
         self.multiline = self.config.get('multiline', False)
         
-        # Compiler l'expression regex si nécessaire
+        # Compile the regex expression if needed
         self._compile_pattern()
     
     def _compile_pattern(self):
-        """Compiler l'expression regex si nécessaire."""
+        """Compile the regex expression if needed."""
         if self.use_regex:
             flags = 0
             if not self.case_sensitive:
@@ -64,19 +64,19 @@ class ReplaceTextTask(BaseTask):
     
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """
-        Exécuter la tâche ReplaceText.
+        Execute the ReplaceText task.
         
         Args:
-            flowfile: FlowFile d'entrée
+            flowfile: Input FlowFile
             
         Returns:
-            Liste avec le FlowFile modifié
+            List containing the modified FlowFile
             
         Raises:
-            TaskError: Si la tâche échoue
+            TaskError: If the task fails
         """
         try:
-            # Lire le contenu
+            # Read content
             content = self.read_content(flowfile)
             
             if isinstance(content, bytes):
@@ -90,23 +90,23 @@ class ReplaceTextTask(BaseTask):
                 parameters=getattr(self, '_parameter_context', None),
             )
 
-            # Effectuer le remplacement
+            # Perform the replacement
             if self.use_regex and self.pattern:
                 new_content = self.pattern.sub(resolved_replacement, content)
             else:
-                # Remplacement simple de chaîne
+                # Plain string replacement
                 flags = 0 if self.case_sensitive else re.IGNORECASE
-                # Échapper le pattern si ce n'est pas une regex
+                # Escape the pattern if it is not a regex
                 escaped_pattern = re.escape(self.search_pattern)
                 new_content = re.sub(escaped_pattern, resolved_replacement, content, flags=flags)
             
-            # Écrire le contenu modifié
+            # Write the modified content
             if isinstance(new_content, str):
                 new_content = new_content.encode('utf-8')
             
             self.write_content(flowfile, new_content)
             
-            # Mettre à jour l'attribut de taille
+            # Update the size attribute
             flowfile.set_attribute('fileSize', str(len(new_content)))
             
             return [flowfile]
@@ -118,34 +118,34 @@ class ReplaceTextTask(BaseTask):
     
     def get_parameter_schema(self) -> Dict[str, Any]:
         """
-        Retourner le schéma des paramètres.
+        Return the parameter schema.
         
         Returns:
-            Schema des paramètres pour l'UI
+            Parameter schema for the UI
         """
         return {
             'search_pattern': {
                 'type': 'string',
                 'required': True,
-                'description': 'Motif de recherche',
-                'placeholder': 'motif à rechercher'
+                'description': 'Search pattern',
+                'placeholder': 'pattern to search for'
             },
             'replacement': {
                 'type': 'string',
                 'required': True,
-                'description': 'Texte de remplacement',
+                'description': 'Replacement text',
                 'placeholder': 'nouveau texte'
             },
             'regex': {
                 'type': 'boolean',
                 'required': False,
-                'description': 'Utiliser une expression régulière',
+                'description': 'Use a regular expression',
                 'default': False
             },
             'case_sensitive': {
                 'type': 'boolean',
                 'required': False,
-                'description': 'Sensible à la casse',
+                'description': 'Case sensitive',
                 'default': True
             },
             'multiline': {

@@ -1,8 +1,8 @@
 # Base Service Implementation
 
 """
-Implémentation de base pour tous les services.
-Fournit la gestion du cycle de vie et les fonctionnalités communes.
+Base implementation for all services.
+Provides lifecycle management and common functionality.
 """
 
 from typing import Dict, Any, Optional
@@ -14,17 +14,17 @@ import logging
 
 class BaseService(VariableResolverMixin, Service, ABC):
     """
-    Implémentation de base pour tous les services.
+    Base implementation for all services.
     
-    Gère le cycle de vie de la connexion, la validation et les utilitaires communs.
+    Manages connection lifecycle, validation and common utilities.
     """
     
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialiser le service.
+        Initialize the service.
 
         Args:
-            config: Configuration du service (may be LazyResolveDict)
+            config: Service configuration (may be LazyResolveDict)
         """
         from core.expression import LazyResolveDict
         # ALWAYS wrap config in LazyResolveDict — every .get() resolves
@@ -35,31 +35,31 @@ class BaseService(VariableResolverMixin, Service, ABC):
         super().__init__(config)
         self.config = config
 
-        # État de la connexion
+        # Connection state
         self._connection: Optional[Any] = None
         self._initialized = False
 
     def connect(self):
         """
-        Établir la connexion au service.
+        Establish the service connection.
         
-        Cette méthode abstraite doit être implémentée par les sous-classes.
+        This abstract method must be implemented by subclasses.
         
         Raises:
-            ServiceError: Si la connexion échoue
+            ServiceError: If connection fails
         """
         try:
             self._connection = self._create_connection()
             self._initialized = True
             self._log_connection("Connected successfully")
         except Exception as e:
-            raise ServiceError(f"Échec de connexion: {e}")
+            raise ServiceError(f"Connection failed: {e}")
     
     def disconnect(self):
         """
-        Fermer la connexion proprement.
+        Close the connection cleanly.
         
-        Cette méthode abstraite doit être implémentée par les sous-classes.
+        This abstract method must be implemented by subclasses.
         """
         if self._connection is not None:
             try:
@@ -73,34 +73,34 @@ class BaseService(VariableResolverMixin, Service, ABC):
     
     def _create_connection(self):
         """
-        Créer la connexion réelle (à implémenter par les sous-classes).
+        Create the actual connection (to be implemented by subclasses).
         
         Returns:
-            Instance de connexion
+            Connection instance
             
         Raises:
-            NotImplementedError: Si non implémenté
+            NotImplementedError: If not implemented
         """
         raise NotImplementedError("Subclasses must implement _create_connection()")
     
     def _close_connection(self):
         """
-        Fermer la connexion réelle (à implémenter par les sous-classes).
+        Close the actual connection (to be implemented by subclasses).
         
         Raises:
-            NotImplementedError: Si non implémenté
+            NotImplementedError: If not implemented
         """
         raise NotImplementedError("Subclasses must implement _close_connection()")
     
     def _get_connection(self) -> Any:
         """
-        Obtenir la connexion, en établissant si nécessaire.
+        Get the connection, establishing it if necessary.
         
         Returns:
-            Instance de connexion
+            Connection instance
             
         Raises:
-            ServiceError: Si la connexion n'est pas établie
+            ServiceError: If connection is not established
         """
         if self._connection is None:
             self.connect()
@@ -112,11 +112,11 @@ class BaseService(VariableResolverMixin, Service, ABC):
     
     def _log_connection(self, message: str, level: str = "INFO"):
         """
-        Logguer des messages de connexion.
+        Log connection messages.
         
         Args:
-            message: Message à logguer
-            level: Niveau de log
+            message: Message to log
+            level: Log level
         """
         logger = logging.getLogger(self.__class__.__name__)
         
@@ -129,26 +129,26 @@ class BaseService(VariableResolverMixin, Service, ABC):
     
     def is_connected(self) -> bool:
         """
-        Vérifier si le service est connecté.
+        Check if the service is connected.
         
         Returns:
-            True si connecté
+            True if connected
         """
         return self._connection is not None and self._initialized
     
     def ensure_connected(self):
         """
-        S'assurer que le service est connecté, sinon établir la connexion.
+        Ensure the service is connected, otherwise establish connection.
         """
         if not self.is_connected():
             self.connect()
     
     def validate_config(self) -> bool:
         """
-        Valider la configuration du service.
+        Validate service configuration.
         
         Returns:
-            True si valide
+            True if valid
         """
         try:
             self._validate_config()
@@ -158,25 +158,25 @@ class BaseService(VariableResolverMixin, Service, ABC):
     
     def get_config(self) -> Dict[str, Any]:
         """
-        Obtenir la configuration du service.
+        Get the service configuration.
         
         Returns:
-            Configuration résolue
+            Resolved configuration
         """
         return self.config.copy()
     
     def get_original_config(self) -> Dict[str, Any]:
         """
-        Obtenir la configuration originale (avant résolution de variables).
+        Get the original configuration (before variable resolution).
         
         Returns:
-            Configuration originale
+            Original configuration
         """
         return self._original_config.copy()
     
     def reset(self):
         """
-        Réinitialiser le service (fermer la connexion).
+        Reset the service (close connection).
         """
         self.disconnect()
         self._initialized = False

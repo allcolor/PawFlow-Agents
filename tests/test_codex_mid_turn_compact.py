@@ -4,6 +4,7 @@ from pathlib import Path
 
 _GEMINI = Path("core/llm_providers/gemini.py").read_text(encoding="utf-8")
 _AGENT_CORE = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+_AGENT_ACTIONS = Path("tasks/ai/agent_actions.py").read_text(encoding="utf-8")
 _AGENT_COMPACTION = Path("tasks/ai/agent_compaction.py").read_text(
     encoding="utf-8")
 _CONTEXT_OPS = Path("tasks/ai/actions/context_ops.py").read_text(
@@ -67,6 +68,35 @@ def test_agent_core_rechecks_compact_threshold_after_context_injections():
     assert "_pre_send_est >= _trigger_tokens" in guard
     assert "self._compact(" in guard
     assert "force=True" in guard
+
+
+def test_api_pre_send_compact_replaces_active_messages_not_provider_view():
+    """API providers have no CLI session boundary to recover from.
+
+    The post-injection guard must compact and persist the active agent context,
+    then rebuild the provider-only prompt. Compacting only `llm_context` protects
+    a single API call but leaves the live/store context oversized.
+    """
+    guard_start = _AGENT_CORE.index("# Force-fit guard")
+    call_start = _AGENT_CORE.index("# LLM call", guard_start)
+    guard = _AGENT_CORE[guard_start:call_start]
+    assert "compacted_messages = self._compact(" in guard
+    assert "copy.deepcopy(messages)" in guard
+    assert "copy.deepcopy(llm_context)" not in guard
+    assert "messages[:] = compacted_messages" in guard
+    assert "llm_context, _pre_inject_chars = _build_provider_context(" in guard
+
+
+def test_manual_compact_refreshes_active_context_without_cancelling_loop():
+    """Manual /compact during an API turn must not force-stop that turn."""
+    op_start = _AGENT_ACTIONS.index("def _run_bg_context_op")
+    op_end = _AGENT_ACTIONS.index("# ═════════════════", op_start)
+    block = _AGENT_ACTIONS[op_start:op_end]
+    assert 'if op_name != "compact":' in block
+    assert "self.cancel_agent(conv_id, agent_name=agent_name, silent=True)" in block
+    assert "def _refresh_active_context_from_store" in block
+    assert "active_msgs[:] = refreshed" in block
+    assert "_context_usage_cache" in block
 
 
 def test_force_fit_notifies_ui_as_compaction():

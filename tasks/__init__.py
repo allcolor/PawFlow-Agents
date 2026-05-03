@@ -1,8 +1,8 @@
 # PawFlow Tasks Module
 
 """
-Module principal des tâches PawFlow.
-Fournit et enregistre toutes les tâches disponibles.
+Main PawFlow tasks module.
+Provides and registers all available tasks.
 """
 
 from typing import Dict, Any, List
@@ -85,22 +85,22 @@ def _register_all_services():
 
 
 def register_all_tasks():
-    """Enregistrer toutes les tâches et services disponibles."""
+    """Register all available tasks and services."""
     # Services first (no guard — they have their own idempotent registration)
     _register_all_services()
 
     if "log" in TaskFactory.list_types():
-        return  # Tasks déjà enregistrées
+        return  # Already registered tasks
 
-    # Tâches système
+    # System tasks
     from tasks.system import register_system_tasks
     register_system_tasks()
 
-    # Tâches d'IO
+    # Tasks d'IO
     from tasks.io import GetFileTask, PutFileTask, FetchHTTPTask
     from tasks.io.listen_http import ListenHTTPTask
 
-    # Tâches de données
+    # Data tasks
     from tasks.data import TransformJSONTask
     from tasks.data.evaluate_jsonpath import EvaluateJSONPathTask
     from tasks.data.extract_text import ExtractTextTask
@@ -111,14 +111,14 @@ def register_all_tasks():
     from tasks.data.base64_encode import Base64EncodeTask
     from tasks.data.count_text import CountTextTask
 
-    # Tâches de contrôle
+    # Control tasks
     from tasks.control import RouteOnAttributeTask, SplitContentTask, MergeContentTask
     from tasks.control.duplicate_content import DuplicateContentTask
     from tasks.control.ports import InputPortTask, OutputPortTask
     from tasks.control.funnel import FunnelTask
     from tasks.control.control_rate import ControlRateTask
 
-    # Tâches de données supplémentaires
+    # Additional data tasks
     from tasks.data.convert_csv import ConvertCSVToJSONTask, ConvertJSONToCSVTask
     from tasks.data.execute_sql import ExecuteSQLTask, PutSQLTask
     from tasks.data.cache_tasks import PutCacheTask, GetCacheTask
@@ -128,7 +128,7 @@ def register_all_tasks():
     from tasks.data.split_json import SplitJSONTask
     from tasks.data.infer_llm import InferLLMTask
 
-    # Tâches IO supplémentaires
+    # Additional IO tasks
     from tasks.io.send_email import SendEmailTask
     from tasks.io.notify_slack import NotifySlackTask
     from tasks.io.sftp_tasks import GetSFTPTask, PutSFTPTask
@@ -138,16 +138,16 @@ def register_all_tasks():
     from tasks.io.gcs_tasks import GetGCSTask, PutGCSTask
     from tasks.io.azure_tasks import GetAzureBlobTask, PutAzureBlobTask
 
-    # Tâches XML
+    # Tasks XML
     from tasks.data.parse_xml import ParseXMLTask, TransformXMLTask
 
-    # Tâches Avro / Parquet
+    # Tasks Avro / Parquet
     from tasks.data.convert_avro_parquet import (
         ConvertAvroToJSONTask, ConvertJSONToAvroTask,
         ConvertParquetToJSONTask, ConvertJSONToParquetTask,
     )
 
-    # Tâches MQTT
+    # Tasks MQTT
     from tasks.io.mqtt_tasks import PublishMQTTTask, ConsumeMQTTTask
 
     # List SFTP
@@ -158,10 +158,10 @@ def register_all_tasks():
     from tasks.io.handle_http_response import HandleHTTPResponseTask
     from tasks.io.validate_http_auth import ValidateHTTPAuthTask
 
-    # Tâches de synchronisation
+    # Tasks de synchronisation
     from tasks.control.wait_notify import WaitTask, NotifyTask
 
-    # Tâches système supplémentaires
+    # Additional system tasks
     from tasks.system.generate_flowfile import GenerateFlowFileTask
     from tasks.system.hash_content import HashContentTask
     from tasks.system.list_files import ListFilesTask
@@ -219,7 +219,7 @@ def register_all_tasks():
     # Filesystem operations
     from tasks.io.filesystem_ops import FilesystemOpsTask
 
-    # Tâches AI
+    # Tasks AI
     from tasks.ai.agent_loop import AgentLoopTask
     from tasks.ai.agent_actions_task import AgentActionsTask
 
@@ -230,13 +230,13 @@ def register_all_tasks():
 
 
 
-# Export des tâches enregistrées
+# Export registered tasks
 def get_available_tasks() -> List[Dict[str, Any]]:
     """
-    Obtenir la liste des tâches disponibles.
+    Get the list of available tasks.
     
     Returns:
-        Liste de dictionnaires avec les informations sur chaque tâche
+        Liste de dictionnaires avec les informations sur chaque task
     """
     tasks = []
     task_types = TaskFactory.list_types()

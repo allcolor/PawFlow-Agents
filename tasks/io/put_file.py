@@ -1,7 +1,7 @@
 # PutFile Task
 
 """
-Tâche PutFile - Écrire un FlowFile sur le système de fichiers.
+Task PutFile - Write a FlowFile to the filesystem.
 """
 
 import os
@@ -11,12 +11,12 @@ from core.base_task import BaseTask
 
 
 class PutFileTask(BaseTask):
-    """Écrire le contenu d'un FlowFile dans un fichier."""
+    """Write FlowFile content to a file."""
 
     TYPE = "putFile"
     VERSION = "1.0.0"
     NAME = "PutFile"
-    DESCRIPTION = "Écrire un FlowFile sur le système de fichiers"
+    DESCRIPTION = "Write a FlowFile to the filesystem"
     ICON = "file-output"
 
     def __init__(self, config: Dict[str, Any]):
@@ -78,16 +78,16 @@ class PutFileTask(BaseTask):
         return {
             'output_directory': {
                 'type': 'string', 'required': True,
-                'description': 'Répertoire de destination',
+                'description': 'Destination directory',
             },
             'conflict_resolution': {
                 'type': 'select', 'required': False, 'default': 'replace',
                 'options': ['replace', 'fail', 'ignore', 'rename'],
-                'description': 'Stratégie en cas de fichier existant',
+                'description': 'Strategy when the file already exists',
             },
             'create_dirs': {
                 'type': 'boolean', 'required': False, 'default': True,
-                'description': 'Créer le répertoire si inexistant',
+                'description': 'Create the directory if missing',
             },
             'service_id': {
                 'type': 'string', 'required': False,
@@ -96,5 +96,5 @@ class PutFileTask(BaseTask):
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(PutFileTask)

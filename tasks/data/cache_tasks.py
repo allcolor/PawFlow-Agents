@@ -1,5 +1,5 @@
 """
-Cache Tasks - Stocker et recuperer des donnees en cache.
+Cache tasks - Store and retrieve cached data.
 """
 
 from typing import Dict, Any, List

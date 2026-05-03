@@ -1,8 +1,8 @@
 # MQTT Tasks
 
-"""Tâches PublishMQTT / ConsumeMQTT - Messaging MQTT.
+"""Tasks PublishMQTT / ConsumeMQTT - Messaging MQTT.
 
-Utilise paho-mqtt si disponible.
+Uses paho-mqtt if available.
 """
 
 import json
@@ -24,12 +24,12 @@ def _get_mqtt():
 
 
 class PublishMQTTTask(BaseTask):
-    """Publier un message sur un topic MQTT."""
+    """Publish a message to a topic MQTT."""
 
     TYPE = "publishMQTT"
     VERSION = "1.0.0"
     NAME = "Publish MQTT"
-    DESCRIPTION = "Publier le contenu du FlowFile sur un topic MQTT"
+    DESCRIPTION = "Publish FlowFile content to a topic MQTT"
     ICON = "send"
 
     def __init__(self, config: Dict[str, Any]):
@@ -98,16 +98,16 @@ class PublishMQTTTask(BaseTask):
 
 
 class ConsumeMQTTTask(BaseTask):
-    """Consommer un message depuis un topic MQTT.
+    """Consume a message from a topic MQTT.
 
-    Se connecte au broker, souscrit au topic, et attend un message
-    pendant poll_timeout secondes. Chaque message reçu produit un FlowFile.
+    Connects to the broker, subscribes to the topic, and waits for a message
+    pendant poll_timeout secondes. Each received message produces a FlowFile.
     """
 
     TYPE = "consumeMQTT"
     VERSION = "1.0.0"
     NAME = "Consume MQTT"
-    DESCRIPTION = "Consommer des messages depuis un topic MQTT"
+    DESCRIPTION = "Consume messages from a topic MQTT"
     ICON = "inbox"
 
     def __init__(self, config: Dict[str, Any]):

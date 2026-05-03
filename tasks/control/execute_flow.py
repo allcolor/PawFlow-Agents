@@ -1,7 +1,7 @@
 # ExecuteFlow Task
 
 """
-Task ExecuteFlow - Exécuter un sous-flow et passer les FlowFiles.
+Task ExecuteFlow - Execute a subflow and pass FlowFiles through it.
 """
 
 from typing import Dict, Any, List
@@ -19,16 +19,16 @@ MAX_SUBFLOW_DEPTH = 10
 
 
 class ExecuteFlowTask(BaseTask):
-    """Exécuter un flow externe et passer les FlowFiles à travers lui.
+    """Execute an external flow and pass FlowFiles through it.
 
-    Supporte la propagation des paramètres du flow parent vers le subflow
-    via un mapping explicite (parameter_mapping) ou par propagation directe.
+    Supports propagation of parent flow parameters to the subflow
+    through an explicit mapping (parameter_mapping) ou par propagation directe.
     """
 
     TYPE = "executeFlow"
     VERSION = "1.1.0"
     NAME = "Execute Flow"
-    DESCRIPTION = "Exécuter un flow JSON et passer les FlowFiles à travers"
+    DESCRIPTION = "Execute a JSON flow and pass FlowFiles through it"
     ICON = "flow"
 
     def __init__(self, config: Dict[str, Any]):
@@ -39,9 +39,9 @@ class ExecuteFlowTask(BaseTask):
         self.port_mapping = self.config.get('port_mapping', {})
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Exécuter le sous-flow avec le FlowFile en entrée."""
+        """Execute the subflow with the FlowFile as input."""
         if not self.flow_path:
-            raise TaskError("Le paramètre 'flow_path' est requis.")
+            raise TaskError("The 'flow_path' parameter is required.")
 
         import os
         if not os.path.exists(self.flow_path):
@@ -64,7 +64,7 @@ class ExecuteFlowTask(BaseTask):
         _stack.append(_key)
         flowfile.set_attribute(_STACK_ATTR, "|".join(_stack))
         try:
-            # Parser et exécuter le sous-flow
+            # Parse and execute the subflow
             flow = FlowParser.parse_from_file(self.flow_path)
 
             # If port_mapping specifies an input port, tag the FlowFile so the
@@ -88,7 +88,7 @@ class ExecuteFlowTask(BaseTask):
                 errors_str = "; ".join(str(e) for e in result.errors)
                 raise TaskError(f"Exécution du sous-flow échouée: {errors_str}")
 
-            # Copier les attributs du parent si demandé
+            # Copy parent attributes if requested
             if self.pass_attributes:
                 parent_attrs = flowfile.get_attributes()
                 for ff in result.output_flowfiles:
@@ -236,7 +236,7 @@ class ExecuteFlowTask(BaseTask):
         return {
             'flow_path': {
                 'type': 'string', 'required': True,
-                'description': "Chemin vers le fichier JSON du flow à exécuter",
+                'description': "Path to the flow JSON file to execute",
             },
             'pass_attributes': {
                 'type': 'boolean', 'required': False, 'default': True,
@@ -244,14 +244,14 @@ class ExecuteFlowTask(BaseTask):
             },
             'parameter_mapping': {
                 'type': 'object', 'required': False, 'default': {},
-                'description': "Mapping des paramètres parent → subflow. Ex: {\"sub_env\": \"${flow.parameters.env}\"}",
+                'description': "Mapping of parent parameters -> subflow parameters. Ex: {\"sub_env\": \"${flow.parameters.env}\"}",
             },
             'port_mapping': {
                 'type': 'object', 'required': False, 'default': {},
-                'description': "Mapping des ports du subflow. input.port_task_id = port d'entrée cible, output.{port_id} = nom de relationship",
+                'description': "Subflow port mapping. input.port_task_id = target input port, output.{port_id} = relationship name",
             },
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(ExecuteFlowTask)

@@ -1,7 +1,7 @@
 # Flow Parser and Validator
 
 """
-Parser et validateur de flux.
+Flow parser and validator.
 Lit les flux JSON et valide leur structure.
 """
 
@@ -16,7 +16,7 @@ from core.process_group import ProcessGroup
 
 
 class FlowParser:
-    """Parser de flux JSON."""
+    """JSON flow parser."""
 
     @staticmethod
     def _resolve_config(params: Dict[str, Any], flow_parameters: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -37,20 +37,20 @@ class FlowParser:
     @classmethod
     def parse(cls, config: Dict[str, Any]) -> Flow:
         """
-        Parser un flux depuis une configuration.
+        Parse a flow from a configuration.
         
         Args:
             config: Configuration du flux
             
         Returns:
-            Objet Flow parseé
+            Parsed Flow object
         """
         flow = Flow(config)
         
-        # Parser les entrées
+        # Parse inputs
         flow.entries = config.get('entries', [])
         
-        # Parser les sorties
+        # Parse outputs
         flow.exits = config.get('exits', [])
         
         flow_parameters = config.get('parameters', {})
@@ -61,7 +61,7 @@ class FlowParser:
             service_parameters = service_config.get('parameters', {})
             resolved_services[service_id] = cls._resolve_config(service_parameters, flow_parameters)
 
-        # Parser les tâches
+        # Parse tasks
         for task_id, task_config in config.get('tasks', {}).items():
             task_type = task_config.get('type')
             task_parameters = task_config.get('parameters', {})
@@ -87,7 +87,7 @@ class FlowParser:
             task._max_instances = int(_raw_mi) if _raw_mi else 1
             flow.add_task(task_id, task)
 
-        # Parser les services — resolve expressions (secrets, env, flow params)
+        # Parse services — resolve expressions (secrets, env, flow params)
         for service_id, service_config in config.get('services', {}).items():
             service_type = service_config.get('type')
             service_parameters = resolved_services[service_id]
@@ -96,7 +96,7 @@ class FlowParser:
             service = service_class(service_parameters)
             flow.add_service(service_id, service)
         
-        # Parser les groupes via ProcessGroup.from_dict (handles legacy format)
+        # Parse groups through ProcessGroup.from_dict (handles legacy format)
         for group_id, group_config in config.get('groups', {}).items():
             if not isinstance(group_config, dict):
                 continue
@@ -166,10 +166,10 @@ class FlowParser:
                 _ef_task._max_instances = 1
                 flow.add_task(group_id, _ef_task)
         
-        # Parser les relations
+        # Parse relationships
         flow.relations = config.get('relations', [])
 
-        # Parser les variables
+        # Parse variables
         flow.variables = config.get('variables', {})
 
         return flow
@@ -177,13 +177,13 @@ class FlowParser:
     @classmethod
     def parse_from_file(cls, filepath: str) -> Flow:
         """
-        Parser un flux depuis un fichier JSON.
+        Parse a flow from a JSON file.
         
         Args:
-            filepath: Chemin vers le fichier JSON
+            filepath: Path to the JSON file
             
         Returns:
-            Objet Flow parseé
+            Parsed Flow object
         """
         with open(filepath, 'r', encoding='utf-8') as f:
             config = json.load(f)
@@ -195,56 +195,56 @@ class FlowParser:
     @classmethod
     def parse_from_json(cls, json_string: str) -> Flow:
         """
-        Parser un flux depuis une chaîne JSON.
+        Parse a flow from a JSON string.
         
         Args:
-            json_string: Chaîne JSON
+            json_string: JSON string
             
         Returns:
-            Objet Flow parseé
+            Parsed Flow object
         """
         config = json.loads(json_string)
         return cls.parse(config)
 
 
 class FlowValidator:
-    """Validateur de flux."""
+    """Flow validator."""
     
     @classmethod
     def validate(cls, flow: Flow, strict: bool = True) -> List[str]:
         """
-        Valider un flux.
+        Validate a flow.
         
         Args:
-            flow: Flux à valider
-            strict: Mode strict (lève des erreurs) ou non
+            flow: Flow to validate
+            strict: Strict mode (raises errors) or not
             
         Returns:
             Liste de messages d'erreur (vide si valide)
         """
         errors = []
         
-        # Valider le nom
+        # Validate the name
         if not flow.name:
             errors.append("Le flux doit avoir un nom")
         
-        # Valider les tâches
+        # Validate tasks
         for task_id, task in flow.tasks.items():
             task_errors = task.validate()
             for error in task_errors:
-                errors.append(f"Tâche {task_id}: {error}")
+                errors.append(f"Task {task_id}: {error}")
         
-        # Valider les services
+        # Validate services
         for service_id, service in flow.services.items():
             service_errors = service.validate()
             for error in service_errors:
                 errors.append(f"Service {service_id}: {error}")
         
-        # Valider les relations
+        # Validate relationships
         relation_errors = cls._validate_relations(flow)
         errors.extend(relation_errors)
         
-        # Valider la connectivité
+        # Validate connectivity
         connectivity_errors = cls._validate_connectivity(flow)
         errors.extend(connectivity_errors)
         
@@ -255,10 +255,10 @@ class FlowValidator:
     
     @classmethod
     def _validate_relations(cls, flow: Flow) -> List[str]:
-        """Valider les relations entre les composants."""
+        """Validate relationships between components."""
         errors = []
         
-        # Vérifier que toutes les références dans les relations existent
+        # Check that all references in relationships exist
         all_ids = set(flow.tasks.keys()) | set(flow.services.keys())
         
         for relation in flow.relations:
@@ -275,25 +275,25 @@ class FlowValidator:
     
     @classmethod
     def _validate_connectivity(cls, flow: Flow) -> List[str]:
-        """Valider la connectivité du DAG."""
+        """Validate DAG connectivity."""
         errors = []
         
-        # Vérifier qu'il y a au moins une entrée
+        # Check that there is at least one input
         if not flow.entries and not flow.tasks:
-            errors.append("Le flux doit avoir au moins une entrée ou une tâche")
+            errors.append("Le flux doit avoir au moins une entrée ou une task")
         
-        # Vérifier l'absence de cycles (simplifié)
-        # Une implémentation complète ferait un DFS pour détecter les cycles
+        # Check for cycles (simplified)
+        # A full implementation would use DFS to detect cycles
         
         return errors
     
     @classmethod
     def validate_from_file(cls, filepath: str, strict: bool = True) -> List[str]:
         """
-        Valider un flux depuis un fichier.
+        Validate a flow from a file.
         
         Args:
-            filepath: Chemin vers le fichier JSON
+            filepath: Path to the JSON file
             strict: Mode strict
             
         Returns:
@@ -308,10 +308,10 @@ class FlowValidator:
     @classmethod
     def validate_from_json(cls, json_string: str, strict: bool = True) -> List[str]:
         """
-        Valider un flux depuis une chaîne JSON.
+        Validate a flow from a JSON string.
         
         Args:
-            json_string: Chaîne JSON
+            json_string: JSON string
             strict: Mode strict
             
         Returns:

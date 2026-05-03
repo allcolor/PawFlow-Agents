@@ -1,8 +1,8 @@
 # Variable Resolver Mixin
 
 """
-Mixin pour la résolution de variables dans les configuration.
-Évite la duplication de code entre BaseTask et BaseService.
+Mixin for variable resolution in configuration.
+Avoids code duplication between BaseTask and BaseService.
 """
 
 from typing import Dict, Any, List, Optional
@@ -11,20 +11,20 @@ import re
 
 class VariableResolverMixin:
     """
-    Mixin pour résoudre les variables dans les configurations.
+    Mixin for resolving variables in configuration.
 
     Supporte le format ${variable} et ${var}
     """
 
     def _resolve_variables(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Résoudre les variables dans la configuration.
+        Resolve variables in configuration.
 
         Args:
-            config: Configuration à résoudre
+            config: Configuration to resolve
 
         Returns:
-            Configuration avec variables résolues
+            Configuration with resolved variables
         """
         resolved = {}
 
@@ -45,15 +45,15 @@ class VariableResolverMixin:
 
     def _resolve_string(self, value: str) -> Any:
         """
-        Résoudre une chaîne contenant des variables.
+        Resolve a string containing variables.
 
         Supporte le format ${variable} et ${var}
 
         Args:
-            value: Chaîne à résoudre
+            value: String to resolve
 
         Returns:
-            Chaîne résolue ou valeur originale
+            Resolved string or original value
         """
         if '${' not in value:
             return value
@@ -61,14 +61,14 @@ class VariableResolverMixin:
         def replace_var(match):
             var_path = match.group(1)
 
-            # Support pour parameters (legacy flow.parameters. prefix removed)
+            # Support parameters (legacy flow.parameters. prefix removed)
             if var_path.startswith('flow.parameters.'):
                 param_name = var_path.replace('flow.parameters.', '')
                 # NOTE: legacy prefix — new expressions use ${var} directly
-                # Ceci nécessite un contexte global, retourner la chaîne telle quelle
+                # This requires a global context; return the string unchanged
                 return match.group(0)
 
-            # Non résolvable à la config-time, garder tel quel
+            # Cannot be resolved at config time; keep unchanged
             return match.group(0)
 
         result = re.sub(r'\$\{([^}]+)\}', replace_var, value)

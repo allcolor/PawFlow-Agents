@@ -893,6 +893,50 @@ class AgentCoreMixin:
                             out.insert(0, sys_msg)
                         return out
 
+                    def _build_provider_context(stored_msgs):
+                        provider_context = _with_provider_system_prompt(list(stored_msgs))
+                        pre_inject_chars = self._estimate_tokens(
+                            provider_context, tool_defs=tool_defs, chars_per_token=1.0)
+                        return provider_context, pre_inject_chars
+
+                    def _inject_dynamic_metadata(provider_context):
+                        _est_used_local = self._estimate_tokens(
+                            provider_context, tool_defs=tool_defs,
+                            chars_per_token=ctx.get("chars_per_token", 0))
+                        _remaining_local = max(0, _max_ctx - _est_used_local)
+                        _meta_parts_local = []
+                        if ctx.get("_datetime_str", ""):
+                            _meta_parts_local.append(
+                                f"Current date/time: {ctx.get('_datetime_str', '')}")
+                        _meta_parts_local.append(
+                            f"Context: ~{_est_used_local}/{_max_ctx} tokens "
+                            f"(~{_remaining_local} remaining)")
+                        _meta_note_local = "\n\n[System: " + ". ".join(_meta_parts_local) + "]"
+                        for _mi in range(len(provider_context) - 1, -1, -1):
+                            if provider_context[_mi].role == "user":
+                                _um = provider_context[_mi]
+                                if isinstance(_um.content, list):
+                                    _new_content = list(_um.content) + [
+                                        {"type": "text", "text": _meta_note_local}]
+                                    provider_context[_mi] = LLMMessage(
+                                        role="user", content=_new_content,
+                                        tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
+                                        source=_um.source, msg_id=_um.msg_id,
+                                        timestamp=_um.timestamp, seq=_um.seq,
+                                        conversation_id=conversation_id,
+                                    )
+                                else:
+                                    _uc = _um.content or ""
+                                    provider_context[_mi] = LLMMessage(
+                                        role="user", content=_uc + _meta_note_local,
+                                        tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
+                                        source=_um.source, msg_id=_um.msg_id,
+                                        timestamp=_um.timestamp, seq=_um.seq,
+                                        conversation_id=conversation_id,
+                                    )
+                                break
+                        return provider_context
+
                     def _should_proactive_compact(stored_msgs, max_ctx, cpt):
                         if _trigger_frac <= 0:
                             return False
@@ -1000,11 +1044,8 @@ class AgentCoreMixin:
                             # retry — still applies as a safety net).
                             llm_context = list(messages)
 
-                    llm_context = _with_provider_system_prompt(llm_context)
-
-                    # Pre-injection char count for CPT calibration
-                    _pre_inject_chars = self._estimate_tokens(
-                        llm_context, tool_defs=tool_defs, chars_per_token=1.0)
+                    # Pre-injection char count
+                    llm_context, _pre_inject_chars = _build_provider_context(messages)
 
                     # Identity injection
                     _id_nicks = ctx.get("_nicknames") or {}
@@ -1015,40 +1056,7 @@ class AgentCoreMixin:
                     # Dynamic metadata — merged into the last user message
                     # (AFTER cache breakpoints, so prefix is stable)
                     _max_ctx = ctx.get("max_context_size", 200000)
-                    _est_used = self._estimate_tokens(
-                        llm_context, tool_defs=tool_defs,
-                        chars_per_token=ctx.get("chars_per_token", 0))
-                    _remaining = max(0, _max_ctx - _est_used)
-                    _dt = ctx.get("_datetime_str", "")
-                    _meta_parts = []
-                    if _dt:
-                        _meta_parts.append(f"Current date/time: {_dt}")
-                    _meta_parts.append(f"Context: ~{_est_used}/{_max_ctx} tokens (~{_remaining} remaining)")
-                    _meta_note = "\n\n[System: " + ". ".join(_meta_parts) + "]"
-                    # Find last user message and append metadata to it
-                    for _mi in range(len(llm_context) - 1, -1, -1):
-                        if llm_context[_mi].role == "user":
-                            _um = llm_context[_mi]
-                            if isinstance(_um.content, list):
-                                # Multipart content (text + image_ref/file_ref) — append metadata as text block
-                                _new_content = list(_um.content) + [{"type": "text", "text": _meta_note}]
-                                llm_context[_mi] = LLMMessage(
-                                    role="user", content=_new_content,
-                                    tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
-                                    source=_um.source, msg_id=_um.msg_id,
-                                    timestamp=_um.timestamp, seq=_um.seq,
-                                    conversation_id=conversation_id,
-                                )
-                            else:
-                                _uc = _um.content or ""
-                                llm_context[_mi] = LLMMessage(
-                                    role="user", content=_uc + _meta_note,
-                                    tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
-                                    source=_um.source, msg_id=_um.msg_id,
-                                    timestamp=_um.timestamp, seq=_um.seq,
-                                    conversation_id=conversation_id,
-                                )
-                            break
+                    llm_context = _inject_dynamic_metadata(llm_context)
 
                     emitter.check_cancelled()
 
@@ -1133,8 +1141,8 @@ class AgentCoreMixin:
                                 # crossed the configured threshold. Force the
                                 # compact so _compact() cannot recompute a lower
                                 # pre-assembly estimate and silently skip.
-                                compacted_llm_context = self._compact(
-                                    copy.deepcopy(llm_context), compact_client,
+                                compacted_messages = self._compact(
+                                    copy.deepcopy(messages), compact_client,
                                     _max_ctx,
                                     force=True,
                                     trigger_fraction=_trigger_frac,
@@ -1145,8 +1153,10 @@ class AgentCoreMixin:
                                     user_id=user_id,
                                     budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                                 )
-                                if _messages_changed(compacted_llm_context, llm_context):
-                                    llm_context = compacted_llm_context
+                                if _messages_changed(compacted_messages, messages):
+                                    messages[:] = compacted_messages
+                                    ctx.pop("_context_usage_cache", None)
+                                    ctx.pop("_auto_compact_usage_cache", None)
                                     if ctx.get("_is_cli_provider") and conversation_id:
                                         try:
                                             from core.conversation_store import ConversationStore
@@ -1157,6 +1167,11 @@ class AgentCoreMixin:
                                             logger.debug(
                                                 "CLI session invalidation after pre-send compact failed",
                                                 exc_info=True)
+                                    llm_context, _pre_inject_chars = _build_provider_context(messages)
+                                    llm_context = self._inject_identity(llm_context, _id_nicks)
+                                    llm_context = self._apply_identity_suffix(
+                                        llm_context, ctx.get("_identity_suffix", ""))
+                                    llm_context = _inject_dynamic_metadata(llm_context)
                                 _pre_send_est = self._estimate_tokens(
                                     llm_context, tool_defs=ctx.get("tool_defs"),
                                     chars_per_token=ctx.get("chars_per_token", 0),

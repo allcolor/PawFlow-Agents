@@ -9,12 +9,12 @@ from core.signals import SignalRegistry
 
 
 class WaitTask(BaseTask):
-    """Attend un signal avant de passer le FlowFile."""
+    """Waits for a signal before passing the FlowFile."""
 
     TYPE = "waitForSignal"
     VERSION = "1.0.0"
     NAME = "Wait For Signal"
-    DESCRIPTION = "Attend un signal du SignalRegistry avant de continuer"
+    DESCRIPTION = "Waits for a SignalRegistry signal before continuing"
     ICON = "clock"
 
     def __init__(self, config: Dict[str, Any]):
@@ -43,7 +43,7 @@ class WaitTask(BaseTask):
         return {
             "signal_id": {
                 "type": "string", "required": True,
-                "description": "Identifiant du signal a attendre",
+                "description": "Signal identifier a attendre",
             },
             "target_count": {
                 "type": "integer", "required": False, "default": 1,
@@ -57,7 +57,7 @@ class WaitTask(BaseTask):
 
 
 class NotifyTask(BaseTask):
-    """Emet un signal vers le SignalRegistry."""
+    """Emit a signal to the SignalRegistry."""
 
     TYPE = "notify"
     VERSION = "1.0.0"
@@ -87,11 +87,11 @@ class NotifyTask(BaseTask):
         return {
             "signal_id": {
                 "type": "string", "required": True,
-                "description": "Identifiant du signal a emettre",
+                "description": "Signal identifier a emettre",
             },
             "signal_value": {
                 "type": "string", "required": False, "default": "",
-                "description": "Valeur optionnelle associee au signal",
+                "description": "Optional value associated with the signal",
             },
             "delta": {
                 "type": "integer", "required": False, "default": 1,

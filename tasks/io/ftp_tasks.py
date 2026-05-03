@@ -1,6 +1,6 @@
 # FTP Tasks
 
-"""Tâches GetFTP / PutFTP - Transfert de fichiers via FTP/FTPS."""
+"""Tasks GetFTP / PutFTP - File transfer via FTP/FTPS."""
 
 import ftplib
 import logging
@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class GetFTPTask(BaseTask):
-    """Télécharger un fichier depuis un serveur FTP/FTPS."""
+    """Download a file from a server FTP/FTPS."""
 
     TYPE = "getFTP"
     VERSION = "1.0.0"
     NAME = "Get FTP"
-    DESCRIPTION = "Télécharger un fichier depuis un serveur FTP ou FTPS"
+    DESCRIPTION = "Download a file from a server FTP ou FTPS"
     ICON = "download"
 
     def __init__(self, config: Dict[str, Any]):
@@ -110,12 +110,12 @@ class GetFTPTask(BaseTask):
 
 
 class PutFTPTask(BaseTask):
-    """Uploader un fichier vers un serveur FTP/FTPS."""
+    """Upload a file to a server FTP/FTPS."""
 
     TYPE = "putFTP"
     VERSION = "1.0.0"
     NAME = "Put FTP"
-    DESCRIPTION = "Uploader un fichier vers un serveur FTP ou FTPS"
+    DESCRIPTION = "Upload a file to a server FTP ou FTPS"
     ICON = "upload"
 
     def __init__(self, config: Dict[str, Any]):

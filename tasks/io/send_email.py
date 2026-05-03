@@ -1,12 +1,12 @@
 # SendEmail Task
 
 """
-Tâche SendEmail - Envoyer des emails via SMTP.
+Task SendEmail - Send emails through SMTP.
 
-Supporte deux modes d'authentification:
+Supports two authentication modes:
 - password: login SMTP classique (username/password)
 - oauth2: XOAUTH2 pour Gmail et Microsoft 365
-  Nécessite client_id, client_secret et refresh_token.
+  Requires client_id, client_secret, and refresh_token.
   L'access token est obtenu automatiquement via le refresh token.
 """
 
@@ -45,12 +45,12 @@ _OAUTH2_PRESETS = {
 
 
 class SendEmailTask(BaseTask):
-    """Envoyer un email via SMTP avec support OAuth2 (Gmail, Microsoft 365)."""
+    """Send an email through SMTP with OAuth2 support (Gmail, Microsoft 365)."""
 
     TYPE = "sendEmail"
     VERSION = "2.0.0"
     NAME = "Send Email"
-    DESCRIPTION = "Envoyer un email via SMTP (password ou OAuth2 pour Gmail/Microsoft)"
+    DESCRIPTION = "Send an email through SMTP (password ou OAuth2 pour Gmail/Microsoft)"
     ICON = "mail"
 
     def __init__(self, config: Dict[str, Any]):
@@ -303,23 +303,23 @@ class SendEmailTask(BaseTask):
             },
             'from': {
                 'type': 'string', 'required': False,
-                'description': 'Adresse expéditeur',
+                'description': 'Sender address',
             },
             'to': {
                 'type': 'string', 'required': False,
-                'description': 'Destinataire(s), séparés par virgule (supporte ${attribut})',
+                'description': 'Recipient(s), comma-separated (supports ${attribute})',
             },
             'cc': {
                 'type': 'string', 'required': False,
-                'description': 'CC, séparés par virgule',
+                'description': 'CC, comma-separated',
             },
             'bcc': {
                 'type': 'string', 'required': False,
-                'description': 'BCC, séparés par virgule',
+                'description': 'BCC, comma-separated',
             },
             'subject': {
                 'type': 'string', 'required': False,
-                'description': 'Sujet (supporte ${attribut})',
+                'description': 'Sujet (supports ${attribute})',
             },
             'content_type': {
                 'type': 'select', 'required': False, 'default': 'text/plain',
@@ -328,11 +328,11 @@ class SendEmailTask(BaseTask):
             },
             'body': {
                 'type': 'string', 'required': False,
-                'description': 'Body personnalisé (défaut: contenu FlowFile)',
+                'description': 'Custom body (default: FlowFile content)',
             },
             'attach_content': {
                 'type': 'boolean', 'required': False, 'default': False,
-                'description': 'Joindre le contenu FlowFile en pièce jointe',
+                'description': 'Attach FlowFile content as an attachment',
             },
         }
 

@@ -1,7 +1,7 @@
 # Compress Content Task
 
 """
-Tâche CompressContent - Compresser ou décompresser le contenu d'un FlowFile.
+Task CompressContent - Compress or decompress FlowFile content.
 """
 
 import gzip
@@ -12,12 +12,12 @@ from core.base_task import BaseTask
 
 
 class CompressContentTask(BaseTask):
-    """Compresser ou décompresser le contenu d'un FlowFile."""
+    """Compress or decompress FlowFile content."""
 
     TYPE = "compressContent"
     VERSION = "1.0.0"
     NAME = "Compress Content"
-    DESCRIPTION = "Compresser ou décompresser le contenu d'un FlowFile"
+    DESCRIPTION = "Compress or decompress FlowFile content"
     ICON = "compress"
 
     def __init__(self, config: Dict[str, Any]):
@@ -27,7 +27,7 @@ class CompressContentTask(BaseTask):
         self.level = self.config.get('level', 6)
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Compresser ou décompresser le contenu du FlowFile."""
+        """Compress or decompress the FlowFile content."""
         content = flowfile.get_content()
 
         if self.mode == 'compress':
@@ -52,7 +52,7 @@ class CompressContentTask(BaseTask):
             'mode': {
                 'type': 'select',
                 'required': False,
-                'description': "Mode d'opération",
+                'description': "Operation mode",
                 'options': ['compress', 'decompress'],
                 'default': 'compress'
             },
@@ -74,5 +74,5 @@ class CompressContentTask(BaseTask):
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(CompressContentTask)

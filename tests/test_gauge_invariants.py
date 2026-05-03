@@ -137,7 +137,7 @@ def test_proactive_compact_only_runs_after_threshold_estimate():
     assert "used_tokens >= trigger_tokens" in _AGENT_CORE_PY
     proactive_region = _AGENT_CORE_PY[
         _AGENT_CORE_PY.index("if ctx.get(\"_is_claude_code\"):"):
-        _AGENT_CORE_PY.index("llm_context = _with_provider_system_prompt")]
+        _AGENT_CORE_PY.index("# Pre-injection char count")]
     assert "if _trigger_frac > 0:" not in proactive_region
     assert "if _should_proactive_compact(messages, _max_ctx, _cpt):" in proactive_region
 

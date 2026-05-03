@@ -62,14 +62,6 @@ class GlobHandler(BaseFsHandler):
             return self._no_target_error(source)
 
         try:
-            if recursive:
-                rtk_output = self._relay_exec_rtk(
-                    svc, ".", ["rtk", "find", pattern, path], arguments)
-                if rtk_output is not None:
-                    lines = [line for line in rtk_output.strip().split("\n") if line.strip()]
-                    lines = lines[:limit]
-                    return "\n".join(lines) if lines else "(no matches)"
-
             try:
                 results = svc.search(path, pattern, recursive,
                                      local=bool(arguments.get("local", False)),

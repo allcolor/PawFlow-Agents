@@ -1,14 +1,14 @@
 # Parameter Context
 
 """
-ParameterContext — porte les paramètres d'un flow et les rend disponibles
-aux tâches et services pendant l'exécution.
+ParameterContext — carries flow parameters and makes them available
+to tasks and services during execution.
 
-Supporte :
-- Paramètres définis dans le flow JSON (`flow.parameters`)
-- Overrides au déploiement (API, CLI, scheduler)
-- Merge hiérarchique (parent flow → subflow avec mapping)
-- Résolution d'expressions `${X}` dans les configs de tâches
+Supports:
+- Parameters defined in the flow JSON (`flow.parameters`)
+- Deployment overrides (API, CLI, scheduler)
+- Hierarchical merge (parent flow -> subflow with mapping)
+- Expression resolution `${X}` in task configs
 """
 
 from typing import Any, Dict, Optional
@@ -16,9 +16,9 @@ from core.expression import resolve_expression
 
 
 class ParameterContext:
-    """Contexte de paramètres pour un flow.
+    """Parameter context for a flow.
 
-    Immutable après construction : les overrides créent un nouveau contexte.
+    Immutable after construction: overrides create a new context.
 
     Usage:
         ctx = ParameterContext({"env": "prod", "batch_size": "100"})
@@ -31,11 +31,11 @@ class ParameterContext:
 
     @property
     def parameters(self) -> Dict[str, Any]:
-        """Retourne une copie des paramètres."""
+        """Return a copy of the parameters."""
         return dict(self._params)
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Récupérer un paramètre par clé."""
+        """Retrieve a parameter by key."""
         return self._params.get(key, default)
 
     def get_raw(self, key: str, default: Any = None):
@@ -43,24 +43,24 @@ class ParameterContext:
         return self._params.get(key, default)
 
     def has(self, key: str) -> bool:
-        """Vérifier si un paramètre existe."""
+        """Check whether a parameter exists."""
         return key in self._params
 
     def with_overrides(self, overrides: Dict[str, Any]) -> 'ParameterContext':
-        """Créer un nouveau contexte avec des overrides appliqués.
+        """Create a new context with overrides applied.
 
-        Les overrides écrasent les valeurs existantes.
-        Les clés non présentes dans overrides restent inchangées.
+        Overrides replace existing values.
+        Keys not present in overrides remain unchanged.
         """
         merged = dict(self._params)
         merged.update(overrides)
         return ParameterContext(merged)
 
     def with_mapping(self, mapping: Dict[str, str]) -> 'ParameterContext':
-        """Créer un nouveau contexte pour un subflow via un mapping.
+        """Create a new context for a subflow through a mapping.
 
-        Le mapping définit : {subflow_param_name: expression_or_value}
-        Les expressions ${X} sont résolues depuis le contexte courant.
+        The mapping defines : {subflow_param_name: expression_or_value}
+        ${X} expressions are resolved from the current context.
 
         Exemple:
             parent_ctx = ParameterContext({"env": "prod", "key": "abc"})
@@ -78,18 +78,18 @@ class ParameterContext:
         return ParameterContext(child_params)
 
     def resolve(self, template: str) -> str:
-        """Résoudre les expressions ${X} dans un template.
+        """Resolve ${X} expressions in a template.
 
-        Utilise le moteur d'expressions existant.
+        Uses the existing expression engine.
         """
         if not isinstance(template, str) or '${' not in template:
             return template
         return resolve_expression(template, parameters=self._params)
 
     def resolve_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Résoudre toutes les expressions dans un dict de config (récursif).
+        """Resolve all expressions in a config dict recursively.
 
-        Résout les ${X} dans toutes les valeurs string.
+        Resolves ${X} in all string values.
         """
         return self._resolve_dict(config)
 

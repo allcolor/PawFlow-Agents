@@ -1,7 +1,7 @@
 # Generate FlowFile Task
 
 """
-Tâche GenerateFlowFile - Générer de nouveaux FlowFiles avec contenu configurable.
+Task GenerateFlowFile - Generate new FlowFiles with configurable content.
 
 Works as a one-shot source task in ContinuousFlowExecutor:
 fires once when the flow starts, then stays quiet.
@@ -15,12 +15,12 @@ from core.base_task import BaseTask
 
 
 class GenerateFlowFileTask(BaseTask):
-    """Générer de nouveaux FlowFiles avec contenu configurable."""
+    """Generate new FlowFiles with configurable content."""
 
     TYPE = "generateFlowFile"
     VERSION = "1.0.0"
     NAME = "Generate FlowFile"
-    DESCRIPTION = "Générer de nouveaux FlowFiles avec contenu configurable"
+    DESCRIPTION = "Generate new FlowFiles with configurable content"
     ICON = "plus"
     TAGS = ["source", "generator"]
 
@@ -44,7 +44,7 @@ class GenerateFlowFileTask(BaseTask):
         pass
 
     def execute(self, flowfile: Optional[FlowFile] = None) -> List[FlowFile]:
-        """Générer de nouveaux FlowFiles."""
+        """Generate new FlowFiles."""
         # Mark as fired so has_pending_input() returns False from now on
         with self._lock:
             self._fired = True
@@ -75,7 +75,7 @@ class GenerateFlowFileTask(BaseTask):
             'content': {
                 'type': 'string',
                 'required': False,
-                'description': 'Contenu à écrire dans les FlowFiles générés',
+                'description': 'Content to write into generated FlowFiles',
                 'default': ''
             },
             'content_type': {
@@ -87,7 +87,7 @@ class GenerateFlowFileTask(BaseTask):
             'count': {
                 'type': 'integer',
                 'required': False,
-                'description': 'Nombre de FlowFiles à générer',
+                'description': 'Number of FlowFiles to generate',
                 'default': 1,
                 'min': 1
             },
@@ -101,10 +101,10 @@ class GenerateFlowFileTask(BaseTask):
             'custom_attributes': {
                 'type': 'map',
                 'required': False,
-                'description': 'Attributs personnalisés à ajouter (clé → valeur)'
+                'description': 'Custom attributes to add (key -> value)'
             }
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(GenerateFlowFileTask)

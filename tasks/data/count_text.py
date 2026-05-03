@@ -1,7 +1,7 @@
 # Count Text Task
 
 """
-Tâche CountText - Compter les lignes, mots et caractères du contenu.
+CountText task - Count lines, words, and characters in content.
 """
 
 from typing import Dict, Any, List
@@ -10,19 +10,19 @@ from core.base_task import BaseTask
 
 
 class CountTextTask(BaseTask):
-    """Compter les lignes, mots et caractères du contenu d'un FlowFile."""
+    """Count lines, words, and characters in FlowFile content."""
 
     TYPE = "countText"
     VERSION = "1.0.0"
     NAME = "Count Text"
-    DESCRIPTION = "Compter les lignes, mots et caractères du contenu d'un FlowFile"
+    DESCRIPTION = "Count lines, words, and characters in FlowFile content"
     ICON = "count"
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Compter les lignes, mots et caractères du contenu du FlowFile."""
+        """Count lines, words, and characters in the FlowFile content."""
         content = flowfile.get_content().decode('utf-8')
 
         lines = content.split('\n')
@@ -40,5 +40,5 @@ class CountTextTask(BaseTask):
         return {}
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(CountTextTask)

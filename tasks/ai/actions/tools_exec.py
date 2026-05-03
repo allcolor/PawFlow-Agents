@@ -229,7 +229,7 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"output": output, "metrics": metrics}, ensure_ascii=False).encode())
         return [flowfile]
 
-    # â”€â”€ User tool call â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # User tool call
 
     if action == "get_tool_schemas":
         # Return all builtin tool definitions for /call help
@@ -284,7 +284,7 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
                         ),
                     }).encode())
                     return [flowfile]
-        # Execute in background thread â€” publish SSE events + persist
+        # Execute in background thread - publish SSE events + persist
         # exactly like the agent streaming loop does
         _call_registry = registry
         _call_tool_name = tool_name
@@ -372,6 +372,6 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
-    # â”€â”€ User services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # User services
 
     return None

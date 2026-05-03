@@ -1,7 +1,7 @@
 # Filter Content Task
 
 """
-Tâche FilterContent - Filtrer les lignes du contenu selon un motif regex.
+Task FilterContent - Filter content lines using a regex pattern.
 """
 
 import re
@@ -11,12 +11,12 @@ from core.base_task import BaseTask
 
 
 class FilterContentTask(BaseTask):
-    """Filtrer les lignes du contenu selon un motif regex."""
+    """Filter content lines using a regex pattern."""
 
     TYPE = "filterContent"
     VERSION = "1.0.0"
     NAME = "Filter Content"
-    DESCRIPTION = "Filtrer les lignes du contenu selon un motif regex"
+    DESCRIPTION = "Filter content lines using a regex pattern"
     ICON = "filter"
 
     def __init__(self, config: Dict[str, Any]):
@@ -25,7 +25,7 @@ class FilterContentTask(BaseTask):
         self.mode = self.config.get('mode', 'include')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Filtrer les lignes du contenu du FlowFile."""
+        """Filter the FlowFile content lines."""
         content = flowfile.get_content().decode('utf-8')
         lines = content.split('\n')
         compiled_pattern = re.compile(self.pattern)
@@ -55,5 +55,5 @@ class FilterContentTask(BaseTask):
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(FilterContentTask)

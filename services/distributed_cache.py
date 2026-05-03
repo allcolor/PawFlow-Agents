@@ -1,12 +1,12 @@
 """
-DistributedMapCacheService - Cache distribue cle-valeur.
+DistributedMapCacheService - Distributed key-value cache.
 
 Backends:
-- memory: dict Python thread-safe (defaut, single process)
+- memory: thread-safe Python dict (default, single process)
 - redis: Redis pour la synchronisation multi-process/multi-machine
 
 Usage NiFi-like: les tasks FetchDistributedMapCache et PutDistributedMapCache
-utilisent ce service pour partager des donnees entre flux.
+use this service to share data between flows.
 """
 
 import threading
@@ -25,7 +25,7 @@ except ImportError:
 
 
 class DistributedMapCacheService(BaseService):
-    """Service de cache distribue cle-valeur."""
+    """Distributed key-value cache service."""
 
     TYPE = "distributedMapCache"
     VERSION = "1.0.0"
@@ -61,10 +61,10 @@ class DistributedMapCacheService(BaseService):
 
     def put(self, key: str, value: bytes, ttl: int = 0) -> bool:
         """
-        Stocker une valeur.
+        Store a value.
 
         Args:
-            key: Cle
+            key: Key
             value: Valeur (bytes)
             ttl: Time-to-live en secondes (0 = pas d'expiration)
 
@@ -87,10 +87,10 @@ class DistributedMapCacheService(BaseService):
 
     def get(self, key: str) -> Optional[bytes]:
         """
-        Recuperer une valeur.
+        Retrieve a value.
 
         Args:
-            key: Cle
+            key: Key
 
         Returns:
             Valeur ou None si absent
@@ -104,7 +104,7 @@ class DistributedMapCacheService(BaseService):
                 return self._memory_store.get(full_key)
 
     def delete(self, key: str) -> bool:
-        """Supprimer une cle."""
+        """Delete a key."""
         full_key = self.key_prefix + key
 
         if self.backend == "redis" and self._redis_client:
@@ -114,7 +114,7 @@ class DistributedMapCacheService(BaseService):
                 return self._memory_store.pop(full_key, None) is not None
 
     def contains(self, key: str) -> bool:
-        """Verifier si une cle existe."""
+        """Check whether a key exists."""
         full_key = self.key_prefix + key
 
         if self.backend == "redis" and self._redis_client:
@@ -124,7 +124,7 @@ class DistributedMapCacheService(BaseService):
                 return full_key in self._memory_store
 
     def keys(self, pattern: str = "*") -> List[str]:
-        """Lister les cles correspondant au pattern."""
+        """List keys matching the pattern."""
         full_pattern = self.key_prefix + pattern
 
         if self.backend == "redis" and self._redis_client:
@@ -144,7 +144,7 @@ class DistributedMapCacheService(BaseService):
                 ]
 
     def size(self) -> int:
-        """Nombre d'entrees dans le cache."""
+        """Number of entries in the cache."""
         if self.backend == "redis" and self._redis_client:
             return len(self._redis_client.keys(self.key_prefix + "*"))
         else:
@@ -193,7 +193,7 @@ _default_lock = threading.Lock()
 
 
 def get_default_cache() -> DistributedMapCacheService:
-    """Obtenir le cache distribue par defaut (in-memory)."""
+    """Get the default distributed cache (in-memory)."""
     global _default_cache
     if _default_cache is None:
         with _default_lock:

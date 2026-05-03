@@ -1,7 +1,7 @@
 # Validate JSON Task
 
 """
-Tâche ValidateJSON - Valider que le contenu d'un FlowFile est un JSON valide.
+Task ValidateJSON - Validate that FlowFile content is valid JSON.
 """
 
 import json
@@ -11,12 +11,12 @@ from core.base_task import BaseTask
 
 
 class ValidateJSONTask(BaseTask):
-    """Valider que le contenu d'un FlowFile est un JSON valide."""
+    """Validate that FlowFile content is valid JSON."""
 
     TYPE = "validateJSON"
     VERSION = "1.0.0"
     NAME = "Validate JSON"
-    DESCRIPTION = "Valider que le contenu d'un FlowFile est un JSON valide"
+    DESCRIPTION = "Validate that FlowFile content is valid JSON"
     ICON = "check-circle"
 
     def __init__(self, config: Dict[str, Any]):
@@ -25,7 +25,7 @@ class ValidateJSONTask(BaseTask):
         self.route_to = self.config.get('route_to', '')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Valider le contenu JSON du FlowFile."""
+        """Validate the FlowFile JSON content."""
         content = flowfile.get_content()
 
         try:
@@ -46,18 +46,18 @@ class ValidateJSONTask(BaseTask):
             'destination_attribute': {
                 'type': 'string',
                 'required': False,
-                'description': "Nom de l'attribut pour le résultat de validation",
+                'description': "Attribute name for the validation result",
                 'default': 'json.valid'
             },
             'route_to': {
                 'type': 'select',
                 'required': False,
-                'description': 'Activer le routage selon le résultat',
+                'description': 'Enable routing based on the result',
                 'options': ['', 'valid', 'invalid'],
                 'default': ''
             }
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(ValidateJSONTask)

@@ -1,8 +1,8 @@
 # Notification System
 
-"""Système de notifications pour PawFlow.
+"""Notification system for PawFlow.
 
-Envoie des notifications sur les événements de flow (succès, échec, etc.)
+Sends notifications for flow events (success, failure, etc.)
 via webhook HTTP, et supporte des handlers custom.
 """
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class EventType:
-    """Constantes pour les types d'événements."""
+    """Constants for event types."""
     FLOW_STARTED = "flow.started"
     FLOW_COMPLETED = "flow.completed"
     FLOW_FAILED = "flow.failed"
@@ -31,13 +31,13 @@ class EventType:
 
 
 class NotificationManager:
-    """Gestionnaire de notifications centralisé (singleton).
+    """Centralized notification manager (singleton).
 
-    Supporte :
+    Supports:
     - Webhook HTTP (POST JSON)
     - Handlers Python callable
-    - Filtrage par type d'événement
-    - File d'attente asynchrone (thread)
+    - Filtering by event type
+    - Asynchronous queue (thread)
     """
 
     _instance = None
@@ -66,12 +66,12 @@ class NotificationManager:
     def register_webhook(self, url: str, events: Optional[List[str]] = None,
                          headers: Optional[Dict[str, str]] = None,
                          name: str = "") -> str:
-        """Enregistrer un webhook HTTP.
+        """Register an HTTP webhook.
 
         Args:
             url: URL du webhook (POST)
-            events: Liste de types d'événements à écouter (None = tous)
-            headers: Headers HTTP supplémentaires
+            events: List of event types to listen for (None = all)
+            headers: Additional HTTP headers
             name: Nom descriptif
 
         Returns:
@@ -94,7 +94,7 @@ class NotificationManager:
         return webhook_id
 
     def unregister_webhook(self, webhook_id: str) -> bool:
-        """Supprimer un webhook par ID."""
+        """Remove a webhook by ID."""
         with self._lock:
             before = len(self._webhooks)
             self._webhooks = [w for w in self._webhooks if w['id'] != webhook_id]
@@ -102,11 +102,11 @@ class NotificationManager:
 
     def register_handler(self, handler: Callable, events: Optional[List[str]] = None,
                          name: str = "") -> str:
-        """Enregistrer un handler Python callable.
+        """Register a Python callable handler.
 
         Args:
-            handler: Callable qui reçoit (event_type, payload)
-            events: Types d'événements à écouter (None = tous)
+            handler: Callable that receives (event_type, payload)
+            events: Event types to listen for (None = all)
             name: Nom descriptif
         """
         import hashlib
@@ -121,7 +121,7 @@ class NotificationManager:
         return handler_id
 
     def unregister_handler(self, handler_id: str) -> bool:
-        """Supprimer un handler par ID."""
+        """Remove a handler by ID."""
         with self._lock:
             before = len(self._handlers)
             self._handlers = [h for h in self._handlers if h['id'] != handler_id]
@@ -129,12 +129,12 @@ class NotificationManager:
 
     def notify(self, event_type: str, payload: Optional[Dict[str, Any]] = None,
                async_send: bool = True):
-        """Émettre une notification.
+        """Emit a notification.
 
         Args:
-            event_type: Type d'événement (ex: "flow.completed")
-            payload: Données associées
-            async_send: Envoyer en arrière-plan (True) ou synchrone (False)
+            event_type: Event type (ex: "flow.completed")
+            payload: Associated data
+            async_send: Send in the background (True) ou synchrone (False)
         """
         event = {
             'event': event_type,
@@ -210,18 +210,18 @@ class NotificationManager:
             logger.warning(f"Webhook {webhook['name']} failed: {e}")
 
     def list_webhooks(self) -> List[Dict[str, Any]]:
-        """Lister les webhooks enregistrés."""
+        """List registered webhooks."""
         with self._lock:
             return [{k: v for k, v in w.items()} for w in self._webhooks]
 
     def list_handlers(self) -> List[Dict[str, str]]:
-        """Lister les handlers enregistrés."""
+        """List registered handlers."""
         with self._lock:
             return [{'id': h['id'], 'name': h['name'], 'events': h['events']}
                     for h in self._handlers]
 
     def get_history(self, event_type: Optional[str] = None, limit: int = 50) -> List[Dict]:
-        """Récupérer l'historique des notifications."""
+        """Retrieve notification history."""
         with self._lock:
             history = list(reversed(self._history))
         if event_type:
@@ -229,7 +229,7 @@ class NotificationManager:
         return history[:limit]
 
     def get_stats(self) -> Dict[str, Any]:
-        """Statistiques du système de notifications."""
+        """Notification system statistics."""
         with self._lock:
             event_counts = defaultdict(int)
             for e in self._history:

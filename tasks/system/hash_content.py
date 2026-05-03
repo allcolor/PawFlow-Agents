@@ -1,7 +1,7 @@
 # Hash Content Task
 
 """
-Tâche HashContent - Hacher le contenu d'un FlowFile.
+Task HashContent - Hash FlowFile content.
 """
 
 import hashlib
@@ -11,12 +11,12 @@ from core.base_task import BaseTask
 
 
 class HashContentTask(BaseTask):
-    """Hacher le contenu d'un FlowFile avec différents algorithmes."""
+    """Hash FlowFile content with different algorithms."""
 
     TYPE = "hashContent"
     VERSION = "1.0.0"
     NAME = "Hash Content"
-    DESCRIPTION = "Hacher le contenu d'un FlowFile"
+    DESCRIPTION = "Hash FlowFile content"
     ICON = "lock"
 
     def __init__(self, config: Dict[str, Any]):
@@ -25,7 +25,7 @@ class HashContentTask(BaseTask):
         self.attribute_name = self.config.get('attribute_name', 'content.hash')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Hacher le contenu du FlowFile."""
+        """Hash the FlowFile content."""
         content = flowfile.get_content()
 
         hasher = hashlib.new(self.algorithm) if self.algorithm in ('md5', 'sha1', 'sha256', 'sha512') else hashlib.sha256()
@@ -46,11 +46,11 @@ class HashContentTask(BaseTask):
             'attribute_name': {
                 'type': 'string',
                 'required': False,
-                'description': "Nom de l'attribut pour stocker le hash",
+                'description': "Attribute name used to store the hash",
                 'default': 'content.hash'
             }
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(HashContentTask)

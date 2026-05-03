@@ -1,5 +1,5 @@
 """
-Module de provenance pour tracer l'historique des FlowFiles a travers le DAG.
+Provenance module for tracking FlowFile history through the DAG.
 """
 
 from dataclasses import dataclass, field
@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 
 class ProvenanceEventType(Enum):
-    """Types d'evenements de provenance."""
+    """Provenance event types."""
     CREATE = "CREATE"
     RECEIVE = "RECEIVE"
     SEND = "SEND"
@@ -23,7 +23,7 @@ class ProvenanceEventType(Enum):
 
 @dataclass
 class ProvenanceEvent:
-    """Evenement de provenance d'un FlowFile."""
+    """FlowFile provenance event."""
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     event_type: ProvenanceEventType = ProvenanceEventType.CREATE
     timestamp: datetime = field(default_factory=datetime.now)
@@ -57,7 +57,7 @@ class ProvenanceEvent:
 
 
 class ProvenanceRepository:
-    """Repository thread-safe pour les evenements de provenance."""
+    """Thread-safe repository for provenance events."""
 
     def __init__(self, max_events: int = 100000):
         self._events: List[ProvenanceEvent] = []
@@ -65,7 +65,7 @@ class ProvenanceRepository:
         self._max_events = max_events
 
     def record(self, event: ProvenanceEvent) -> None:
-        """Enregistrer un evenement (thread-safe, FIFO)."""
+        """Record an event (thread-safe, FIFO)."""
         with self._lock:
             self._events.append(event)
             if len(self._events) > self._max_events:
@@ -79,7 +79,7 @@ class ProvenanceRepository:
         flow_id: Optional[str] = None,
         limit: int = 100
     ) -> List[ProvenanceEvent]:
-        """Filtrer les evenements."""
+        """Filter events."""
         with self._lock:
             filtered = self._events.copy()
 
@@ -124,7 +124,7 @@ class ProvenanceRepository:
         return sorted(lineage_events, key=lambda e: e.timestamp)
 
     def get_flow_events(self, flow_id: str) -> List[ProvenanceEvent]:
-        """Tous les evenements d'un flow."""
+        """All events for a flow."""
         with self._lock:
             filtered = [e for e in self._events if e.flow_id == flow_id]
         return sorted(filtered, key=lambda e: e.timestamp)

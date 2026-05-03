@@ -1,6 +1,6 @@
 # Avro / Parquet Conversion Tasks
 
-"""Tâches ConvertAvro / ConvertParquet - conversion de formats colonnaires."""
+"""Tasks ConvertAvro / ConvertParquet - columnar format conversion."""
 
 import json
 import logging
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConvertAvroToJSONTask(BaseTask):
-    """Convertir du contenu Avro en JSON."""
+    """Convert Avro content to JSON."""
 
     TYPE = "convertAvroToJSON"
     VERSION = "1.0.0"
@@ -51,7 +51,7 @@ class ConvertAvroToJSONTask(BaseTask):
 
 
 class ConvertJSONToAvroTask(BaseTask):
-    """Convertir du JSON en Avro binaire."""
+    """Convert JSON to binary Avro."""
 
     TYPE = "convertJSONToAvro"
     VERSION = "1.0.0"
@@ -105,12 +105,12 @@ class ConvertJSONToAvroTask(BaseTask):
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             'avro_schema': {'type': 'string', 'required': False,
-                           'description': 'Schéma Avro en JSON (auto-inféré si vide)'},
+                           'description': 'Avro schema as JSON (auto-inferred if empty)'},
         }
 
 
 class ConvertParquetToJSONTask(BaseTask):
-    """Convertir du contenu Parquet en JSON."""
+    """Convert Parquet content to JSON."""
 
     TYPE = "convertParquetToJSON"
     VERSION = "1.0.0"
@@ -148,12 +148,12 @@ class ConvertParquetToJSONTask(BaseTask):
         return {
             'pretty': {'type': 'boolean', 'required': False, 'default': True},
             'columns': {'type': 'string', 'required': False,
-                       'description': 'Colonnes à lire (comma-separated, vide = toutes)'},
+                       'description': 'Columns to read (comma-separated, empty = all)'},
         }
 
 
 class ConvertJSONToParquetTask(BaseTask):
-    """Convertir du JSON en Parquet."""
+    """Convert JSON to Parquet."""
 
     TYPE = "convertJSONToParquet"
     VERSION = "1.0.0"

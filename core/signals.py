@@ -1,7 +1,7 @@
 """
-Signal Registry - Synchronisation intra-process pour Wait/Notify.
+Signal Registry - intra-process synchronization for Wait/Notify.
 
-Thread-safe, singleton. Les signaux ont un compteur et une valeur optionnelle.
+Thread-safe singleton. Signals have a counter and an optional value.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from datetime import datetime
 
 
 class SignalRegistry:
-    """Registre de signaux pour synchronisation Wait/Notify."""
+    """Signal registry for Wait/Notify synchronization."""
 
     _instance: ClassVar[Optional['SignalRegistry']] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
@@ -31,11 +31,11 @@ class SignalRegistry:
 
     def notify(self, signal_id: str, value: str = "", delta: int = 1) -> Dict[str, Any]:
         """
-        Incrementer un signal (appele par NotifyTask).
+        Increment a signal (called by NotifyTask).
 
         Args:
-            signal_id: Identifiant du signal
-            value: Valeur optionnelle associee au signal
+            signal_id: Signal identifier
+            value: Optional value associated with the signal
             delta: Nombre a ajouter au compteur (default 1)
 
         Returns:
@@ -64,11 +64,11 @@ class SignalRegistry:
 
     def check(self, signal_id: str, target_count: int = 1) -> bool:
         """
-        Verifier si un signal a atteint le seuil (appele par WaitTask).
+        Check whether a signal has reached the threshold (called by WaitTask).
 
         Args:
-            signal_id: Identifiant du signal
-            target_count: Nombre de notifications requises
+            signal_id: Signal identifier
+            target_count: Required notification countes
 
         Returns:
             True si le compteur >= target_count
@@ -82,11 +82,11 @@ class SignalRegistry:
     def wait_for(self, signal_id: str, target_count: int = 1,
                  timeout: float = 30.0) -> bool:
         """
-        Attendre qu'un signal atteigne le seuil (bloquant).
+        Wait for a signal to reach the threshold (blocking).
 
         Args:
-            signal_id: Identifiant du signal
-            target_count: Nombre de notifications requises
+            signal_id: Signal identifier
+            target_count: Required notification countes
             timeout: Timeout en secondes
 
         Returns:
@@ -115,13 +115,13 @@ class SignalRegistry:
         return False
 
     def get_signal(self, signal_id: str) -> Optional[Dict[str, Any]]:
-        """Recuperer l'etat d'un signal."""
+        """Retrieve a signal state."""
         with self._signal_lock:
             sig = self._signals.get(signal_id)
             return dict(sig) if sig else None
 
     def get_value(self, signal_id: str) -> Optional[str]:
-        """Recuperer la valeur d'un signal."""
+        """Retrieve a signal value."""
         with self._signal_lock:
             sig = self._signals.get(signal_id)
             return sig["value"] if sig else None
@@ -133,12 +133,12 @@ class SignalRegistry:
             self._events.pop(signal_id, None)
 
     def clear_all(self):
-        """Effacer tous les signaux."""
+        """Clear all signals."""
         with self._signal_lock:
             self._signals.clear()
             self._events.clear()
 
     def list_signals(self) -> Dict[str, Dict[str, Any]]:
-        """Lister tous les signaux actifs."""
+        """List all active signals."""
         with self._signal_lock:
             return {k: dict(v) for k, v in self._signals.items()}

@@ -1,7 +1,7 @@
 # Evaluate JSONPath Task
 
 """
-Tâche EvaluateJSONPath - Évaluer des expressions JSONPath simples sur du contenu JSON.
+Task EvaluateJSONPath - Evaluate simple JSONPath expressions on JSON content.
 """
 
 from typing import Dict, Any, List
@@ -10,12 +10,12 @@ from core.base_task import BaseTask
 
 
 class EvaluateJSONPathTask(BaseTask):
-    """Évaluer des expressions JSONPath simples (dot notation) sur du contenu JSON."""
+    """Evaluate simple JSONPath expressions (dot notation) on JSON content."""
 
     TYPE = "evaluateJSONPath"
     VERSION = "1.0.0"
     NAME = "Evaluate JSONPath"
-    DESCRIPTION = "Évaluer des expressions JSONPath simples sur du contenu JSON"
+    DESCRIPTION = "Evaluate simple JSONPath expressions on JSON content"
     ICON = "code"
 
     def __init__(self, config: Dict[str, Any]):
@@ -24,7 +24,7 @@ class EvaluateJSONPathTask(BaseTask):
         self.destination = self.config.get('destination', 'attribute')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Évaluer les expressions JSONPath sur le contenu du FlowFile."""
+        """Evaluate JSONPath expressions on FlowFile content."""
         content = flowfile.get_content().decode('utf-8')
         data = self.parse_json(content)
 
@@ -46,7 +46,7 @@ class EvaluateJSONPathTask(BaseTask):
         return [flowfile]
 
     def _resolve_dot_path(self, data: Any, path: str) -> Any:
-        """Résoudre un chemin en notation point (ex: "user.name", "items.0.id")."""
+        """Resolve a dot-notation path (ex: "user.name", "items.0.id")."""
         if not path:
             return data
 
@@ -81,18 +81,18 @@ class EvaluateJSONPathTask(BaseTask):
             'expressions': {
                 'type': 'map',
                 'required': True,
-                'description': 'Expressions JSONPath (clé: nom attribut, valeur: chemin)',
+                'description': 'JSONPath expressions (key: attribute name, value: path)',
                 'help': 'Notation point: "user.name", "items.0.id", "address.city"'
             },
             'destination': {
                 'type': 'select',
                 'required': False,
-                'description': 'Destination des résultats',
+                'description': 'Result destination',
                 'options': ['attribute', 'content'],
                 'default': 'attribute'
             }
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(EvaluateJSONPathTask)

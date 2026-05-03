@@ -1,7 +1,7 @@
 # Funnel Task
 
 """
-Task Funnel - Merge multiple connexions en une seule sortie.
+Funnel task - Merge multiple connections into a single output.
 """
 
 from typing import Dict, Any, List
@@ -10,7 +10,7 @@ from core.base_task import BaseTask
 
 
 class FunnelTask(BaseTask):
-    """Merge multiple connexions en une seule sortie (pass-through)."""
+    """Merge multiple connections into a single output (pass-through)."""
 
     TYPE = "funnel"
     VERSION = "1.0.0"

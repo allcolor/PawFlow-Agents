@@ -1,7 +1,7 @@
 # Base64 Encode Task
 
 """
-Tâche Base64Encode - Encoder ou décoder le contenu en Base64.
+Base64Encode task - Encode or decode content as Base64.
 """
 
 import base64
@@ -11,12 +11,12 @@ from core.base_task import BaseTask
 
 
 class Base64EncodeTask(BaseTask):
-    """Encoder ou décoder le contenu d'un FlowFile en Base64."""
+    """Encode or decode FlowFile content as Base64."""
 
     TYPE = "base64Encode"
     VERSION = "1.0.0"
     NAME = "Base64 Encode"
-    DESCRIPTION = "Encoder ou décoder le contenu d'un FlowFile en Base64"
+    DESCRIPTION = "Encode or decode FlowFile content as Base64"
     ICON = "code"
 
     def __init__(self, config: Dict[str, Any]):
@@ -24,7 +24,7 @@ class Base64EncodeTask(BaseTask):
         self.mode = self.config.get('mode', 'encode')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Encoder ou décoder le contenu du FlowFile en Base64."""
+        """Encode or decode the FlowFile content as Base64."""
         content = flowfile.get_content()
 
         if self.mode == 'encode':
@@ -40,12 +40,12 @@ class Base64EncodeTask(BaseTask):
             'mode': {
                 'type': 'select',
                 'required': False,
-                'description': "Mode d'opération",
+                'description': "Operation mode",
                 'options': ['encode', 'decode'],
                 'default': 'encode'
             }
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(Base64EncodeTask)

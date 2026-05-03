@@ -1,7 +1,7 @@
 # Cache Service
 
 """
-Service de cache clé-valeur en mémoire avec TTL.
+In-memory key-value cache service with TTL.
 """
 
 import time
@@ -11,7 +11,7 @@ from core import ServiceFactory
 
 
 class CacheService(BaseService):
-    """Cache clé-valeur en mémoire avec expiration."""
+    """In-memory key-value cache with expiration."""
 
     TYPE = "cacheService"
     VERSION = "1.0.0"

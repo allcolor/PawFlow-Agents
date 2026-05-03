@@ -1,8 +1,8 @@
 # Base Task Implementation
 
 """
-Implémentation de base pour toutes les tâches.
-Fournit des fonctionnalités communes et la structure standard.
+Base implementation for all tasks.
+Provides common functionality and the standard structure.
 """
 
 from typing import Dict, Any, List, Optional
@@ -15,17 +15,17 @@ import json
 
 class BaseTask(VariableResolverMixin, Task, ABC):
     """
-    Implémentation de base pour toutes les tâches.
+    Base implementation for all tasks.
 
-    Gère la validation, la résolution de variables et les fonctions utilitaires.
+    Handles validation, variable resolution, and utility functions.
     """
 
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialiser la tâche avec sa configuration.
+        Initialize the task with its configuration.
 
         Args:
-            config: Configuration de la tâche
+            config: Task configuration
         """
         # ALWAYS wrap config in LazyResolveDict — every .get() resolves
         # expressions automatically. No task needs manual resolution.
@@ -47,12 +47,12 @@ class BaseTask(VariableResolverMixin, Task, ABC):
 
     def log(self, level: str = "INFO", message: str = "", **kwargs):
         """
-        Logguer un message.
+        Log a message.
         
         Args:
-            level: Niveau de log (DEBUG, INFO, WARNING, ERROR)
-            message: Message à logguer
-            **kwargs: Attributs à inclure dans le log
+            level: Log level (DEBUG, INFO, WARNING, ERROR)
+            message: Message to log
+            **kwargs: Attributes to include in the log
         """
         import logging
         logger = logging.getLogger(self.__class__.__name__)
@@ -72,32 +72,32 @@ class BaseTask(VariableResolverMixin, Task, ABC):
     
     def get_attribute(self, flowfile: FlowFile, key: str, default: Optional[str] = None) -> Optional[str]:
         """
-        Récupérer un attribut du FlowFile avec résolution de variable.
+        Get a FlowFile attribute with variable resolution.
         
         Args:
-            flowfile: FlowFile source
-            key: Clé de l'attribut
-            default: Valeur par défaut
+            flowfile: Source FlowFile
+            key: Attribute key
+            default: Default value
             
         Returns:
-            Valeur de l'attribut ou valeur par défaut
+            Attribute value or default value
         """
         value = flowfile.get_attribute(key, default)
         
         if value and '${' in value:
-            # Résoudre les variables dans l'attribut
+            # Resolve variables in the attribute
             return self._resolve_string(value)
         
         return value
     
     def set_attribute(self, flowfile: FlowFile, key: str, value: str):
         """
-        Définir un attribut sur le FlowFile.
+        Set an attribute on the FlowFile.
         
         Args:
-            flowfile: FlowFile cible
-            key: Clé de l'attribut
-            value: Valeur de l'attribut
+            flowfile: Target FlowFile
+            key: Attribute key
+            value: Attribute value
         """
         resolved_value = self._resolve_string(str(value))
         flowfile.set_attribute(key, resolved_value)
@@ -109,19 +109,19 @@ class BaseTask(VariableResolverMixin, Task, ABC):
         parent_flowfile: Optional[FlowFile] = None
     ) -> FlowFile:
         """
-        Créer un nouveau FlowFile.
+        Create a new FlowFile.
         
         Args:
-            content: Contenu du FlowFile
-            attributes: Attributs optionnels
-            parent_flowfile: FlowFile parent pour hériter des attributs
+            content: FlowFile content
+            attributes: Optional attributes
+            parent_flowfile: Parent FlowFile used to inherit attributes
             
         Returns:
-            Nouveau FlowFile
+            New FlowFile
         """
         new_attributes = attributes.copy() if attributes else {}
         
-        # Hériter des attributs du parent si spécifié
+        # Inherit attributes from the parent if specified
         if parent_flowfile:
             for key, value in parent_flowfile.get_attributes().items():
                 if key not in new_attributes:
@@ -134,65 +134,65 @@ class BaseTask(VariableResolverMixin, Task, ABC):
     
     def read_content(self, flowfile: FlowFile) -> bytes:
         """
-        Lire le contenu d'un FlowFile.
+        Read a FlowFile's content.
         
         Args:
-            flowfile: FlowFile source
+            flowfile: Source FlowFile
             
         Returns:
-            Contenu binaire
+            Binary content
         """
         return flowfile.get_content()
     
     def write_content(self, flowfile: FlowFile, content: bytes):
         """
-        Écrire le contenu dans un FlowFile.
+        Write content into a FlowFile.
         
         Args:
-            flowfile: FlowFile cible
-            content: Contenu à écrire
+            flowfile: Target FlowFile
+            content: Content to write
         """
         flowfile.set_content(content)
     
     def split_content(self, content: bytes, split_by: bytes = b"\n") -> List[bytes]:
         """
-        Découper du contenu en plusieurs parties.
+        Split content into multiple parts.
         
         Args:
-            content: Contenu à découper
-            split_by: Caractère de séparation (bytes)
+            content: Content to split
+            split_by: Separator bytes
             
         Returns:
-            Liste de contenus découpés
+            List of split content chunks
         """
         if isinstance(content, str):
             content = content.encode('utf-8')
         
         parts = content.split(split_by)
-        return [p for p in parts if p]  # Filtrer les parties vides
+        return [p for p in parts if p]  # Filter out empty parts
     
     def merge_content(self, contents: List[bytes], separator: bytes = b"\n") -> bytes:
         """
-        Fusionner plusieurs contenus.
+        Merge multiple content chunks.
         
         Args:
-            contents: Listes de contenus
-            separator: Séparateur entre contenus (bytes)
+            contents: List of content chunks
+            separator: Separator between chunks, as bytes
             
         Returns:
-            Contenu fusionné
+            Merged content
         """
         return separator.join(contents)
     
     def validate_json(self, content: str) -> bool:
         """
-        Valider un contenu JSON.
+        Validate JSON content.
         
         Args:
-            content: Contenu JSON à valider
+            content: JSON content to validate
             
         Returns:
-            True si valide
+            True if valid
         """
         try:
             json.loads(content)
@@ -202,16 +202,16 @@ class BaseTask(VariableResolverMixin, Task, ABC):
     
     def parse_json(self, content: str) -> Dict[str, Any]:
         """
-        Parser un contenu JSON.
+        Parse JSON content.
         
         Args:
-            content: Contenu JSON
+            content: JSON content
             
         Returns:
-            Objet JSON parseé
+            Parsed JSON object
             
         Raises:
-            TaskError: Si le JSON est invalide
+            TaskError: If the JSON is invalid
         """
         try:
             return json.loads(content)
@@ -220,16 +220,16 @@ class BaseTask(VariableResolverMixin, Task, ABC):
     
     def serialize_json(self, data: Any) -> str:
         """
-        Sérialiser un objet en JSON.
+        Serialize an object to JSON.
         
         Args:
-            data: Objet à sérialiser
+            data: Object to serialize
             
         Returns:
-            Chaîne JSON
+            JSON string
             
         Raises:
-            TaskError: Si la sérialisation échoue
+            TaskError: If serialization fails
         """
         try:
             return json.dumps(data, ensure_ascii=False, indent=2)
@@ -238,12 +238,12 @@ class BaseTask(VariableResolverMixin, Task, ABC):
     
     def copy_flowfile_attributes(self, source: FlowFile, target: FlowFile, exclude: Optional[List[str]] = None):
         """
-        Copier les attributs d'un FlowFile à un autre.
+        Copy attributes from one FlowFile to another.
         
         Args:
-            source: FlowFile source
-            target: FlowFile cible
-            exclude: Liste d'attributs à exclure
+            source: Source FlowFile
+            target: Target FlowFile
+            exclude: List of attributes to exclude
         """
         exclude = exclude or []
         
@@ -452,10 +452,10 @@ class BaseTask(VariableResolverMixin, Task, ABC):
 
     def get_task_id(self) -> str:
         """
-        Retourner l'ID de la tâche.
+        Return the task ID.
         
         Returns:
-            ID de la tâche (basé sur le nom de classe)
+            Task ID, based on the class name
         """
-        # Cette méthode sera remplie par le flux parent
+        # This method is populated by the parent flow
         return self.__class__.__name__

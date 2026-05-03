@@ -1,5 +1,5 @@
 """
-Distributed Map Cache Tasks - Cache distribue pour synchronisation inter-processus.
+Distributed Map Cache tasks - Distributed cache for inter-process synchronization.
 """
 
 from typing import Dict, Any, List
@@ -9,7 +9,7 @@ from services.distributed_cache import get_default_cache
 
 
 class FetchDistributedMapCacheTask(BaseTask):
-    """Recupere une valeur du DistributedMapCacheService par cle."""
+    """Retrieve a value from DistributedMapCacheService by key."""
 
     TYPE = "fetchDistributedMapCache"
     VERSION = "1.0.0"
@@ -47,7 +47,7 @@ class FetchDistributedMapCacheTask(BaseTask):
 
 
 class PutDistributedMapCacheTask(BaseTask):
-    """Stocke le contenu du FlowFile dans le DistributedMapCacheService."""
+    """Store FlowFile content in DistributedMapCacheService."""
 
     TYPE = "putDistributedMapCache"
     VERSION = "1.0.0"

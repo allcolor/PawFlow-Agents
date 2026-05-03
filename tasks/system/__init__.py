@@ -1,8 +1,8 @@
 # Tasks System Module
 
 """
-Module des tâches système.
-Tâches de base pour le fonctionnement du framework.
+System tasks module.
+Tasks de base pour le fonctionnement du framework.
 """
 
 from typing import List
@@ -11,7 +11,7 @@ from core.base_task import BaseTask
 
 
 def register_system_tasks():
-    """Enregistrer toutes les tâches système."""
+    """Register all system tasks."""
     from tasks.system.log_task import LogTask
     from tasks.system.replace_text_task import ReplaceTextTask
     from tasks.system.wait_task import WaitTask
@@ -20,7 +20,7 @@ def register_system_tasks():
     from tasks.system.generate_flowfile import GenerateFlowFileTask
     from tasks.system.cron_trigger import CronTriggerTask
 
-    # Enregistrer les tâches
+    # Register tasks
     TaskFactory.register(LogTask)
     TaskFactory.register(ReplaceTextTask)
     TaskFactory.register(WaitTask)

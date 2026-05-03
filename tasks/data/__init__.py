@@ -1,8 +1,8 @@
 # Data Tasks
 
 """
-Modules Data pour PawFlow.
-Tâches pour le traitement, la transformation et la validation de données.
+Data modules for PawFlow.
+Tasks for data processing, transformation, and validation.
 """
 
 from tasks.data.transform_json import TransformJSONTask

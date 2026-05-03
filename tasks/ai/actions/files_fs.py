@@ -277,11 +277,11 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 {"error": f"Unknown action: {flow_action}"}).encode())
         return [flowfile]
 
-    # â”€â”€ Per-agent context routing helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Per-agent context routing helpers
     # All context actions below support agent_name param.
     # "ALL" means apply to all agents with diverged contexts.
     def _ctx_load(conv_id, agent_name=""):
-        """Load context for an agent (falls back to shared â†’ messages)."""
+        """Load context for an agent (falls back to shared -> messages)."""
         if agent_name and agent_name != "ALL":
             return store.load_agent_context(conv_id, agent_name)
         return store.load_context(conv_id, user_id=user_id)

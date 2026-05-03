@@ -1,9 +1,9 @@
 # FetchHTTP Task
 
 """
-Tâche FetchHTTP - Effectuer des requêtes HTTP avec scraping intelligent.
+FetchHTTP task - Perform HTTP requests with intelligent scraping.
 
-Pour les requêtes GET, utilise Scrapling (anti-bot, JS rendering, auto-escalation).
+For GET requests, uses Scrapling (anti-bot, JS rendering, auto-escalation).
 Pour POST/PUT/PATCH/DELETE ou quand Scrapling n'est pas disponible, fallback urllib.
 """
 
@@ -33,7 +33,7 @@ _GDPR_COOKIES = {
 
 
 class FetchHTTPTask(BaseTask):
-    """Effectuer une requête HTTP avec scraping intelligent.
+    """Perform an HTTP request with intelligent scraping.
 
     GET requests use Scrapling for anti-bot handling, JS rendering,
     and auto-escalation (fast → stealth when JS wall detected).
@@ -341,7 +341,7 @@ class FetchHTTPTask(BaseTask):
         return {
             'url': {
                 'type': 'string', 'required': True,
-                'description': 'URL de la requête (supporte ${attribut})',
+                'description': 'URL de la requête (supports ${attribute})',
             },
             'method': {
                 'type': 'select', 'required': False, 'default': 'GET',
@@ -364,7 +364,7 @@ class FetchHTTPTask(BaseTask):
             },
             'headers': {
                 'type': 'map', 'required': False,
-                'description': 'En-têtes HTTP (clé → valeur)',
+                'description': 'En-têtes HTTP (key -> value)',
             },
             'timeout': {
                 'type': 'integer', 'required': False, 'default': 30,

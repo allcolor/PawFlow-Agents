@@ -1,8 +1,8 @@
 # Control Tasks
 
 """
-Modules Control pour PawFlow.
-Tâches pour le contrôle de flux.
+Control modules for PawFlow.
+Tasks for flow control.
 """
 
 from tasks.control.split_content import SplitContentTask

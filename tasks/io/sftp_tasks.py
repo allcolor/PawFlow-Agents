@@ -1,6 +1,6 @@
 # SFTP Tasks
 
-"""Tâches GetSFTP / PutSFTP - Transfert de fichiers via SFTP.
+"""Tasks GetSFTP / PutSFTP - File transfer via SFTP.
 
 Utilise paramiko si disponible, sinon subprocess sftp/scp.
 """
@@ -28,12 +28,12 @@ def _get_paramiko():
 
 
 class GetSFTPTask(BaseTask):
-    """Récupérer un fichier depuis un serveur SFTP."""
+    """Retrieve a file from an SFTP server."""
 
     TYPE = "getSFTP"
     VERSION = "1.0.0"
     NAME = "Get SFTP"
-    DESCRIPTION = "Télécharger un fichier depuis un serveur SFTP"
+    DESCRIPTION = "Download a file from a server SFTP"
     ICON = "download"
 
     def __init__(self, config: Dict[str, Any]):
@@ -116,12 +116,12 @@ class GetSFTPTask(BaseTask):
 
 
 class PutSFTPTask(BaseTask):
-    """Envoyer un fichier vers un serveur SFTP."""
+    """Send a file to an SFTP server."""
 
     TYPE = "putSFTP"
     VERSION = "1.0.0"
     NAME = "Put SFTP"
-    DESCRIPTION = "Uploader un fichier vers un serveur SFTP"
+    DESCRIPTION = "Upload a file to a server SFTP"
     ICON = "upload"
 
     def __init__(self, config: Dict[str, Any]):

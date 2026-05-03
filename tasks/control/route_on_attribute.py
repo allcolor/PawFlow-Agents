@@ -1,8 +1,8 @@
 # RouteOnAttribute Task Implementation
 
 """
-Tâche RouteOnAttribute - Router les FlowFiles selon la valeur d'un attribut.
-Inspiré du processor RouteOnAttribute de Apache NiFi.
+Task RouteOnAttribute - Route FlowFiles based on an attribute value.
+Inspired by Apache NiFi's RouteOnAttribute processor.
 """
 
 import logging
@@ -16,19 +16,19 @@ logger = logging.getLogger(__name__)
 
 class RouteOnAttributeTask(BaseTask):
     """
-    Router les FlowFiles vers différentes sorties selon leurs attributs.
+    Route FlowFiles to different outputs based on their attributes.
 
-    Chaque route est définie par un nom et une condition (expression).
-    Les FlowFiles qui ne matchent aucune route vont vers 'unmatched'.
+    Each route is defined by a name and condition (expression).
+    FlowFiles that do not match any route go to 'unmatched'.
     """
 
     TYPE = "routeOnAttribute"
     VERSION = "1.0.0"
     NAME = "RouteOnAttribute"
-    DESCRIPTION = "Router les FlowFiles selon la valeur d'un attribut"
+    DESCRIPTION = "Route FlowFiles based on an attribute value"
     ICON = "git-branch"
 
-    # Sorties multiples : chaque route est une sortie nommée
+    # Multiple outputs : each route is a named output
     OUTPUTS = ['matched', 'unmatched']
 
     def __init__(self, config: Dict[str, Any]):
@@ -38,9 +38,9 @@ class RouteOnAttributeTask(BaseTask):
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """
-        Évaluer les routes et taguer le FlowFile avec la route correspondante.
+        Evaluate routes and tag the FlowFile with the matching route.
 
-        Le FlowFile reçoit un attribut 'route' indiquant la route choisie.
+        The FlowFile receives an attribute 'route' indicating the selected route.
         L'executor pourra ensuite utiliser cet attribut pour le routage.
         """
         matched_routes = []
@@ -72,14 +72,14 @@ class RouteOnAttributeTask(BaseTask):
 
     def _evaluate_condition(self, flowfile: FlowFile, condition: Dict[str, Any]) -> bool:
         """
-        Évaluer une condition sur un FlowFile.
+        Evaluate a condition on a FlowFile.
 
-        Conditions supportées :
+        Supported conditions :
         - equals: attribut == valeur
         - not_equals: attribut != valeur
         - contains: valeur dans attribut
         - matches_regex: attribut matche regex
-        - greater_than / less_than: comparaison numérique
+        - greater_than / less_than: numeric comparison
         - is_empty / is_not_empty: attribut vide ou non
         """
         attribute = condition.get('attribute', '')
@@ -128,7 +128,7 @@ class RouteOnAttributeTask(BaseTask):
                 'required': False,
                 'default': 'route_to_matched',
                 'options': ['route_to_matched', 'route_to_all'],
-                'description': 'Stratégie de routage (première route ou toutes)',
+                'description': 'Routing strategy (first route or all routes)',
             },
             'routes': {
                 'type': 'map',

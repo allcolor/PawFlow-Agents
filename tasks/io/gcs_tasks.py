@@ -1,6 +1,6 @@
 # GCS Tasks
 
-"""Tâches PutGCS / GetGCS - Stockage objet Google Cloud Storage.
+"""Tasks PutGCS / GetGCS - Object storage Google Cloud Storage.
 
 Utilise google-cloud-storage si disponible.
 """
@@ -26,7 +26,7 @@ def _get_gcs():
 
 
 class GetGCSTask(BaseTask):
-    """Télécharger un objet depuis Google Cloud Storage."""
+    """Download an object from Google Cloud Storage."""
 
     TYPE = "getGCS"
     VERSION = "1.0.0"
@@ -115,7 +115,7 @@ class GetGCSTask(BaseTask):
 
 
 class PutGCSTask(BaseTask):
-    """Uploader un objet vers Google Cloud Storage."""
+    """Upload an object to Google Cloud Storage."""
 
     TYPE = "putGCS"
     VERSION = "1.0.0"

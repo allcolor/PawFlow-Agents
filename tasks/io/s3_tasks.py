@@ -1,8 +1,8 @@
 # S3 Tasks
 
-"""Tâches PutS3 / GetS3 - Stockage objet AWS S3 / compatible (MinIO, etc).
+"""Tasks PutS3 / GetS3 - Object storage AWS S3 / compatible (MinIO, etc).
 
-Utilise boto3 si disponible.
+Uses boto3 if available.
 """
 
 import logging
@@ -26,7 +26,7 @@ def _get_boto3():
 
 
 class GetS3Task(BaseTask):
-    """Télécharger un objet depuis S3."""
+    """Download an object from S3."""
 
     TYPE = "getS3"
     VERSION = "1.0.0"
@@ -120,7 +120,7 @@ class GetS3Task(BaseTask):
 
 
 class PutS3Task(BaseTask):
-    """Uploader un objet vers S3."""
+    """Upload an object to S3."""
 
     TYPE = "putS3"
     VERSION = "1.0.0"

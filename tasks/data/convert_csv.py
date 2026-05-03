@@ -13,7 +13,7 @@ from core.base_task import BaseTask
 
 
 class ConvertCSVToJSONTask(BaseTask):
-    """Convertir du CSV en JSON."""
+    """Convert CSV to JSON."""
 
     TYPE = "convertCSVToJSON"
     VERSION = "1.0.0"
@@ -45,7 +45,7 @@ class ConvertCSVToJSONTask(BaseTask):
         return {
             'delimiter': {
                 'type': 'string', 'required': False, 'default': ',',
-                'description': 'Caractère de séparation CSV',
+                'description': 'CSV separator character',
             },
             'has_header': {
                 'type': 'boolean', 'required': False, 'default': True,
@@ -55,7 +55,7 @@ class ConvertCSVToJSONTask(BaseTask):
 
 
 class ConvertJSONToCSVTask(BaseTask):
-    """Convertir du JSON en CSV."""
+    """Convert JSON to CSV."""
 
     TYPE = "convertJSONToCSV"
     VERSION = "1.0.0"
@@ -77,7 +77,7 @@ class ConvertJSONToCSVTask(BaseTask):
             raise TaskError(f"JSON invalide: {e}")
 
         if not isinstance(data, list):
-            raise TaskError("Le JSON doit être un tableau pour la conversion CSV")
+            raise TaskError("JSON must be an array for CSV conversion")
 
         output = StringIO()
         writer = csv.writer(output, delimiter=self.delimiter)
@@ -93,7 +93,7 @@ class ConvertJSONToCSVTask(BaseTask):
                 for row in data:
                     writer.writerow(row)
             else:
-                raise TaskError("Structure JSON non supportée pour CSV")
+                raise TaskError("Unsupported JSON structure for CSV")
 
         flowfile.set_content(output.getvalue().encode('utf-8'))
         flowfile.set_attribute('mime.type', 'text/csv')
@@ -103,7 +103,7 @@ class ConvertJSONToCSVTask(BaseTask):
         return {
             'delimiter': {
                 'type': 'string', 'required': False, 'default': ',',
-                'description': 'Caractère de séparation CSV',
+                'description': 'CSV separator character',
             },
             'include_header': {
                 'type': 'boolean', 'required': False, 'default': True,

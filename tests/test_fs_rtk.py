@@ -69,7 +69,8 @@ def test_grep_uses_rtk_for_relay_search(monkeypatch):
     assert relay.commands[0][1] == "rtk grep PAWFLOW_USE_RTK core --max 10 --line-numbers"
 
 
-def test_glob_uses_rtk_find_for_recursive_relay_search(monkeypatch):
+def test_glob_stays_native_even_when_rtk_is_enabled(monkeypatch):
+    """RTK find does not preserve PawFlow glob semantics for ** patterns."""
     monkeypatch.setenv("PAWFLOW_USE_RTK", "true")
     relay = RtkFsRelay("a.py\nb.py\nc.py\n")
     handler = _handler(GlobHandler, relay)
@@ -77,13 +78,13 @@ def test_glob_uses_rtk_find_for_recursive_relay_search(monkeypatch):
     result = handler.execute({
         "source": "fs_test",
         "path": ".",
-        "pattern": "*.py",
+        "pattern": "**/*relay*Dockerfile",
         "limit": 2,
     })
 
-    assert result == "a.py\nb.py"
-    assert relay.native_calls == []
-    assert relay.commands[0][1] == "rtk find '*.py' ."
+    assert result == "native.py"
+    assert relay.commands == []
+    assert relay.native_calls[0][0] == "search"
 
 
 def test_grep_falls_back_when_rtk_fails(monkeypatch):

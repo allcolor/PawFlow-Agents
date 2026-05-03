@@ -1,7 +1,7 @@
 # Duplicate Content Task
 
 """
-Tâche DuplicateContent - Créer des copies d'un FlowFile.
+Task DuplicateContent - Create FlowFile copies.
 """
 
 from typing import Dict, Any, List
@@ -10,12 +10,12 @@ from core.base_task import BaseTask
 
 
 class DuplicateContentTask(BaseTask):
-    """Créer des copies du contenu d'un FlowFile."""
+    """Create copies of FlowFile content."""
 
     TYPE = "duplicateContent"
     VERSION = "1.0.0"
     NAME = "Duplicate Content"
-    DESCRIPTION = "Créer des copies du contenu d'un FlowFile"
+    DESCRIPTION = "Create copies of FlowFile content"
     ICON = "copy"
 
     def __init__(self, config: Dict[str, Any]):
@@ -23,7 +23,7 @@ class DuplicateContentTask(BaseTask):
         self.copies = self.config.get('copies', 2)
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Créer des copies du FlowFile."""
+        """Create copies of the FlowFile."""
         content = flowfile.get_content()
         attributes = dict(flowfile.get_attributes())
         result = []
@@ -41,12 +41,12 @@ class DuplicateContentTask(BaseTask):
             'copies': {
                 'type': 'integer',
                 'required': False,
-                'description': 'Nombre de copies à créer',
+                'description': 'Number of copies to create',
                 'default': 2,
                 'min': 1
             }
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(DuplicateContentTask)

@@ -1,7 +1,7 @@
 # Log Task Implementation
 
 """
-Tâche Log - Logguer un message avec formatage.
+Task Log - Log a formatted message.
 """
 
 import logging
@@ -13,28 +13,28 @@ from core.expression import resolve_expression
 
 class LogTask(BaseTask):
     """
-    Tâche pour logguer un message.
+    Task for logging a message.
     
-    Permet de logger des messages avec différents niveaux de log
-    et d'inclure les attributs du FlowFile.
+    Allows logging messages with different log levels
+    and including FlowFile attributes.
     """
     
     TYPE = "log"
     VERSION = "1.0.0"
     NAME = "Log"
-    DESCRIPTION = "Logguer un message avec formatage"
+    DESCRIPTION = "Log a formatted message"
     ICON = "log"
     
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialiser la tâche Log.
+        Initialize the Log task.
         
         Args:
             config: Configuration avec:
-                - message: Message à logguer (requis)
-                - level: Niveau de log (par défaut: INFO)
+                - message: Message to log (required)
+                - level: Log level (default: INFO)
                 - logger_name: Nom du logger (optionnel)
-                - include_attributes: Inclure les attributs (par défaut: false)
+                - include_attributes: Include attributes (default: false)
         """
         super().__init__(config)
         
@@ -45,13 +45,13 @@ class LogTask(BaseTask):
     
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """
-        Exécuter la tâche Log.
+        Execute the Log task.
         
         Args:
-            flowfile: FlowFile d'entrée
+            flowfile: Input FlowFile
             
         Returns:
-            Liste avec le FlowFile inchangé
+            List containing the unchanged FlowFile
         """
         # Construire le message
         log_message = self._format_message(self.message, flowfile)
@@ -59,15 +59,15 @@ class LogTask(BaseTask):
         # Logguer
         self._log_with_level(log_message)
         
-        # Retourner le FlowFile inchangé
+        # Return the FlowFile unchanged
         return [flowfile]
     
     def _format_message(self, message: str, flowfile: FlowFile) -> str:
         """
-        Formater le message avec les attributs du FlowFile.
-        Utilise le moteur d'expression generique pour resoudre ${...}.
+        Format the message with FlowFile attributes.
+        Uses the generic expression engine to resolve ${...}.
         """
-        # Enrichir les attributs avec des valeurs par defaut pour les champs standard
+        # Enrich attributes with default values for standard fields
         attrs = flowfile.get_attributes()
         attrs.setdefault('fileSize', str(flowfile.size()))
         attrs.setdefault('uuid', flowfile.process_id[:8])
@@ -88,10 +88,10 @@ class LogTask(BaseTask):
     
     def _log_with_level(self, message: str):
         """
-        Logguer un message avec le niveau spécifié.
+        Log a message with the specified level.
         
         Args:
-            message: Message à logguer
+            message: Message to log
         """
         logger = logging.getLogger(self.logger_name or self.__class__.__name__)
         
@@ -108,36 +108,36 @@ class LogTask(BaseTask):
     
     def get_parameter_schema(self) -> Dict[str, Any]:
         """
-        Retourner le schéma des paramètres.
+        Return the parameter schema.
         
         Returns:
-            Schema des paramètres pour l'UI
+            Parameter schema for the UI
         """
         return {
             'message': {
                 'type': 'string',
                 'required': True,
-                'description': 'Message à logguer (supporte les placeholders)',
+                'description': 'Message to log (supports placeholders)',
                 'placeholder': 'Message: ${filename}, taille: ${fileSize}',
                 'help': 'Les placeholders disponibles: ${filename}, ${fileSize}, ${uuid}, ${timestamp}, ${mime.type}, ${line.count}, ${process.id}'
             },
             'level': {
                 'type': 'select',
                 'required': False,
-                'description': 'Niveau de log',
+                'description': 'Log level',
                 'options': ['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                 'default': 'INFO'
             },
             'logger_name': {
                 'type': 'string',
                 'required': False,
-                'description': 'Nom du logger (optionnel, utilise le nom de la tâche par défaut)',
+                'description': 'Logger name (optional, uses the default task name)',
                 'placeholder': 'mon_logger'
             },
             'include_attributes': {
                 'type': 'boolean',
                 'required': False,
-                'description': 'Inclure les attributs du FlowFile dans le log',
+                'description': 'Include FlowFile attributes in the log',
                 'default': False
             }
         }

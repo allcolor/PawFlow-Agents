@@ -1,7 +1,7 @@
 # Convert Charset Task
 
 """
-Tâche ConvertCharset - Convertir l'encodage du contenu d'un FlowFile.
+Task ConvertCharset - Convert FlowFile content encoding.
 """
 
 from typing import Dict, Any, List
@@ -10,12 +10,12 @@ from core.base_task import BaseTask
 
 
 class ConvertCharsetTask(BaseTask):
-    """Convertir l'encodage du contenu d'un FlowFile."""
+    """Convert FlowFile content encoding."""
 
     TYPE = "convertCharset"
     VERSION = "1.0.0"
     NAME = "Convert Charset"
-    DESCRIPTION = "Convertir l'encodage du contenu d'un FlowFile"
+    DESCRIPTION = "Convert FlowFile content encoding"
     ICON = "exchange"
 
     def __init__(self, config: Dict[str, Any]):
@@ -24,7 +24,7 @@ class ConvertCharsetTask(BaseTask):
         self.target_encoding = self.config.get('target_encoding', 'utf-8')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Convertir l'encodage du contenu du FlowFile."""
+        """Convert the FlowFile content encoding."""
         content = flowfile.get_content()
         decoded_content = content.decode(self.source_encoding)
         converted_content = decoded_content.encode(self.target_encoding)
@@ -51,5 +51,5 @@ class ConvertCharsetTask(BaseTask):
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(ConvertCharsetTask)

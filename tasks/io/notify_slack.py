@@ -1,6 +1,6 @@
 # NotifySlack Task
 
-"""Tâche NotifySlack - Envoyer des messages à Slack via webhook."""
+"""Task NotifySlack - Send messages to Slack through a webhook."""
 
 import json
 import logging
@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 
 
 class NotifySlackTask(BaseTask):
-    """Envoyer un message à un channel Slack via webhook."""
+    """Send a message to a Slack channel through a webhook."""
 
     TYPE = "notifySlack"
     VERSION = "1.0.0"
     NAME = "Notify Slack"
-    DESCRIPTION = "Envoyer un message à Slack via Incoming Webhook"
+    DESCRIPTION = "Send a message to Slack through an Incoming Webhook"
     ICON = "message-square"
 
     def __init__(self, config: Dict[str, Any]):

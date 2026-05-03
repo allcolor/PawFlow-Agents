@@ -1,7 +1,7 @@
 # GetFile Task
 
 """
-Tâche GetFile - Lire un fichier depuis le système de fichiers.
+Task GetFile - Read a file from the filesystem.
 """
 
 import os
@@ -12,12 +12,12 @@ from core.base_task import BaseTask
 
 
 class GetFileTask(BaseTask):
-    """Lire un fichier et créer un FlowFile avec son contenu."""
+    """Read a file and create a FlowFile with its content."""
 
     TYPE = "getFile"
     VERSION = "1.0.0"
     NAME = "GetFile"
-    DESCRIPTION = "Lire un fichier depuis le système de fichiers"
+    DESCRIPTION = "Read a file from the filesystem"
     ICON = "file-input"
 
     def __init__(self, config: Dict[str, Any]):
@@ -97,7 +97,7 @@ class GetFileTask(BaseTask):
         return {
             'input_directory': {
                 'type': 'string', 'required': True,
-                'description': 'Répertoire source',
+                'description': 'Source directory',
             },
             'file_filter': {
                 'type': 'string', 'required': False, 'default': '*',
@@ -105,11 +105,11 @@ class GetFileTask(BaseTask):
             },
             'recursive': {
                 'type': 'boolean', 'required': False, 'default': False,
-                'description': 'Parcourir les sous-répertoires',
+                'description': 'Traverse subdirectories',
             },
             'keep_source': {
                 'type': 'boolean', 'required': False, 'default': True,
-                'description': 'Conserver le fichier source après lecture',
+                'description': 'Keep the source file after reading',
             },
             'service_id': {
                 'type': 'string', 'required': False,
@@ -118,5 +118,5 @@ class GetFileTask(BaseTask):
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(GetFileTask)

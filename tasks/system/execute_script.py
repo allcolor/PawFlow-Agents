@@ -1,7 +1,7 @@
 # Execute Script Task
 
 """
-Tâche ExecuteScript - Exécuter un script Python sur le contenu d'un FlowFile.
+Task ExecuteScript - Execute a Python script on a FlowFile's content.
 
 Uses the unified sandbox from core.sandbox:
 - Safe builtins whitelist
@@ -17,12 +17,12 @@ from core.docker_utils import docker_run, to_host_path as _to_host_path
 
 
 class ExecuteScriptTask(BaseTask):
-    """Exécuter un script Python sur le contenu d'un FlowFile."""
+    """Execute a Python script on a FlowFile's content."""
 
     TYPE = "executeScript"
     VERSION = "2.0.0"
     NAME = "Execute Script"
-    DESCRIPTION = "Exécuter un script Python sur le contenu d'un FlowFile"
+    DESCRIPTION = "Execute a Python script on a FlowFile's content"
     ICON = "terminal"
 
     def __init__(self, config: Dict[str, Any]):
@@ -31,7 +31,7 @@ class ExecuteScriptTask(BaseTask):
         self.script_engine = self.config.get('script_engine', 'python')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Exécuter le script sur le contenu du FlowFile."""
+        """Execute the script on the FlowFile content."""
         if self.config.get('containerize'):
             return self._execute_docker(flowfile)
         return self._execute_local(flowfile)
@@ -212,11 +212,11 @@ with open("/data/output.json", "w") as f:
                 'type': 'textarea',
                 'required': True,
                 'description': (
-                    "Script Python à exécuter. Variables disponibles: "
+                    "Python script to execute. Available variables: "
                     "content (str), attributes (dict), flowfile (FlowFile). "
-                    "Définir 'result' pour modifier le contenu du FlowFile. "
-                    "open() écrit dans un sandbox FileStore. "
-                    "Modules autorisés: json, re, csv, datetime, math, io, "
+                    "Set 'result' to modify the FlowFile content. "
+                    "open() writes inside a FileStore sandbox. "
+                    "Allowed modules: json, re, csv, datetime, math, io, "
                     "requests, collections, itertools, hashlib, base64, etc."
                 ),
             },

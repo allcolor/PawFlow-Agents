@@ -82,7 +82,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
     if action == "random_thought":
         return self._handle_random_thought(body, conv_id, user_id, flowfile)
 
-    # â”€â”€ Task management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Task management
 
     if action == "list_schedules":
         from core.poll_scheduler import PollScheduler
@@ -474,7 +474,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
-    # â”€â”€ Image service management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Image service management
     if action == "edit_task":
         task_id = body.get("task_id", "")
         if not conv_id or not task_id:

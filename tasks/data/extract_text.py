@@ -1,7 +1,7 @@
 # Extract Text Task
 
 """
-Tâche ExtractText - Extraire du texte d'un FlowFile en utilisant des expressions régulières.
+Task ExtractText - Extract text from a FlowFile using regular expressions.
 """
 
 import re
@@ -11,12 +11,12 @@ from core.base_task import BaseTask
 
 
 class ExtractTextTask(BaseTask):
-    """Extraire du texte d'un FlowFile en utilisant des expressions régulières."""
+    """Extract text from a FlowFile using regular expressions."""
 
     TYPE = "extractText"
     VERSION = "1.0.0"
     NAME = "Extract Text"
-    DESCRIPTION = "Extraire du texte d'un FlowFile via expressions régulières"
+    DESCRIPTION = "Extract text from a FlowFile with regular expressions"
     ICON = "search"
 
     def __init__(self, config: Dict[str, Any]):
@@ -26,7 +26,7 @@ class ExtractTextTask(BaseTask):
         self.group = self.config.get('group', 0)
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Extraire du texte en appliquant une expression régulière."""
+        """Extract text by applying a regular expression."""
         try:
             content = flowfile.get_content().decode('utf-8')
         except UnicodeDecodeError:
@@ -48,24 +48,24 @@ class ExtractTextTask(BaseTask):
             'pattern': {
                 'type': 'string',
                 'required': True,
-                'description': 'Expression régulière à appliquer',
+                'description': 'Regular expression to apply',
                 'placeholder': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
             },
             'attribute_name': {
                 'type': 'string',
                 'required': False,
-                'description': "Nom de l'attribut pour stocker le texte extrait",
+                'description': "Attribute name used to store extracted text",
                 'default': 'extracted.text'
             },
             'group': {
                 'type': 'integer',
                 'required': False,
-                'description': 'Groupe de capture à extraire (0 = correspondance complète)',
+                'description': 'Capture group to extract (0 = full match)',
                 'default': 0,
                 'min': 0
             }
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(ExtractTextTask)

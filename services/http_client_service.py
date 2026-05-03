@@ -1,7 +1,7 @@
 # HTTP Client Service
 
 """
-Service de client HTTP partagé avec session persistante.
+Shared HTTP client service with a persistent session.
 """
 
 from typing import Any, Dict, Optional
@@ -15,7 +15,7 @@ except ImportError:
 
 
 class HTTPClientService(BaseService):
-    """Client HTTP partagé avec session, headers et authentification."""
+    """Shared HTTP client with session, headers, and authentication."""
 
     TYPE = "httpClientService"
     VERSION = "1.0.0"

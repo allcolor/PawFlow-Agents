@@ -188,7 +188,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── Desktop apps: image, video, audio, office, viewers ─────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gimp gimp-plugin-registry inkscape imagemagick \
+    gimp gimp-plugin-registry inkscape blender imagemagick \
     ffmpeg vlc audacity \
     libreoffice-calc libreoffice-writer libreoffice-impress libreoffice-draw \
     feh evince file-roller eog \

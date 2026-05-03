@@ -1,6 +1,6 @@
 # Azure Blob Storage Tasks
 
-"""Tâches PutAzureBlob / GetAzureBlob - Stockage objet Azure Blob Storage.
+"""Tasks PutAzureBlob / GetAzureBlob - Object storage Azure Blob Storage.
 
 Utilise azure-storage-blob si disponible.
 """
@@ -26,7 +26,7 @@ def _get_azure():
 
 
 class GetAzureBlobTask(BaseTask):
-    """Télécharger un blob depuis Azure Blob Storage."""
+    """Download a blob from Azure Blob Storage."""
 
     TYPE = "getAzureBlob"
     VERSION = "1.0.0"
@@ -99,7 +99,7 @@ class GetAzureBlobTask(BaseTask):
 
 
 class PutAzureBlobTask(BaseTask):
-    """Uploader un blob vers Azure Blob Storage."""
+    """Upload a blob to Azure Blob Storage."""
 
     TYPE = "putAzureBlob"
     VERSION = "1.0.0"

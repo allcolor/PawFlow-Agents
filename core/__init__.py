@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 """
-Core module de PawFlow.
-Définit les interfaces et classes abstraites du framework.
+PawFlow core module.
+Defines the framework interfaces and abstract classes.
 """
 
 from typing import Dict, Any, List, Optional, BinaryIO
@@ -22,32 +22,32 @@ __author__ = "PawFlow Team"
 # ============================================================================
 
 class PawFlowError(Exception):
-    """Exception de base pour PawFlow."""
+    """Base exception for PawFlow."""
     pass
 
 
 class TaskError(PawFlowError):
-    """Erreur lors de l'exécution d'une tâche."""
+    """Error while executing a task."""
     pass
 
 
 class ServiceError(PawFlowError):
-    """Erreur lors de l'utilisation d'un service."""
+    """Error while using a service."""
     pass
 
 
 class FlowError(PawFlowError):
-    """Erreur de configuration ou d'exécution d'un flow."""
+    """Flow configuration or execution error."""
     pass
 
 
 class ValidationError(PawFlowError):
-    """Erreur de validation."""
+    """Validation error."""
     pass
 
 
 class VariableResolutionError(PawFlowError):
-    """Erreur de résolution de variables."""
+    """Variable resolution error."""
     pass
 
 
@@ -75,7 +75,7 @@ def safe_float(val, default: float = 0.0) -> float:
 # ============================================================================
 
 class FlowFile:
-    """Représente une unité de données circulant dans le pipeline.
+    """Represents a data unit moving through the pipeline.
 
     Supports both in-memory and disk-backed content transparently.
     Small content stays in RAM; large content (> SPILL_THRESHOLD) is
@@ -235,7 +235,7 @@ class FlowFile:
 # ============================================================================
 
 class Flow:
-    """Orchestration de tâches pour créer un pipeline de traitement."""
+    """Task orchestration for building a processing pipeline."""
 
     def __init__(self, config: Dict[str, Any]):
         from core.process_group import ProcessGroup
@@ -282,7 +282,7 @@ class Flow:
 # ============================================================================
 
 class Task:
-    """Interface abstraite pour toutes les tâches."""
+    """Abstract interface for all tasks."""
     
     TYPE: str = ""
     VERSION: str = "1.0.0"
@@ -330,7 +330,7 @@ class Task:
 # ============================================================================
 
 class Service:
-    """Interface abstraite pour tous les services."""
+    """Abstract interface for all services."""
     
     TYPE: str = ""
     VERSION: str = "1.0.0"
@@ -393,7 +393,7 @@ class Service:
 # ============================================================================
 
 class TaskFactory:
-    """Factory pour créer des tâches."""
+    """Factory for creating tasks."""
     
     _tasks: Dict[str, type] = {}
     
@@ -405,7 +405,7 @@ class TaskFactory:
     @classmethod
     def get(cls, task_type: str) -> type:
         if task_type not in cls._tasks:
-            raise TaskError(f"Tâche non trouvée: {task_type}")
+            raise TaskError(f"Task non trouvée: {task_type}")
         return cls._tasks[task_type]
     
     @classmethod
@@ -414,7 +414,7 @@ class TaskFactory:
 
 
 class ServiceFactory:
-    """Factory pour créer des services."""
+    """Factory for creating services."""
     
     _services: Dict[str, type] = {}
     
@@ -459,6 +459,6 @@ VariableType = type('VariableType', (), {
     'JSON': "json",
 })
 
-# Import du StorageManager pour accessibilité
+# Import StorageManager for accessibility
 from core.storage import StorageManager, StorageInterface
 from core.variable_resolver import VariableResolverMixin

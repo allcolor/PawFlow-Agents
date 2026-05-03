@@ -1,7 +1,7 @@
 # Wait Task Implementation
 
 """
-Tâche Wait - Attendre une durée avant de continuer.
+Task Wait - Wait for a duration before continuing.
 """
 
 import time
@@ -12,37 +12,37 @@ from core.base_task import BaseTask
 
 class WaitTask(BaseTask):
     """
-    Tâche pour attendre une durée avant de continuer.
+    Task for waiting a duration before continuing.
     
-    Utile pour introduire des pauses dans le flux ou attendre
-    qu'une condition soit remplie.
+    Useful for introducing pauses in the flow or waiting
+    until a condition is met.
     """
     
     TYPE = "wait"
     VERSION = "1.0.0"
     NAME = "Attendre"
-    DESCRIPTION = "Attendre une durée avant de continuer"
+    DESCRIPTION = "Wait for a duration before continuing"
     ICON = "wait"
     
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialiser la tâche Wait.
+        Initialize the Wait task.
         
         Args:
             config: Configuration avec:
-                - duration: Durée en millisecondes (requis)
-                - duration_unit: Unité de temps (par défaut: MS)
+                - duration: Duration in milliseconds (requis)
+                - duration_unit: Time unit (default: MS)
         """
         super().__init__(config)
         
         self.duration = self.config.get('duration', 0)
         self.duration_unit = self.config.get('duration_unit', 'MS').upper()
         
-        # Convertir en secondes
+        # Convert to seconds
         self.duration_seconds = self._convert_to_seconds()
     
     def _convert_to_seconds(self) -> float:
-        """Convertir la durée en secondes."""
+        """Convert the duration to seconds."""
         if self.duration_unit == 'MS':
             return self.duration / 1000.0
         elif self.duration_unit == 'SEC':
@@ -52,29 +52,29 @@ class WaitTask(BaseTask):
         elif self.duration_unit == 'HOUR':
             return self.duration * 3600
         else:
-            raise ValueError(f"Unité de temps invalide: {self.duration_unit}")
+            raise ValueError(f"Time unit invalide: {self.duration_unit}")
     
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """
-        Exécuter la tâche Wait.
+        Execute the Wait task.
         
         Args:
-            flowfile: FlowFile d'entrée
+            flowfile: Input FlowFile
             
         Returns:
-            Liste avec le FlowFile inchangé
+            List containing the unchanged FlowFile
         """
-        # Attendre la durée spécifiée
+        # Wait for the specified duration
         time.sleep(self.duration_seconds)
         
         return [flowfile]
     
     def get_parameter_schema(self) -> Dict[str, Any]:
         """
-        Retourner le schéma des paramètres.
+        Return the parameter schema.
         
         Returns:
-            Schema des paramètres pour l'UI
+            Parameter schema for the UI
         """
         return {
             'duration': {
@@ -86,7 +86,7 @@ class WaitTask(BaseTask):
             'duration_unit': {
                 'type': 'select',
                 'required': False,
-                'description': 'Unité de temps',
+                'description': 'Time unit',
                 'options': ['MS', 'SEC', 'MIN', 'HOUR'],
                 'default': 'MS'
             }

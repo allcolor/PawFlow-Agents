@@ -1,7 +1,7 @@
 # SplitContent Task
 
 """
-Tâche SplitContent - Découper un FlowFile en plusieurs.
+Task SplitContent - Split a FlowFile into multiple FlowFiles.
 """
 
 from typing import Dict, Any, List
@@ -10,22 +10,22 @@ from core.base_task import BaseTask
 
 
 class SplitContentTask(BaseTask):
-    """Découper le contenu d'un FlowFile en plusieurs FlowFiles."""
+    """Split FlowFile content into multiple FlowFiles."""
 
     TYPE = "splitContent"
     VERSION = "1.0.0"
     NAME = "SplitContent"
-    DESCRIPTION = "Découper un FlowFile selon un séparateur"
+    DESCRIPTION = "Split a FlowFile by separator"
     ICON = "scissors"
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.separator = self.config.get('separator', '\n')
         self.keep_separator = self.config.get('keep_separator', False)
-        self.max_splits = self.config.get('max_splits', 0)  # 0 = illimité
+        self.max_splits = self.config.get('max_splits', 0)  # 0 = unlimited
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Découper le contenu en plusieurs fragments."""
+        """Split content into multiple fragments."""
         content = flowfile.get_content().decode('utf-8')
         sep = self.separator
 
@@ -54,18 +54,18 @@ class SplitContentTask(BaseTask):
         return {
             'separator': {
                 'type': 'string', 'required': False, 'default': '\\n',
-                'description': 'Séparateur (\\n, ;, \\t, etc.)',
+                'description': 'Separator (\\n, ;, \\t, etc.)',
             },
             'keep_separator': {
                 'type': 'boolean', 'required': False, 'default': False,
-                'description': 'Conserver le séparateur dans les fragments',
+                'description': 'Keep the separator in fragments',
             },
             'max_splits': {
                 'type': 'integer', 'required': False, 'default': 0,
-                'description': 'Nombre max de découpes (0 = illimité)',
+                'description': 'Maximum number of splits (0 = unlimited)',
             },
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(SplitContentTask)

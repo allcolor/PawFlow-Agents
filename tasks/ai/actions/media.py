@@ -67,7 +67,7 @@ def _handle_media(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
 
-    # â”€â”€ Video service management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Video service management
 
     if action == "list_video_services":
         from services.base_video_generation import BaseVideoGenerationService

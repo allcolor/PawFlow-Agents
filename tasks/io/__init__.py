@@ -1,8 +1,8 @@
 # IO Tasks
 
 """
-Modules IO pour PawFlow.
-Tâches pour la lecture/écriture de fichiers, HTTP, email, messaging, cloud.
+IO modules for PawFlow.
+Tasks for file reading/writing, HTTP, email, messaging, and cloud services.
 """
 
 from tasks.io.get_file import GetFileTask

@@ -1,7 +1,7 @@
 # UpdateAttribute Task
 
 """
-Tâche UpdateAttribute - Modifier les attributs d'un FlowFile.
+Task UpdateAttribute - Modify FlowFile attributes.
 """
 
 from typing import Dict, Any, List
@@ -11,27 +11,27 @@ from core.base_task import BaseTask
 
 
 class UpdateAttributeTask(BaseTask):
-    """Ajouter, modifier ou supprimer des attributs sur un FlowFile."""
+    """Add, modify, or delete attributes on a FlowFile."""
 
     TYPE = "updateAttribute"
     VERSION = "1.0.0"
     NAME = "UpdateAttribute"
-    DESCRIPTION = "Modifier les attributs d'un FlowFile"
+    DESCRIPTION = "Modify FlowFile attributes"
     ICON = "edit"
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # Sauvegarder les valeurs originales avant résolution
+        # Save original values before resolution
         self._raw_attributes_to_set = config.get('set', {})
         self._raw_attributes_to_delete = config.get('delete', [])
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Modifier les attributs du FlowFile."""
-        # Supprimer les attributs
+        """Modify FlowFile attributes."""
+        # Remove attributes
         for key in self._raw_attributes_to_delete:
             flowfile.delete_attribute(key)
 
-        # Ajouter/modifier les attributs avec résolution sur le flowfile
+        # Add/modify attributes with resolution on the FlowFile
         for key, value in self._raw_attributes_to_set.items():
             resolved = self._resolve_attribute_value(flowfile, str(value))
             flowfile.set_attribute(key, resolved)
@@ -39,7 +39,7 @@ class UpdateAttributeTask(BaseTask):
         return [flowfile]
 
     def _resolve_attribute_value(self, flowfile: FlowFile, value: str) -> str:
-        """Résoudre les références à d'autres attributs dans la valeur."""
+        """Resolve references to other attributes in the value."""
         if '${' not in value:
             return value
 
@@ -47,7 +47,7 @@ class UpdateAttributeTask(BaseTask):
             attr_name = match.group(1)
             return flowfile.get_attribute(attr_name) or match.group(0)
 
-        # Boucler pour résoudre les références en cascade
+        # Loop to resolve cascading references
         result = value
         max_iterations = 10
         for _ in range(max_iterations):
@@ -62,14 +62,14 @@ class UpdateAttributeTask(BaseTask):
         return {
             'set': {
                 'type': 'map', 'required': False,
-                'description': 'Attributs à ajouter/modifier (clé → valeur)',
+                'description': 'Attributes to add/modify (key -> value)',
             },
             'delete': {
                 'type': 'list', 'required': False,
-                'description': 'Attributs à supprimer',
+                'description': 'Attributes to remove',
             },
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(UpdateAttributeTask)

@@ -1,8 +1,8 @@
 # Kafka Tasks
 
-"""Tâches PublishKafka / ConsumeKafka - Messaging Apache Kafka.
+"""Tasks PublishKafka / ConsumeKafka - Messaging Apache Kafka.
 
-Utilise kafka-python si disponible.
+Uses kafka-python if available.
 """
 
 import json
@@ -24,12 +24,12 @@ def _get_kafka():
 
 
 class PublishKafkaTask(BaseTask):
-    """Publier un message sur un topic Kafka."""
+    """Publish a message to a topic Kafka."""
 
     TYPE = "publishKafka"
     VERSION = "1.0.0"
     NAME = "Publish Kafka"
-    DESCRIPTION = "Publier le contenu du FlowFile sur un topic Kafka"
+    DESCRIPTION = "Publish FlowFile content to a topic Kafka"
     ICON = "send"
 
     def __init__(self, config: Dict[str, Any]):
@@ -112,16 +112,16 @@ class PublishKafkaTask(BaseTask):
 
 
 class ConsumeKafkaTask(BaseTask):
-    """Consommer un message depuis un topic Kafka.
+    """Consume a message from a Kafka topic.
 
     En mode continu, chaque appel consomme un batch de messages.
-    Chaque message produit un FlowFile séparé.
+    Each message produces a separate FlowFile.
     """
 
     TYPE = "consumeKafka"
     VERSION = "1.0.0"
     NAME = "Consume Kafka"
-    DESCRIPTION = "Consommer des messages depuis un topic Kafka"
+    DESCRIPTION = "Consume messages from a topic Kafka"
     ICON = "inbox"
 
     def __init__(self, config: Dict[str, Any]):

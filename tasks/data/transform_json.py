@@ -1,7 +1,7 @@
 # TransformJSON Task
 
 """
-Tâche TransformJSON - Transformer du contenu JSON.
+Task TransformJSON - Transform JSON content.
 """
 
 import json
@@ -11,12 +11,12 @@ from core.base_task import BaseTask
 
 
 class TransformJSONTask(BaseTask):
-    """Transformer le contenu JSON d'un FlowFile."""
+    """Transform the JSON content of a FlowFile."""
 
     TYPE = "transformJSON"
     VERSION = "1.0.0"
     NAME = "TransformJSON"
-    DESCRIPTION = "Transformer du contenu JSON (extraire, modifier, filtrer)"
+    DESCRIPTION = "Transform JSON content (extraire, modifier, filtrer)"
     ICON = "braces"
 
     def __init__(self, config: Dict[str, Any]):
@@ -28,7 +28,7 @@ class TransformJSONTask(BaseTask):
         self.output_format = self.config.get('output_format', 'json')
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Transformer le contenu JSON du FlowFile."""
+        """Transform the FlowFile JSON content."""
         content = flowfile.get_content()
         try:
             data = json.loads(content.decode('utf-8'))
@@ -56,7 +56,7 @@ class TransformJSONTask(BaseTask):
         return [flowfile]
 
     def _extract(self, data: Any, path: str) -> Any:
-        """Extraire une valeur par chemin ($.key1.key2)."""
+        """Extract a value by path ($.key1.key2)."""
         if not path or path == '$':
             return data
         keys = path.lstrip('$.').split('.')
@@ -74,23 +74,23 @@ class TransformJSONTask(BaseTask):
         return current
 
     def _set_values(self, data: Any, values: Dict[str, Any]) -> Any:
-        """Ajouter/modifier des valeurs."""
+        """Add/modify values."""
         if not isinstance(data, dict):
-            raise TaskError("set_values nécessite un objet JSON racine")
+            raise TaskError("set_values requires a root JSON object")
         for key, value in values.items():
             data[key] = value
         return data
 
     def _delete_keys(self, data: Any, keys: List[str]) -> Any:
-        """Supprimer des clés."""
+        """Delete keys."""
         if not isinstance(data, dict):
-            raise TaskError("delete_keys nécessite un objet JSON racine")
+            raise TaskError("delete_keys requires a root JSON object")
         for key in keys:
             data.pop(key, None)
         return data
 
     def _flatten(self, data: Any, prefix: str = '') -> Union[Dict[str, Any], Any]:
-        """Aplatir un JSON imbriqué."""
+        """Flatten a nested JSON object."""
         result = {}
         if isinstance(data, dict):
             for k, v in data.items():
@@ -115,7 +115,7 @@ class TransformJSONTask(BaseTask):
             'operation': {
                 'type': 'select', 'required': True,
                 'options': ['extract', 'set', 'delete', 'flatten'],
-                'description': 'Opération à effectuer',
+                'description': 'Operation to perform',
             },
             'json_path': {
                 'type': 'string', 'required': False, 'default': '$',
@@ -123,11 +123,11 @@ class TransformJSONTask(BaseTask):
             },
             'set_values': {
                 'type': 'map', 'required': False,
-                'description': 'Valeurs à ajouter/modifier (pour set)',
+                'description': 'Values to add/modify (pour set)',
             },
             'delete_keys': {
                 'type': 'list', 'required': False,
-                'description': 'Clés à supprimer (pour delete)',
+                'description': 'Keys to delete (pour delete)',
             },
             'output_format': {
                 'type': 'select', 'required': False, 'default': 'json',
@@ -137,5 +137,5 @@ class TransformJSONTask(BaseTask):
         }
 
 
-# Enregistrement dans la factory
+# Register in the factory
 TaskFactory.register(TransformJSONTask)

@@ -1,6 +1,6 @@
 # ParseXML / TransformXML Tasks
 
-"""Tâches XML - Parser et transformer du XML."""
+"""Tasks XML - Parse and transform XML."""
 
 import json
 import logging
@@ -116,7 +116,7 @@ class ParseXMLTask(BaseTask):
 
 
 class TransformXMLTask(BaseTask):
-    """Transformer du JSON en XML."""
+    """Transform JSON into XML."""
 
     TYPE = "transformXML"
     VERSION = "1.0.0"

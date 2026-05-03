@@ -1,7 +1,7 @@
 # Input/Output Port Tasks
 
 """
-Ports d'entrée et de sortie pour les Process Groups.
+Input and output ports for Process Groups.
 """
 
 from typing import Dict, Any, List
@@ -10,12 +10,12 @@ from core.base_task import BaseTask
 
 
 class InputPortTask(BaseTask):
-    """Port d'entrée - point d'entrée d'un ProcessGroup."""
+    """Input port - entry point d'un ProcessGroup."""
 
     TYPE = "inputPort"
     VERSION = "1.0.0"
     NAME = "Input Port"
-    DESCRIPTION = "Port d'entrée pour un Process Group"
+    DESCRIPTION = "Input port pour un Process Group"
     ICON = "log-in"
 
     def __init__(self, config: Dict[str, Any]):
@@ -30,18 +30,18 @@ class InputPortTask(BaseTask):
         return {
             'port_name': {
                 'type': 'string', 'required': False, 'default': 'input',
-                'description': "Nom du port d'entrée",
+                'description': "Input port name",
             },
         }
 
 
 class OutputPortTask(BaseTask):
-    """Port de sortie - point de sortie d'un ProcessGroup."""
+    """Output port - exit point d'un ProcessGroup."""
 
     TYPE = "outputPort"
     VERSION = "1.0.0"
     NAME = "Output Port"
-    DESCRIPTION = "Port de sortie pour un Process Group"
+    DESCRIPTION = "Output port pour un Process Group"
     ICON = "log-out"
 
     def __init__(self, config: Dict[str, Any]):

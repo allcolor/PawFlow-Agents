@@ -1,15 +1,15 @@
-# Architecture Détaillée - PawFlow
+# Detailed Architecture - PawFlow
 
-Ce document décrit l'architecture interne de PawFlow, ses composants principaux et leurs interactions.
+This document describes PawFlow's internal architecture, its core components, and their interactions.
 
 ---
 
-## Vue d'ensemble
+## Overview
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                              PawFlow Architecture                              │
-├──────────────────────────────────────────────────────────────────────────────┤
+├───────���──────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌──────────────┐  ┌───────────────────┐  ┌──────────────┐  ┌────────────┐ │
 │  │    Core      │  │      Engine       │  │ Listener/UI  │  │  Clients   │ │
@@ -31,56 +31,56 @@ Ce document décrit l'architecture interne de PawFlow, ses composants principaux
 
 ---
 
-## FlowFile : Structure et Cycle de Vie
+## FlowFile: Structure and Lifecycle
 
-### Définition
+### Definition
 
-Le **FlowFile** est l'unité fondamentale de données dans PawFlow. Il contient du contenu binaire et des attributs metadata, avec support transparent du streaming et du disk-spill.
+The **FlowFile** is the fundamental data unit in PawFlow. It holds binary content and metadata attributes, with transparent streaming and disk-spill support.
 
 ### Structure
 
 ```python
 class FlowFile:
-    _content_ref: ContentReference  # In-memory ou disk-backed (transparent)
-    attributes: Dict[str, str]      # Metadata clé-valeur
-    process_id: str                 # UUID unique
-    created_at: datetime            # Timestamp de création
+    _content_ref: ContentReference  # In-memory or disk-backed (transparent)
+    attributes: Dict[str, str]      # Key-value metadata
+    process_id: str                 # Unique UUID
+    created_at: datetime            # Creation timestamp
 ```
 
 ### API
 
 ```python
-# Attributs
+# Attributes
 flowfile.get_attribute('key', 'default')
 flowfile.set_attribute('key', 'value')
 flowfile.delete_attribute('key')
-flowfile.get_attributes()          # copie du dict
+flowfile.get_attributes()          # copy of the dict
 
-# Contenu (backward-compatible)
-content = flowfile.get_content()   # bytes (charge en mémoire si spilled)
-flowfile.set_content(b'data')      # auto-spill si > SPILL_THRESHOLD
+# Content (backward-compatible)
+content = flowfile.get_content()   # bytes (loads into memory if spilled)
+flowfile.set_content(b'data')      # auto-spill if > SPILL_THRESHOLD
 
-# Streaming (nouveau — pour fichiers volumineux)
-stream = flowfile.get_content_stream()   # BinaryIO (BytesIO ou file handle)
+# Streaming (new — for large files)
+stream = flowfile.get_content_stream()   # BinaryIO (BytesIO or file handle)
 flowfile.set_content_from_stream(stream, size_hint=10_000_000)
 
-# Taille et état
-flowfile.size()                    # int (sans charger le contenu)
+# Size and state
+flowfile.size()                    # int (without loading content)
 flowfile.is_empty()                # bool
 flowfile.is_content_on_disk        # bool
 
-# Clonage
-clone = flowfile.clone(deep=True)  # deep=True: copie indépendante
-clone = flowfile.clone(deep=False) # deep=False: partage via ref-counting
+# Cloning
+clone = flowfile.clone(deep=True)  # deep=True: independent copy
+clone = flowfile.clone(deep=False) # deep=False: shared via ref-counting
 ```
 
-### Streaming et Disk-Spill (ContentReference + SpillTracker)
+### Streaming and Disk-Spill (ContentReference + SpillTracker)
 
-Les FlowFiles supportent le streaming transparent :
-- **Contenu < SPILL_THRESHOLD** (10 MB) : stocké en mémoire
-- **Contenu ≥ SPILL_THRESHOLD** : automatiquement spilled sur disque
+FlowFiles support transparent streaming:
+- **Content < SPILL_THRESHOLD** (10 MB): stored in memory
+- **Content ≥ SPILL_THRESHOLD**: automatically spilled to disk
 
-Le `SpillTracker` gère le ref-counting et le nettoyage des fichiers temporaires :
+The `SpillTracker` handles ref-counting and temporary file cleanup:
 ```python
 from core.stream import get_spill_tracker
 stats = get_spill_tracker().get_stats()
@@ -89,84 +89,84 @@ stats = get_spill_tracker().get_stats()
 
 ---
 
-## Task : Interface et Services Injectés
+## Task: Interface and Injected Services
 
 ```python
 class Task:
-    TYPE: str           # Identifiant unique
-    VERSION: str        # Version sémantique
-    NAME: str           # Nom affiché
+    TYPE: str           # Unique identifier
+    VERSION: str        # Semantic version
+    NAME: str           # Display name
     DESCRIPTION: str    # Description
-    ICON: str           # Icône pour la GUI
+    ICON: str           # GUI icon
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Exécuter la tâche. Retourne 0, 1, ou N FlowFiles."""
+        """Execute the task. Returns 0, 1, or N FlowFiles."""
 
     def get_parameter_schema(self) -> Dict[str, Any]:
-        """Schema des paramètres pour validation et UI."""
+        """Parameter schema for validation and UI."""
 
-    # Services injectés par l'executor
+    # Services injected by the executor
     def get_service(self, service_id: str) -> Any:
-        """Accéder à un service partagé."""
+        """Access a shared service."""
 
     def set_services(self, services: Dict[str, Any]):
-        """Appelé par l'executor pour injecter les services."""
+        """Called by the executor to inject services."""
 ```
 
 ### Configuration
 
-Les tasks reçoivent un dict plat :
+Tasks receive a flat dict:
 ```python
 task = LogTask({"message": "hello", "level": "INFO"})
-# Accès : self.config.get("message")
+# Access: self.config.get("message")
 ```
 
 ---
 
-## Connection : Queues avec Backpressure
+## Connection: Queues with Backpressure
 
-Les `Connection` relient les tasks dans le mode continu. Chaque connection est une queue FIFO.
+`Connection` objects link tasks in continuous mode. Each connection is a FIFO queue.
 
 ```python
 class Connection:
     source_id: str
     target_id: str
     relationship: str            # "success", "failure", "matched", etc.
-    max_queue_size: int = 10000  # Backpressure par nombre
-    max_queue_bytes: int = ...   # Backpressure par taille
-    flowfile_ttl_seconds: float  # TTL des FlowFiles (0 = pas de TTL)
+    max_queue_size: int = 10000  # Backpressure by count
+    max_queue_bytes: int = ...   # Backpressure by size
+    flowfile_ttl_seconds: float  # FlowFile TTL (0 = no TTL)
 
-    def enqueue(ff) -> bool      # False si backpressure
+    def enqueue(ff) -> bool      # False if backpressure
     def dequeue() -> FlowFile
-    def peek() -> FlowFile       # Sans retirer
+    def peek() -> FlowFile       # Without removing
     def is_empty() -> bool
     def queue_size() -> int
-    def drain_expired() -> list  # FlowFiles expirés (TTL)
+    def drain_expired() -> list  # Expired FlowFiles (TTL)
 ```
 
 ---
 
-## Deux Modes d'Exécution
+## Two Execution Modes
 
 ### 1. FlowExecutor (Batch)
 
-Exécute le DAG niveau par niveau avec parallélisme :
+Executes the DAG level by level with parallelism:
 
 ```python
 executor = FlowExecutor(
-    max_workers=10,        # Threads parallèles
-    max_retries=3,         # Retries par tâche
-    flow_timeout=300,      # Timeout global (s)
-    provenance=repo,       # ProvenanceRepository (optionnel)
+    max_workers=10,        # Parallel threads
+    max_retries=3,         # Retries per task
+    flow_timeout=300,      # Global timeout (s)
+    provenance=repo,       # ProvenanceRepository (optional)
 )
 result = executor.execute_flow(flow, input_flowfiles=[ff])
 ```
 
-Séquence : tri topologique → niveaux → parallel execution → clone si branching → résultat.
+Sequence: topological sort → levels → parallel execution → clone if branching → result.
 
 ### 2. ContinuousFlowExecutor (NiFi-style)
 
-Exécution continue avec queues et transactions :
+Continuous execution with queues and transactions:
 
 ```python
 executor = ContinuousFlowExecutor(
@@ -182,31 +182,31 @@ executor.get_status()
 executor.stop()
 ```
 
-**Transaction model :**
-1. **Peek** : FlowFile lu de la queue d'entrée (sans retirer)
-2. **Execute** : tâche exécutée
-3. **Commit** : FlowFile retiré de l'entrée, résultats envoyés en sortie
-4. **Rollback** : FlowFile reste dans la queue, tâche passe en ERROR
+**Transaction model:**
+1. **Peek**: FlowFile read from the input queue (without removing)
+2. **Execute**: task executed
+3. **Commit**: FlowFile removed from input, results sent to output
+4. **Rollback**: FlowFile stays in the queue, task transitions to ERROR
 
-**Routing par relationship :**
-- FlowFiles avec attribut `route.relationship` → connection correspondante
-- Fallback → toutes les connections sortantes
+**Relationship routing:**
+- FlowFiles with `route.relationship` attribute → matching connection
+- Fallback → all output connections
 
-**Failure routing (penalty box) :**
-- Si une connection "failure" existe → FlowFile déqueué et routé là
-- Sinon → FlowFile reste dans la queue, tâche en ERROR, backpressure cascade
+**Failure routing (penalty box):**
+- If a "failure" connection exists → FlowFile dequeued and routed there
+- Otherwise → FlowFile stays in the queue, task in ERROR, backpressure cascades
 
-**Hot-swap :**
+**Hot-swap:**
 ```python
-executor.update_task("task_id", new_config)    # Change config sans perte
-executor.update_flow(new_flow)                  # Mise à jour structurelle
+executor.update_task("task_id", new_config)    # Change config without loss
+executor.update_flow(new_flow)                  # Structural update
 ```
 
 ---
 
-## Checkpointing et Crash Recovery
+## Checkpointing and Crash Recovery
 
-Le `CheckpointManager` sauvegarde périodiquement l'état des queues :
+The `CheckpointManager` periodically saves queue state:
 
 ```python
 mgr = CheckpointManager(flow_id="my_flow", max_checkpoints=5)
@@ -215,15 +215,15 @@ data = mgr.load_latest_checkpoint()
 flowfiles = mgr.restore_flowfiles(data)
 ```
 
-Format : JSON avec contenu FlowFile en base64 (petits) ou fichiers (> 256 KB).
+Format: JSON with FlowFile content as base64 (small) or files (> 256 KB).
 
 ---
 
-## Workers Distants
+## Remote Workers
 
 ### WorkerCoordinator
 
-Distribue les tâches sur des workers locaux ou distants :
+Distributes tasks across local or remote workers:
 
 ```python
 coord = WorkerCoordinator(
@@ -234,11 +234,11 @@ coord.register_worker("remote-1", "192.168.1.10", 9000)
 coord.get_health_summary()
 ```
 
-**Circuit breaker** : après N échecs consécutifs, worker → OFFLINE.
+**Circuit breaker**: after N consecutive failures, worker → OFFLINE.
 
 ### WorkerServer / WorkerClient
 
-Communication HTTP avec protocole binaire streaming et auth API key :
+HTTP communication with binary streaming protocol and API key auth:
 
 ```python
 server = WorkerServer(port=9000, api_key="secret")
@@ -250,16 +250,16 @@ result = client.execute_task("log", config, content, attributes)
 
 ---
 
-## Sécurité (RBAC)
+## Security (RBAC)
 
-### Rôles et Permissions
+### Roles and Permissions
 
-| Rôle | Permissions |
+| Role | Permissions |
 |------|-------------|
-| **admin** | Tout : users, plugins, settings, flows, execute, monitor |
+| **admin** | All: users, plugins, settings, flows, execute, monitor |
 | **editor** | flows CRUD, execute, monitor, services |
 | **operator** | execute, monitor |
-| **viewer** | monitor (lecture seule) |
+| **viewer** | monitor (read-only) |
 
 ### SecurityManager
 
@@ -276,7 +276,7 @@ security.set_oauth_config("google", {...})
 
 ## Plugin System (.pfp)
 
-Les plugins sont des archives ZIP contenant tasks, services et flows :
+Plugins are ZIP archives containing tasks, services, and flows:
 
 ```
 plugin.json, tasks/, services/, flows/, requirements.txt
@@ -312,6 +312,7 @@ Important routes:
 | `/terminal/<session>/<token>/...` | Capability-protected terminal proxy |
 | `/code/<session>/<token>/...` | Capability-protected code-server proxy |
 | `/fwd/<forward>/<token>/...` | Capability-protected port-forward proxy |
+
 ---
 
 ## Scheduler (CRON)
@@ -323,33 +324,33 @@ scheduler.start()
 scheduler.save_jobs()
 ```
 
-Format CRON standard : `minute hour day month weekday`
+Standard CRON format: `minute hour day month weekday`
 
 ---
 
 ## Provenance
 
-Le `ProvenanceRepository` trace le cycle de vie de chaque FlowFile :
+The `ProvenanceRepository` tracks the lifecycle of each FlowFile:
 
 ```python
 repo = get_provenance_repository()
 events = repo.get_events(flowfile_id="abc", limit=100)
-lineage = repo.get_lineage("abc")  # Lignage complet
+lineage = repo.get_lineage("abc")  # Full lineage
 stats = repo.to_dict()
 ```
 
-Types d'événements : CREATE, RECEIVE, SEND, MODIFY, CLONE, DROP, ROUTE.
+Event types: CREATE, RECEIVE, SEND, MODIFY, CLONE, DROP, ROUTE.
 
 ---
 
 ## Cluster Mode
 
-Le module `engine/cluster.py` fournit un mode cluster pour la coordination multi-noeud :
+The `engine/cluster.py` module provides cluster mode for multi-node coordination:
 
-- Election de leader pour eviter les conflits d'execution
-- Synchronisation d'etat entre les noeuds
-- Distribution automatique des flows sur les workers disponibles
-- Health monitoring inter-noeuds
+- Leader election to avoid execution conflicts
+- State synchronization between nodes
+- Automatic flow distribution across available workers
+- Inter-node health monitoring
 
 ---
 
@@ -359,10 +360,8 @@ UI/runtime integrations use the listener routes above and the PawFlow relay/clie
 
 ---
 
-## Deploiement Docker
-## Deploiement Docker
+## Docker Deployment
 
-PawFlow fournit un `Dockerfile` et un `docker-compose.yml` pour lancer le listener/UI sur le port `9090`, avec persistance sous `data/` et support des containers provider/relay quand Docker est disponible.
+PawFlow provides a `Dockerfile` and a `docker-compose.yml` to run the listener/UI on port `9090`, with persistence under `data/` and support for provider/relay containers when Docker is available.
 
-Voir **[deployment.md](deployment.md)** pour le guide complet.
-Voir **[deployment.md](deployment.md)** pour le guide complet.
+See **[deployment.md](deployment.md)** for the full guide.

@@ -278,10 +278,10 @@ class AgentActionsMixin:
         """Handle /conv commands from Telegram for cross-channel conversation management.
 
         Commands:
-          /conv list       â€” list the user's conversations
-          /conv select ID  â€” switch active conversation
-          /conv new        â€” start a new conversation
-          /conv info       â€” show current active conversation
+          /conv list       - list the user's conversations
+          /conv select ID  - switch active conversation
+          /conv new        - start a new conversation
+          /conv info       - show current active conversation
         """
         from core.identity_service import IdentityService
         ids = IdentityService.instance()
@@ -367,7 +367,7 @@ class AgentActionsMixin:
             )
         return [flowfile]
 
-    # â”€â”€ Random Thought â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Random thought
 
 
     def _handle_random_thought(self, body: Dict, conv_id: str,
@@ -386,7 +386,7 @@ class AgentActionsMixin:
             agent_name = active_res.get("agent", "")
         if not agent_name:
             raise RuntimeError("No agent resolved for this conversation. Add an agent first.")
-        # Resolve nickname â†’ real name (case-insensitive)
+        # Resolve nickname -> real name (case-insensitive)
         if agent_name:
             agent_name = self._resolve_agent_name(agent_name, conv_id)
         # Normalize agent name for key consistency (case-insensitive)
@@ -511,7 +511,7 @@ class AgentActionsMixin:
 
     @staticmethod
     def _parse_thought_frequency(spec: str):
-        """Parse frequency spec like '2-3/h' â†’ (min_interval, max_interval) in seconds.
+        """Parse frequency spec like '2-3/h' -> (min_interval, max_interval) in seconds.
 
         Format: ``<count_min>[-<count_max>]/<number?><unit>``
         Units: s=1, m=60, h=3600, d=86400.
@@ -529,7 +529,7 @@ class AgentActionsMixin:
         duration_num = int(m.group(3) or 1)
         unit = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[m.group(4)]
         period = duration_num * unit
-        # More counts â†’ shorter intervals
+        # More counts -> shorter intervals
         max_interval = period // count_min
         min_interval = period // count_max
         return (min_interval, max_interval)
@@ -586,8 +586,57 @@ class AgentActionsMixin:
         from core.conversation_event_bus import ConversationEventBus
         bus = ConversationEventBus.instance()
 
+        def _refresh_active_context_from_store(target_agent: str = ""):
+            """Replace active in-memory messages with the compacted store view."""
+            try:
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                target = "" if target_agent in ("", "shared", "ALL") else target_agent
+
+                def _agent_from_key(key: str) -> str | None:
+                    if key == conv_id:
+                        return ""
+                    prefix = conv_id + ":"
+                    if key.startswith(prefix):
+                        return key[len(prefix):]
+                    return None
+
+                def _load_context_for(agent: str):
+                    if agent:
+                        data = store.load_agent_context(conv_id, agent)
+                        if data is not None:
+                            return data
+                    data = store.load_context(conv_id)
+                    if data is not None:
+                        return data
+                    return store.load(conv_id)
+
+                with self._active_contexts_lock:
+                    active_items = list(self._active_contexts.items())
+                for key, active_ctx in active_items:
+                    active_agent = _agent_from_key(key)
+                    if active_agent is None:
+                        continue
+                    if target and active_agent != target:
+                        continue
+                    raw = _load_context_for(active_agent)
+                    if not raw:
+                        continue
+                    refreshed = self._deserialize_messages(
+                        raw, conversation_id=conv_id)
+                    active_msgs = active_ctx.get("messages")
+                    if isinstance(active_msgs, list):
+                        active_msgs[:] = refreshed
+                        active_ctx.pop("_context_usage_cache", None)
+                        active_ctx.pop("_auto_compact_usage_cache", None)
+            except Exception:
+                logger.debug(
+                    "active context refresh after compact failed",
+                    exc_info=True)
+
         def _bg():
-            self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
+            if op_name != "compact":
+                self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
             if not self._acquire_context_op(conv_id, agent_name,
                                              timeout=60.0):
                 bus.publish_event(conv_id, "compact_progress", {
@@ -607,7 +656,9 @@ class AgentActionsMixin:
                 else:
                     # Shared context changed — clear all agent sessions
                     self._clear_claude_session(conv_id, "")
-                if op_name != "compact":
+                if op_name == "compact":
+                    _refresh_active_context_from_store(_agent)
+                else:
                     bus.publish_event(conv_id, "compact_progress", {
                         "stage": "done", **result,
                     })

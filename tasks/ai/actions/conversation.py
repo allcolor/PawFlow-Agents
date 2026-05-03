@@ -259,7 +259,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
-    # â”€â”€ Filesystem explorer actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Filesystem explorer actions
 
     if action == "clear":
         conv_id = body.get("conversation_id", "")
@@ -906,7 +906,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             # Shared context file: agents resuming the imported conv read
             # their LLM context from here (or from their own agent dir, which
             # falls back to shared). Without this file the "Shared" view
-            # shows "divergé / aucun contexte" and the agent has no memory.
+            # shows "diverged / no context" and the agent has no memory.
             # Use ConversationStore's filter so imported convs match native
             # ones exactly (no tool rows, tool_calls stripped, source kept).
             store._cid_user[cid] = user_id  # required for _conv_dir lookups

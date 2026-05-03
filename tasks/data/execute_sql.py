@@ -1,7 +1,7 @@
 # ExecuteSQL Task
 
 """
-Exécuter une requête SQL et retourner les résultats.
+Execute a SQL query and return the results.
 """
 
 import sqlite3
@@ -12,12 +12,12 @@ from core.base_task import BaseTask
 
 
 class ExecuteSQLTask(BaseTask):
-    """Exécuter une requête SQL sur une base SQLite."""
+    """Execute a SQL query on a SQLite database."""
 
     TYPE = "executeSQL"
     VERSION = "1.0.0"
     NAME = "Execute SQL"
-    DESCRIPTION = "Exécuter une requête SQL et retourner les résultats en JSON"
+    DESCRIPTION = "Execute a SQL query and return the results en JSON"
     ICON = "database"
 
     def __init__(self, config: Dict[str, Any]):
@@ -27,9 +27,9 @@ class ExecuteSQLTask(BaseTask):
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         if not self.sql_query:
-            raise TaskError("Le paramètre 'sql_query' est requis.")
+            raise TaskError("The 'sql_query' parameter is required.")
         if not self.db_path:
-            raise TaskError("Le paramètre 'db_path' est requis.")
+            raise TaskError("The 'db_path' parameter is required.")
 
         conn = sqlite3.connect(self.db_path)
         try:
@@ -59,7 +59,7 @@ class ExecuteSQLTask(BaseTask):
         return {
             'sql_query': {
                 'type': 'textarea', 'required': True,
-                'description': 'Requête SQL à exécuter',
+                'description': 'SQL query to execute',
             },
             'db_path': {
                 'type': 'string', 'required': True,
@@ -69,12 +69,12 @@ class ExecuteSQLTask(BaseTask):
 
 
 class PutSQLTask(BaseTask):
-    """Exécuter un statement SQL avec le contenu du FlowFile."""
+    """Execute a SQL statement with the FlowFile content."""
 
     TYPE = "putSQL"
     VERSION = "1.0.0"
     NAME = "Put SQL"
-    DESCRIPTION = "Exécuter un statement SQL paramétré par le contenu du FlowFile"
+    DESCRIPTION = "Execute a SQL statement parameterized by the FlowFile content"
     ICON = "database"
 
     def __init__(self, config: Dict[str, Any]):
@@ -84,9 +84,9 @@ class PutSQLTask(BaseTask):
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         if not self.sql_statement:
-            raise TaskError("Le paramètre 'sql_statement' est requis.")
+            raise TaskError("The 'sql_statement' parameter is required.")
         if not self.db_path:
-            raise TaskError("Le paramètre 'db_path' est requis.")
+            raise TaskError("The 'db_path' parameter is required.")
 
         content_str = flowfile.get_content().decode('utf-8')
         sql = self.sql_statement.replace('${content}', content_str)
@@ -108,7 +108,7 @@ class PutSQLTask(BaseTask):
         return {
             'sql_statement': {
                 'type': 'textarea', 'required': True,
-                'description': 'Statement SQL (utiliser ${content} pour le contenu du FlowFile)',
+                'description': 'SQL statement (use ${content} for FlowFile content)',
             },
             'db_path': {
                 'type': 'string', 'required': True,

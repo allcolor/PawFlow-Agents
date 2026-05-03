@@ -1,8 +1,8 @@
 # Engine Module
 
 """
-Module Engine.
-Moteur d'exécution des flux PawFlow.
+Engine module.
+PawFlow flow execution engine.
 """
 
 from engine.continuous_executor import ContinuousFlowExecutor, ExecutionResult, TaskStats

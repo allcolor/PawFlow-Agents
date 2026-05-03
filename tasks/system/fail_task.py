@@ -1,7 +1,7 @@
 # Fail Task Implementation
 
 """
-Tâche Fail - Échouer explicitement un FlowFile.
+Task Fail - Explicitly fail a FlowFile.
 """
 
 from typing import Dict, Any, List
@@ -11,26 +11,26 @@ from core.base_task import BaseTask
 
 class FailTask(BaseTask):
     """
-    Tâche pour échouer explicitement un FlowFile.
+    Task for explicitly failing a FlowFile.
     
-    Utile pour forcer l'échec d'un traitement ou tester
-    les mécanismes de retry.
+    Useful for forcing processing failure or testing
+    retry mechanisms.
     """
     
     TYPE = "fail"
     VERSION = "1.0.0"
-    NAME = "Échouer"
-    DESCRIPTION = "Échouer explicitement un FlowFile"
+    NAME = "Fail"
+    DESCRIPTION = "Explicitly fail a FlowFile"
     ICON = "fail"
     
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialiser la tâche Fail.
+        Initialize the Fail task.
         
         Args:
             config: Configuration avec:
-                - message: Message d'erreur (optionnel)
-                - terminate: Terminer le flow entier (par défaut: true)
+                - message: Error message (optionnel)
+                - terminate: Terminate the entire flow (default: true)
         """
         super().__init__(config)
         
@@ -39,30 +39,30 @@ class FailTask(BaseTask):
     
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """
-        Exécuter la tâche Fail.
+        Execute the Fail task.
         
         Args:
-            flowfile: FlowFile d'entrée
+            flowfile: Input FlowFile
             
         Returns:
-            Liste vide (aucun FlowFile en sortie)
+            Empty list (no output FlowFile)
             
         Raises:
-            TaskError: Toujours levé pour forcer l'échec
+            TaskError: Always raised to force failure
         """
-        # Mettre à jour l'attribut d'erreur
+        # Update the error attribute
         flowfile.set_attribute('error.message', self.message)
         flowfile.set_attribute('error.count', '1')
         
-        # Lever l'erreur
+        # Raise the error
         raise TaskError(self.message)
     
     def get_parameter_schema(self) -> Dict[str, Any]:
         """
-        Retourner le schéma des paramètres.
+        Return the parameter schema.
         
         Returns:
-            Schema des paramètres pour l'UI
+            Parameter schema for the UI
         """
         return {
             'message': {

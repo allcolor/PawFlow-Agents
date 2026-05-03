@@ -1,7 +1,7 @@
 # DBConnectionPool Service
 
 """
-Service de pool de connexions base de données.
+Database connection pool service.
 Supporte SQLite et PostgreSQL.
 """
 
@@ -17,7 +17,7 @@ except ImportError:
 
 
 class DBConnectionPoolService(BaseService):
-    """Pool de connexions base de données."""
+    """Database connection pool."""
 
     TYPE = "dbConnectionPool"
     VERSION = "1.0.0"

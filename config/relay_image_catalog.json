@@ -189,6 +189,7 @@
       "implies": ["desktop.runtime"],
       "estimated_size_mb": 430
     },
+    "gui.blender": {"label": "Blender", "category": "gui_apps", "apt": ["blender"], "implies": ["desktop.runtime"], "estimated_size_mb": 520},
     "gui.vscode": {
       "label": "VS Code desktop",
       "category": "gui_apps",

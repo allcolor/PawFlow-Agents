@@ -134,7 +134,7 @@ class TestConvertJSONToCSVTask:
 
         with pytest.raises(Exception) as exc_info:
             task.execute(ff)
-        assert "tableau" in str(exc_info.value)
+        assert "array" in str(exc_info.value)
 
 
 class TestExecuteSQLTask:

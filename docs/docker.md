@@ -294,6 +294,16 @@ The `exec` action supports a `shell` parameter:
 
 Docker shells (`docker-*`) create a new container per command. For persistent containers, use the relay `--docker-image` flag instead.
 
+### Optional RTK rewrite
+
+The `pawflow-relay-dev` image includes the `rtk` CLI. When `PAWFLOW_USE_RTK`
+is truthy (`1`, `true`, `yes`, `on`) and the selected relay target has the
+`rtk` binary, PawFlow uses RTK on compatible relay-backed tools: `bash` and
+`run_tests` run `rtk rewrite <command>` before execution, while `read`, `grep`,
+and `glob` use `rtk read`, `rtk grep`, and `rtk find`. If the variable is not
+truthy, RTK is unavailable, or RTK cannot handle a request, the native tool
+path runs unchanged.
+
 ## 4. ExecuteScript Containerization
 
 Run flow scripts in Docker for isolation.

@@ -1,7 +1,9 @@
 """bash — Execute a shell command via relay."""
 
 import logging
+import os
 import re
+import shlex
 import subprocess
 from typing import Any, Dict, Optional
 
@@ -36,6 +38,8 @@ _DANGEROUS_PATTERNS = [
      "Blocked: fork bomb detected"),
 ]
 
+_RTK_SHELLS = {"", "bash", "sh"}
+
 
 def _check_dangerous_command(command: str) -> Optional[str]:
     """Check if a command matches known dangerous patterns.
@@ -49,6 +53,10 @@ def _check_dangerous_command(command: str) -> Optional[str]:
                           command[:100], message)
             return f"Error: {message}. This command was blocked as a safety measure."
     return None
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class BashHandler(BaseFsHandler):
@@ -139,6 +147,78 @@ class BashHandler(BaseFsHandler):
             return raw // 1000
         return raw
 
+    def _rtk_enabled(self, arguments: dict) -> bool:
+        """Return whether relay bash commands should use RTK rewriting."""
+        secret_env = arguments.get("_secret_env") or {}
+        if "PAWFLOW_USE_RTK" in secret_env:
+            return _truthy(secret_env.get("PAWFLOW_USE_RTK"))
+        if "PAWFLOW_USE_RTK" in os.environ:
+            return _truthy(os.environ.get("PAWFLOW_USE_RTK"))
+        try:
+            from core.expression import resolve_expression
+            raw = resolve_expression(
+                "$" + "{" + "PAWFLOW_USE_RTK:default(\"\")" + "}",
+                owner=self._user_id,
+                conversation_id=self._conversation_id,
+            )
+        except Exception:
+            raw = ""
+        return _truthy(raw)
+
+    def _maybe_rewrite_with_rtk(self, svc, path: str, command: str,
+                                arguments: dict, timeout) -> str:
+        """Best-effort RTK command rewrite.
+
+        RTK is opt-in and unsupported commands fall back to the original input.
+        The rewrite runs on the same relay target as the final command so local
+        host execution only uses RTK when that host actually provides it.
+        """
+        shell = arguments.get("shell", "") or ""
+        if shell not in _RTK_SHELLS:
+            return command
+        if command.strip().startswith("rtk "):
+            return command
+        if not self._rtk_enabled(arguments):
+            return command
+
+        rewrite_kwargs = {"shell": shell}
+        if "timeout" in arguments:
+            rewrite_kwargs["timeout"] = timeout
+        if arguments.get("_secret_env"):
+            rewrite_kwargs["env"] = arguments["_secret_env"]
+
+        try:
+            result = svc.exec(
+                path,
+                "rtk rewrite " + shlex.quote(command),
+                local=bool(arguments.get("local", False)),
+                **rewrite_kwargs,
+            )
+        except Exception as exc:
+            logger.debug("[bash] RTK rewrite failed; using raw command: %s", exc)
+            return command
+
+        if result.get("returncode", 0) != 0:
+            logger.debug(
+                "[bash] RTK rewrite unsupported rc=%s; using raw command",
+                result.get("returncode"),
+            )
+            return command
+        lines = [
+            line.strip()
+            for line in str(result.get("stdout", "")).splitlines()
+            if line.strip() and not line.strip().startswith("[rtk]")
+        ]
+        if not lines:
+            return command
+        rewritten = lines[-1]
+        if _check_dangerous_command(rewritten):
+            logger.warning("[bash] RTK rewrite produced blocked command; using raw command")
+            return command
+        if rewritten != command:
+            logger.info("[bash] RTK rewrite: %s -> %s", command[:120], rewritten[:120])
+        return rewritten
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
         arguments = self._resolve_expressions(arguments)
@@ -192,6 +272,8 @@ class BashHandler(BaseFsHandler):
             # Pass secret env vars (injected by tool_relay_service)
             if arguments.get("_secret_env"):
                 _exec_kwargs["env"] = arguments["_secret_env"]
+            command = self._maybe_rewrite_with_rtk(
+                svc, path, command, arguments, timeout)
             result = svc.exec(
                 path, command, local=bool(arguments.get("local", False)),
                 **_exec_kwargs)
@@ -264,8 +346,10 @@ class BashHandler(BaseFsHandler):
                     path = arguments.get("path", ".")
                     shell = arguments.get("shell", "")
                     timeout = self._resolve_timeout(arguments)
+                    exec_command = self._maybe_rewrite_with_rtk(
+                        svc, path, command, arguments, timeout)
                     result = svc.exec(
-                        path, command, shell=shell, timeout=timeout,
+                        path, exec_command, shell=shell, timeout=timeout,
                         local=bool(arguments.get("local", False)))
                 else:
                     result = {"stdout": "Error: no relay", "returncode": 1}

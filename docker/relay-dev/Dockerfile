@@ -102,8 +102,10 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     sh -s -- -y --default-toolchain stable --profile default
 ENV PATH="/home/pawflow/.cargo/bin:${PATH}"
 RUN cargo install cargo-watch cargo-edit cargo-expand \
+    && cargo install --git https://github.com/rtk-ai/rtk \
     && rustup component add clippy rustfmt rust-analyzer
 USER root
+RUN install -m 0755 /home/pawflow/.cargo/bin/rtk /usr/local/bin/rtk
 
 # ── Go ──────────────────────────────────────────────────────────────
 RUN curl -fsSL https://go.dev/dl/go1.23.6.linux-amd64.tar.gz | \

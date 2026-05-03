@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shlex
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.tool_handler import ToolHandler
@@ -96,6 +97,10 @@ def cap_binary_output(text: str, cap: int = _BINARY_CAP) -> str:
     if 'data:' in text[:200] and ';base64,' in text[:200]:
         return text[:cap] + f"\n\n... [data URI truncated — {len(text)} chars total]"
     return text
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class BaseFsHandler(ToolHandler):
@@ -233,6 +238,57 @@ class BaseFsHandler(ToolHandler):
                     f"Available: {', '.join(names)}. "
                     f"Use the source/destination/filesystem parameter.")
         return "Error: no filesystem services available."
+
+    # ── Optional RTK helpers ──
+
+    def _rtk_enabled(self, arguments: Dict[str, Any]) -> bool:
+        """Return whether filesystem tools should prefer RTK output."""
+        secret_env = arguments.get("_secret_env") or {}
+        if "PAWFLOW_USE_RTK" in secret_env:
+            return _truthy(secret_env.get("PAWFLOW_USE_RTK"))
+        if "PAWFLOW_USE_RTK" in os.environ:
+            return _truthy(os.environ.get("PAWFLOW_USE_RTK"))
+        try:
+            from core.expression import resolve_expression
+            raw = resolve_expression(
+                "$" + "{" + "PAWFLOW_USE_RTK:default(\"\")" + "}",
+                owner=self._user_id,
+                conversation_id=self._conversation_id,
+            )
+        except Exception:
+            raw = ""
+        return _truthy(raw)
+
+    def _relay_exec_rtk(self, svc, path: str, args: List[str],
+                        arguments: Dict[str, Any]) -> Optional[str]:
+        """Run an RTK command on the relay, returning stdout or None.
+
+        This is best-effort: missing RTK, unsupported flags, or non-zero exit
+        all fall back to the native handler path.
+        """
+        if not self._rtk_enabled(arguments):
+            return None
+        if not hasattr(svc, "exec"):
+            return None
+        command = " ".join(shlex.quote(part) for part in args)
+        kwargs = {"shell": ""}
+        if arguments.get("_secret_env"):
+            kwargs["env"] = arguments["_secret_env"]
+        try:
+            result = svc.exec(
+                path,
+                command,
+                local=bool(arguments.get("local", False)),
+                **kwargs,
+            )
+        except Exception as exc:
+            logger.debug("[rtk] command failed; using native path: %s", exc)
+            return None
+        if result.get("returncode", 0) != 0:
+            logger.debug("[rtk] command rc=%s; using native path", result.get("returncode"))
+            return None
+        output = str(result.get("stdout", ""))
+        return output if output.strip() else None
 
     # ── Path helpers ──
 

@@ -194,4 +194,15 @@ class ReadHandler(BaseFsHandler):
         except UnicodeDecodeError:
             return f"(binary file, {len(data)} bytes)"
 
+        # RTK compact read for relay-backed text files. Preserve native
+        # pagination when callers request a non-zero offset/range because RTK
+        # currently supports max/tail lines, not arbitrary start lines.
+        if offset <= 1:
+            rtk_args = ["rtk", "read", path, "--line-numbers"]
+            if limit:
+                rtk_args.extend(["--max-lines", str(limit)])
+            rtk_output = self._relay_exec_rtk(svc, ".", rtk_args, arguments)
+            if rtk_output is not None:
+                return rtk_output
+
         return self._format_text_read(fname, text, offset, limit)

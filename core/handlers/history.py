@@ -1,5 +1,6 @@
 """Read conversation history tool — lets the LLM pull messages outside ctx."""
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -14,6 +15,8 @@ _ROLE_FILTERS = {"user", "assistant", "tool", "thinking"}
 # messages (a super-bucket range) into the LLM's context.
 _MAX_LIMIT = 100
 _DEFAULT_LIMIT = 50
+
+_QUERY_TOKEN_RE = re.compile(r"[a-z0-9_][a-z0-9_.-]*", re.IGNORECASE)
 
 
 def _paginate(items, offset, limit):
@@ -48,6 +51,23 @@ def _page_footer(offset: int, limit: int, returned: int, total: int,
                  f"read_history(action=\"{action}\", ...) call "
                  f"with offset={offset + limit}.")
     return foot
+
+
+def _search_tokens(query: str) -> List[str]:
+    """Tokenize keyword-style history searches.
+
+    Exact substring search is still tried first. These tokens are only used as
+    a fallback so queries like "rtk PAWFLOW_USE_RTK rewrite" can recover nearby
+    messages even when the words are not a contiguous phrase.
+    """
+    seen = set()
+    tokens = []
+    for token in _QUERY_TOKEN_RE.findall(query.lower()):
+        if len(token) < 2 or token in seen:
+            continue
+        seen.add(token)
+        tokens.append(token)
+    return tokens
 
 
 def _msg_ts(m) -> float:
@@ -173,7 +193,8 @@ class ReadHistoryHandler(ToolHandler):
             "\n"
             "Actions:\n"
             "  recent         — last N messages (tail).\n"
-            "  search         — full-text match (case-insensitive).\n"
+            "  search         — full-text match (case-insensitive), "
+            "with keyword fallback for non-contiguous terms.\n"
             "  read           — a single message by numeric index.\n"
             "  count          — total message count.\n"
             "  range          — inclusive slice [from_msg_id, to_msg_id]. "
@@ -259,7 +280,11 @@ class ReadHistoryHandler(ToolHandler):
                 },
                 "query": {
                     "type": "string",
-                    "description": "Search query (for search action). Case-insensitive text match.",
+                    "description": (
+                        "Search query (for search action). Exact case-insensitive "
+                        "text match first; if no exact phrase matches, terms are "
+                        "matched as keywords and ranked by number of hits."
+                    ),
                 },
                 "index": {
                     "type": "integer",
@@ -399,16 +424,29 @@ class ReadHistoryHandler(ToolHandler):
             return "No history found"
         # Collect every match first, then paginate — the offset/limit
         # pair lets the LLM page through large hit sets instead of being
-        # silently cut off at 20 like the old impl did.
-        hits = []  # list of (index, msg)
+        # silently cut off at 20 like the old impl did. Exact phrase search
+        # wins; keyword fallback handles natural multi-term queries.
+        exact_hits = []  # list of (index, msg)
+        token_hits = []  # list of (-score, index, msg)
         query_lower = query.lower()
+        tokens = _search_tokens(query)
         for i, msg in enumerate(all_msgs):
             if (role_filter or agent_filter) and not _apply_filters(
                     [msg], role_filter, agent_filter):
                 continue
             content = self._render_body(msg, role_filter)
-            if query_lower in content.lower():
-                hits.append((i, msg))
+            content_lower = content.lower()
+            if query_lower in content_lower:
+                exact_hits.append((i, msg))
+                continue
+            if tokens:
+                score = sum(1 for token in tokens if token in content_lower)
+                if score:
+                    token_hits.append((-score, i, msg))
+        hits = exact_hits
+        if not hits and token_hits:
+            token_hits.sort()
+            hits = [(i, msg) for _score, i, msg in token_hits]
         if not hits:
             scope = _scope_label(role_filter, agent_filter)
             tag = f" ({scope})" if scope else ""

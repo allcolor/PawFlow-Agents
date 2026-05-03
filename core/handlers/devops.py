@@ -2,7 +2,9 @@
 
 import json
 import logging
+import os
 import re
+import shlex
 import threading
 from typing import Dict, Any, List, Optional
 
@@ -34,6 +36,7 @@ class RunTestsHandler(ToolHandler):
     """Run pytest on specified test files via filesystem service exec."""
 
     _user_id: str = ""
+    _conversation_id: str = ""
 
     @property
     def name(self) -> str:
@@ -75,6 +78,57 @@ class RunTestsHandler(ToolHandler):
     def set_user_id(self, user_id: str):
         self._user_id = user_id
 
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id
+
+    def _rtk_enabled(self, arguments: Dict[str, Any]) -> bool:
+        """Return whether run_tests should use RTK output."""
+        from core.handlers._fs_base import _truthy
+
+        secret_env = arguments.get("_secret_env") or {}
+        if "PAWFLOW_USE_RTK" in secret_env:
+            return _truthy(secret_env.get("PAWFLOW_USE_RTK"))
+        if "PAWFLOW_USE_RTK" in os.environ:
+            return _truthy(os.environ.get("PAWFLOW_USE_RTK"))
+        try:
+            from core.expression import resolve_expression
+            raw = resolve_expression(
+                "$" + "{" + "PAWFLOW_USE_RTK:default(\"\")" + "}",
+                owner=self._user_id,
+                conversation_id=self._conversation_id,
+            )
+        except Exception:
+            raw = ""
+        return _truthy(raw)
+
+    def _maybe_rewrite_with_rtk(self, svc, cmd: str,
+                                arguments: Dict[str, Any], timeout) -> str:
+        """Best-effort RTK rewrite for pytest commands."""
+        if not self._rtk_enabled(arguments):
+            return cmd
+        try:
+            rewrite_cmd = "rtk rewrite " + shlex.quote(cmd)
+            if "timeout" in arguments:
+                result = svc.exec(".", rewrite_cmd, timeout)
+            else:
+                result = svc.exec(".", rewrite_cmd)
+        except Exception as exc:
+            logger.debug("[run_tests] RTK rewrite failed; using raw command: %s", exc)
+            return cmd
+        if result.get("returncode", 0) != 0:
+            logger.debug(
+                "[run_tests] RTK rewrite unsupported rc=%s; using raw command",
+                result.get("returncode"),
+            )
+            return cmd
+        lines = [
+            line.strip()
+            for line in str(result.get("stdout", "")).splitlines()
+            if line.strip() and not line.strip().startswith("[rtk]")
+        ]
+        return lines[-1] if lines else cmd
+
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         from core.handlers._arg_normalize import normalize_string_list
         test_files = normalize_string_list(arguments.get("test_files"))
@@ -96,8 +150,13 @@ class RunTestsHandler(ToolHandler):
         if test_pattern:
             cmd += f" -k \"{test_pattern}\""
 
+        cmd = self._maybe_rewrite_with_rtk(svc, cmd, arguments, timeout)
+
         try:
-            result = svc.exec(".", cmd, timeout)
+            if "timeout" in arguments:
+                result = svc.exec(".", cmd, timeout)
+            else:
+                result = svc.exec(".", cmd)
             stdout = result.get("stdout", "")
             stderr = result.get("stderr", "")
             rc = result.get("returncode", -1)

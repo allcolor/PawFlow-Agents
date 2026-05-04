@@ -85,6 +85,9 @@ class AgentSSEStreamTask(BaseTask):
                     if timeout > 0 and time.monotonic() - started >= timeout:
                         logger.info("SSE stream lifetime reached for conv=%s client=%s",
                                     conversation_id[:8], client_id[:12])
+                        yield ("event: sse_reconnect\n"
+                               f"data: {json.dumps({'reason': 'lifetime', 'ts': time.time()})}\n\n").encode("utf-8")
+                        writer.close()
                         break
                     yield chunk
             finally:

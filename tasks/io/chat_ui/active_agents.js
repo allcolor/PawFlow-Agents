@@ -75,6 +75,9 @@ function setContextUsage(agentName, usage) {
   // Reject older persisted/polled values when we have timestamps on both
   // sides. This replaces the old "never decrease without compact" guard,
   // which froze the gauge after legitimate compactions.
+  if (!incomingAt) {
+    throw new Error('BUG: context_usage update missing updated_at/ts for ' + agentName);
+  }
   if (incomingAt && cachedAt && incomingAt < cachedAt) {
     return;
   }
@@ -98,6 +101,16 @@ function setContextUsage(agentName, usage) {
     activeInteractions[key].contextPct = pct;
   }
   _refreshGaugeSurfaces(key);
+}
+
+function hydrateContextUsage() {
+  if (!conversationId || typeof action$ !== 'function') return;
+  action$('list_context_usage', { conversation_id: conversationId }).subscribe(data => {
+    const usageMap = (data && data.context_usage) || {};
+    Object.keys(usageMap).forEach(agentName => {
+      setContextUsage(agentName, usageMap[agentName]);
+    });
+  });
 }
 
 // Bump the cached gauge by an estimated `chars/4` tokens. Marks the entry
@@ -359,18 +372,8 @@ function syncActiveFromServer() {
         geminiIdleSeconds: a.gemini_idle_seconds || 0,
         updatedAt: now,
       };
-      // Hydrate persistent cache from server's persisted context_usage so the
-      // gauge renders on page reload before loadResources() finishes. Route
-      // through setContextUsage so stale list_active payloads cannot demote a
-      // fresher SSE/resource-panel gauge.
-      if (a.context_usage && a.context_usage.max) {
-        setContextUsage(a.agent_name, {
-          used: a.context_usage.used || 0,
-          max: a.context_usage.max || 0,
-          pct: a.context_usage.pct || 0,
-          updated_at: a.context_usage.updated_at || 0,
-        });
-      }
+      // list_active is status-only. Context gauge hydration is handled by
+      // hydrateContextUsage() on load/switch, then live message_meta events.
     }
     updateActivePanel();
     if (Object.keys(activeInteractions).length > 0) {

@@ -207,10 +207,11 @@ function resumeConv(cid, force) {
       if (cid !== conversationId) return;
       // 3. DISPLAY.
       _renderHistory(data);
-      // 4. Open SSE for live future events. noReplay=true: we just
-      //    refetched the authoritative transcript from disk; any still-
-      //    buffered events on the server bus would just be duplicates
-      //    of what we already rendered, so discard them.
+      // 4. Hydrate context gauges from current agent contexts, then open SSE
+      //    for live future events. noReplay=true: we just refetched the
+      //    authoritative transcript from disk; buffered bus events would be
+      //    duplicates of what we already rendered.
+      if (typeof hydrateContextUsage === 'function') hydrateContextUsage();
       connectSSE(cid, () => startPollTimer(), { noReplay: true });
     });
 }

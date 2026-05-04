@@ -106,6 +106,41 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "list_context_usage":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.context_window import effective_context_window
+        from core.conv_agent_config import get_all_agent_configs
+        from core.service_registry import ServiceRegistry
+        from core.token_counter import resolve_token_multiplier
+        from tasks.ai.context_usage_cache import context_usage_from_cache
+
+        registry = ServiceRegistry.get_instance()
+        out = {}
+        for agent_name, cfg in (get_all_agent_configs(conv_id) or {}).items():
+            ctx_data = store.load_agent_context(conv_id, agent_name)
+            if ctx_data is None:
+                ctx_data = store.load_transcript_for_agent(conv_id, agent_name) or []
+            if not ctx_data:
+                continue
+            svc_id = cfg.get("llm_service", "") or ""
+            svc = registry.resolve(svc_id, user_id=user_id) if svc_id else None
+            svc_cfg = getattr(svc, "config", {}) or {}
+            configured = int(svc_cfg.get("max_context_size", 0) or 0)
+            max_ctx = effective_context_window(configured, 0, fallback=0)
+            if max_ctx <= 0:
+                continue
+            messages = self._deserialize_messages(ctx_data, conversation_id=conv_id)
+            usage = context_usage_from_cache(
+                messages, max_ctx, source="initial_context_usage",
+                token_multiplier=resolve_token_multiplier(svc_cfg))
+            out[agent_name] = usage
+        flowfile.set_content(json.dumps({"context_usage": out}, ensure_ascii=False).encode())
+        return [flowfile]
+
     if action == "list_active":
         conv_id = body.get("conversation_id", "")
         if not conv_id:
@@ -120,23 +155,9 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         from tasks.ai.agent_loop import AgentLoopTask
         _exec = AgentLoopTask._live_instance or self
         active = []
-        # Persisted per-agent context-fill gauge (set by agent_core on each
-        # final message_meta). Attached to each active row so the floating
-        # panel can render the gauge immediately on page reload, without
-        # waiting for loadResources() to populate window._contextUsage.
-        from core.conversation_store import ConversationStore as _CS_active
-        _store_active = _CS_active.instance()
-        _ctx_usage_map = (
-            _store_active.get_extra_snapshot(conv_id, "context_usage", {})
-            if hasattr(_store_active, "get_extra_snapshot") else {}
-        ) or {}
-        if not isinstance(_ctx_usage_map, dict):
-            _ctx_usage_map = {}
-
-        # list_active is on the UI poll path. Never tokenize live contexts
-        # here: active turns can hold very large message lists, and this action
-        # must stay a cheap status read regardless of the selected LLM service.
-        # Agent turns persist context_usage via message_meta; use that cache.
+        # list_active is a status endpoint. It must not publish or hydrate the
+        # context gauge: polling stale persisted usage was able to overwrite
+        # the live `message_meta` gauge and make the UI alternate values.
         with _exec._active_contexts_lock:
             import time as _time
             import re as _re_active
@@ -174,9 +195,6 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                     "status": turn.get("status", "thinking"),
                     "message_preview": turn.get("message_preview", ""),
                 }
-                _cu = _ctx_usage_map.get(_aname)
-                if _cu:
-                    _row["context_usage"] = _cu
                 active_by_key[_row_key(_k, _aname, _task_id)] = _row
 
             for _k, ctx in _exec._active_contexts.items():
@@ -194,9 +212,6 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                         "last_tool": ctx.get("_last_tool", ""),
                         "duration_s": _time.time() - _started if _started else 0,
                     }
-                    _cu = _ctx_usage_map.get(_aname)
-                    if _cu:
-                        _row["context_usage"] = _cu
                     active_by_key[_row_key(_k, _aname, _task_id)] = _row
             active.extend(active_by_key.values())
         # Also include scheduled tasks (active but between turns)

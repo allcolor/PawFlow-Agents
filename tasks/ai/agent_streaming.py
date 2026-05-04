@@ -64,7 +64,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             or ""
         )
         _user_text = _body.get("message", "")
-        _target = _body.get("target_agent", "")
+        _target = _body.get("target_agent", "") or _body.get("agent_name", "")
+        _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
+        if (_user_text.strip() or _attachments_body) and not _target:
+            flowfile.set_content(json.dumps({
+                "error": "target_agent is required for user messages",
+            }).encode("utf-8"))
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         _user_msg_id = _body.get("msg_id", "")
         if _user_msg_id:
             flowfile.set_attribute("_user_msg_id", _user_msg_id)
@@ -101,7 +108,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         from core.conversation_writer import ConversationWriter
         from core.llm_client import stamp_message
         _uid = flowfile.get_attribute("http.auth.principal") or ""
-        _attachments_body = _body.get("attachments", []) if isinstance(_body, dict) else []
         _stamped_user = None
         _skip_pre_persist = bool(flowfile.get_attribute("skip_pre_persist"))
         if _user_text.strip() or _attachments_body:
@@ -194,7 +200,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _running_mode.get("type"),
                     _running_mode.get("source_agent") or "-")
 
-            if (_active_client and hasattr(_active_client, 'send_user_message')
+            if (_active_client and getattr(_active_client, 'supports_live_preempt', False)
+                    and hasattr(_active_client, 'send_user_message')
                     and _user_text and _modes_match):
                 _attachments = _body.get("attachments", [])
                 if _active_client.send_user_message(_user_text, attachments=_attachments):

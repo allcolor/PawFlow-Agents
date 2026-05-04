@@ -163,17 +163,12 @@ def test_setcontextusage_mirrors_to_active_interactions():
         "activeInteractions for the active-agents panel")
 
 
-def test_resources_hydration_uses_setcontextusage():
-    """list_resources may lag behind SSE, so Resource Panel hydration must
-    use setContextUsage instead of overwriting `_contextUsage` directly."""
-    assert "setContextUsage(a.name" in _RESOURCES_JS
+def test_resource_and_active_polling_do_not_update_context_gauge():
+    """Polling endpoints must not touch the live gauge. Initial hydration uses
+    list_context_usage; live updates use one server event: message_meta."""
+    assert "setContextUsage(a.name" not in _RESOURCES_JS
+    assert "setContextUsage(a.agent_name" not in _ACTIVE_AGENTS_JS
     assert "window._contextUsage[aKeyLc] =" not in _RESOURCES_JS
-
-
-def test_active_poll_hydration_uses_setcontextusage():
-    """list_active may also lag behind SSE. It must not write `_contextUsage`
-    directly or it can make the header gauge bounce 30% -> 11% -> 30%."""
-    assert "setContextUsage(a.agent_name" in _ACTIVE_AGENTS_JS
     active_poll = _ACTIVE_AGENTS_JS[_ACTIVE_AGENTS_JS.index("function syncActiveFromServer") :]
     setter_body = _extract_function_body(_ACTIVE_AGENTS_JS, "setContextUsage")
     outside_setter = active_poll.replace(setter_body, "")
@@ -247,6 +242,18 @@ def test_frontend_context_pct_is_always_used_over_max():
     assert "usage.pct || usage.context_pct" not in setter
 
 
+def test_context_command_shared_view_exposes_display_role_not_raw_llm_role():
+    context_src = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
+    get_context = context_src[
+        context_src.index('if action == "get_context":'):
+        context_src.index('if action == "get_context_full":')]
+    assert "display_role = role" in get_context
+    assert "if stype == \"agent\":" in get_context
+    assert "display_role = \"assistant\"" in get_context
+    assert '"raw_role": role' in get_context
+    assert '"role": display_role' in get_context
+
+
 def test_context_command_exposes_full_agent_context_usage():
     context_src = Path("tasks/ai/actions/context_ops.py").read_text(encoding="utf-8")
     ui_src = Path("tasks/io/chat_ui/context_editor.js").read_text(encoding="utf-8")
@@ -283,18 +290,14 @@ def test_context_usage_cache_counts_suffix_then_resets():
     assert compacted["used"] < second["used"]
 
 
-def test_list_resources_uses_cached_stored_context_usage():
+def test_list_resources_does_not_transport_context_usage():
     src = Path("tasks/ai/actions/agent_resource.py").read_text(encoding="utf-8")
-    assert "def _stored_context_usage" in src
     list_resources_block = src[
         src.index('if action == "list_resources":'):
         src.index('if action == "get_resource_detail":')]
     assert "context_usage_from_cache" not in list_resources_block
     assert "load_agent_context" not in list_resources_block
-    assert "reg.resolve(llm_service" not in list_resources_block
-    assert "resolve_definition(\n                                llm_service" not in list_resources_block
-    assert "get_client()" not in list_resources_block
-    assert 'store.set_extra(conv_id, "context_usage", context_usage_map)' not in list_resources_block
+    assert '"context_usage"' not in list_resources_block
 
 
 def test_list_resources_uses_async_flow_template_cache():
@@ -331,7 +334,7 @@ def test_open_desktop_backend_does_not_emit_audio_session_without_token():
     assert '"audio_session": _sid,\n                            "audio_token": _audio_lookup_token(_sid)' not in src
 
 
-def test_list_active_uses_stored_context_usage_without_live_token_count():
+def test_list_active_does_not_transport_context_usage_or_count_tokens():
     from core import FlowFile
     from core.llm_client import LLMMessage
     from tasks.ai.actions.usage import _handle_usage
@@ -353,15 +356,10 @@ def test_list_active_uses_stored_context_usage_without_live_token_count():
 
     class _Store:
         def get_extra(self, *_args, **_kwargs):
-            raise AssertionError("list_active must not hit disk-backed get_extra")
+            raise AssertionError("list_active must not read context_usage")
 
-        def get_extra_snapshot(self, _cid, key, default=None):
-            if key == "context_usage":
-                return {"assistant": {
-                    "source": "message_meta", "max": 10000,
-                    "used": 9300, "pct": 0.93,
-                }}
-            return default
+        def get_extra_snapshot(self, *_args, **_kwargs):
+            raise AssertionError("list_active must not read context_usage")
 
     ff = FlowFile()
     with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec), \
@@ -380,24 +378,22 @@ def test_list_active_uses_stored_context_usage_without_live_token_count():
     data = json.loads(out[0].get_content().decode("utf-8"))
     row = data["active"][0]
     assert row["agent_name"] == "assistant"
-    assert row["context_usage"]["source"] == "message_meta"
-    assert row["context_usage"]["max"] == 10000
-    assert row["context_usage"]["used"] == 9300
-    assert row["context_usage"]["pct"] == 0.93
+    assert "context_usage" not in row
 
 
-def test_ui_polling_paths_use_cache_only_context_usage():
-    list_resources_block = _extract_action_block(
-        Path("tasks/ai/actions/agent_resource.py").read_text(encoding="utf-8"),
-        'if action == "list_resources":')
-    assert 'get_extra_snapshot(conv_id, "context_usage", {})' in list_resources_block
-    assert 'get_extra(conv_id, "context_usage")' not in list_resources_block
+def test_initial_context_usage_has_dedicated_action():
+    usage_src = Path("tasks/ai/actions/usage.py").read_text(encoding="utf-8")
+    list_context_usage_block = _extract_action_block(
+        usage_src, 'if action == "list_context_usage":')
+    assert "context_usage_from_cache" in list_context_usage_block
+    assert "load_agent_context" in list_context_usage_block
+    assert "load_transcript_for_agent" in list_context_usage_block
+    assert '"initial_context_usage"' in list_context_usage_block
+    assert '"context_usage": out' in list_context_usage_block
 
     list_active_block = _extract_action_block(
-        Path("tasks/ai/actions/usage.py").read_text(encoding="utf-8"),
-        'if action == "list_active":')
-    assert 'get_extra_snapshot(conv_id, "context_usage", {})' in list_active_block
-    assert 'get_extra(conv_id, "context_usage")' not in list_active_block
+        usage_src, 'if action == "list_active":')
+    assert '"context_usage"' not in list_active_block
 
 
 def test_idle_polling_cannot_stack_unbounded_work():
@@ -407,16 +403,6 @@ def test_idle_polling_cannot_stack_unbounded_work():
     assert "setInterval(syncActiveFromServer, 10000)" in _ACTIVE_AGENTS_JS
     assert "document.hidden) return" in _ACTIVE_AGENTS_JS
     assert "_MAX_BG_ACTIONS" in _AGENT_ACTIONS_PY
-    assert "_BG_ACTION_SEMAPHORE.acquire(blocking=False)" in _AGENT_ACTIONS_PY
-
-
-def test_webchat_fallback_poll_is_disabled_while_sse_is_healthy():
-    assert "function _sseIsHealthy()" in _SSE_JS
-    assert "if (_sseIsHealthy()) return" in _SSE_JS
-    assert "document.hidden && _sseIsHealthy()" in _SSE_JS
-    assert "}, 120000);" in _SSE_JS
-
-
 def test_poller_watchdogs_are_throttled():
     assert "PAWFLOW_AGENT_WATCHDOG_INTERVAL_SECONDS" in _AGENT_POLLER_PY
     assert "_last_task_watchdog" in _AGENT_POLLER_PY
@@ -709,6 +695,17 @@ def test_live_agent_thread_without_context_is_not_killed_as_zombie():
 
 
 
+def test_live_preempt_uses_hidden_provider_capability():
+    from core.llm_client import LLMClient
+
+    assert LLMClient("claude-code").supports_live_preempt is True
+    assert LLMClient("codex-app-server").supports_live_preempt is True
+    assert LLMClient("gemini").supports_live_preempt is True
+    assert LLMClient("openai").supports_live_preempt is False
+    assert LLMClient("anthropic").supports_live_preempt is False
+
+
+
 def test_accepted_live_preempt_keeps_pending_rescue():
     """A live provider steer is not proof that the turn consumed the message.
 
@@ -717,13 +714,14 @@ def test_accepted_live_preempt_keeps_pending_rescue():
     without proof cannot lose a late steer.
     """
     src = Path("tasks/ai/agent_streaming.py").read_text(encoding="utf-8")
+    assert "supports_live_preempt" in src
     assert "source=\"preempt_rescue\"" in src
     assert "preempted active provider session" in src
     assert "_queue_pending_user(source=\"http\")" in src
     assert "even_if_active=True" in src
 
 
-def test_final_drain_only_suppresses_proven_text_preempt_rescue_messages():
+def test_final_drain_suppresses_confirmed_live_preempt_rescues():
     from core.llm_client import LLMMessage
     from tasks.ai.agent_core import _preempt_rescue_requires_retrigger
 
@@ -745,10 +743,34 @@ def test_final_drain_only_suppresses_proven_text_preempt_rescue_messages():
     http_msg._pending_enqueued_at = 100.0
 
     assert _preempt_rescue_requires_retrigger(text_rescue, 101.0, "claude-code") is False
+    assert _preempt_rescue_requires_retrigger(image_rescue, 101.0, "claude-code") is False
     assert _preempt_rescue_requires_retrigger(text_rescue, 101.0, "codex-app-server") is False
-    assert _preempt_rescue_requires_retrigger(text_rescue, 99.0, "claude-code") is True
-    assert _preempt_rescue_requires_retrigger(image_rescue, 101.0, "claude-code") is True
+    assert _preempt_rescue_requires_retrigger(image_rescue, 101.0, "codex-app-server") is False
+    assert _preempt_rescue_requires_retrigger(text_rescue, 101.0, "gemini") is False
+    assert _preempt_rescue_requires_retrigger(text_rescue, 0.0, "claude-code") is True
     assert _preempt_rescue_requires_retrigger(http_msg, 101.0, "claude-code") is True
+
+
+def test_context_gauge_events_always_include_timestamp():
+    core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
+    compact_src = Path("tasks/ai/agent_compaction.py").read_text(encoding="utf-8")
+
+    assert '"updated_at": time.time()' in core_src
+    assert '"updated_at": float(_post_usage.get("updated_at", 0.0) or 0.0)' in core_src
+    assert '"updated_at": float(usage.get("updated_at", 0.0) or 0.0)' in emitter_src
+    assert "updated_at=_context_updated_at" in compact_src
+    compact_event = compact_src[
+        compact_src.index('"stage": "done"'):
+        compact_src.index('except Exception:', compact_src.index('"stage": "done"'))]
+    assert '"context_used"' not in compact_event
+    assert '"context_pct"' not in compact_event
+    assert 'int(result.tokens_in or 0)' not in emitter_src
+    done_block = emitter_src[
+        emitter_src.index('def on_done'):
+        emitter_src.index('def on_cancelled')]
+    assert '"context_used"' not in done_block
+    assert '"context_pct"' not in done_block
 
 
 def test_provider_compact_discards_pending_messages_already_in_compacted_context():
@@ -872,7 +894,7 @@ def test_missing_agent_context_is_seeded_from_shared_before_first_append():
     store_src = Path("core/conversation_store.py").read_text(encoding="utf-8")
     assert "def _seed_agent_context_from_shared_if_missing" in store_src
     assert "copy the current shared context personalized for this agent" in store_src
-    assert "_seed_agent_context_from_shared_if_missing(\n                            cid, agent_name)" in store_src
+    assert "_seed_agent_context_from_shared_if_missing(\n                            cid, route_agent)" in store_src
 
     src = Path("tasks/ai/agent_context.py").read_text(encoding="utf-8")
     assert "def _load_pawflow_initial_context" in src

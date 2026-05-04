@@ -1474,14 +1474,16 @@ function connectSSE(cid, onReady, opts) {
   let sseEverConnected = false;  // only recover after a real disconnect (not initial connect hiccup)
 
   eventSource.onerror = (err) => {
-    console.warn('[SSE] error, readyState:', eventSource.readyState, err);
+    const state = eventSource ? eventSource.readyState : EventSource.CLOSED;
+    console.warn('[SSE] error, readyState:', state, err);
     sseHadError = true;
     document.getElementById('status').textContent = t('reconnecting');
-    if (eventSource.readyState === EventSource.CLOSED) {
-      // Connection permanently closed — schedule reconnect with backoff
-      _scheduleSSEReconnect(cid);
-    }
-    // readyState === CONNECTING: browser is auto-retrying, we just update status
+    // Do not rely on the browser's opaque EventSource retry after the server
+    // intentionally closes a long-lived stream. Own the reconnect so we also
+    // recover messages that landed while this tab had no subscriber.
+    if (eventSource) { try { eventSource.close(); } catch (_) {} }
+    eventSource = null;
+    _scheduleSSEReconnect(cid);
   };
 
   eventSource.onopen = () => {
@@ -1508,6 +1510,14 @@ function connectSSE(cid, onReady, opts) {
   // onerror (laptop sleep, NAT eviction, proxy idle-kill).
   eventSource.addEventListener('sse_ping', () => {
     lastSSEActivity = Date.now();
+  });
+
+  eventSource.addEventListener('sse_reconnect', (e) => {
+    lastSSEActivity = Date.now();
+    console.log('[SSE] server requested reconnect', e.data || '');
+    if (eventSource) { try { eventSource.close(); } catch (_) {} }
+    eventSource = null;
+    _scheduleSSEReconnect(cid);
   });
 }
 

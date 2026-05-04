@@ -349,20 +349,8 @@ async function _renderResourcesData(data) {
         var primaryArrow = isPrimary ? '&#9654;' : '&#9655;';
         var autoconvTag = a.autoconv ? '<span style="font-size:9px;color:#4ecdc4;margin-left:2px;">' + String.fromCodePoint(0x1F504) + '</span>' : '';
         // Hydrate the global cache through the same monotonic path used by
-        // SSE. list_resources can lag behind live message_meta/done events;
-        // writing `_contextUsage` directly here would make the gauge flicker
-        // backwards (e.g. 12% -> 11% -> 12%) until the next live update.
-        if (a.context_usage && typeof setContextUsage === 'function') {
-          setContextUsage(a.name, {
-            used: a.context_usage.used || 0,
-            max: a.context_usage.max || 0,
-            pct: a.context_usage.pct || 0,
-            updated_at: a.context_usage.updated_at || 0,
-          });
-        }
-        liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + (a.scope||'') + '\',\'' + (a.autoconv||'') + '\');return false;">'
-          + '<span style="cursor:pointer;font-size:10px;color:' + primaryColor + ';" title="' + primaryTitle + '"'
-          + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + primaryArrow + '</span>'
+        // Resource polling must not touch the context gauge. The gauge is
+        // updated only by live context events and the explicit /context view.
           + _scopeBadge(a.scope)
           + '<span style="color:' + textColor + ';font-size:12px;cursor:pointer;flex:1;"'
           + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + aName + '</span>'

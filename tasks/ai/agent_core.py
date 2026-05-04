@@ -44,22 +44,15 @@ def _strip_context_ack(text: str) -> str:
 def _preempt_rescue_requires_retrigger(message, provider_completed_at: float, provider: str = "") -> bool:
     """Return True when a drained preempt rescue still needs a real turn.
 
-    Providers can suppress a text rescue only when their session log shows the
-    preempt text before the completed provider response. Multimodal queued
-    content is rebuilt only during PendingQueue drain, so it must always run
-    through a normal PawFlow turn.
+    Providers suppress a rescue only after their own session log proves the
+    preempt was accepted into the completed provider turn. At that point the
+    PendingQueue copy is bookkeeping, regardless of text vs multimodal shape.
     """
     if getattr(message, "_pending_source", "") != "preempt_rescue":
         return True
-    if isinstance(getattr(message, "content", None), list):
-        return True
     if not provider_completed_at:
         return True
-    try:
-        enqueued_at = float(getattr(message, "_pending_enqueued_at", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        return True
-    return enqueued_at > provider_completed_at
+    return False
 
 
 def _apply_bg_results(messages, conversation_id):
@@ -801,6 +794,9 @@ class AgentCoreMixin:
                             _payload["context_used"] = _src["context_used"]
                             _payload["context_max"] = _src["context_max"]
                             _payload["context_pct"] = _src["context_pct"]
+                            _payload["updated_at"] = float((
+                                _src.get("context_cache") or {}).get("updated_at")
+                                or time.time())
                             # Persist-then-pub: the gauge value must land
                             # on disk BEFORE the SSE fires so a reload
                             # after crash shows the same gauge value the
@@ -1778,40 +1774,42 @@ class AgentCoreMixin:
                             # size via tiktoken gives the UI an accurate
                             # starting point instead of a misleading 0%.
                             try:
-                                from core.token_counter import (
-                                    count_messages_tokens,
-                                    resolve_token_multiplier,
-                                )
-                                _serialized = self._serialize_messages(messages)
-                                # Scale cl100k_base estimate by the agent's
-                                # service multiplier so models with divergent
-                                # tokenizers (e.g. Opus 4.7 ~1.6x) show a
-                                # realistic gauge instead of ~½ of reality.
+                                from core.context_window import effective_context_window
+                                from core.token_counter import resolve_token_multiplier
+                                from tasks.ai.context_usage_cache import context_usage_from_cache
+
+                                _client = ctx.get("client")
+                                _cw_map = (getattr(_client, '_cc_context_window_by_stream', None)
+                                           if _client else None) or {}
+                                _cw_key = (conversation_id or "", _agent_name or "")
+                                _post_max = effective_context_window(
+                                    ctx.get("max_context_size", 0),
+                                    _cw_map.get(_cw_key, 0), fallback=0)
                                 _tmul = resolve_token_multiplier(
-                                    getattr(ctx.get("resolved_svc"),
-                                            "config", None))
-                                _post_used = int(count_messages_tokens(
-                                    _serialized, multiplier=_tmul))
-                                _post_max = int(ctx.get("max_context_size", 200000) or 200000)
-                                _post_pct = (_post_used / _post_max) if _post_max > 0 else 0.0
+                                    getattr(ctx.get("resolved_svc"), "config", None))
+                                ctx.pop("_context_usage_cache", None)
+                                ctx.pop("_auto_compact_usage_cache", None)
+                                _post_usage = context_usage_from_cache(
+                                    messages, _post_max,
+                                    source="compact_post",
+                                    token_multiplier=_tmul)
+                                ctx["_context_usage_cache"] = _post_usage
                                 _cu_map = _store.get_extra(
                                     conversation_id, "context_usage") or {}
-                                _cu_map[_agent_name] = {
-                                    "used": _post_used,
-                                    "max": _post_max,
-                                    "pct": _post_pct,
-                                    "updated_at": time.time(),
-                                    "estimated": True,
-                                }
+                                _cu_map = dict(_cu_map)
+                                _cu_map[_agent_name] = dict(_post_usage)
                                 _store.set_extra(
                                     conversation_id, "context_usage", _cu_map)
                                 _CEB.instance().publish_event(
                                     conversation_id, "message_meta",
                                     {"agent_name": _agent_name,
-                                     "context_used": _post_used,
-                                     "context_max": _post_max,
-                                     "context_pct": _post_pct,
-                                     "estimated": True})
+                                     "context_used": int(_post_usage.get("used", 0) or 0),
+                                     "context_max": int(_post_usage.get("max", 0) or 0),
+                                     "context_pct": float(_post_usage.get("pct", 0.0) or 0.0),
+                                     "context_source": _post_usage.get("source", "compact_post"),
+                                     "context_message_count": _post_usage.get("message_count", 0),
+                                     "context_cache_mode": _post_usage.get("cache_mode", ""),
+                                     "updated_at": float(_post_usage.get("updated_at", 0.0) or 0.0)})
                             except Exception:
                                 logger.debug("exception suppressed", exc_info=True)
                         except Exception as compact_err:

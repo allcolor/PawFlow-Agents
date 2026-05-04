@@ -45,6 +45,11 @@ def test_gemini_acp_preempt_is_live_prompt_reuse_not_reloop():
     assert "preempt_req_id" in block
     assert "return True" in block
     assert "_kill_gemini_hard" not in block
+    completion_block = _GEMINI[
+        _GEMINI.index("if _preempt_prompt_active:"):
+        _GEMINI.index("if stop_reason not in", _GEMINI.index("if _preempt_prompt_active:"))]
+    assert 'pstatus in ("done", "pending")' in completion_block
+    assert '"unknown"' not in completion_block
 
 
 def test_gemini_system_prompt_prefers_pawflow_mcp_over_builtins():
@@ -140,15 +145,16 @@ def test_proactive_compact_replaces_active_messages_for_cli_providers():
     assert "llm_context = list(messages)" in cli_block
 
 
-def test_manual_compact_done_publishes_context_usage():
-    """Manual compact completion has no provider message_meta; it must
-    publish and persist the new gauge itself."""
+def test_manual_compact_done_does_not_publish_context_gauge_event():
+    """Manual compact may persist usage, but live gauge updates come from
+    the dedicated context_usage/message_meta paths, not compact_progress.
+    """
     done_block = _AGENT_COMPACTION[
         _AGENT_COMPACTION.index('"stage": "done"'):
         _AGENT_COMPACTION.index('"conv_total_messages"') + 400]
-    assert '"context_used"' in done_block
-    assert '"context_max"' in done_block
-    assert '"context_pct"' in done_block
+    assert '"context_used"' not in done_block
+    assert '"context_max"' not in done_block
+    assert '"context_pct"' not in done_block
     assert 'set_extra(\n                                conversation_id, "context_usage"' in _AGENT_COMPACTION
 
 
@@ -184,14 +190,12 @@ def test_manual_compact_uses_selected_agent_llm_service_budget():
     assert "effective_context_window(" in _CONTEXT_OPS
 
 
-def test_list_resources_does_not_resolve_services_on_ui_refresh():
-    """Resource polling must stay cheap; context_usage is repaired when written,
-    not by resolving live LLM services during list_resources.
-    """
+def test_list_resources_does_not_transport_or_resolve_context_usage():
+    """Resource polling must stay cheap and must not hydrate the live gauge."""
     block = _AGENT_RESOURCE[
         _AGENT_RESOURCE.index('if action == "list_resources":'):
         _AGENT_RESOURCE.index('if action == "get_resource_detail":')]
-    assert "def _stored_context_usage" in block
+    assert "context_usage" not in block
     assert "reg.resolve(llm_service" not in block
     assert "resolve_definition(\n                                llm_service" not in block
     assert "effective_context_window(" not in block
@@ -209,8 +213,8 @@ def test_compact_threshold_accepts_fractional_ui_values():
     assert "_compact_threshold_fraction(" in _AGENT_CORE
 
 
-def test_streaming_api_publishes_live_context_usage_before_done():
-    """HTTP/API providers must update the gauge while the turn is active."""
+def test_streaming_api_live_context_usage_is_not_published_by_done():
+    """HTTP/API providers update gauge while active; done only closes the turn."""
     assert "def _context_usage_payload" in _AGENT_EMITTER
     assert "def _publish_context_usage" in _AGENT_EMITTER
     stream_start = _AGENT_EMITTER.index("class StreamEmitter")
@@ -225,5 +229,5 @@ def test_streaming_api_publishes_live_context_usage_before_done():
     done_start = _AGENT_EMITTER.index("def on_done", stream_start)
     done_end = _AGENT_EMITTER.index("def on_error", done_start)
     done_block = _AGENT_EMITTER[done_start:done_end]
-    assert 'self._publish_context_usage("done")' in done_block
-    assert '_usage_payload = self._context_usage_payload("done")' in done_block
+    assert 'self._publish_context_usage("done")' not in done_block
+    assert '_context_usage_payload("done")' not in done_block

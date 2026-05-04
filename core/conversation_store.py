@@ -692,13 +692,21 @@ class ConversationStore:
 
     @staticmethod
     def _prefix_content(content, prefix: str):
-        """Prefix content with a tag. Handles both string and multipart (list) content."""
+        """Prefix content with a tag. Handles both string and multipart (list)."""
         if isinstance(content, str):
+            if content.startswith(prefix + "\n") or content.startswith(prefix + " "):
+                return content
             return f"{prefix}\n{content}"
         if isinstance(content, list):
-            # Multipart: prepend text block with prefix
+            if content:
+                first = content[0]
+                if isinstance(first, dict) and first.get("type") == "text" and first.get("text") == prefix:
+                    return list(content)
             return [{"type": "text", "text": prefix}] + list(content)
-        return f"{prefix}\n{content}"
+        text = str(content)
+        if text.startswith(prefix + "\n") or text.startswith(prefix + " "):
+            return text
+        return f"{prefix}\n{text}"
 
     @staticmethod
     def _strip_prefix(content, prefix: str):
@@ -863,7 +871,7 @@ class ConversationStore:
         return out
 
     def _append_shared_ctx(self, cid: str, messages: List[Dict]):
-        """Append transformed messages to the shared context file.
+        """Append already-shared-normalized messages to shared context.
 
         No dedup: see _append_ctx_file for rationale.
 
@@ -878,7 +886,7 @@ class ConversationStore:
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
-                xf = self._stamp_line(cid, self._transform_for_shared(m))
+                xf = self._stamp_line(cid, m)
                 f.write(json.dumps(xf, ensure_ascii=False) + "\n")
                 _shared_chars += self._row_payload_chars(xf)
                 _s = int(xf.get("seq") or 0)
@@ -1228,6 +1236,10 @@ class ConversationStore:
         role = msg.get("role", "")
         source = msg.get("source") or {}
         src_type = source.get("type", "")
+        target_agent = self._canon_agent(source.get("target_agent", "")) if source.get("target_agent") else ""
+        if role == "user" and src_type != "context" and not target_agent:
+            raise ValueError("user messages require source.target_agent")
+        route_agent = agent_name or (target_agent if target_agent not in ("ALL", "all") else "")
         display_only = bool(msg.get("display_only"))
         has_tool_calls = bool(msg.get("tool_calls"))
         now = time.time()
@@ -1265,11 +1277,11 @@ class ConversationStore:
             else:
                 # 2. Author's own context (brut, keeps tool_calls /
                 #    tool results; also target of context injections).
-                if agent_name:
+                if route_agent:
                     if src_type != "context":
                         self._seed_agent_context_from_shared_if_missing(
-                            cid, agent_name)
-                    self._append_ctx_file(cid, agent_name, [msg])
+                            cid, route_agent)
+                    self._append_ctx_file(cid, route_agent, [msg])
 
                 # 3. Shared + broadcast to other agents — only for
                 #    conversation messages (filter_for_shared drops

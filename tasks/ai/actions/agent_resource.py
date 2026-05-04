@@ -518,22 +518,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         conv_agent_cfgs = get_all_agent_configs(conv_id) if conv_id else {}
         conv_agent_names = list(conv_agent_cfgs.keys())
 
-        # Per-agent context-window usage. This is a cached PawFlow-context
-        # gauge, not provider prompt usage. Keep list_resources strictly cheap:
-        # this action is called from the UI refresh path and must not read or
-        # tokenize large agent contexts synchronously. Agent turns and compact
-        # already persist this cache via message_meta/context_usage updates.
-        context_usage_map = (
-            store.get_extra_snapshot(conv_id, "context_usage", {})
-            if conv_id and hasattr(store, "get_extra_snapshot") else {}
-        )
-        if not isinstance(context_usage_map, dict):
-            context_usage_map = {}
-
-        def _stored_context_usage(aname):
-            # Cheap UI hydration only. Context window repair happens when
-            # context_usage is written, not in the synchronous refresh path.
-            return context_usage_map.get(aname)
+        # list_resources is a resource catalog/status endpoint. It must not
+        # publish or hydrate the context gauge: the gauge has one live source
+        # of truth (`message_meta` / compact events / explicit `/context`).
 
         all_agent_defs = rs.list_all("agent", uid, conversation_id=conv_id)
         agent_defs_by_name = {a.get("name"): a for a in all_agent_defs}
@@ -556,9 +543,6 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             }
             for skill_name in entry["assigned_skills"]:
                 assigned_by_skill.setdefault(skill_name, []).append(aname)
-            _cu = _stored_context_usage(aname)
-            if _cu:
-                entry["context_usage"] = _cu
             if conv_id:
                 ac_cfg = store.get_extra(conv_id, f"random_thought::{aname.lower()}") or {}
                 if ac_cfg.get("enabled"):

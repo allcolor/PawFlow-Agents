@@ -242,21 +242,8 @@ class StreamEmitter(AgentEmitter):
         # Use all_msg_ids from the full turn (survives flush)
         _all_ids = result.all_msg_ids or []
         _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
-        # Context fill must match PawFlow's active context, not provider
-        # usage deltas. API providers often report only the current request,
-        # while the UI gauge represents the next prompt PawFlow will send.
-        self._publish_context_usage("done")
-        _usage_payload = self._context_usage_payload("done")
-        if _usage_payload:
-            _ctx_used = int(_usage_payload.get("context_used", 0) or 0)
-            _ctx_max = int(_usage_payload.get("context_max", 0) or 0)
-            _ctx_pct = float(_usage_payload.get("context_pct", 0.0) or 0.0)
-        else:
-            _ctx_used = (int(result.tokens_in or 0)
-                         + int(getattr(result, 'cache_creation_tokens', 0) or 0)
-                         + int(getattr(result, 'cache_read_tokens', 0) or 0))
-            _ctx_max = int(self.ctx.get("max_context_size", 0) or 0)
-            _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
+        # The context gauge is emitted once through message_meta above. Done
+        # closes the turn only; it must not be a second gauge publisher.
         self._emit("done", {
             "response": result.response_content,
             "msg_id": _last_id,
@@ -266,9 +253,6 @@ class StreamEmitter(AgentEmitter):
             "base_url": result.base_url,
             "tokens_in": result.tokens_in,
             "tokens_out": result.tokens_out,
-            "context_used": _ctx_used,
-            "context_max": _ctx_max,
-            "context_pct": _ctx_pct,
             "duration_ms": result.duration_ms,
             "cost_usd": result.cost_usd,
             "source": result.source,

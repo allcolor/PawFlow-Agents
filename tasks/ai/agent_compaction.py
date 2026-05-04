@@ -948,6 +948,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                     _context_max = int(max_tokens or 0)
                     _context_pct = ((float(new_estimate) / float(_context_max))
                                     if _context_max > 0 else 0.0)
+                    _context_updated_at = _t_compact.time()
                     if agent_name:
                         try:
                             _store = ConversationStore.instance()
@@ -960,7 +961,7 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                                 source="compact_reset",
                                 token_multiplier=_tmul,
                                 cache_mode="reset",
-                                updated_at=_t_compact.time())
+                                updated_at=_context_updated_at)
                             _store.set_extra(
                                 conversation_id, "context_usage", _cu_map)
                         except Exception:
@@ -976,9 +977,6 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                             "tokens_before": _original_tokens,
                             "tokens_after": new_estimate,
                             "conv_total_messages": _conv_total,
-                            "context_used": int(new_estimate),
-                            "context_max": _context_max,
-                            "context_pct": _context_pct,
                         })
                 except Exception:
                     logger.debug("compact SSE publish failed", exc_info=True)

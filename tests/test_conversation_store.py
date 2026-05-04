@@ -98,7 +98,10 @@ class TestLoadPage:
     def test_load_page_returns_messages(self, conv):
         store, cid, uid = conv
         for i in range(10):
-            store.append_message(cid, _msg(content=f"m{i}"), user_id=uid)
+            store.append_message(cid, _msg(content=f"m{i}",
+                                           source={"type": "user", "name": uid,
+                                                   "target_agent": "bot"}),
+                                 user_id=uid)
         result = store.load_page(cid, limit=5, offset=0)
         assert result is not None
         assert len(result["messages"]) == 5
@@ -108,7 +111,10 @@ class TestLoadPage:
     def test_load_page_offset(self, conv):
         store, cid, uid = conv
         for i in range(10):
-            store.append_message(cid, _msg(content=f"m{i}"), user_id=uid)
+            store.append_message(cid, _msg(content=f"m{i}",
+                                           source={"type": "user", "name": uid,
+                                                   "target_agent": "bot"}),
+                                 user_id=uid)
         result = store.load_page(cid, limit=5, offset=5)
         assert result is not None
         assert len(result["messages"]) == 5
@@ -130,7 +136,9 @@ class TestMessageCount:
     def test_count_after_append(self, conv):
         store, cid, uid = conv
         for _ in range(3):
-            store.append_message(cid, _msg(), user_id=uid)
+            store.append_message(cid, _msg(source={"type": "user", "name": uid,
+                                                   "target_agent": "bot"}),
+                                 user_id=uid)
         assert store.message_count(cid) == 3
 
 
@@ -291,6 +299,28 @@ class TestAppendMessage:
         assert bot_ctx and any("hi bot" in str(m.get("content", ""))
                                for m in bot_ctx)
 
+    def test_user_message_routes_by_target_agent_without_agent_param(
+            self, conv):
+        store, cid, uid = conv
+        msg = _msg(role="user", content="targeted request",
+                   source={"type": "user", "name": uid,
+                           "target_agent": "bot"})
+
+        store.append_message(cid, msg, user_id=uid)
+
+        bot_ctx = store.load_agent_context(cid, "bot")
+        assert bot_ctx and bot_ctx[-1]["content"] == "targeted request"
+        shared = store.load_agent_context(cid, "")
+        assert shared and "[User to agent bot]" in shared[-1]["content"]
+
+    def test_user_message_without_target_agent_is_rejected(self, conv):
+        store, cid, uid = conv
+        msg = _msg(role="user", content="orphan",
+                   source={"type": "user", "name": uid})
+
+        with pytest.raises(ValueError, match="source.target_agent"):
+            store.append_message(cid, msg, user_id=uid)
+
     def test_first_target_message_seeds_missing_agent_context_from_shared(
             self, conv):
         store, cid, uid = conv
@@ -319,6 +349,17 @@ class TestAppendMessage:
         assert shared and any(
             "[Agent bot]" in str(m.get("content", ""))
             for m in shared)
+        assert shared[-1]["content"].count("[Agent bot]") == 1
+
+    def test_shared_prefixing_is_idempotent(self, conv):
+        store, cid, uid = conv
+        msg = _msg(role="assistant", content="[Agent bot]:\nalready tagged",
+                   source={"type": "agent", "name": "bot"})
+        store.append_message(cid, msg, agent_name="bot", user_id=uid)
+
+        shared = store.load_agent_context(cid, "")
+        assert shared
+        assert shared[-1]["content"].count("[Agent bot]:") == 1
 
     def test_assistant_with_tool_calls_writes_raw_to_own_ctx(
             self, conv):

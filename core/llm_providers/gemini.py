@@ -1032,7 +1032,7 @@ class LLMGeminiMixin(GeminiSessionMixin):
                     if _preempt_prompt_active:
                         sent = list(getattr(self, "_gemini_acp_sent_preempt_texts", []) or [])
                         pstatus = self._gemini_acp_check_preempt_in_history(workdir, sent)
-                        if pstatus in ("done", "pending", "unknown"):
+                        if pstatus in ("done", "pending"):
                             self._had_preempts_this_turn = True
                             logger.info(
                                 "[gemini-acp-live] preempt prompt completed (history=%s, count=%d)",

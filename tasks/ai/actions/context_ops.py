@@ -916,8 +916,17 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 logger.debug("context usage calculation failed", exc_info=True)
         # Classify messages for display
         display_msgs = []
+        _is_shared_view = (not _ctx_agent or _ctx_agent == "shared")
         for m in context_data:
             role = m.get("role", "unknown")
+            source = m.get("source") or {}
+            display_role = role
+            if _is_shared_view and isinstance(source, dict):
+                stype = source.get("type", "")
+                if stype == "agent":
+                    display_role = "assistant"
+                elif stype == "user":
+                    display_role = "user"
             content = m.get("content", "")
             if isinstance(content, list):
                 text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
@@ -929,7 +938,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             _row_mid = m.get("msg_id", "") or (
                 m.get("trace_id", "") if role == "sub_agent_trace" else "")
             display_msgs.append({
-                "role": role,
+                "role": display_role,
+                "raw_role": role,
                 "content": content[:300] if isinstance(content, str) else str(content)[:300],
                 "has_tool_calls": has_tool_calls,
                 "tool_calls": m.get("tool_calls") or [],

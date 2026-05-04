@@ -289,6 +289,28 @@ The FlowParser handles the `parameters` wrapping for JSON files, but tasks alway
 
 ---
 
+## Operator Repair Scripts
+
+`scripts/repair_contexts.py` rebuilds derived conversation context files from
+`transcript.jsonl`, which is the canonical record. Use it when shared or
+per-agent context files have been corrupted by routing or projection bugs.
+
+Examples:
+
+```bash
+# Inspect what would change.
+python scripts/repair_contexts.py <conversation_id> --shared --agent assistant
+
+# Apply with automatic .bak-<timestamp> backups beside each repaired file.
+python scripts/repair_contexts.py <conversation_id> --shared --agent assistant --apply
+```
+
+The script rebuilds `shared.jsonl` from the transcript shared projection and
+agent contexts from `ConversationStore.load_transcript_for_agent()`, preserving
+provider-independent PawFlow context semantics.
+
+---
+
 ## Implementation Areas
 
 | Area | Description |

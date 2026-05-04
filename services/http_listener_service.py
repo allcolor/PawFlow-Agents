@@ -211,9 +211,9 @@ def _emit_timing_summary(req: "PendingRequest") -> None:
         if is_long_stream and label == "respond→send":
             continue
         if a in t and b in t:
-            segments.append(f"{label}={int((t[b] - t[a]) * 1000)}ms")
+            segments.append(f"{label}={round((t[b] - t[a]) * 1000)}ms")
     last = (t.get("respond") if is_long_stream else None) or t.get("send") or t.get("respond") or t.get("dispatch")
-    total = int((last - t["recv"]) * 1000) if last else 0
+    total = round((last - t["recv"]) * 1000) if last else 0
     action = _request_action_label(req)
     msg = "[http-timing] req_id=%s %s %s%s total=%dms %s status=%d"
     args = (

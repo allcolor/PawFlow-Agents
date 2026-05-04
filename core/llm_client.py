@@ -354,6 +354,12 @@ class LLMClient(
 
     DEFAULT_MODELS = _load_default_models()
 
+    _LIVE_PREEMPT_SUPPORT = {
+        "claude-code": True,
+        "codex-app-server": True,
+        "gemini": True,
+    }
+
     _circuit_lock = threading.Lock()
     _circuit_state: Dict[str, Dict[str, Any]] = {}
 
@@ -481,6 +487,15 @@ class LLMClient(
         if self.provider in ("claude-code", "codex-app-server", "gemini"):
             return ""
         return self.DEFAULT_MODELS.get(self.provider, "")
+
+    @property
+    def supports_live_preempt(self) -> bool:
+        raw = self._cfg("_supports_live_preempt", None)
+        if raw is not None and raw != "":
+            if isinstance(raw, bool):
+                return raw
+            return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+        return bool(self._LIVE_PREEMPT_SUPPORT.get(self.provider, False))
 
     @property
     def supports_vision(self) -> bool:

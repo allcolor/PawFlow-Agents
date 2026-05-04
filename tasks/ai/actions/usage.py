@@ -217,8 +217,8 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         # Also include scheduled tasks (active but between turns)
         try:
             all_tasks = (
-                _store_active.get_extra_snapshot(conv_id, "agent_tasks", {})
-                if hasattr(_store_active, "get_extra_snapshot") else {}
+                store.get_extra_snapshot(conv_id, "agent_tasks", {})
+                if hasattr(store, "get_extra_snapshot") else {}
             ) or {}
             _active_task_ids = {a["task_id"] for a in active if a.get("task_id")}
             for tid, task in all_tasks.items():

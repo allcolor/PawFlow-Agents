@@ -36,6 +36,12 @@ MIN_BG_INPUT_CHARS = int(
     * BgBucketBuilder._CHARS_PER_TOKEN_EST)
 
 
+def _cfg(builder: BgBucketBuilder, **overrides):
+    cfg = builder._bg_compact_config("cid_test", "user_test")
+    cfg.update(overrides)
+    return cfg
+
+
 # ── helpers ──────────────────────────────────────────────────────
 
 
@@ -130,18 +136,20 @@ class _FakeBuilder(BgBucketBuilder):
         client, ctx_max, _svc_id = self._summarizer_resolver(user_id)
         if not client:
             return
+        cfg = self._bg_compact_config(cid, user_id)
         built = 0
         while True:
             shared_msgs = self._load_shared_since(cid, store.last_seq)
             chunk = self._pick_chunk(shared_msgs, store.object_count,
-                                       allow_partial=False)
+                                       allow_partial=False, cfg=cfg)
             if not chunk:
                 break
             if not self._build_one_bucket(cid, user_id, store, chunk,
-                                            client, ctx_max):
+                                            client, ctx_max, cfg=cfg):
                 break
             built += 1
-            self._maybe_rollup(store, client, user_id, ctx_max, cid)
+            self._maybe_rollup(store, client, user_id, ctx_max, cid,
+                               cfg=cfg)
         if built:
             self._publish_built(cid, built, store)
 
@@ -156,6 +164,7 @@ class _FakeBuilder(BgBucketBuilder):
             return {"buckets_built": 0, "rollups_fired": 0,
                      "final_object_count": store.object_count,
                      "final_last_seq": store.last_seq}
+        cfg = self._bg_compact_config(cid, user_id)
         with self._pending_lock:
             self._pending.add(cid)
         buckets_built = 0
@@ -164,14 +173,16 @@ class _FakeBuilder(BgBucketBuilder):
             while True:
                 shared_msgs = self._load_shared_since(cid, store.last_seq)
                 chunk = self._pick_chunk(shared_msgs, store.object_count,
-                                           allow_partial=allow_partial)
+                                           allow_partial=allow_partial,
+                                           cfg=cfg)
                 if not chunk:
                     break
                 if not self._build_one_bucket(cid, user_id, store, chunk,
-                                                client, ctx_max):
+                                                client, ctx_max, cfg=cfg):
                     break
                 buckets_built += 1
-                if self._maybe_rollup(store, client, user_id, ctx_max, cid):
+                if self._maybe_rollup(store, client, user_id, ctx_max, cid,
+                                      cfg=cfg):
                     rollups_fired += 1
         finally:
             with self._pending_lock:
@@ -185,8 +196,9 @@ class _FakeBuilder(BgBucketBuilder):
         if self._summarizer_resolver is None:
             return
         # Test-only simplified gating: only the shared-gap path. The
-        # production token-trigger path is exercised in test_pawflow.
-        if self._shared_gap(cid) < L1_TRIGGER_MSGS + TAIL_RESERVE:
+        # production token-trigger path is exercised in production-builder tests.
+        cfg = self._bg_compact_config(cid, user_id)
+        if self._shared_gap(cid) < cfg["l1_trigger_msgs"] + cfg["tail_reserve_msgs"]:
             return
         with self._pending_lock:
             if cid in self._pending:
@@ -301,6 +313,45 @@ def test_pick_chunk_tail_only_returns_empty(fake_builder):
     assert chunk == []
 
 
+def test_bg_compact_config_resolves_pawflow_variables(fake_builder, monkeypatch):
+    calls = []
+
+    def _resolve(template, owner=None, conversation_id=None):
+        calls.append((template, owner, conversation_id))
+        if template == "${pawflow.bg_compact.bucket_target_tokens}":
+            return "1234"
+        return template
+
+    monkeypatch.setattr("core.expression.resolve_expression", _resolve)
+
+    cfg = fake_builder._bg_compact_config("cid_cfg", "user_cfg")
+
+    assert cfg["bucket_target_tokens"] == 1234
+    assert ("${pawflow.bg_compact.bucket_target_tokens}",
+            "user_cfg", "cid_cfg") in calls
+    assert cfg["l1_trigger_msgs"] == L1_TRIGGER_MSGS
+
+
+def test_pick_chunk_uses_bg_compact_overrides(fake_builder):
+    cfg = _cfg(fake_builder, l1_trigger_msgs=12, tail_reserve_msgs=3,
+               partial_min_msgs=2, bulk_catchup_multiplier=4)
+
+    msgs = [_shared_msg(i) for i in range(1, 20)]
+    chunk = fake_builder._pick_chunk(msgs, current_object_count=5,
+                                      allow_partial=False, cfg=cfg)
+    assert len(chunk) == 12
+
+    bulk_msgs = [_shared_msg(i) for i in range(1, 50)]
+    bulk = fake_builder._pick_chunk(bulk_msgs, current_object_count=0,
+                                    allow_partial=False, cfg=cfg)
+    assert len(bulk) == len(bulk_msgs) - 3
+
+    partial_msgs = [_shared_msg(i) for i in range(1, 8)]
+    partial = fake_builder._pick_chunk(partial_msgs, current_object_count=1,
+                                       allow_partial=True, cfg=cfg)
+    assert len(partial) == len(partial_msgs) - 3
+
+
 # ── build_now_sync integration ──────────────────────────────────
 
 
@@ -313,6 +364,31 @@ def _make_summarize_fn(output: str = "## Narrative\nok\n\n## Files & operations\
         calls.append({"n_msgs": len(messages), **kwargs})
         return output
     return _summarize, calls
+
+
+def test_build_now_sync_passes_configured_target_tokens(fake_builder, monkeypatch):
+    def _resolve(template, owner=None, conversation_id=None):
+        values = {
+            "${pawflow.bg_compact.l1_trigger_msgs}": "8",
+            "${pawflow.bg_compact.tail_reserve_msgs}": "2",
+            "${pawflow.bg_compact.bucket_target_tokens}": "321",
+        }
+        return values.get(template, template)
+
+    monkeypatch.setattr("core.expression.resolve_expression", _resolve)
+    _write_shared(fake_builder._shared_path, 10)
+    summarize_fn, calls = _make_summarize_fn()
+    fake_builder.set_summarizer_resolver(
+        lambda uid: (_fake_client(), 128000, "svc-test"))
+    fake_builder.set_summarize_fn(summarize_fn)
+
+    result = fake_builder.build_now_sync("cid_test", "user_test",
+                                         allow_partial=False)
+
+    assert result["buckets_built"] == 1
+    assert calls[0]["n_msgs"] == 8
+    assert calls[0]["target_tokens"] == 321
+
 
 
 def test_build_now_sync_builds_normal_l1_bucket(fake_builder):
@@ -536,6 +612,39 @@ def test_maybe_trigger_submits_background_job_without_foreground_gate(tmp_path, 
     with bb._pending_lock:
         assert cid in bb._pending
     bb._executor.shutdown(wait=False)
+
+
+def test_maybe_trigger_uses_configured_msg_threshold(tmp_path, monkeypatch):
+    bb = BgBucketBuilder(max_workers=1)
+    submitted: List[str] = []
+
+    def _resolve(template, owner=None, conversation_id=None):
+        values = {
+            "${pawflow.bg_compact.l1_trigger_msgs}": "10",
+            "${pawflow.bg_compact.tail_reserve_msgs}": "2",
+        }
+        return values.get(template, template)
+
+    monkeypatch.setattr("core.expression.resolve_expression", _resolve)
+    monkeypatch.setattr(
+        bb._executor, "submit",
+        lambda *a, **kw: submitted.append(a) or None)
+    bb.set_summarizer_resolver(
+        lambda uid: (_fake_client(), 128000, "svc"))
+    bb.set_summarize_fn(_make_summarize_fn()[0])
+
+    cid = "cid_configured_msg_threshold"
+    bb._shared_seq_cache[cid] = 12
+    bb._pyramid_seq_cache[cid] = 0
+    bb._shared_unbucketed_rows_cache[cid] = 12
+    bb._shared_unbucketed_chars_cache[cid] = MIN_BG_INPUT_CHARS + 1000
+    bb._transcript_chars_post_pyramid_cache[cid] = 0
+
+    bb.maybe_trigger(cid, "uid")
+
+    assert len(submitted) == 1
+    bb._executor.shutdown(wait=False)
+
 
 
 def test_no_trigger_below_both_thresholds(tmp_path, monkeypatch):

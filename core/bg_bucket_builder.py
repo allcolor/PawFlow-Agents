@@ -42,6 +42,25 @@ from core.tool_activity_digest import (
 logger = logging.getLogger(__name__)
 
 
+_BG_COMPACT_DEFAULTS: Dict[str, Any] = {
+    "l1_trigger_msgs": L1_TRIGGER_MSGS,
+    "bucket_target_tokens": BUCKET_OUTPUT_TARGET,
+    "header_budget_tokens": HEADER_BUDGET,
+    "rollup_trigger_count": ROLLUP_TRIGGER_COUNT,
+    "tail_reserve_msgs": TAIL_RESERVE,
+    "tail_token_budget": TAIL_TOKEN_BUDGET,
+    "token_trigger_fraction": 0.7,
+    "bulk_catchup_multiplier": 5,
+    "partial_min_msgs": 5,
+    "min_input_multiplier": 4,
+    "chars_per_token": 3.5,
+    "overshoot_warn_multiplier": 1.5,
+    "header_char_multiplier": 3.0,
+}
+
+_BG_COMPACT_PARAM_PREFIX = "pawflow.bg_compact."
+
+
 def _build_embed_fn(client: Any):
     """Return a callable that embeds text using `client`'s credentials when
     available, falling back to the local sentence-transformer otherwise.
@@ -115,6 +134,89 @@ class BgBucketBuilder:
     _PARTIAL_MIN = 5
     _MIN_BG_INPUT_MULTIPLIER = 4
     _CHARS_PER_TOKEN_EST = 3.5
+
+    @staticmethod
+    def _coerce_positive_int(name: str, raw: Any, default: int,
+                             minimum: int = 1) -> int:
+        try:
+            value = int(float(raw))
+        except (TypeError, ValueError):
+            logger.warning("[bg-bucket] invalid %s=%r; using default %r",
+                           name, raw, default)
+            return default
+        if value < minimum:
+            logger.warning("[bg-bucket] invalid %s=%r; minimum is %d; using default %r",
+                           name, raw, minimum, default)
+            return default
+        return value
+
+    @staticmethod
+    def _coerce_positive_float(name: str, raw: Any, default: float,
+                               minimum: float = 0.0) -> float:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            logger.warning("[bg-bucket] invalid %s=%r; using default %r",
+                           name, raw, default)
+            return default
+        if value <= minimum:
+            logger.warning("[bg-bucket] invalid %s=%r; must be > %s; using default %r",
+                           name, raw, minimum, default)
+            return default
+        return value
+
+    def _resolve_bg_compact_param(self, short_name: str, default: Any,
+                                  cid: str, user_id: str) -> Any:
+        full_name = _BG_COMPACT_PARAM_PREFIX + short_name
+        template = "${" + full_name + "}"
+        try:
+            from core.expression import resolve_expression
+            value = resolve_expression(
+                template, owner=user_id or None,
+                conversation_id=cid or None)
+        except Exception:
+            logger.debug("[bg-bucket] failed to resolve %s", full_name,
+                         exc_info=True)
+            return default
+        if value == template:
+            return default
+        return value
+
+    def _bg_compact_config(self, cid: str = "", user_id: str = "") -> Dict[str, Any]:
+        raw = {
+            name: self._resolve_bg_compact_param(name, default, cid, user_id)
+            for name, default in _BG_COMPACT_DEFAULTS.items()
+        }
+        return {
+            "l1_trigger_msgs": self._coerce_positive_int(
+                "l1_trigger_msgs", raw["l1_trigger_msgs"], L1_TRIGGER_MSGS),
+            "bucket_target_tokens": self._coerce_positive_int(
+                "bucket_target_tokens", raw["bucket_target_tokens"], BUCKET_OUTPUT_TARGET),
+            "header_budget_tokens": self._coerce_positive_int(
+                "header_budget_tokens", raw["header_budget_tokens"], HEADER_BUDGET),
+            "rollup_trigger_count": self._coerce_positive_int(
+                "rollup_trigger_count", raw["rollup_trigger_count"], ROLLUP_TRIGGER_COUNT),
+            "tail_reserve_msgs": self._coerce_positive_int(
+                "tail_reserve_msgs", raw["tail_reserve_msgs"], TAIL_RESERVE,
+                minimum=0),
+            "tail_token_budget": self._coerce_positive_int(
+                "tail_token_budget", raw["tail_token_budget"], TAIL_TOKEN_BUDGET),
+            "token_trigger_fraction": self._coerce_positive_float(
+                "token_trigger_fraction", raw["token_trigger_fraction"], 0.7),
+            "bulk_catchup_multiplier": self._coerce_positive_float(
+                "bulk_catchup_multiplier", raw["bulk_catchup_multiplier"], 5.0),
+            "partial_min_msgs": self._coerce_positive_int(
+                "partial_min_msgs", raw["partial_min_msgs"], self._PARTIAL_MIN),
+            "min_input_multiplier": self._coerce_positive_float(
+                "min_input_multiplier", raw["min_input_multiplier"],
+                float(self._MIN_BG_INPUT_MULTIPLIER)),
+            "chars_per_token": self._coerce_positive_float(
+                "chars_per_token", raw["chars_per_token"], self._CHARS_PER_TOKEN_EST),
+            "overshoot_warn_multiplier": self._coerce_positive_float(
+                "overshoot_warn_multiplier", raw["overshoot_warn_multiplier"], 1.5),
+            "header_char_multiplier": self._coerce_positive_float(
+                "header_char_multiplier", raw["header_char_multiplier"], 3.0),
+        }
 
     @classmethod
     def instance(cls) -> "BgBucketBuilder":
@@ -403,16 +505,19 @@ class BgBucketBuilder:
             _log_once("seq cache cold — seeding asynchronously")
             return
 
+        cfg = self._bg_compact_config(cid, user_id)
         seq_gap = shared_seq - pyramid_seq
-        # 3.5 chars/token matches agent_compaction default (chars_per_token).
-        transcript_tokens_est = int(transcript_chars / self._CHARS_PER_TOKEN_EST)
-        shared_tokens_est = int(shared_chars / self._CHARS_PER_TOKEN_EST)
-        min_input_tokens = BUCKET_OUTPUT_TARGET * self._MIN_BG_INPUT_MULTIPLIER
-        min_input_chars = int(min_input_tokens * self._CHARS_PER_TOKEN_EST)
+        chars_per_token = float(cfg["chars_per_token"])
+        transcript_tokens_est = int(transcript_chars / chars_per_token)
+        shared_tokens_est = int(shared_chars / chars_per_token)
+        min_input_tokens = int(
+            cfg["bucket_target_tokens"] * cfg["min_input_multiplier"])
+        min_input_chars = int(min_input_tokens * chars_per_token)
 
         # Need at least a few unbucketable shared rows for _pick_chunk
-        # to return non-[] (TAIL_RESERVE + _PARTIAL_MIN).
-        buildable_threshold = TAIL_RESERVE + self._PARTIAL_MIN
+        # to return non-[] (tail_reserve_msgs + partial_min_msgs).
+        buildable_threshold = (
+            int(cfg["tail_reserve_msgs"]) + int(cfg["partial_min_msgs"]))
 
         if unbucketed_rows < buildable_threshold:
             _log_once(
@@ -425,16 +530,18 @@ class BgBucketBuilder:
         if shared_chars < min_input_chars:
             _log_once(
                 f"only ~{shared_tokens_est} shared tokens < {min_input_tokens} "
-                f"minimum ({self._MIN_BG_INPUT_MULTIPLIER}x target); "
+                f"minimum ({cfg['min_input_multiplier']}x target); "
                 f"waiting for useful bg bucket input "
                 f"(shared_chars={shared_chars}, transcript_tokens_est="
                 f"{transcript_tokens_est})")
             return
 
         # Trigger A: transcript token budget. When the gap-since-pyramid
-        # in transcript tokens passes 70% of TAIL_TOKEN_BUDGET, fire so
-        # the next agent /compact finds the tail already small.
-        token_threshold = int(TAIL_TOKEN_BUDGET * 0.7)
+        # in transcript tokens passes the configured fraction of the tail
+        # token budget, fire so the next agent /compact finds the tail
+        # already small.
+        token_threshold = int(
+            cfg["tail_token_budget"] * cfg["token_trigger_fraction"])
         token_trigger = transcript_tokens_est >= token_threshold
 
         # Trigger B: shared-msg gap (legacy). For low-tool sessions
@@ -442,7 +549,7 @@ class BgBucketBuilder:
         # of conversational content sits unbucketed past the tail
         # reserve. With small TAIL_RESERVE this still requires
         # ~L1_TRIGGER_MSGS shared msgs of conversation.
-        msg_threshold = L1_TRIGGER_MSGS + TAIL_RESERVE
+        msg_threshold = int(cfg["l1_trigger_msgs"] + cfg["tail_reserve_msgs"])
         msg_trigger = seq_gap >= msg_threshold
 
         if not (token_trigger or msg_trigger):
@@ -496,10 +603,10 @@ class BgBucketBuilder:
         pyramid covers all of shared.jsonl.
 
         When allow_partial=True (default for manual/forced compacts),
-        the final bucket may be smaller than L1_TRIGGER_MSGS — gap
-        msgs "in progress" are flushed into a partial bucket rather
-        than left in the agent's tail. Floor at _PARTIAL_MIN (~37
-        msgs) to avoid paying for a tiny LLM call.
+        the final bucket may be smaller than the configured L1 trigger.
+        Gap msgs "in progress" are flushed into a partial bucket rather
+        than left in the agent's tail. The configured partial-min floor
+        avoids paying for a tiny LLM call.
 
         Used by manual /compact on a conv whose pyramid is behind (or
         empty: import, long-idle). Blocks the caller. Emits
@@ -507,9 +614,9 @@ class BgBucketBuilder:
         the UI can show progression.
 
         Bulk catchup shortcut: when the pyramid is empty AND the gap
-        exceeds L1_TRIGGER_MSGS × _BULK_CATCHUP_MULTIPLIER, the first
-        chunk absorbs everything except the last L1_TRIGGER_MSGS msgs
-        in a single bucket. Internal chunking in the summarize pipeline
+        exceeds l1_trigger_msgs * bulk_catchup_multiplier, the first
+        chunk absorbs everything except the configured tail reserve in
+        a single bucket. Internal chunking in the summarize pipeline
         handles oversize input. This keeps /compact on a 50k-msg
         imported conv bounded to ~20 LLM calls instead of ~333.
         """
@@ -535,6 +642,8 @@ class BgBucketBuilder:
                      "final_object_count": store.object_count,
                      "final_last_seq": store.last_seq}
 
+        cfg = self._bg_compact_config(cid, user_id)
+
         # Mark in-flight so maybe_trigger doesn't race us
         with self._pending_lock:
             self._pending.add(cid)
@@ -546,12 +655,13 @@ class BgBucketBuilder:
                 shared_msgs = self._load_shared_since(cid, store.last_seq)
                 chunk = self._pick_chunk(
                     shared_msgs, store.object_count,
-                    allow_partial=allow_partial)
+                    allow_partial=allow_partial, cfg=cfg)
                 if not chunk:
                     break
 
                 if not self._build_one_bucket(
-                        cid, user_id, store, chunk, client, ctx_max):
+                        cid, user_id, store, chunk, client, ctx_max,
+                        cfg=cfg):
                     break
                 buckets_built += 1
                 self._publish_progress(cid, "bucket_building", {
@@ -560,7 +670,8 @@ class BgBucketBuilder:
                     "bucket_msg_count": len(chunk),
                 })
 
-                if self._maybe_rollup(store, client, user_id, ctx_max, cid):
+                if self._maybe_rollup(store, client, user_id, ctx_max, cid,
+                                      cfg=cfg):
                     rollups_fired += 1
                     self._publish_progress(cid, "rollup_merging", {
                         "rollups_fired": rollups_fired,
@@ -807,27 +918,32 @@ class BgBucketBuilder:
                 user_id, cid[:8])
             return
 
+        cfg = self._bg_compact_config(cid, user_id)
+
         built = 0
         while True:
             shared_msgs = self._load_shared_since(cid, store.last_seq)
             # allow_partial=True: trigger fires on seq gap (captures
             # transcript activity including tools). When a tool-heavy
             # conv hits the threshold, shared might not have a full
-            # L1_TRIGGER_MSGS worth of new rows yet — without partial
+            # configured L1 worth of new rows yet — without partial
             # mode, _pick_chunk would return [] and the job no-ops
             # silently. Partial lets us bucket whatever shared does
-            # have (>= _PARTIAL_MIN ≈ 37) so the pyramid keeps
-            # advancing even in tool-dominated conversations.
+            # have above the configured partial floor so the pyramid
+            # keeps advancing even in tool-dominated conversations.
             chunk = self._pick_chunk(
-                shared_msgs, store.object_count, allow_partial=True)
+                shared_msgs, store.object_count, allow_partial=True,
+                cfg=cfg)
             if not chunk:
                 break
 
             if not self._build_one_bucket(
-                    cid, user_id, store, chunk, client, ctx_max):
+                    cid, user_id, store, chunk, client, ctx_max,
+                    cfg=cfg):
                 break
             built += 1
-            self._maybe_rollup(store, client, user_id, ctx_max, cid)
+            self._maybe_rollup(store, client, user_id, ctx_max, cid,
+                               cfg=cfg)
 
         if built:
             self._publish_built(cid, built, store)
@@ -867,41 +983,48 @@ class BgBucketBuilder:
 
     def _pick_chunk(self, shared_msgs: List[Dict],
                      current_object_count: int,
-                     allow_partial: bool = False) -> List[Dict]:
+                     allow_partial: bool = False,
+                     cfg: Optional[Dict[str, Any]] = None) -> List[Dict]:
         """Choose the next chunk of shared msgs for a single bucket.
 
-        CORE INVARIANT: the last TAIL_RESERVE msgs are NEVER bucketed.
-        They form the "recent window" that every post-compact output
-        carries. Every branch here subtracts TAIL_RESERVE from `n`
-        before deciding — `available` is what's legitimately
+        CORE INVARIANT: the last configured tail-reserve msgs are NEVER
+        bucketed. They form the "recent window" that every post-compact
+        output carries. Every branch subtracts tail_reserve_msgs from
+        `n` before deciding — `available` is what's legitimately
         bucketable in this call.
 
-        - Bulk catchup: pyramid empty AND total gap ≥ L1_TRIGGER ×
-          _BULK_CATCHUP_MULTIPLIER → one big bucket absorbs all
-          pre-tail msgs (available). Internal chunker in
-          _summarize_messages handles oversize input.
-        - Normal L1: available ≥ L1_TRIGGER_MSGS → 150-msg chunk.
-        - Partial (sync only): available in [_PARTIAL_MIN, L1_TRIGGER)
-          and allow_partial=True → flush what's bucketable (still
-          preserving TAIL_RESERVE).
+        - Bulk catchup: pyramid empty AND total gap >= l1_trigger_msgs *
+          bulk_catchup_multiplier -> one big bucket absorbs all pre-tail
+          msgs (available). Internal chunker in _summarize_messages
+          handles oversize input.
+        - Normal L1: available >= l1_trigger_msgs.
+        - Partial (sync only): available in [partial_min_msgs, L1)
+          and allow_partial=True -> flush what's bucketable.
         - Tail-only: available ≤ 0 → return [], nothing to do.
         """
+        cfg = cfg or self._bg_compact_config()
+        l1_trigger = int(cfg["l1_trigger_msgs"])
+        tail_reserve = int(cfg["tail_reserve_msgs"])
+        partial_min = int(cfg["partial_min_msgs"])
+        bulk_multiplier = float(cfg["bulk_catchup_multiplier"])
+
         n = len(shared_msgs)
-        available = n - TAIL_RESERVE
+        available = n - tail_reserve
         if available <= 0:
             return []
-        bulk_threshold = L1_TRIGGER_MSGS * self._BULK_CATCHUP_MULTIPLIER
+        bulk_threshold = int(l1_trigger * bulk_multiplier)
         if current_object_count == 0 and n >= bulk_threshold:
             return shared_msgs[:available]
-        if available >= L1_TRIGGER_MSGS:
-            return shared_msgs[:L1_TRIGGER_MSGS]
-        if allow_partial and available >= self._PARTIAL_MIN:
+        if available >= l1_trigger:
+            return shared_msgs[:l1_trigger]
+        if allow_partial and available >= partial_min:
             return shared_msgs[:available]
         return []
 
     def _build_one_bucket(self, cid: str, user_id: str,
                            store: BucketStore, chunk: List[Dict],
-                           client: Any, ctx_max: int) -> bool:
+                           client: Any, ctx_max: int,
+                           cfg: Optional[Dict[str, Any]] = None) -> bool:
         """Summarize one chunk of shared msgs and append as a bucket.
 
         Delegates the summarize call (and its internal chunking for
@@ -914,6 +1037,10 @@ class BgBucketBuilder:
         """
         if not chunk or self._summarize_fn is None:
             return False
+        cfg = cfg or self._bg_compact_config(cid, user_id)
+        bucket_target_tokens = int(cfg["bucket_target_tokens"])
+        chars_per_token = float(cfg["chars_per_token"])
+        overshoot_multiplier = float(cfg["overshoot_warn_multiplier"])
 
         first_seq = int(chunk[0].get("seq") or 0)
         last_seq = int(chunk[-1].get("seq") or 0)
@@ -968,7 +1095,7 @@ class BgBucketBuilder:
             summary = self._summarize_fn(
                 llm_msgs, client,
                 max_tokens=ctx_max or 0,
-                target_tokens=BUCKET_OUTPUT_TARGET,
+                target_tokens=bucket_target_tokens,
                 conversation_id=cid,
                 agent_name="",
                 compact_instructions=extra_instr,
@@ -1032,15 +1159,15 @@ class BgBucketBuilder:
         # HEADER_BUDGET, and /compact has to compress it privately
         # every time (step 2c). Make the drift visible so we can tune
         # the summarizer prompt or lower the target if it's chronic.
-        _summary_tokens_est = int(len(summary) / 3.5)
-        if _summary_tokens_est > BUCKET_OUTPUT_TARGET * 1.5:
+        _summary_tokens_est = int(len(summary) / chars_per_token)
+        if _summary_tokens_est > bucket_target_tokens * overshoot_multiplier:
             logger.warning(
                 "[bg-bucket] L1 summary overshoot cid=%s seq %d..%d: "
                 "~%d tokens (target=%d, %.1fx). Pyramid header will "
                 "bloat faster than designed; rollup fires earlier.",
                 cid[:8], first_seq, last_seq, _summary_tokens_est,
-                BUCKET_OUTPUT_TARGET,
-                _summary_tokens_est / float(BUCKET_OUTPUT_TARGET))
+                bucket_target_tokens,
+                _summary_tokens_est / float(bucket_target_tokens))
 
         # Feed the memory extractor: each bucket summary is a distilled
         # phase of the conversation — exactly the right granularity for
@@ -1061,11 +1188,17 @@ class BgBucketBuilder:
         return True
 
     def _maybe_rollup(self, store: BucketStore, client: Any,
-                       user_id: str, ctx_max: int, cid: str) -> bool:
+                       user_id: str, ctx_max: int, cid: str,
+                       cfg: Optional[Dict[str, Any]] = None) -> bool:
         """Fire rollup_all_except_last when header exceeds budget OR
         object_count exceeds trigger count. Return True if a rollup or
         collapse actually fired."""
-        over_count = store.object_count > ROLLUP_TRIGGER_COUNT
+        cfg = cfg or self._bg_compact_config(cid, user_id)
+        bucket_target_tokens = int(cfg["bucket_target_tokens"])
+        rollup_trigger_count = int(cfg["rollup_trigger_count"])
+        header_budget_tokens = int(cfg["header_budget_tokens"])
+        header_char_multiplier = float(cfg["header_char_multiplier"])
+        over_count = store.object_count > rollup_trigger_count
         # HEADER_BUDGET is a token budget; convert to chars via 3.5
         # chars/token (consistent with agent_utils._estimate_tokens
         # default and agent_compaction._compact). The previous `*4`
@@ -1079,7 +1212,9 @@ class BgBucketBuilder:
         # Tighten to `*3` (~26k tokens trigger, 20% margin under the
         # 30k nominal budget) so rollup kicks in early and keeps the
         # header well under HEADER_BUDGET even with summarizer drift.
-        over_budget = store.estimated_header_chars() > HEADER_BUDGET * 3
+        over_budget = (
+            store.estimated_header_chars()
+            > header_budget_tokens * header_char_multiplier)
         if not (over_count or over_budget):
             return False
 
@@ -1092,7 +1227,7 @@ class BgBucketBuilder:
             merged_trace = merge_traces(d.get("tool_trace") for d in inputs
                                           if d.get("tool_trace"))
             combined = self._consolidate_via_summarize(
-                inputs, client, user_id, ctx_max, cid)
+                inputs, client, user_id, ctx_max, cid, cfg=cfg)
             if combined and len(combined.strip()) >= 20:
                 try:
                     model = getattr(client, "default_model", "") or ""
@@ -1110,7 +1245,7 @@ class BgBucketBuilder:
         merged_trace = merge_traces(d.get("tool_trace") for d in inputs
                                       if d.get("tool_trace"))
         consolidated = self._consolidate_via_summarize(
-            inputs, client, user_id, ctx_max, cid)
+            inputs, client, user_id, ctx_max, cid, cfg=cfg)
         if consolidated and len(consolidated.strip()) >= 20:
             try:
                 model = getattr(client, "default_model", "") or ""
@@ -1124,7 +1259,8 @@ class BgBucketBuilder:
 
     def _consolidate_via_summarize(self, bucket_docs: List[Dict],
                                      client: Any, user_id: str,
-                                     ctx_max: int, cid: str) -> str:
+                                     ctx_max: int, cid: str,
+                                     cfg: Optional[Dict[str, Any]] = None) -> str:
         """Merge N bucket summaries into one via the injected summarize
         pipeline. Inputs stay as text (each phase is one synthetic
         LLMMessage carrying the previous bucket's summary). The
@@ -1136,6 +1272,10 @@ class BgBucketBuilder:
         long-term storage."""
         if not bucket_docs or self._summarize_fn is None:
             return ""
+        cfg = cfg or self._bg_compact_config(cid, user_id)
+        bucket_target_tokens = int(cfg["bucket_target_tokens"])
+        chars_per_token = float(cfg["chars_per_token"])
+        overshoot_multiplier = float(cfg["overshoot_warn_multiplier"])
         from core.llm_client import LLMMessage
         llm_msgs: List[LLMMessage] = []
         for d in bucket_docs:
@@ -1150,7 +1290,7 @@ class BgBucketBuilder:
             result = self._summarize_fn(
                 llm_msgs, client,
                 max_tokens=ctx_max or 0,
-                target_tokens=BUCKET_OUTPUT_TARGET,
+                target_tokens=bucket_target_tokens,
                 conversation_id=cid,
                 agent_name="",
                 compact_instructions=_ROLLUP_COMPACT_INSTRUCTIONS,
@@ -1166,14 +1306,14 @@ class BgBucketBuilder:
         # Flag it so chronic drift doesn't silently keep the header
         # above budget even post-rollup.
         if result:
-            _result_tokens_est = int(len(result) / 3.5)
-            if _result_tokens_est > BUCKET_OUTPUT_TARGET * 1.5:
+            _result_tokens_est = int(len(result) / chars_per_token)
+            if _result_tokens_est > bucket_target_tokens * overshoot_multiplier:
                 logger.warning(
                     "[bg-bucket] SB consolidation overshoot cid=%s: "
                     "~%d tokens (target=%d, %.1fx, from %d buckets). "
                     "Post-rollup header will stay large.",
-                    cid[:8], _result_tokens_est, BUCKET_OUTPUT_TARGET,
-                    _result_tokens_est / float(BUCKET_OUTPUT_TARGET),
+                    cid[:8], _result_tokens_est, bucket_target_tokens,
+                    _result_tokens_est / float(bucket_target_tokens),
                     len(bucket_docs))
 
         if result and user_id:

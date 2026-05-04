@@ -169,6 +169,28 @@ Operational notes:
 
 All summarizer providers use the same `compact_result` tool contract. Provider call scope (`call_user_id`, `call_conversation_id`, and `call_agent_name`) is passed uniformly so API providers and CLI providers receive equivalent identity context.
 
+## Background Compaction Variables
+
+Background bucket compaction reads optional PawFlow parameters at decision time with the normal expression cascade: conversation -> user -> global -> environment. Define these as parameters named `pawflow.bg_compact.*`; no service restart is required for later decisions to see changed values.
+
+| Parameter | Default | Meaning |
+|---|---:|---|
+| `pawflow.bg_compact.l1_trigger_msgs` | `150` | Shared-message count used for a normal level-1 bucket and the message-gap trigger. |
+| `pawflow.bg_compact.bucket_target_tokens` | `2000` | Target token size passed to the summarizer for level-1 buckets and rollup summaries. |
+| `pawflow.bg_compact.header_budget_tokens` | `30000` | Nominal pyramid header token budget before rollup pressure is considered. |
+| `pawflow.bg_compact.rollup_trigger_count` | `30` | Object-count ceiling; above this the builder consolidates old buckets. |
+| `pawflow.bg_compact.tail_reserve_msgs` | `10` | Recent shared messages that are never bucketed and remain in the post-compact tail. |
+| `pawflow.bg_compact.tail_token_budget` | `20000` | Estimated transcript-token budget since the last pyramid coverage. |
+| `pawflow.bg_compact.token_trigger_fraction` | `0.7` | Fraction of `tail_token_budget` that triggers async background bucketing. |
+| `pawflow.bg_compact.bulk_catchup_multiplier` | `5` | Empty-pyramid shortcut threshold: `l1_trigger_msgs * multiplier` enables one large catch-up bucket. |
+| `pawflow.bg_compact.partial_min_msgs` | `5` | Minimum bucketable shared messages for a partial bucket. |
+| `pawflow.bg_compact.min_input_multiplier` | `4` | Minimum useful shared input as `bucket_target_tokens * multiplier` before token pressure can submit a job. |
+| `pawflow.bg_compact.chars_per_token` | `3.5` | Estimation ratio for background trigger and overshoot calculations. |
+| `pawflow.bg_compact.overshoot_warn_multiplier` | `1.5` | Warn when a produced bucket/rollup summary exceeds target tokens by this multiplier. |
+| `pawflow.bg_compact.header_char_multiplier` | `3.0` | Converts `header_budget_tokens` into the estimated character threshold used for rollup pressure. |
+
+Invalid override values are ignored with a warning and the default is used for that decision. Integer counts must be non-negative for `tail_reserve_msgs` and positive for the other count/token fields; multipliers and fractions must be positive.
+
 ## Gemini CLI
 
 Gemini uses either API-key auth or Gemini CLI OAuth state.

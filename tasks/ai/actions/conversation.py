@@ -907,10 +907,12 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             # their LLM context from here (or from their own agent dir, which
             # falls back to shared). Without this file the "Shared" view
             # shows "diverged / no context" and the agent has no memory.
-            # Use ConversationStore's filter so imported convs match native
-            # ones exactly (no tool rows, tool_calls stripped, source kept).
+            # Use ConversationStore's filter + shared transform so imported
+            # convs match native appends exactly: no tool rows, tool_calls
+            # stripped, agent turns prefixed for the agent-neutral shared view.
             store._cid_user[cid] = user_id  # required for _conv_dir lookups
-            shared_msgs = store.filter_for_shared(raw_msgs)
+            shared_candidates = store.filter_for_shared(raw_msgs)
+            shared_msgs = [store._transform_for_shared(m) for m in shared_candidates]
             if shared_msgs:
                 store._append_shared_ctx(cid, shared_msgs)
             # Create minimal extras

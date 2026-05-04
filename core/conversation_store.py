@@ -44,7 +44,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 _CTX_CACHE_MAX_MESSAGES = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_MESSAGES", "500") or "500")
-_CTX_CACHE_MAX_CHARS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CHARS", "250000") or "250000")
+_CTX_CACHE_MAX_CHARS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CHARS", "1000000") or "1000000")
 _CTX_CACHE_MAX_CONVS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CONVS", "20") or "20")
 
 import core.paths as _paths
@@ -1427,9 +1427,9 @@ class ConversationStore:
                 self._trim_ctx_cache_locked()
             else:
                 self._ctx_cache.get(cid, {}).pop(agent_name, None)
-                logger.info("ConversationStore: skipped ctx cache for %s/%s (%s messages, %s chars)",
-                            cid[:8], agent_name or "shared", len(result or []),
-                            self._context_cache_chars(result))
+                logger.debug("ConversationStore: skipped ctx cache for %s/%s (%s messages, %s chars)",
+                             cid[:8], agent_name or "shared", len(result or []),
+                             self._context_cache_chars(result))
         return result
 
     def load_transcript_for_agent(self, cid: str, agent_name: str

@@ -248,11 +248,18 @@ class TestAgentContext:
         assert store.load_agent_context(cid, "agent1") is not None
         assert "agent1" in store._ctx_cache.get(cid, {})
 
-    def test_large_context_is_not_cached(self, conv):
+    def test_compacted_sized_context_is_cached(self, conv):
         store, cid, uid = conv
-        store.save_agent_context(cid, "agent1", [_msg(content="x" * 250001)])
+        store.save_agent_context(cid, "agent1", [_msg(content="x" * 390457)])
+        assert store.load_agent_context(cid, "agent1") is not None
+        assert "agent1" in store._ctx_cache.get(cid, {})
+
+    def test_oversized_context_is_not_cached(self, conv, caplog):
+        store, cid, uid = conv
+        store.save_agent_context(cid, "agent1", [_msg(content="x" * 1000001)])
         assert store.load_agent_context(cid, "agent1") is not None
         assert "agent1" not in store._ctx_cache.get(cid, {})
+        assert "skipped ctx cache" not in caplog.text
 
     def test_many_message_context_is_not_cached(self, conv):
         store, cid, uid = conv

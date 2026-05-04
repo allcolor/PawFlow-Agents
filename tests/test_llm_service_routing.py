@@ -355,6 +355,57 @@ class TestClassifyMessagesSource(unittest.TestCase):
         # Assistant messages now always get a default source for badge display
         self.assertEqual(classified[1]["source"], {"type": "agent", "name": ""})
 
+    def test_assistant_thinking_field_is_not_replayed_as_history_row(self):
+        """Stored reasoning stays on the message; history does not create fake rows."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        raw = [{
+            "role": "assistant",
+            "content": "visible answer",
+            "thinking": "old reasoning",
+            "msg_id": "m1",
+            "ts": 1234.5,
+            "source": {"type": "agent", "name": "bot"},
+        }]
+
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+
+        self.assertEqual(len(classified), 1)
+        self.assertEqual(classified[0]["type"], "assistant")
+        self.assertEqual(classified[0]["timestamp"], 1234.5)
+        self.assertEqual(classified[0]["msg_id"], "m1")
+
+    def test_tool_display_entries_keep_ts_without_synthetic_msg_ids(self):
+        """Tool calls use tc_id; tool results keep their JSONL msg_id."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        raw = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "tc1", "name": "bash", "arguments": {"command": "pwd"}}],
+                "msg_id": "a1",
+                "ts": 2000.0,
+                "source": {"type": "agent", "name": "bot"},
+            },
+            {
+                "role": "tool",
+                "content": "ok",
+                "tool_call_id": "tc1",
+                "msg_id": "r1",
+                "ts": 2001.0,
+            },
+        ]
+
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+
+        self.assertEqual(classified[0]["type"], "tool_call")
+        self.assertEqual(classified[0]["timestamp"], 2000.0)
+        self.assertEqual(classified[0]["tc_id"], "tc1")
+        self.assertNotIn("msg_id", classified[0])
+        self.assertEqual(classified[1]["type"], "tool_result")
+        self.assertEqual(classified[1]["timestamp"], 2001.0)
+        self.assertEqual(classified[1]["msg_id"], "r1")
+
+
 
 class TestAgentLoopSchema(unittest.TestCase):
     """Test AgentLoopTask parameter schema changes."""

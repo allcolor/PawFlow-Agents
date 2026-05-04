@@ -644,6 +644,7 @@ class AgentCoreMixin:
                         _sse.append({"type": "thinking_content", "data": {
                             "text": _think_text,
                             "msg_id": getattr(msg, "msg_id", ""),
+                            "ts": getattr(msg, "timestamp", 0) or None,
                             "agent_name": _agent,
                             "source": msg.source,
                         }})
@@ -655,6 +656,7 @@ class AgentCoreMixin:
                             "role": "assistant",
                             "content": msg.content,
                             "msg_id": getattr(msg, "msg_id", ""),
+                            "ts": getattr(msg, "timestamp", 0) or None,
                             "source": msg.source,
                         }})
                     # Assistant tool_calls → one tool_call SSE per tc.
@@ -674,6 +676,7 @@ class AgentCoreMixin:
                                 "tc_id": tc.id,
                                 "agent_name": _agent, "llm_service": _svc,
                                 "msg_id": getattr(msg, "msg_id", ""),
+                                "ts": getattr(msg, "timestamp", 0) or None,
                                 "source": msg.source,
                             }})
                     # role=tool → tool_result SSE. The `_tool_name` attr
@@ -710,6 +713,7 @@ class AgentCoreMixin:
                                 "result": _preview,
                                 "tc_id": getattr(msg, 'tool_call_id', ''),
                                 "msg_id": getattr(msg, "msg_id", ""),
+                                "ts": getattr(msg, "timestamp", 0) or None,
                                 "agent_name": _agent, "llm_service": _svc,
                             }})
                     _agent_for_route = ctx.get("active_agent_name", "") or ""

@@ -148,6 +148,7 @@ class AgentSerializationMixin:
         _META_TOOLS = {"get_tool_schema"}
         for raw_idx, m in enumerate(raw_messages):
             role = m.get("role", "")
+            _display_ts = m.get("timestamp") or m.get("ts")
             if role == "system":
                 continue  # skip system prompts
             raw_content = m.get("content", "")
@@ -188,17 +189,6 @@ class AgentSerializationMixin:
                 for tc in tool_calls:
                     _unwrapped_name, _ = unwrap_mcp_tool(tc.get("name", "?"), tc.get("arguments", {}))
                     _tc_id_to_name[tc.get("id", "")] = _unwrapped_name
-                # Thinking block (before tool calls, same as SSE live order)
-                _thinking = m.get("thinking", "")
-                if _thinking:
-                    _think_entry = {
-                        "type": "thinking", "role": "assistant",
-                        "content": _thinking,
-                        "source": m.get("source"),
-                    }
-                    if m.get("timestamp"):
-                        _think_entry["timestamp"] = m["timestamp"]
-                    result.append(_think_entry)
                 # Assistant message that contains tool calls
                 if content:
                     _tc_entry = {
@@ -207,8 +197,8 @@ class AgentSerializationMixin:
                     }
                     if m.get("source"):
                         _tc_entry["source"] = m["source"]
-                    if m.get("timestamp"):
-                        _tc_entry["timestamp"] = m["timestamp"]
+                    if _display_ts:
+                        _tc_entry["timestamp"] = _display_ts
                     result.append(_tc_entry)
                 _tc_source = m.get("source")
                 for tc in tool_calls:
@@ -251,8 +241,8 @@ class AgentSerializationMixin:
                         "arguments": _tc_args,
                         "source": _tc_source,
                     }
-                    if m.get("timestamp"):
-                        _tc_entry2["timestamp"] = m["timestamp"]
+                    if _display_ts:
+                        _tc_entry2["timestamp"] = _display_ts
                     result.append(_tc_entry2)
             elif role == "tool" and tool_call_id:
                 # Skip results for hidden meta tools
@@ -283,12 +273,14 @@ class AgentSerializationMixin:
                     "tool_call_id": tool_call_id,
                     "tc_id": tool_call_id,
                 }
+                if m.get("msg_id"):
+                    _tr_entry["msg_id"] = m["msg_id"]
                 if tool_call_id in _tc_id_to_name:
                     _tr_entry["tool_name"] = _tc_id_to_name[tool_call_id]
                 if m.get("source"):
                     _tr_entry["source"] = m["source"]
-                if m.get("timestamp"):
-                    _tr_entry["timestamp"] = m["timestamp"]
+                if _display_ts:
+                    _tr_entry["timestamp"] = _display_ts
                 result.append(_tr_entry)
             elif role == "sub_agent_trace":
                 entry = {
@@ -307,8 +299,8 @@ class AgentSerializationMixin:
                     entry["msg_id"] = _mid
                 if m.get("source"):
                     entry["source"] = m["source"]
-                if m.get("timestamp"):
-                    entry["timestamp"] = m["timestamp"]
+                if _display_ts:
+                    entry["timestamp"] = _display_ts
                 result.append(entry)
             elif role in ("tool_call", "tool_result", "thinking"):
                 # Skip meta tools from display
@@ -327,6 +319,8 @@ class AgentSerializationMixin:
                     entry["tool_call_id"] = m["tool_call_id"]
                 if m.get("display_type"):
                     entry["display_type"] = m["display_type"]
+                if _display_ts:
+                    entry["timestamp"] = _display_ts
                 result.append(entry)
             elif role in ("user", "assistant"):
                 # Skip internal system instructions injected as user messages
@@ -336,13 +330,6 @@ class AgentSerializationMixin:
                 _src = m.get("source") or {}
                 if isinstance(_src, dict) and _src.get("type") == "context":
                     continue
-                # Thinking block on assistant text messages (no tool_calls)
-                if role == "assistant" and m.get("thinking"):
-                    result.append({
-                        "type": "thinking", "role": "assistant",
-                        "content": m["thinking"],
-                        "source": m.get("source"),
-                    })
                 if role == "assistant" and not str(content).strip():
                     continue
                 _type = role
@@ -364,8 +351,8 @@ class AgentSerializationMixin:
                         entry["tool_name"] = m["tool_name"]
                     if m.get("tool_args"):
                         entry["tool_args"] = m["tool_args"]
-                if m.get("timestamp"):
-                    entry["timestamp"] = m["timestamp"]
+                if _display_ts:
+                    entry["timestamp"] = _display_ts
                 if m.get("channel"):
                     entry["channel"] = m["channel"]
                 if m.get("source"):

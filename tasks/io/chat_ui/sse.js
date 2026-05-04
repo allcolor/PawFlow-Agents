@@ -104,7 +104,7 @@ function connectSSE(cid, onReady, opts) {
       // Dedup by msg_id — don't render if already in DOM
       if (data.msg_id && document.querySelector('[data-msgid="' + data.msg_id + '"]')) return;
       addMsg(data.role, data.content, {
-        source: data.source, msg_id: data.msg_id,
+        source: data.source, msg_id: data.msg_id, ts: data.ts,
       });
       if (typeof _noteLiveHistoryAppend === 'function') {
         _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');
@@ -198,11 +198,13 @@ function connectSSE(cid, onReady, opts) {
       }
       if (!_placed) {
         const _msgContainer = document.getElementById('messages');
-        const _typingEl = document.getElementById('typing');
-        if (_typingEl) {
-          _msgContainer.insertBefore(details, _typingEl);
+        const _sortTs = (typeof _messageSortTs === 'function') ? _messageSortTs(data) : Date.now() / 1000;
+        if (typeof _insertMessageChronologically === 'function') {
+          _insertMessageChronologically(_msgContainer, details, _sortTs);
         } else {
-          _msgContainer.appendChild(details);
+          const _typingEl = document.getElementById('typing');
+          if (_typingEl) _msgContainer.insertBefore(details, _typingEl);
+          else _msgContainer.appendChild(details);
         }
       }
       thinkingElements[aKey] = {el: details, content: content, summary: summary, text: '', startTime: Date.now()};
@@ -835,6 +837,7 @@ function connectSSE(cid, onReady, opts) {
       const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
       if (tcEl) {
         _attachToolResult(tcEl, data.result || '');
+        if (data.msg_id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
         return;
       }
     }
@@ -847,6 +850,7 @@ function connectSSE(cid, onReady, opts) {
       llm_service: data.llm_service || '',
       path: data.path || '',
       ts: data.ts,
+      msg_id: data.msg_id || '',
       tc_id: tcId,
     });
     // Route into task block if this is a task event

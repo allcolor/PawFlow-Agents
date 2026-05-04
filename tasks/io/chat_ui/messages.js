@@ -151,7 +151,16 @@ function _insertMessageChronologically(container, el, sortTs) {
   if (!container) return;
   el.dataset.sortTs = String(sortTs);
   const typingEl = document.getElementById('typing');
-  if (typingEl) container.insertBefore(el, typingEl);
+  const fallback = typingEl && typingEl.parentNode === container ? typingEl : null;
+  for (const child of Array.from(container.children)) {
+    if (child === fallback) break;
+    const childTs = Number(child.dataset && child.dataset.sortTs);
+    if (Number.isFinite(childTs) && childTs > sortTs) {
+      container.insertBefore(el, child);
+      return;
+    }
+  }
+  if (fallback) container.insertBefore(el, fallback);
   else container.appendChild(el);
 }
 
@@ -163,6 +172,10 @@ function addMsg(role, text, extra) {
       return null;
     }
     _seenMsgIds.add(msgId);
+  }
+  if (role === 'tool_call' && extra && extra.tc_id
+      && document.querySelector('[data-tc-id="' + extra.tc_id + '"]')) {
+    return null;
   }
   // Background-tool results are written to transcript as role=user (that
   // is what CC's wire protocol requires for tool_result replies), but in

@@ -429,70 +429,88 @@ function loadMoreMessages() {
 }
 
 function _recoverConversation(cid) {
-  if (cid !== conversationId) return;
-  action$('poll', { conversation_id: cid, last_count: serverMsgCount })
-    .subscribe(data => {
-      if (data.error) return;
-      const newMsgs = data.new_messages || [];
-      if (newMsgs.length === 0) return;
-      console.log('[poll] recovering', newMsgs.length, 'new messages');
-      if (newMsgs.length > 50) {
-        // Too many missed — just update count/offset, don't try to render them all
-        _noteLiveHistoryAppend(data.message_count, newMsgs.length);
-        return;
-      }
-      _noteLiveHistoryAppend(data.message_count, newMsgs.length);
-      const msgContainer = document.getElementById('messages');
-      let rendered = 0;
-      for (const m of newMsgs) {
-        const mType = m.type || m.role;
-        if (mType === 'tool_call' || mType === 'tool_result' || mType === 'thinking') continue;
-        // Use msg_id dedup — if already rendered via SSE, skip
-        if (m.msg_id && _seenMsgIds.has(m.msg_id)) continue;
-        if (mType === 'user') {
-          const existing = msgContainer.querySelectorAll('.msg.user');
-          const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
-          if (lastUserEl) {
-            const stripPrefix = (s) => s.replace(/^\[(?:btw\s*)?(?:\u2192\s+\w+)?\]\s*/, '');
-            const stripDeflated = (s) => s
-              .replace(/\n?\[\d+ image\(s\) were shown[^\]]*\]/g, '')
-              .replace(/\n?\[\d+ image\(s\) — saved to FileStore:[\s\S]*?Use show_file to view again\]/g, '')
-              .replace(/\n?\[images deflated\]/g, '').trim();
-            const localRaw = stripPrefix(stripDeflated(lastUserEl.dataset.rawText || lastUserEl.textContent.trim()));
-            const serverRaw = stripPrefix(stripDeflated((m.content || '').trim()));
-            if (localRaw === serverRaw || localRaw.startsWith(serverRaw) || serverRaw.startsWith(localRaw)) continue;
-          }
-        }
-        if (mType === 'assistant') {
-          if (m.source && m.source.btw) continue;
-          // Content-based dedup: check if the last displayed assistant message matches
-          const existing = msgContainer.querySelectorAll('.msg.assistant, .msg.subagent');
-          const lastEl = existing.length > 0 ? existing[existing.length - 1] : null;
-          if (lastEl && lastEl.dataset.rawText) {
-            const newText = (m.content || '').replace(/^\[[^\]]+\]:\s*/, '').substring(0, 500);
-            if (lastEl.dataset.rawText === newText) continue;
-          }
-        }
-        let pollContent = m.content || '';
-        if (mType === 'assistant' && typeof pollContent === 'string') {
-          pollContent = pollContent.replace(/^\[[^\]]+\]:\s*/, '');
-        }
-        addMsg(mType, pollContent, m);
-        rendered++;
-      }
-      if (rendered > 0) console.log('[poll] rendered', rendered, 'recovered messages');
-      const last = newMsgs[newMsgs.length - 1];
-      const lastType = last ? (last.type || last.role) : '';
-      if (lastType === 'user' || lastType === 'tool_call' || lastType === 'tool_result') {
-        document.getElementById('status').textContent = t('thinking');
-      } else {
-        sending = false;
-        document.getElementById('sendBtn').disabled = false;
-        document.getElementById('status').textContent = t('ready');
-      }
-      scrollBottom();
-    });
+  if (cid !== conversationId) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    try {
+      action$('poll', { conversation_id: cid, last_count: serverMsgCount })
+        .subscribe({
+          next: data => {
+            if (data.error) { finish(); return; }
+            const newMsgs = data.new_messages || [];
+            if (newMsgs.length === 0) { finish(); return; }
+            console.log('[poll] recovering', newMsgs.length, 'new messages');
+            if (newMsgs.length > 50) {
+              // Too many missed — just update count/offset, don't try to render them all
+              _noteLiveHistoryAppend(data.message_count, newMsgs.length);
+              finish();
+              return;
+            }
+            _noteLiveHistoryAppend(data.message_count, newMsgs.length);
+            const msgContainer = document.getElementById('messages');
+            let rendered = 0;
+            for (const m of newMsgs) {
+              const mType = m.type || m.role;
+              // Use msg_id dedup — if already rendered via SSE, skip
+              if (m.msg_id && _seenMsgIds.has(m.msg_id)) continue;
+              if (mType === 'user') {
+                const existing = msgContainer.querySelectorAll('.msg.user');
+                const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
+                if (lastUserEl) {
+                  const stripPrefix = (s) => s.replace(/^\[(?:btw\s*)?(?:\u2192\s+\w+)?\]\s*/, '');
+                  const stripDeflated = (s) => s
+                    .replace(/\n?\[\d+ image\(s\) were shown[^\]]*\]/g, '')
+                    .replace(/\n?\[\d+ image\(s\) — saved to FileStore:[\s\S]*?Use show_file to view again\]/g, '')
+                    .replace(/\n?\[images deflated\]/g, '').trim();
+                  const localRaw = stripPrefix(stripDeflated(lastUserEl.dataset.rawText || lastUserEl.textContent.trim()));
+                  const serverRaw = stripPrefix(stripDeflated((m.content || '').trim()));
+                  if (localRaw === serverRaw || localRaw.startsWith(serverRaw) || serverRaw.startsWith(localRaw)) continue;
+                }
+              }
+              if (mType === 'assistant') {
+                if (m.source && m.source.btw) continue;
+                // Content-based dedup: check if the last displayed assistant message matches
+                const existing = msgContainer.querySelectorAll('.msg.assistant, .msg.subagent');
+                const lastEl = existing.length > 0 ? existing[existing.length - 1] : null;
+                if (lastEl && lastEl.dataset.rawText) {
+                  const newText = (m.content || '').replace(/^\[[^\]]+\]:\s*/, '').substring(0, 500);
+                  if (lastEl.dataset.rawText === newText) continue;
+                }
+              }
+              let pollContent = m.content || '';
+              if (mType === 'assistant' && typeof pollContent === 'string') {
+                pollContent = pollContent.replace(/^\[[^\]]+\]:\s*/, '');
+              }
+              addMsg(mType, pollContent, m);
+              rendered++;
+            }
+            if (rendered > 0) console.log('[poll] rendered', rendered, 'recovered messages');
+            const last = newMsgs[newMsgs.length - 1];
+            const lastType = last ? (last.type || last.role) : '';
+            if (lastType === 'user' || lastType === 'tool_call' || lastType === 'tool_result') {
+              document.getElementById('status').textContent = t('thinking');
+            } else {
+              sending = false;
+              document.getElementById('sendBtn').disabled = false;
+              document.getElementById('status').textContent = t('ready');
+            }
+            scrollBottom();
+            finish();
+          },
+          error: () => finish(),
+          complete: () => finish(),
+        });
+    } catch (_) {
+      finish();
+    }
+  });
 }
+
 
 function deleteConv(event, cid) {
   event.stopPropagation();

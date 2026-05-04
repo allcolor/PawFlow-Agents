@@ -13,6 +13,11 @@ def _msg(role="user", content="hello", **kw):
         "role": role, "content": content,
         "msg_id": uuid.uuid4().hex[:12], "ts": time.time(), "seq": 1,
     }
+    if role == "user" and "source" not in kw:
+        m["source"] = {
+            "type": "user", "name": "testuser",
+            "target_agent": "assistant",
+        }
     m.update(kw)
     return m
 

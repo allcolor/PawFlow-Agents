@@ -22,6 +22,9 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
                 entries = ms.list_by_agent(user_id, agent_filter)
             else:
                 entries = ms.list_all(user_id)
+            include_ended = bool(body.get("include_ended"))
+            if not include_ended:
+                entries = [e for e in entries if not e.ended]
             # Newest first — users open this panel to see what was just
             # captured, not to scroll through 30-day-old auto-extracts.
             entries = sorted(
@@ -34,6 +37,8 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
                 "created_at": e.created_at, "updated_at": e.updated_at,
                 "source": e.source, "agent": e.agent,
                 "conversation_id": e.conversation_id,
+                "category": e.category, "ended": e.ended,
+                "expires_at": e.expires_at,
             } for e in entries]
             flowfile.set_content(json.dumps({
                 "memories": result, "count": len(result),

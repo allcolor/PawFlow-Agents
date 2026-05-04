@@ -37,6 +37,18 @@ def _bm25_tokens(text: str) -> List[str]:
     return [t for t in _BM25_SPLIT.split(text.lower()) if len(t) > 1]
 
 
+def _memory_dedup_key(text: str) -> str:
+    """Stable exact-ish key for duplicate memory inserts.
+
+    This intentionally stays conservative: punctuation/case/spacing should
+    not create a second memory, but different numbers or facts still should.
+    Broader consolidation belongs in memory_gc, where it can be reviewed.
+    """
+    text = (text or "").lower().strip()
+    text = _BM25_SPLIT.sub(" ", text)
+    return " ".join(text.split())
+
+
 # ── Scope semantics (single source of truth) ───────────────────────
 VALID_SCOPES = ("global", "agent", "conversation", "private")
 
@@ -230,8 +242,13 @@ class MemoryStore:
             self._ensure_loaded(user_id)
             # Check for duplicate (same text)
             entries = self._memories.setdefault(user_id, [])
+            incoming_key = _memory_dedup_key(text)
             for e in entries:
-                if e.text.strip().lower() == text.strip().lower():
+                same_text = e.text.strip().lower() == text.strip().lower()
+                same_key = incoming_key and _memory_dedup_key(e.text) == incoming_key
+                same_scope = e.agent == agent and e.conversation_id == conversation_id
+                same_category = (e.category or "") == (category or "")
+                if same_text or (same_key and same_scope and same_category):
                     # Update existing entry
                     e.tags = list(set(e.tags + [t.lower().strip() for t in tags]))
                     e.updated_at = time.time()
@@ -241,6 +258,8 @@ class MemoryStore:
                         e.embedding = embedding
                     if agent:
                         e.agent = agent
+                    if conversation_id:
+                        e.conversation_id = conversation_id
                     if category:
                         e.category = category
                     if expires_at:

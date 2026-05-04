@@ -82,9 +82,9 @@ Memories are extracted automatically in two situations:
 
 1. **Periodic auto-save** -- Every ~15 user messages, the system extracts key facts from recent conversation text using the `summarizer_service` LLM. The counter is tracked per-agent via conversation extras (`_auto_save_count:{agent}`).
 
-2. **Post-compaction extraction** -- When a conversation is compacted (context window overflow), the compaction summary is fed to `auto_extract_memories()` which uses the LLM (or a heuristic fallback) to extract 3-5 key facts. Extracted memories are tagged `["auto-extracted", "compaction"]`.
+2. **Post-compaction extraction** -- When a conversation is compacted, the bucket or rollup summary is fed to `auto_extract_memories()`. This path is intentionally conservative: it stores at most two durable memories per extraction, rejects ephemeral/current-task state, and asks the LLM for `importance`, `durability`, `scope`, and `ttl_days` metadata. Extracted memories are tagged `["auto-extracted", "compaction"]`.
 
-The heuristic fallback scans for sentences containing indicators like "prefer", "decided", "chose", "using", "switched", "deadline", "must", "should", "always", "never", "important", "key", "role".
+Compaction auto-extract does not write global permanent memories by default. Only durable high/critical user preferences or advice may become global. Project/debug facts are stored in conversation scope with a TTL unless explicitly classified as durable. Existing stale auto-extracted entries can be marked ended with `scripts/memory_gc.py`; ended memories remain in the raw JSON audit trail but are ignored by normal recall and the memory panel.
 
 ### 1.5 Memory Digest Injection
 

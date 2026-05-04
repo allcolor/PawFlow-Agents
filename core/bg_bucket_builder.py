@@ -1179,7 +1179,8 @@ class BgBucketBuilder:
             auto_extract_memories(
                 user_id=user_id, summary=summary,
                 agent_name="", llm_client=client,
-                embed_fn=_build_embed_fn(client))
+                embed_fn=_build_embed_fn(client),
+                conversation_id=cid)
         except Exception:
             logger.debug(
                 "[bg-bucket] auto_extract_memories failed for cid=%s "
@@ -1322,7 +1323,8 @@ class BgBucketBuilder:
                 auto_extract_memories(
                     user_id=user_id, summary=result,
                     agent_name="", llm_client=client,
-                    embed_fn=_build_embed_fn(client))
+                    embed_fn=_build_embed_fn(client),
+                    conversation_id=cid)
             except Exception:
                 logger.debug("[bg-bucket] consolidate memory extract failed",
                               exc_info=True)

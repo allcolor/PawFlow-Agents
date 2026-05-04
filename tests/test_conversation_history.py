@@ -519,7 +519,11 @@ class TestConversationStoreContext(unittest.TestCase):
         ctx = [{"role": "system", "content": "compacted"}]
         store.save_context("c1", ctx)
         # Append to messages
-        store.append_message("c1", {"role": "user", "content": "new", "msg_id": uuid.uuid4().hex[:12], "ts": _t.time()})
+        store.append_message("c1", {
+            "role": "user", "content": "new",
+            "source": {"type": "user", "target_agent": "assistant"},
+            "msg_id": uuid.uuid4().hex[:12], "ts": _t.time(),
+        })
         # Messages have the new one
         loaded_msgs = store.load("c1")
         assert len(loaded_msgs) == 2

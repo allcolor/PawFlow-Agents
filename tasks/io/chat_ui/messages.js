@@ -151,15 +151,6 @@ function _insertMessageChronologically(container, el, sortTs) {
   if (!container) return;
   el.dataset.sortTs = String(sortTs);
   const typingEl = document.getElementById('typing');
-  for (const child of Array.from(container.children)) {
-    if (child === typingEl) break;
-    if (!child.classList || !child.classList.contains('msg')) continue;
-    const childTs = Number(child.dataset.sortTs || '');
-    if (Number.isFinite(childTs) && childTs > sortTs) {
-      container.insertBefore(el, child);
-      return;
-    }
-  }
   if (typingEl) container.insertBefore(el, typingEl);
   else container.appendChild(el);
 }
@@ -229,11 +220,6 @@ function addMsg(role, text, extra) {
   }
   el.className = 'msg ' + cssClass;
   if (msgId) el.dataset.msgid = msgId;
-  // Wallclock at insertion — lets sse.js's thinking_content handler
-  // know whether to slot a freshly-arrived thinking block ABOVE this
-  // message (CC bundles thinking onto the tool_calls msg that follows
-  // the text, so SSE order is new_message → thinking_content even
-  // though the thinking semantically came first).
   el.dataset.insertedAt = String(Date.now());
   el.addEventListener('click', function(e) {
     if (e.ctrlKey || e.shiftKey) { e.preventDefault(); toggleMsgSelect(this, e); }

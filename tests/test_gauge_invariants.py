@@ -91,6 +91,19 @@ def test_chat_tool_display_unwraps_meta_use_tool_calls():
     assert "toolArgs.arguments || {}" in _MESSAGES_JS
 
 
+def test_transcript_tool_events_are_not_filtered_by_cancelled_ui_state():
+    """Received transcript events must render; msg_id dedup is the filter."""
+    assert "_cancelledAgents" not in _SSE_JS
+    tool_call = _SSE_JS[
+        _SSE_JS.index("eventSource.addEventListener('tool_call'"):
+        _SSE_JS.index("eventSource.addEventListener('tool_result'")]
+    tool_result = _SSE_JS[
+        _SSE_JS.index("eventSource.addEventListener('tool_result'"):
+        _SSE_JS.index("eventSource.addEventListener('bg_task_update'")]
+    assert "cancel" not in tool_call.lower()
+    assert "cancel" not in tool_result.lower()
+
+
 def test_iteration_status_updates_state_without_polluting_chat_timeline():
     start = _SSE_JS.index("eventSource.addEventListener('iteration_status'")
     end = _SSE_JS.index("eventSource.addEventListener('flowfile_in'", start)
@@ -100,15 +113,15 @@ def test_iteration_status_updates_state_without_polluting_chat_timeline():
     assert "addMsg(" not in block
 
 
-def test_compact_progress_done_applies_gauge_immediately():
-    """Manual compact has no immediate message_meta; compact_progress done
-    must carry and apply the post-compact gauge itself."""
+def test_compact_progress_done_does_not_publish_gauge():
+    """Gauge updates come from message_meta produced by compute_context_usage.
+    compact_progress is progress UI only and must not carry a second formula."""
     done_branch = _SSE_JS[
         _SSE_JS.index("} else if (data.stage === 'done')"):
         _SSE_JS.index("} else if (data.stage === 'error')")]
-    assert "setContextUsage(agent" in done_branch
-    assert "data.context_used" in done_branch
-    assert "data.context_max" in done_branch
+    assert "setContextUsage(agent" not in done_branch
+    assert "data.context_used" not in done_branch
+    assert "data.context_max" not in done_branch
 
 
 def test_context_shrinks_only_through_threshold_compact():
@@ -132,13 +145,16 @@ def test_proactive_compact_only_runs_after_threshold_estimate():
     assert "if _should_proactive_compact(messages, _max_ctx, _cpt):" in proactive_region
 
 
-def test_cli_session_invalidation_requires_real_compact_change():
-    """Codex and Gemini live sessions must survive normal below-threshold turns."""
-    invalidation = _AGENT_CORE_PY.index(
-        "invalidate_claude_session_for_agent(")
-    guard = _AGENT_CORE_PY.rfind("if _messages_changed", 0, invalidation)
-    assert guard != -1
-    assert invalidation - guard < 600
+def test_cli_session_invalidation_requires_compacted_context_adoption():
+    """CLI sessions are invalidated only when compacted context is adopted."""
+    helper = _AGENT_CORE_PY[
+        _AGENT_CORE_PY.index("def _adopt_compacted_context"):
+        _AGENT_CORE_PY.index("# Claude-code: CC session")]
+    assert "messages[:] = compacted_list" in helper
+    assert "save_agent_context(" in helper
+    assert "if ctx.get(\"_is_cli_provider\"):" in helper
+    assert "invalidate_claude_session_for_agent(" in helper
+    assert "ctx[\"_cli_has_session\"] = False" in helper
 
 
 def test_no_direct_active_interactions_mutation_for_context():
@@ -197,13 +213,12 @@ def test_list_active_does_not_surface_idle_live_only_rows():
     assert "gemini_live_list = _gem_entries" in src
 
 
-def test_message_meta_context_used_comes_from_pawflow_context_not_provider_delta():
+def test_message_meta_context_used_comes_from_central_context_usage():
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     agent_source = src[src.index("def _agent_source") : src.index("# SpawnAgentsHandler source tracking")]
-    assert "used = token_count(ctx[\"messages\"])" in agent_source
-    assert "effective context" in agent_source
-    assert "context_usage_from_cache" in agent_source
+    assert "compute_context_usage" in agent_source
     assert "source=\"pawflow_context\"" in agent_source
+    assert "context_usage_from_cache" not in agent_source
     assert 'src["tokens_in"] = tok_in' in agent_source
 
 
@@ -230,7 +245,8 @@ def test_manual_compact_suspends_stale_live_gauge_until_refresh():
     assert "_refresh_active_context_from_store(_agent)" in compact_block
     assert "_set_context_usage_suspended(_agent, False)" in compact_block
     assert "_context_usage_suspended" in emitter_src
-    assert '"updated_at": float(usage.get("updated_at", 0.0) or 0.0)' in emitter_src
+    assert "compute_context_usage" in emitter_src
+    assert "usage_event_payload" in emitter_src
 
 
 def test_frontend_context_pct_is_always_used_over_max():
@@ -261,8 +277,8 @@ def test_context_command_exposes_full_agent_context_usage():
         context_src.index('if action == "get_context":'):
         context_src.index('if action == "get_context_full":')]
     assert "_usage_context_data = list(context_data)" in get_context
-    assert "context_usage_from_cache" in get_context
-    assert '"computed_from": "full_agent_context"' in get_context
+    assert "compute_context_usage" in get_context
+    assert '"computed_from": "authoritative_agent_context"' in get_context
     assert '"context_usage": _context_usage' in get_context
     assert "context gauge:" in ui_src
     assert "used.toLocaleString() + ' / ' + max.toLocaleString()" in ui_src
@@ -385,15 +401,61 @@ def test_initial_context_usage_has_dedicated_action():
     usage_src = Path("tasks/ai/actions/usage.py").read_text(encoding="utf-8")
     list_context_usage_block = _extract_action_block(
         usage_src, 'if action == "list_context_usage":')
-    assert "context_usage_from_cache" in list_context_usage_block
-    assert "load_agent_context" in list_context_usage_block
-    assert "load_transcript_for_agent" in list_context_usage_block
-    assert '"initial_context_usage"' in list_context_usage_block
+    assert "compute_context_usage" in list_context_usage_block
+    assert "context_usage_from_cache" not in list_context_usage_block
+    assert 'source="list_context_usage"' in list_context_usage_block
     assert '"context_usage": out' in list_context_usage_block
 
     list_active_block = _extract_action_block(
         usage_src, 'if action == "list_active":')
     assert '"context_usage"' not in list_active_block
+
+
+def test_list_context_usage_prefers_active_context_over_disk():
+    from core import FlowFile
+    from core.llm_client import LLMMessage
+    from tasks.ai.actions.usage import _handle_usage
+
+    active_messages = [
+        LLMMessage(
+            role="user", content="live context " * 20,
+            conversation_id="conv-live"),
+        LLMMessage(
+            role="assistant", content="current assistant context " * 20,
+            conversation_id="conv-live"),
+    ]
+    fake_exec = SimpleNamespace(
+        _active_contexts={
+            "conv-live:assistant": {
+                "active_agent_name": "assistant",
+                "messages": active_messages,
+                "max_context_size": 10000,
+            },
+        },
+        _active_contexts_lock=threading.Lock())
+
+    class _Store:
+        def load_agent_context(self, *_args, **_kwargs):
+            raise AssertionError("active agent gauge must not read disk context")
+
+        def load_transcript_for_agent(self, *_args, **_kwargs):
+            raise AssertionError("active agent gauge must not read transcript")
+
+    ff = FlowFile()
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec), \
+            patch("core.conv_agent_config.get_all_agent_configs",
+                  return_value={"assistant": {"llm_service": "svc"}}), \
+            patch("core.service_registry.ServiceRegistry.get_instance",
+                  return_value=SimpleNamespace()):
+        out = _handle_usage(
+            SimpleNamespace(), "list_context_usage",
+            {"conversation_id": "conv-live"}, _Store(), "user", ff)
+
+    data = json.loads(out[0].get_content().decode("utf-8"))
+    usage = data["context_usage"]["assistant"]
+    assert usage["source"] == "list_context_usage"
+    assert usage["message_count"] == len(active_messages)
+    assert usage["used"] > 0
 
 
 def test_idle_polling_cannot_stack_unbounded_work():
@@ -755,11 +817,12 @@ def test_context_gauge_events_always_include_timestamp():
     core_src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
     compact_src = Path("tasks/ai/agent_compaction.py").read_text(encoding="utf-8")
+    usage_src = Path("tasks/ai/context_usage.py").read_text(encoding="utf-8")
 
-    assert '"updated_at": time.time()' in core_src
-    assert '"updated_at": float(_post_usage.get("updated_at", 0.0) or 0.0)' in core_src
-    assert '"updated_at": float(usage.get("updated_at", 0.0) or 0.0)' in emitter_src
-    assert "updated_at=_context_updated_at" in compact_src
+    assert '"updated_at": time.time()' in usage_src
+    assert "usage_event_payload" in core_src
+    assert "usage_event_payload" in emitter_src
+    assert "updated_at=_context_updated_at" not in compact_src
     compact_event = compact_src[
         compact_src.index('"stage": "done"'):
         compact_src.index('except Exception:', compact_src.index('"stage": "done"'))]
@@ -808,8 +871,8 @@ def test_compact_threshold_uses_same_usage_source_as_gauge():
     pre_send_block = src[
         src.index("if _trigger_frac > 0:", src.index("# Force-fit guard")):
         src.index("if _pre_send_est > _max_ctx:")]
-    assert "context_usage_from_cache" in usage_block
-    assert "token_multiplier=tmul" in usage_block
+    assert "compute_context_usage" in usage_block
+    assert "context_usage_from_cache" not in usage_block
     assert "_auto_compact_usage(max_ctx" in threshold_block
     assert "_auto_compact_usage(" in pre_send_block
     assert "_pre_send_est >= _trigger_tokens" not in pre_send_block

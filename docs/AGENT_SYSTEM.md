@@ -198,14 +198,11 @@ Background pyramid buckets are different from hot-path context compaction. They 
 
 ### Context-usage gauge (per-agent)
 
-At the end of each turn, `agent_core` receives the provider's real `usage` (input/output tokens) and derives `context_used / context_max / context_pct`. These fields are:
+`tasks.ai.context_usage.compute_context_usage(conversation_id, agent_name, user_id=...)` is the single server-side calculation point for the gauge. It resolves the agent's LLM service, computes the effective context window, loads the current PawFlow agent context (live in-memory context when the agent is running, otherwise the persisted private context or personalized transcript), and returns `used / max / pct`.
 
-1. **Emitted** on the `message_meta` SSE event (and `done`), so the chat UI's active-agents panel, header badge, and Resource Panel can update in real time.
-2. **Persisted** on the conversation under the `context_usage` extra as a dict keyed by agent instance name: `{"<agent>": {"used": int, "max": int, "pct": float, "updated_at": int}}`.
+Gauge updates are emitted as `message_meta` SSE events carrying `conversation_id` and `agent_name`, so the chat UI updates only the matching conversation and agent surfaces. `compact_progress`, `list_active`, and `list_resources` do not compute alternate live gauge values.
 
-Persistence is per-agent and keyed on the instance name (not the definition), which means each agent card in the Resource Panel shows its own gauge and the header badge shows the gauge for `selectedAgent`. The value is written from the final `message_meta` of a turn -- so it reflects the provider's real post-turn usage, and survives idle periods until the next turn updates it.
-
-`list_resources` surfaces this value as `agents[i].context_usage` so the UI can hydrate its cache at load time without waiting for an SSE event.
+The latest value is persisted under the conversation `context_usage` extra as a dict keyed by agent instance name: `{"<agent>": {"used": int, "max": int, "pct": float, "updated_at": float}}`. Persistence is per-agent and keyed on the instance name (not the definition), which means each Resource Panel agent card shows its own gauge and the header badge shows the gauge for `selectedAgent`.
 
 ---
 

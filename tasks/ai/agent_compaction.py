@@ -945,29 +945,6 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                             .message_count(conversation_id))
                     except Exception:
                         pass
-                    _context_max = int(max_tokens or 0)
-                    _context_pct = ((float(new_estimate) / float(_context_max))
-                                    if _context_max > 0 else 0.0)
-                    _context_updated_at = _t_compact.time()
-                    if agent_name:
-                        try:
-                            _store = ConversationStore.instance()
-                            _cu_map = _store.get_extra(
-                                conversation_id, "context_usage") or {}
-                            _cu_map = dict(_cu_map)
-                            from tasks.ai.context_usage_cache import context_usage_entry
-                            _cu_map[agent_name] = context_usage_entry(
-                                compacted, int(new_estimate), _context_max,
-                                source="compact_reset",
-                                token_multiplier=_tmul,
-                                cache_mode="reset",
-                                updated_at=_context_updated_at)
-                            _store.set_extra(
-                                conversation_id, "context_usage", _cu_map)
-                        except Exception:
-                            logger.debug(
-                                "compact context_usage persist failed",
-                                exc_info=True)
                     ConversationEventBus.instance().publish_event(
                         conversation_id, "compact_progress", {
                             "stage": "done",

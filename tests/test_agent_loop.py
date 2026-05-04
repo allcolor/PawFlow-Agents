@@ -1011,30 +1011,61 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
 
     def test_rebuild_action_accepted(self):
         """rebuild returns accepted ack (runs in background)."""
+        import time as _t
+        import uuid
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
+
+        def _msg(role, content, source):
+            return {
+                "role": role, "content": content, "source": source,
+                "msg_id": uuid.uuid4().hex[:12], "ts": _t.time(),
+            }
+
         msgs = [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "hello"},
+            _msg("user", "one", {"type": "user", "target_agent": "assistant"}),
+            _msg("assistant", "two", {"type": "agent", "name": "assistant"}),
+            _msg("user", "three", {"type": "user", "target_agent": "assistant"}),
+            _msg("assistant", "four", {"type": "agent", "name": "assistant"}),
         ]
         store.save("cx3", msgs, user_id="testuser")
-        store.save_context("cx3", [{"role": "system", "content": "short"}])
+        store.save_context("cx3", [_msg("system", "short", {"type": "system"})])
+        store.set_extra("cx3", "conv_agents", {
+            "assistant": {
+                "definition": "assistant",
+                "params": {"name": "assistant"},
+                "llm_service": "svc",
+            }
+        }, user_id="testuser")
         task = self._make_task()
         ff = FlowFile(content=json.dumps({
             "action": "rebuild",
             "conversation_id": "cx3",
         }).encode())
-        result = task.execute(ff)
+        def _run_sync(_cid, op_name, fn, flowfile, agent_name=""):
+            flowfile.set_content(json.dumps({
+                "status": "accepted", "action": op_name,
+                "result": fn(),
+            }).encode())
+            return [flowfile]
+
+        from tasks.ai.actions.context_ops import _handle_context_ops
+        with patch.object(task, "_get_summarizer_client",
+                          return_value=(MagicMock(), 10000, "sum")), \
+                patch.object(task, "_compact", side_effect=lambda ms, *_a, **_k: ms[:2]), \
+                patch.object(task, "_run_bg_context_op", side_effect=_run_sync):
+            result = _handle_context_ops(
+                task, "rebuild", {"conversation_id": "cx3"},
+                store, "testuser", ff)
         data = json.loads(result[0].get_content())
         assert data["status"] == "accepted"
         assert data["action"] == "rebuild"
-        # Rebuild runs in background — wait briefly for thread
-        import time; time.sleep(0.5)
-        # After rebuild, context should contain all messages
-        ctx = store.load_context("cx3")
+        shared = store.load_context("cx3")
+        assert shared is not None
+        assert len(shared) == 4
+        ctx = store.load_agent_context("cx3", "assistant")
         assert ctx is not None
-        assert len(ctx) == 3
+        assert len(ctx) == 2
 
     def test_restart_from_action_saves_context(self):
         """restart_from saves a new context with last N messages."""

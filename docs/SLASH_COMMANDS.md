@@ -218,7 +218,7 @@ After a force stop, the next Escape press starts the cycle over (graceful again)
 /compact [@agent|ALL]
 ```
 
-Summarize older messages to reduce context size while preserving key information.
+Summarize older messages to reduce context size while preserving key information. A compact is a hard context replacement: PawFlow stops any active loop for the target agent, writes the compacted agent context to disk, invalidates CLI runtime sessions, and restarts the next loop from that saved compacted context.
 
 ```
 /compact               -- compact current agent's context
@@ -230,16 +230,12 @@ Summarize older messages to reduce context size while preserving key information
 ### /rebuild
 
 ```
-/rebuild [@agent|ALL]
-```
-
-Reconstruct the LLM context from the complete conversation history. If everything fits, restores fully; otherwise compacts.
-
-```
 /rebuild
-/rebuild @grok
-/rebuild @ALL
 ```
+
+Rebuild the derived context state from the canonical transcript. The command rebuilds `shared.jsonl`, wipes and rebuilds the shared background bucket pyramid, deletes stale private agent contexts, then runs the equivalent of `/compact @agent` for every configured conversation agent.
+
+`/rebuild` no longer accepts an agent argument; it is always a whole-conversation repair/rebuild operation.
 
 ### /restart_from
 

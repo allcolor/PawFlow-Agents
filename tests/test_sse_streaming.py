@@ -346,10 +346,15 @@ class TestAgentLoopStreaming(unittest.TestCase):
             "conv_ttl": 60,
             "conv_attr": "",
             "conversation_id": "test-conv-123",
+            "active_agent_name": "assistant",
         })
         task._streaming_agent_loop = MagicMock()
 
-        ff = FlowFile(content=json.dumps({"message": "hello", "conversation_id": "test-conv-123"}).encode())
+        ff = FlowFile(content=json.dumps({
+            "message": "hello",
+            "conversation_id": "test-conv-123",
+            "target_agent": "assistant",
+        }).encode())
         with patch.object(ConversationStore.instance(), 'message_count', return_value=0):
             results = task._execute_streaming(ff)
 

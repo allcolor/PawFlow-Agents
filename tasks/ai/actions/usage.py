@@ -112,32 +112,16 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        from core.context_window import effective_context_window
         from core.conv_agent_config import get_all_agent_configs
-        from core.service_registry import ServiceRegistry
-        from core.token_counter import resolve_token_multiplier
-        from tasks.ai.context_usage_cache import context_usage_from_cache
+        from tasks.ai.context_usage import compute_context_usage
 
-        registry = ServiceRegistry.get_instance()
         out = {}
-        for agent_name, cfg in (get_all_agent_configs(conv_id) or {}).items():
-            ctx_data = store.load_agent_context(conv_id, agent_name)
-            if ctx_data is None:
-                ctx_data = store.load_transcript_for_agent(conv_id, agent_name) or []
-            if not ctx_data:
-                continue
-            svc_id = cfg.get("llm_service", "") or ""
-            svc = registry.resolve(svc_id, user_id=user_id) if svc_id else None
-            svc_cfg = getattr(svc, "config", {}) or {}
-            configured = int(svc_cfg.get("max_context_size", 0) or 0)
-            max_ctx = effective_context_window(configured, 0, fallback=0)
-            if max_ctx <= 0:
-                continue
-            messages = self._deserialize_messages(ctx_data, conversation_id=conv_id)
-            usage = context_usage_from_cache(
-                messages, max_ctx, source="initial_context_usage",
-                token_multiplier=resolve_token_multiplier(svc_cfg))
-            out[agent_name] = usage
+        for agent_name in (get_all_agent_configs(conv_id) or {}).keys():
+            usage = compute_context_usage(
+                conv_id, agent_name, user_id=user_id, store=store,
+                owner=self, source="list_context_usage")
+            if int(usage.get("max", 0) or 0) > 0:
+                out[agent_name] = usage
         flowfile.set_content(json.dumps({"context_usage": out}, ensure_ascii=False).encode())
         return [flowfile]
 

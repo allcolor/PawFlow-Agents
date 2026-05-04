@@ -312,26 +312,15 @@ class AgentCoreMixin:
             if tok_in or tok_out:
                 src["tokens_in"] = tok_in
                 src["tokens_out"] = tok_out
-            # Context gauge policy: provider-independent numerator.
-            # used = token_count(ctx["messages"]). max = effective context
-            # window, i.e. min(configured max_context_size, provider runtime
-            # window) when the provider reports one.
-            _ctx_max = _effective_context_window()
-            _ctx_usage = None
             try:
-                from core.token_counter import resolve_token_multiplier
-                from tasks.ai.context_usage_cache import context_usage_from_cache
-                _tmul = resolve_token_multiplier(
-                    getattr(ctx.get("resolved_svc"), "config", None))
-                _ctx_usage = context_usage_from_cache(
-                    messages, _ctx_max,
-                    ctx.get("_context_usage_cache"),
-                    source="pawflow_context",
-                    token_multiplier=_tmul)
-                ctx["_context_usage_cache"] = _ctx_usage
+                from tasks.ai.context_usage import compute_context_usage
+                _ctx_usage = compute_context_usage(
+                    conversation_id, ctx.get("active_agent_name", ""),
+                    user_id=user_id, source="pawflow_context")
             except Exception:
-                logger.debug("context gauge estimate failed", exc_info=True)
-            if _ctx_usage and int(_ctx_usage.get("used", 0) or 0) > 0:
+                logger.debug("context gauge calculation failed", exc_info=True)
+                _ctx_usage = None
+            if _ctx_usage and int(_ctx_usage.get("max", 0) or 0) > 0:
                 src["context_used"] = int(_ctx_usage.get("used", 0) or 0)
                 src["context_max"] = int(_ctx_usage.get("max", 0) or 0)
                 src["context_pct"] = float(_ctx_usage.get("pct", 0.0) or 0.0)
@@ -419,15 +408,10 @@ class AgentCoreMixin:
 
         def _auto_compact_usage(max_ctx: int, source: str):
             """Return the same used/max pair as the live gauge."""
-            from core.token_counter import resolve_token_multiplier
-            from tasks.ai.context_usage_cache import context_usage_from_cache
-            tmul = resolve_token_multiplier(
-                getattr(ctx.get("resolved_svc"), "config", None))
-            usage = context_usage_from_cache(
-                messages, max_ctx,
-                ctx.get("_auto_compact_usage_cache") or ctx.get("_context_usage_cache"),
-                source=source,
-                token_multiplier=tmul)
+            from tasks.ai.context_usage import compute_context_usage
+            usage = compute_context_usage(
+                conversation_id, ctx.get("active_agent_name", ""),
+                user_id=user_id, source=source)
             ctx["_auto_compact_usage_cache"] = usage
             return usage
 
@@ -488,7 +472,8 @@ class AgentCoreMixin:
                     budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                 )
                 if compacted and len(compacted) <= len(messages):
-                    messages[:] = compacted
+                    _adopt_compacted_context(
+                        compacted, reason="post_append")
             except Exception as compact_err:
                 logger.error(
                     "[compact] auto compact after %s failed: %s",
@@ -517,6 +502,7 @@ class AgentCoreMixin:
                 if int(src.get("context_max", 0) or 0) <= 0:
                     return
                 payload = {
+                    "conversation_id": ctx.get("_event_cid", conversation_id),
                     "agent_name": ctx.get("active_agent_name", "") or "",
                     "source": src,
                     "context_used": int(src.get("context_used", 0) or 0),
@@ -525,7 +511,7 @@ class AgentCoreMixin:
                     "context_source": src.get("context_source", reason),
                     "context_message_count": src.get("context_message_count", 0),
                     "context_cache_mode": src.get("context_cache_mode", ""),
-                    "updated_at": time.time(),
+                    "updated_at": float((src.get("context_cache") or {}).get("updated_at", 0.0) or time.time()),
                     "live": True,
                 }
                 if msg_id:
@@ -781,6 +767,7 @@ class AgentCoreMixin:
                     from core.conversation_event_bus import ConversationEventBus
                     try:
                         _payload = {
+                            "conversation_id": ctx.get("_event_cid", conversation_id),
                             "msg_id": msg.msg_id,
                             "agent_name": _src.get("name", ""),
                             "source": _src,
@@ -828,7 +815,7 @@ class AgentCoreMixin:
                                         "used": _src["context_used"],
                                         "max": _src["context_max"],
                                         "pct": _src["context_pct"],
-                                        "updated_at": int(time.time()),
+                                        "updated_at": _payload["updated_at"],
                                     })
                                     _cu_map[_agent_for_persist] = _cu_entry
                                     _store.set_extra(_pcid, "context_usage", _cu_map)
@@ -1036,6 +1023,40 @@ class AgentCoreMixin:
                                     return True
                             return False
 
+                    def _adopt_compacted_context(compacted_messages, *, reason: str) -> None:
+                        """Replace the active PawFlow agent context after any compact."""
+                        nonlocal base_count
+                        compacted_list = list(compacted_messages or [])
+                        messages[:] = compacted_list
+                        ctx["messages"] = messages
+                        ctx["_base_message_count"] = len(messages)
+                        base_count = len(messages)
+                        new_messages.clear()
+                        ctx.pop("_context_usage_cache", None)
+                        ctx.pop("_auto_compact_usage_cache", None)
+                        _adopt_agent = ctx.get("active_agent_name") or ""
+                        if use_conv_store and conversation_id and _adopt_agent:
+                            try:
+                                from core.conversation_store import ConversationStore
+                                _adopt_store = ConversationStore.instance()
+                                _adopt_store.save_agent_context(
+                                    conversation_id, _adopt_agent,
+                                    self._serialize_messages(messages))
+                                if ctx.get("_is_cli_provider"):
+                                    _adopt_store.invalidate_claude_session_for_agent(
+                                        conversation_id, _adopt_agent)
+                                    ctx["_cli_has_session"] = False
+                                    ctx["_claude_has_session"] = False
+                            except Exception as _adopt_err:
+                                logger.warning(
+                                    "[agent:%s] adopt compacted context failed (%s): %s",
+                                    conversation_id[:8], reason, _adopt_err,
+                                    exc_info=True)
+                                raise
+                        logger.info(
+                            "[agent:%s] adopted compacted PawFlow context for %s: %d messages (%s)",
+                            conversation_id[:8], _adopt_agent, len(messages), reason)
+
                     # Claude-code: CC session and PawFlow ctx MUST stay
                     # identical. On a new session we feed the full PawFlow
                     # ctx (already compacted at load time if needed).
@@ -1063,7 +1084,8 @@ class AgentCoreMixin:
                             )
 
                             if _messages_changed(compacted_messages, messages):
-                                messages[:] = compacted_messages
+                                _adopt_compacted_context(
+                                    compacted_messages, reason="proactive_cli")
                         llm_context = list(messages)
                     else:
                         _max_ctx = ctx.get("max_context_size", 64000)
@@ -1093,18 +1115,8 @@ class AgentCoreMixin:
                                 budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                             )
                             if _messages_changed(compacted_messages, messages):
-                                messages[:] = compacted_messages
-                                ctx.pop("_context_usage_cache", None)
-                                ctx.pop("_auto_compact_usage_cache", None)
-                                if ctx.get("_is_cli_provider") and conversation_id:
-                                    try:
-                                        from core.conversation_store import ConversationStore
-                                        ConversationStore.instance().invalidate_claude_session_for_agent(
-                                            conversation_id,
-                                            ctx.get("active_agent_name") or "")
-                                        ctx["_cli_has_session"] = False
-                                    except Exception:
-                                        logger.debug("CLI session invalidation after compact failed", exc_info=True)
+                                _adopt_compacted_context(
+                                    compacted_messages, reason="proactive")
                             llm_context = list(messages)
                         else:
                             # threshold = 0: no proactive compact, send the
@@ -1226,19 +1238,8 @@ class AgentCoreMixin:
                                     budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                                 )
                                 if _messages_changed(compacted_messages, messages):
-                                    messages[:] = compacted_messages
-                                    ctx.pop("_context_usage_cache", None)
-                                    ctx.pop("_auto_compact_usage_cache", None)
-                                    if ctx.get("_is_cli_provider") and conversation_id:
-                                        try:
-                                            from core.conversation_store import ConversationStore
-                                            ConversationStore.instance().invalidate_claude_session_for_agent(
-                                                conversation_id,
-                                                ctx.get("active_agent_name") or "")
-                                        except Exception:
-                                            logger.debug(
-                                                "CLI session invalidation after pre-send compact failed",
-                                                exc_info=True)
+                                    _adopt_compacted_context(
+                                        compacted_messages, reason="pre_send")
                                     llm_context, _pre_inject_chars = _build_provider_context(messages)
                                     llm_context = self._inject_identity(llm_context, _id_nicks)
                                     llm_context = self._apply_identity_suffix(
@@ -1715,7 +1716,7 @@ class AgentCoreMixin:
                                     _ccd_trigger_frac = _ccd_pct / 100.0
                             except (TypeError, ValueError):
                                 pass
-                            messages = list(self._compact(
+                            _compacted_messages = list(self._compact(
                                 _full_messages, _sc,
                                 max_tokens=ctx.get("max_context_size", 200000),
                                 trigger_fraction=_ccd_trigger_frac,
@@ -1726,6 +1727,8 @@ class AgentCoreMixin:
                                 user_id=user_id,
                                 budget_config=getattr(ctx.get("resolved_svc"), "config", None),
                             ))
+                            _adopt_compacted_context(
+                                _compacted_messages, reason="provider_compact")
                             logger.info("[agent:%s] PawFlow compact: %d → %d messages",
                                         conversation_id[:8], len(_full_messages), len(messages))
                             try:
@@ -1748,14 +1751,6 @@ class AgentCoreMixin:
                             # Otherwise the killed session's jsonl
                             # keeps piling up (orphan workers also
                             # wrote to it) and fills the session dir.
-                            _store.save_agent_context(
-                                conversation_id, _agent_name,
-                                self._serialize_messages(messages))
-                            _store.invalidate_claude_session_for_agent(
-                                conversation_id, _agent_name)
-                            ctx["_cli_has_session"] = False
-                            ctx["_claude_has_session"] = False
-
                             # 4. Prepare for new CC session — PawFlow ctx
                             # was just compacted and saved; CC receives the
                             # same compacted messages (no trimmed view).
@@ -1774,42 +1769,20 @@ class AgentCoreMixin:
                             # size via tiktoken gives the UI an accurate
                             # starting point instead of a misleading 0%.
                             try:
-                                from core.context_window import effective_context_window
-                                from core.token_counter import resolve_token_multiplier
-                                from tasks.ai.context_usage_cache import context_usage_from_cache
-
-                                _client = ctx.get("client")
-                                _cw_map = (getattr(_client, '_cc_context_window_by_stream', None)
-                                           if _client else None) or {}
-                                _cw_key = (conversation_id or "", _agent_name or "")
-                                _post_max = effective_context_window(
-                                    ctx.get("max_context_size", 0),
-                                    _cw_map.get(_cw_key, 0), fallback=0)
-                                _tmul = resolve_token_multiplier(
-                                    getattr(ctx.get("resolved_svc"), "config", None))
+                                from tasks.ai.context_usage import (
+                                    compute_context_usage, persist_context_usage,
+                                    usage_event_payload)
                                 ctx.pop("_context_usage_cache", None)
                                 ctx.pop("_auto_compact_usage_cache", None)
-                                _post_usage = context_usage_from_cache(
-                                    messages, _post_max,
-                                    source="compact_post",
-                                    token_multiplier=_tmul)
-                                ctx["_context_usage_cache"] = _post_usage
-                                _cu_map = _store.get_extra(
-                                    conversation_id, "context_usage") or {}
-                                _cu_map = dict(_cu_map)
-                                _cu_map[_agent_name] = dict(_post_usage)
-                                _store.set_extra(
-                                    conversation_id, "context_usage", _cu_map)
+                                _post_usage = compute_context_usage(
+                                    conversation_id, _agent_name, user_id=user_id,
+                                    source="compact_post")
+                                persist_context_usage(
+                                    conversation_id, _agent_name, _post_usage,
+                                    store=_store)
                                 _CEB.instance().publish_event(
                                     conversation_id, "message_meta",
-                                    {"agent_name": _agent_name,
-                                     "context_used": int(_post_usage.get("used", 0) or 0),
-                                     "context_max": int(_post_usage.get("max", 0) or 0),
-                                     "context_pct": float(_post_usage.get("pct", 0.0) or 0.0),
-                                     "context_source": _post_usage.get("source", "compact_post"),
-                                     "context_message_count": _post_usage.get("message_count", 0),
-                                     "context_cache_mode": _post_usage.get("cache_mode", ""),
-                                     "updated_at": float(_post_usage.get("updated_at", 0.0) or 0.0)})
+                                    usage_event_payload(_post_usage))
                             except Exception:
                                 logger.debug("exception suppressed", exc_info=True)
                         except Exception as compact_err:
@@ -1938,17 +1911,8 @@ class AgentCoreMixin:
                                 chars_per_token=ctx.get("chars_per_token", 0),
                                 user_id=user_id,
                                 budget_config=getattr(ctx.get("resolved_svc"), "config", None))
-                            messages[:] = _compacted
-                            if _is_claude_code and conversation_id and _agent_for_compact:
-                                try:
-                                    from core.conversation_store import ConversationStore
-                                    ConversationStore.instance().save_agent_context(
-                                        conversation_id, _agent_for_compact,
-                                        self._serialize_messages(messages))
-                                except Exception as _sv_err:
-                                    logger.warning(
-                                        "[agent:%s] save compacted ctx failed: %s",
-                                        conversation_id[:8], _sv_err)
+                            _adopt_compacted_context(
+                                _compacted, reason="context_overflow")
                             llm_context = list(messages)
                             try:
                                 _check_budget(

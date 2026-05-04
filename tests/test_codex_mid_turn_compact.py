@@ -90,17 +90,20 @@ def test_api_pre_send_compact_replaces_active_messages_not_provider_view():
     assert "compacted_messages = self._compact(" in guard
     assert "copy.deepcopy(messages)" in guard
     assert "copy.deepcopy(llm_context)" not in guard
-    assert "messages[:] = compacted_messages" in guard
+    assert "_adopt_compacted_context(" in guard
+    assert "reason=\"pre_send\"" in guard
     assert "llm_context, _pre_inject_chars = _build_provider_context(" in guard
 
 
-def test_manual_compact_refreshes_active_context_without_cancelling_loop():
-    """Manual /compact during an API turn must not force-stop that turn."""
+def test_manual_compact_stops_active_loop_before_replacing_context():
+    """Every compact stops the active loop before replacing context."""
     op_start = _AGENT_ACTIONS.index("def _run_bg_context_op")
     op_end = _AGENT_ACTIONS.index("# ═════════════════", op_start)
     block = _AGENT_ACTIONS[op_start:op_end]
-    assert 'if op_name != "compact":' in block
-    assert "self.cancel_agent(conv_id, agent_name=agent_name, silent=True)" in block
+    bg_start = block.index("def _bg():")
+    bg_block = block[bg_start:block.index("if not self._acquire_context_op", bg_start)]
+    assert 'if op_name != "compact":' not in bg_block
+    assert "self.cancel_agent(conv_id, agent_name=agent_name, silent=True)" in bg_block
     assert "def _refresh_active_context_from_store" in block
     assert "active_msgs[:] = refreshed" in block
     assert "_context_usage_cache" in block
@@ -140,8 +143,8 @@ def test_proactive_compact_replaces_active_messages_for_cli_providers():
         _AGENT_CORE.index("# Pre-injection char count")
     ]
     assert "compacted_messages = self._compact(" in cli_block
-    assert "messages[:] = compacted_messages" in cli_block
-    assert "ctx.pop(\"_auto_compact_usage_cache\", None)" in cli_block
+    assert "_adopt_compacted_context(" in cli_block
+    assert "reason=\"proactive\"" in cli_block
     assert "llm_context = list(messages)" in cli_block
 
 
@@ -155,7 +158,8 @@ def test_manual_compact_done_does_not_publish_context_gauge_event():
     assert '"context_used"' not in done_block
     assert '"context_max"' not in done_block
     assert '"context_pct"' not in done_block
-    assert 'set_extra(\n                                conversation_id, "context_usage"' in _AGENT_COMPACTION
+    assert 'context_usage_entry(' not in _AGENT_COMPACTION
+    assert 'set_extra(\n                                conversation_id, "context_usage"' not in _AGENT_COMPACTION
 
 
 def test_compact_budget_uses_active_service_config_not_summarizer():
@@ -176,6 +180,19 @@ def test_codex_forced_compact_passes_active_budget_config():
     handler = _AGENT_CORE[max(0, h_start - 2500):h_start]
     assert "_full_messages, _sc" in handler
     assert "budget_config=getattr(ctx.get(\"resolved_svc\"), \"config\", None)" in handler
+
+
+def test_codex_forced_compact_adopts_persisted_agent_context_before_restart():
+    """Provider compact must replace active PawFlow context before restart."""
+    h_start = _AGENT_CORE.index("except CCCompactDetected:")
+    h_end = _AGENT_CORE.index("emitter.check_cancelled()", h_start)
+    handler = _AGENT_CORE[h_start:h_end]
+    assert "\n                            messages = list(self._compact(" not in handler
+    assert "_compacted_messages = list(self._compact(" in handler
+    assert "_adopt_compacted_context(" in handler
+    assert "reason=\"provider_compact\"" in handler
+    assert "llm_context = list(messages)" in handler
+    assert handler.index("_adopt_compacted_context(") < handler.index("llm_context = list(messages)")
 
 
 def test_manual_compact_uses_selected_agent_llm_service_budget():

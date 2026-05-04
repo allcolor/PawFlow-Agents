@@ -189,9 +189,9 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/rebuild": {
-        "usage": "/rebuild [agent]",
-        "short": "Rebuild context from full history",
-        "detail": "Rebuild the agent's context from the full conversation transcript.",
+        "usage": "/rebuild",
+        "short": "Rebuild shared context, buckets, and compacted agent contexts",
+        "detail": "Rebuild shared context from transcript, rebuild buckets, then compact every conversation agent.",
     },
     "/rebuild-full": {
         "usage": "/rebuild-full [agent]",
@@ -799,8 +799,7 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return {"action": "set_fast", "enabled": True, "model": val, **base}
 
     if cmd == "/rebuild":
-        agt, _ = _extract_at_agent(arg, agent_name)
-        return {"action": "rebuild", "agent_name": agt, **base}
+        return {"action": "rebuild", **base}
 
     if cmd == "/rebuild-full":
         agt, _ = _extract_at_agent(arg, agent_name)

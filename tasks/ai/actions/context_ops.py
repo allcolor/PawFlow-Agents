@@ -705,90 +705,101 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
 
     if action == "rebuild":
         conv_id = body.get("conversation_id", "")
-        _rb_agent = body.get("agent_name", "")
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Membership guard — same rationale as /compact: /rebuild ghost
-        # would load the transcript personalized for a non-member and
-        # save the result into a phantom per-agent dir. "ALL" rebuilds
-        # every member and bypasses the guard (sentinel).
-        from core.conv_agent_config import require_agent_member
-        _rb_err = require_agent_member(conv_id, _rb_agent,
-                                         user_id=user_id)
-        if _rb_err:
-            flowfile.set_content(json.dumps({"error": _rb_err}).encode())
-            flowfile.set_attribute("http.response.status", "400")
-            return [flowfile]
-
-        def _load_rebuild_source(target_agent):
-            """Load transcript personalized for the target agent.
-
-            For a specific agent, claude's assistant turns must be
-            demoted to user with "[Agent claude]:" prefix — otherwise
-            qwen would read claude's words as if they were its own.
-            For shared, use the raw transcript (agent-neutral).
-            """
-            if target_agent and target_agent not in ("", "shared", "ALL"):
-                raw = store.load_transcript_for_agent(conv_id, target_agent)
-            else:
-                raw = store.load(conv_id, user_id=user_id)
-            if not raw:
-                return []
-            return [m for m in raw
-                    if isinstance(m, dict)
-                    and not m.get("display_only")
-                    and not m.get("tool_calls")
-                    and m.get("role") != "tool"]
-
-        _rb_msgs = _load_rebuild_source(_rb_agent)
-        if not _rb_msgs and _rb_agent != "ALL":
+        transcript = store.load(conv_id, user_id=user_id)
+        if transcript is None:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
+        _compact_client, _, _compact_svc_id = self._get_summarizer_client(user_id)
+        if not _compact_client:
+            flowfile.set_content(json.dumps({
+                "error": "No summarizer_service configured — rebuild needs compaction.",
+            }).encode())
+            return [flowfile]
+        from core.conv_agent_config import get_all_agent_configs
+        agent_names = sorted((get_all_agent_configs(conv_id) or {}).keys())
 
         def _do_rebuild():
-            # /rebuild = context = full conversation transcript. No compaction.
-            if _rb_agent == "ALL":
-                # Rebuild ALL agent contexts + shared, each with its own
-                # personalized view (claude's and qwen's contexts differ).
-                agent_map = store.list_agent_contexts(conv_id)
-                _total = 0
-                for name in agent_map:
-                    _msgs = _load_rebuild_source("" if name == "*" else name)
-                    if name == "*":
-                        store.save_context(conv_id, list(_msgs))
-                    else:
-                        store.save_agent_context(conv_id, name, list(_msgs))
-                    _total = max(_total, len(_msgs))
-                deserialized = self._deserialize_messages(_rb_msgs, conversation_id=conv_id) if _rb_msgs else []
-                estimated = self._estimate_tokens(deserialized)
-                store.invalidate_claude_sessions(conv_id)
-                return {"before": _total, "after": _total,
-                        "tokens_after": estimated, "agent": "ALL"}
-            deserialized = self._deserialize_messages(_rb_msgs, conversation_id=conv_id)
-            estimated = self._estimate_tokens(deserialized)
-            _ctx_save(conv_id, _rb_msgs, _rb_agent)
-            # If agent context == shared context after rebuild, remove the
-            # agent context (it'll fall back to shared automatically)
-            if _rb_agent and _rb_agent != "shared":
-                shared_ctx = store.load_context(conv_id)
-                if shared_ctx is not None and shared_ctx == _rb_msgs:
-                    store.save_agent_context(conv_id, _rb_agent, shared_ctx)
-                    logger.info(f"[rebuild] Agent '{_rb_agent}' context == shared, merged back")
-                store.invalidate_claude_session_for_agent(conv_id, _rb_agent)
-            else:
-                store.invalidate_claude_sessions(conv_id)
-            return {"before": len(_rb_msgs), "after": len(_rb_msgs),
-                    "tokens_after": estimated,
-                    "agent": _rb_agent or "shared"}
+            from core.bucket_store import BucketStore
+            from core.bg_bucket_builder import BgBucketBuilder
+            from core.conversation_event_bus import ConversationEventBus
+            from tasks.ai.context_usage import (
+                compute_context_usage, persist_context_usage,
+                usage_event_payload)
 
-        _rebuild_lock_agent = (
-            "" if _rb_agent in ("", "ALL", "shared") else _rb_agent)
+            shared_candidates = store.filter_for_shared(transcript)
+            shared_msgs = [store._transform_for_shared(m) for m in shared_candidates]
+            store.save_agent_context(conv_id, "", shared_msgs)
+
+            bucket_store = BucketStore.get(store._conv_dir(conv_id))
+            buckets_before = bucket_store.object_count
+            bucket_store.wipe()
+            bucket_result = BgBucketBuilder.instance().build_now_sync(
+                conv_id, user_id, allow_partial=True)
+
+            for existing_name in store.list_agent_contexts(conv_id):
+                if existing_name != "*" and existing_name not in agent_names:
+                    store.delete_agent_context(conv_id, existing_name)
+
+            compacted_agents = {}
+            total_before = 0
+            total_after = 0
+            for name in agent_names:
+                source_data = store.load_transcript_for_agent(conv_id, name) or []
+                source_data = [m for m in source_data
+                               if isinstance(m, dict)
+                               and not m.get("display_only")]
+                if len(source_data) < 4:
+                    store.save_agent_context(conv_id, name, list(source_data))
+                    compacted_agents[name] = {
+                        "before": len(source_data), "after": len(source_data),
+                        "skipped": "not_enough_messages",
+                    }
+                else:
+                    msgs = self._deserialize_messages(
+                        source_data, conversation_id=conv_id)
+                    compacted = self._compact(
+                        msgs, _compact_client, _ctx_max_tokens(conv_id, name),
+                        conversation_id=conv_id,
+                        agent_name=name,
+                        compact_instructions="",
+                        force=True,
+                        user_id=user_id,
+                        budget_config=_ctx_llm_service_config(conv_id, name),
+                    )
+                    serialized = self._serialize_messages(compacted)
+                    store.save_agent_context(conv_id, name, serialized)
+                    compacted_agents[name] = {
+                        "before": len(source_data), "after": len(serialized),
+                    }
+                total_before += int(compacted_agents[name]["before"])
+                total_after += int(compacted_agents[name]["after"])
+                usage = compute_context_usage(
+                    conv_id, name, user_id=user_id, store=store,
+                    owner=self, source="rebuild_compact")
+                persist_context_usage(conv_id, name, usage, store=store)
+                ConversationEventBus.instance().publish_event(
+                    conv_id, "message_meta", usage_event_payload(usage))
+
+            store.invalidate_claude_sessions(conv_id)
+            return {
+                "agent": "ALL",
+                "shared_messages": len(shared_msgs),
+                "buckets_before": buckets_before,
+                "buckets_built": bucket_result.get("buckets_built", 0),
+                "rollups_fired": bucket_result.get("rollups_fired", 0),
+                "agents": compacted_agents,
+                "before": total_before,
+                "after": total_after,
+                "summarizer_service": _compact_svc_id,
+            }
+
         return self._run_bg_context_op(
-            conv_id, "rebuild", _do_rebuild, flowfile,
-            agent_name=_rebuild_lock_agent)
+            conv_id, "rebuild", _do_rebuild, flowfile, agent_name="")
 
     if action == "get_context":
         conv_id = body.get("conversation_id", "")
@@ -890,27 +901,21 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             deserialized = self._deserialize_messages(context_data, conversation_id=conv_id)
             estimated = self._estimate_tokens(deserialized)
         _context_usage = None
-        if _usage_context_data is not None:
+        if _usage_context_data is not None and _ctx_agent and _ctx_agent != "shared":
             try:
-                usage_messages = self._deserialize_messages(
-                    _usage_context_data, conversation_id=conv_id)
-                usage_max = int(_ctx_max_tokens(conv_id, _ctx_agent) or 0)
-                from core.token_counter import resolve_token_multiplier
-                from tasks.ai.context_usage_cache import context_usage_from_cache
-                usage_cfg = _ctx_llm_service_config(conv_id, _ctx_agent)
-                usage = context_usage_from_cache(
-                    usage_messages, usage_max,
-                    source="context_command",
-                    token_multiplier=resolve_token_multiplier(usage_cfg))
+                from tasks.ai.context_usage import compute_context_usage
+                usage = compute_context_usage(
+                    conv_id, _ctx_agent, user_id=user_id, store=store,
+                    owner=self, source="context_command")
                 _context_usage = {
                     "used": int(usage.get("used", 0) or 0),
                     "max": int(usage.get("max", 0) or 0),
                     "pct": float(usage.get("pct", 0.0) or 0.0),
                     "source": usage.get("source", "context_command"),
-                    "message_count": usage.get("message_count", len(usage_messages)),
+                    "message_count": usage.get("message_count", 0),
                     "cache_mode": usage.get("cache_mode", "full"),
                     "updated_at": usage.get("updated_at", 0),
-                    "computed_from": "full_agent_context",
+                    "computed_from": "authoritative_agent_context",
                 }
             except Exception:
                 logger.debug("context usage calculation failed", exc_info=True)

@@ -156,7 +156,6 @@ function connectSSE(cid, onReady, opts) {
       return;
     }
     // New turn starting — clear cancel suppression so tool events show again
-    if (agentName) _cancelledAgents.delete(agentName.toLowerCase());
     trackAgentStart(agentName);
   });
 
@@ -200,24 +199,7 @@ function connectSSE(cid, onReady, opts) {
       if (!_placed) {
         const _msgContainer = document.getElementById('messages');
         const _typingEl = document.getElementById('typing');
-        // Reorder for the CC text+tool_calls+thinking case: agent_core
-        // appends the text msg FIRST then the tool_calls msg with the
-        // thinking attached, so SSE order is new_message → thinking_content.
-        // Visually the thinking belongs ABOVE the text it preceded — if
-        // the most recent message inserted in this container is an
-        // assistant text from the same agent, slot the thinking block
-        // just before it. Falls back to the legacy "before #typing"
-        // placement when nothing matches.
-        const _msgs = _msgContainer.querySelectorAll(':scope > .msg.assistant, :scope > .msg.subagent');
-        const _lastAssistantMsg = _msgs.length ? _msgs[_msgs.length - 1] : null;
-        const _lastIsRecent = _lastAssistantMsg && (
-            !_lastAssistantMsg.dataset.thinkingPlaced
-            && (Date.now() - (parseInt(_lastAssistantMsg.dataset.insertedAt || '0', 10) || 0) < 5000)
-        );
-        if (_lastIsRecent) {
-          _msgContainer.insertBefore(details, _lastAssistantMsg);
-          _lastAssistantMsg.dataset.thinkingPlaced = '1';
-        } else if (_typingEl) {
+        if (_typingEl) {
           _msgContainer.insertBefore(details, _typingEl);
         } else {
           _msgContainer.appendChild(details);
@@ -375,6 +357,7 @@ function connectSSE(cid, onReady, opts) {
     if (data.agent_name && (data.context_max || 0) > 0
         && typeof setContextUsage === 'function') {
       setContextUsage(data.agent_name, {
+        conversation_id: data.conversation_id || cid,
         used: data.context_used,
         max: data.context_max,
         pct: data.context_pct,
@@ -758,15 +741,12 @@ function connectSSE(cid, onReady, opts) {
     }
   });
 
-  // Track cancelled agents — suppress their events until done/new message
-  const _cancelledAgents = new Set();
+  // Track cancelled agents for status cleanup only. Transcript events already
+  // mean persisted messages; the chat must render them unless msg_id dedupes.
 
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // Suppress events from cancelled agents (but NOT claude-code — its events
-    // come from the active subprocess, not a stale agent loop iteration)
-    if (_cancelledAgents.has((data.agent_name || '').toLowerCase()) && data.via !== 'claude-code') return;
     // Live context-fill estimate: tool_call args go into the next prompt.
     if (typeof bumpContextEstimate === 'function' && data.agent_name) {
       const argLen = JSON.stringify(data.arguments || {}).length;
@@ -838,7 +818,6 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    if (_cancelledAgents.has((data.agent_name || '').toLowerCase()) && data.via !== 'claude-code') return;
     // Live context-fill estimate: tool_result body goes into the next prompt.
     if (typeof bumpContextEstimate === 'function' && data.agent_name) {
       const resLen = (data.result || '').length;
@@ -910,21 +889,8 @@ function connectSSE(cid, onReady, opts) {
       if (typeof markCompactJustHappened === 'function') {
         markCompactJustHappened(agent);
       }
-      if (typeof setContextUsage === 'function'
-          && data.context_used !== undefined
-          && data.context_max !== undefined
-          && Number(data.context_max) > 0) {
-        setContextUsage(agent, {
-          used: Number(data.context_used) || 0,
-          max: Number(data.context_max) || 0,
-          pct: data.context_pct !== undefined
-            ? Number(data.context_pct) || 0
-            : ((Number(data.context_max) || 0) > 0
-              ? (Number(data.context_used) || 0) / Number(data.context_max)
-              : 0),
-          updated_at: data.updated_at || data.ts || (Date.now() / 1000),
-        });
-      }
+      // Gauge is updated by the authoritative message_meta event emitted
+      // after the server refreshes the compacted PawFlow context.
       // Show TOTAL conversation msg count as the reference (what the
       // user thinks of as "the conversation size"). `before` is the
       // per-agent context pre-compact — meaningless to display
@@ -1111,13 +1077,13 @@ function connectSSE(cid, onReady, opts) {
       clearStream(doneAgent);
       return;
     }
-    _cancelledAgents.delete(doneAgent.toLowerCase());  // allow new events for next turn
     // Single update path — setContextUsage enforces the monotonic
     // invariants and mirrors to both caches (active panel + header /
     // Resource Panel).
     if (doneAgent && (data.context_max || 0) > 0
         && typeof setContextUsage === 'function') {
       setContextUsage(doneAgent, {
+        conversation_id: data.conversation_id || cid,
         used: data.context_used,
         max: data.context_max,
         pct: data.context_pct,
@@ -1261,12 +1227,6 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const cancelData = e.data ? JSON.parse(e.data) : {};
     const cancelAgent = cancelData.agent_name || 'all';
-    // Suppress subsequent tool events from this agent
-    if (cancelAgent === 'all') {
-      Object.keys(streams).forEach(k => _cancelledAgents.add(k));
-    } else {
-      _cancelledAgents.add(cancelAgent.toLowerCase());
-    }
     if (cancelAgent === 'all') {
       // Don't clear activeInteractions — server is source of truth via syncActive
       syncActiveFromServer();

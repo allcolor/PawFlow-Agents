@@ -119,53 +119,24 @@ class StreamEmitter(AgentEmitter):
         }
 
     def _context_usage_payload(self, reason: str = "") -> Optional[Dict[str, Any]]:
-        """Compute live PawFlow context usage for message_meta/done events."""
-        if not self._agent_name:
-            return None
-        if self.ctx.get("_context_usage_suspended"):
-            return None
-        messages = self.ctx.get("messages") or []
-        if not messages:
-            return None
-        _client = self.ctx.get("client")
-        _cw_map = (getattr(_client, '_cc_context_window_by_stream', None)
-                   if _client else None) or {}
-        _cw_key = (self.conversation_id or "", self._agent_name or "")
-        from core.context_window import effective_context_window
-        _ctx_max = effective_context_window(
-            self.ctx.get("max_context_size", 0), _cw_map.get(_cw_key, 0),
-            fallback=0)
-        if _ctx_max <= 0:
+        """Publish the authoritative PawFlow context gauge."""
+        if not self._agent_name or self.ctx.get("_context_usage_suspended"):
             return None
         try:
-            from core.token_counter import resolve_token_multiplier
-            from tasks.ai.context_usage_cache import context_usage_from_cache
-            _tmul = resolve_token_multiplier(
-                getattr(self.ctx.get("resolved_svc"), "config", None))
-            usage = context_usage_from_cache(
-                messages, _ctx_max, self.ctx.get("_context_usage_cache"),
-                source=reason or "stream_context",
-                token_multiplier=_tmul)
-            self.ctx["_context_usage_cache"] = usage
+            from tasks.ai.context_usage import (
+                compute_context_usage, usage_event_payload)
+            usage = compute_context_usage(
+                self.conversation_id, self._agent_name,
+                user_id=self.ctx.get("user_id", ""), source=reason or "stream_context")
         except Exception:
-            logger.debug("stream context usage estimate failed", exc_info=True)
+            logger.debug("stream context usage calculation failed", exc_info=True)
             return None
-        used = int(usage.get("used", 0) or 0)
-        if used <= 0:
+        if int(usage.get("max", 0) or 0) <= 0:
             return None
-        payload = {
-            "agent_name": self._agent_name or "",
-            "source": self._agent_source(),
-            "context_used": used,
-            "context_max": int(usage.get("max", 0) or 0),
-            "context_pct": float(usage.get("pct", 0.0) or 0.0),
-            "context_source": usage.get("source", ""),
-            "context_message_count": usage.get("message_count", 0),
-            "context_cache_mode": usage.get("cache_mode", ""),
-            "context_cache": usage,
-            "updated_at": float(usage.get("updated_at", 0.0) or 0.0),
-            "live": True,
-        }
+        payload = usage_event_payload(usage)
+        payload["source"] = self._agent_source()
+        payload["context_cache"] = usage
+        payload["live"] = True
         return payload
 
     def _publish_context_usage(self, reason: str = "") -> None:
@@ -173,12 +144,10 @@ class StreamEmitter(AgentEmitter):
         if not payload:
             return
         try:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            usage_map = store.get_extra(self.event_cid, "context_usage") or {}
-            usage_map = dict(usage_map)
-            usage_map[self._agent_name] = dict(payload.get("context_cache") or {})
-            store.set_extra(self.event_cid, "context_usage", usage_map)
+            from tasks.ai.context_usage import persist_context_usage
+            persist_context_usage(
+                self.event_cid, self._agent_name,
+                payload.get("context_cache") or {})
         except Exception:
             logger.debug("stream context_usage persist failed", exc_info=True)
         self._emit("message_meta", payload)

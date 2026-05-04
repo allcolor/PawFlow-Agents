@@ -645,8 +645,7 @@ class AgentActionsMixin:
                     exc_info=True)
 
         def _bg():
-            if op_name != "compact":
-                self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
+            self.cancel_agent(conv_id, agent_name=agent_name, silent=True)
             if not self._acquire_context_op(conv_id, agent_name,
                                              timeout=60.0):
                 bus.publish_event(conv_id, "compact_progress", {
@@ -671,6 +670,25 @@ class AgentActionsMixin:
                 if op_name == "compact":
                     _refresh_active_context_from_store(_agent)
                     _set_context_usage_suspended(_agent, False)
+                    if _agent and _agent != "shared":
+                        try:
+                            from core.conversation_store import ConversationStore
+                            from tasks.ai.context_usage import (
+                                compute_context_usage, persist_context_usage,
+                                usage_event_payload)
+                            _store = ConversationStore.instance()
+                            _usage = compute_context_usage(
+                                conv_id, _agent, store=_store,
+                                source="compact_done")
+                            persist_context_usage(
+                                conv_id, _agent, _usage, store=_store)
+                            bus.publish_event(
+                                conv_id, "message_meta",
+                                usage_event_payload(_usage))
+                        except Exception:
+                            logger.debug(
+                                "compact context gauge publish failed",
+                                exc_info=True)
                 else:
                     bus.publish_event(conv_id, "compact_progress", {
                         "stage": "done", **result,

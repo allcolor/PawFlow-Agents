@@ -59,6 +59,8 @@ function markCompactJustHappened(agentName) {
 // are rejected by updated_at/ts when both sides provide a timestamp.
 function setContextUsage(agentName, usage) {
   if (!agentName || !usage) return;
+  if (usage.conversation_id && typeof conversationId !== 'undefined'
+      && usage.conversation_id !== conversationId) return;
   const key = agentKey(agentName);
   const realUsed = usage.used !== undefined ? usage.used : (usage.context_used || 0);
   const newMax = usage.max !== undefined ? usage.max : (usage.context_max || 0);

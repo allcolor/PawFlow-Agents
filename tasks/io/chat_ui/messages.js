@@ -141,6 +141,29 @@ function makeTimeHtml(tsEpoch) {
   return '<span class="msg-time">' + timeStr + '</span>';
 }
 
+function _messageSortTs(extra) {
+  const raw = extra && (extra.timestamp || extra.ts);
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : Date.now() / 1000;
+}
+
+function _insertMessageChronologically(container, el, sortTs) {
+  if (!container) return;
+  el.dataset.sortTs = String(sortTs);
+  const typingEl = document.getElementById('typing');
+  for (const child of Array.from(container.children)) {
+    if (child === typingEl) break;
+    if (!child.classList || !child.classList.contains('msg')) continue;
+    const childTs = Number(child.dataset.sortTs || '');
+    if (Number.isFinite(childTs) && childTs > sortTs) {
+      container.insertBefore(el, child);
+      return;
+    }
+  }
+  if (typingEl) container.insertBefore(el, typingEl);
+  else container.appendChild(el);
+}
+
 function addMsg(role, text, extra) {
   // Dedup by msg_id — if we've already displayed this message, skip
   const msgId = (extra && extra.msg_id) || '';
@@ -182,7 +205,8 @@ function addMsg(role, text, extra) {
       + 'font-size:12.5px;display:flex;align-items:baseline;gap:8px;'
     );
     const fromAgent = displayAgentName(extra.source.agent || 'agent');
-    const timeHtml = makeTimeHtml((extra && extra.ts) ? extra.ts : 0);
+    const notifSortTs = _messageSortTs(extra);
+    const timeHtml = makeTimeHtml(notifSortTs);
     if (extra && extra.msg_id) notifEl.dataset.msgid = extra.msg_id;
     notifEl.innerHTML = (
       '<span style="font-size:14px;">🔔</span>'
@@ -191,11 +215,7 @@ function addMsg(role, text, extra) {
       + timeHtml
     );
     const notifContainer = document.getElementById('messages');
-    if (notifContainer) {
-      const typingEl2 = document.getElementById('typing');
-      if (typingEl2) notifContainer.insertBefore(notifEl, typingEl2);
-      else notifContainer.appendChild(notifEl);
-    }
+    _insertMessageChronologically(notifContainer, notifEl, notifSortTs);
     scrollBottom(true);
     return notifEl;
   }
@@ -235,8 +255,8 @@ function addMsg(role, text, extra) {
   if (extra && extra.raw_index !== undefined) el.dataset.rawIndex = extra.raw_index;
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';
   // Timestamp — use provided timestamp or current time
-  const _ts = extra && (extra.timestamp || extra.ts);
-  const timeHtml = makeTimeHtml(_ts || 0);
+  const _ts = _messageSortTs(extra);
+  const timeHtml = makeTimeHtml(_ts);
 
   // Action buttons (copy + delete + reply) for all user-visible messages
   let actionsHtml = '';
@@ -485,13 +505,7 @@ function addMsg(role, text, extra) {
   // Check near-bottom BEFORE appending so new element doesn't shift the threshold
   const shouldScroll = isNearBottom();
   const container = document.getElementById('messages');
-  // Insert before typing indicator so it always stays at the bottom
-  const typingEl = document.getElementById('typing');
-  if (typingEl) {
-    container.insertBefore(el, typingEl);
-  } else {
-    container.appendChild(el);
-  }
+  _insertMessageChronologically(container, el, _ts);
   scrollBottom(shouldScroll);
   // Syntax highlighting via highlight.js (if loaded)
   if (typeof hljs !== 'undefined') {

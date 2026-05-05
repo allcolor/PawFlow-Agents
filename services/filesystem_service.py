@@ -513,6 +513,13 @@ class RelayService(BaseService):
                 opcode, payload = await asyncio.wait_for(
                     _ws_recv_frame(reader), timeout=KEEPALIVE)
             except asyncio.TimeoutError:
+                reader_exception = None
+                exception_getter = getattr(reader, "exception", None)
+                if callable(exception_getter):
+                    with contextlib.suppress(Exception):
+                        reader_exception = exception_getter()
+                if reader_exception is not None:
+                    raise reader_exception
                 async with send_lock:
                     await _ws_send_frame(
                         writer, json.dumps({'type': 'ping'}).encode())

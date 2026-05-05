@@ -1,4 +1,7 @@
+import asyncio
 import threading
+
+import pytest
 
 from services.filesystem_service import RelayService
 
@@ -61,3 +64,34 @@ def test_clear_last_relay_unblocks_all_pending_even_without_reader_tag():
     assert untagged_holder["error"] == "Relay disconnected"
     assert svc._pending == {}
     assert svc._relay_pool == []
+
+
+class _BrokenReader:
+    def exception(self):
+        return TimeoutError("network interface changed")
+
+    async def readexactly(self, _size):
+        raise self.exception()
+
+
+class _Writer:
+    def __init__(self):
+        self.writes = 0
+
+    def write(self, _data):
+        self.writes += 1
+
+    async def drain(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_relay_main_loop_exits_when_reader_stores_socket_timeout():
+    svc = RelayService({"_service_id": "fs1", "token": "tok"})
+    reader = _BrokenReader()
+    writer = _Writer()
+
+    with pytest.raises(TimeoutError):
+        await svc._relay_main_loop(reader, writer, svc, asyncio.Lock(), set())
+
+    assert writer.writes == 0

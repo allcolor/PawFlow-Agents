@@ -10,6 +10,7 @@ don't conflict.  When no route matches, 504/404 is returned directly.
 
 import json
 import logging
+import os
 import re
 import socket
 import ssl
@@ -76,6 +77,8 @@ class _GlobalRateLimiter:
 
 
 _GLOBAL_RATE_LIMITER = _GlobalRateLimiter()
+_DEFAULT_MAX_DISPATCH_THREADS = 128
+_DEFAULT_HEADER_READ_TIMEOUT = 3.0
 
 
 def _rate_limit_policy(path: str) -> Optional[Tuple[str, int, float]]:
@@ -820,14 +823,49 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
     allow_reuse_port = True
 
-    def __init__(self, server_address, handler_class, route_registry, request_timeout):
+    def __init__(self, server_address, handler_class, route_registry, request_timeout,
+                 max_dispatch_threads=None, header_read_timeout=None):
         self._route_registry = route_registry
         self._pending_requests: Dict[str, PendingRequest] = {}
         self._request_timeout = request_timeout
         self._ssl_ctx: Optional[ssl.SSLContext] = None
         self._sni_certs: Dict[str, ssl.SSLContext] = {}
         self._ws_sockets: set = set()  # sockets handed to WS handlers
+        self._max_dispatch_threads = self._resolve_int_config(
+            max_dispatch_threads,
+            "PAWFLOW_HTTP_MAX_DISPATCH_THREADS",
+            _DEFAULT_MAX_DISPATCH_THREADS,
+            minimum=1)
+        self._header_read_timeout = self._resolve_float_config(
+            header_read_timeout,
+            "PAWFLOW_HTTP_HEADER_TIMEOUT",
+            _DEFAULT_HEADER_READ_TIMEOUT,
+            minimum=0.1)
+        self._dispatch_slots = threading.BoundedSemaphore(self._max_dispatch_threads)
+        self._dispatch_active = 0
+        self._dispatch_rejected = 0
+        self._dispatch_lock = threading.Lock()
         super().__init__(server_address, handler_class)
+
+    @staticmethod
+    def _resolve_int_config(config_value, env_name: str, default: int,
+                            minimum: int = 1) -> int:
+        raw = config_value if config_value is not None else os.getenv(env_name, "")
+        try:
+            value = int(raw or default)
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, value)
+
+    @staticmethod
+    def _resolve_float_config(config_value, env_name: str, default: float,
+                              minimum: float = 0.1) -> float:
+        raw = config_value if config_value is not None else os.getenv(env_name, "")
+        try:
+            value = float(raw or default)
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, value)
 
     def handle_error(self, request, client_address):
         import sys
@@ -941,11 +979,37 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 pass
 
     def process_request(self, request, client_address):
-        """Spawn a dispatch thread immediately — never block the accept loop."""
+        """Spawn a bounded dispatch thread without blocking the accept loop."""
+        if not self._dispatch_slots.acquire(blocking=False):
+            with self._dispatch_lock:
+                self._dispatch_rejected += 1
+                rejected = self._dispatch_rejected
+            if rejected == 1 or rejected % 100 == 0:
+                logger.warning(
+                    "HTTP dispatch saturated: active=%d max=%d rejected=%d; closing %s",
+                    self._dispatch_active, self._max_dispatch_threads,
+                    rejected, client_address)
+            try:
+                request.close()
+            except Exception:
+                pass
+            return
+
+        with self._dispatch_lock:
+            self._dispatch_active += 1
+
+        def _run_dispatch():
+            try:
+                self._dispatch_request(request, client_address)
+            finally:
+                with self._dispatch_lock:
+                    self._dispatch_active = max(0, self._dispatch_active - 1)
+                self._dispatch_slots.release()
+
         t = threading.Thread(
-            target=self._dispatch_request,
-            args=(request, client_address),
-            daemon=True)
+            target=_run_dispatch,
+            daemon=True,
+            name="http-dispatch")
         t.start()
 
     def _dispatch_request(self, request, client_address):
@@ -956,7 +1020,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         """
         # Read headers to determine HTTP vs WS (64KB max to prevent abuse)
         try:
-            request.settimeout(10.0)
+            request.settimeout(self._header_read_timeout)
         except OSError:
             # Socket already closed by the client — bail out cleanly
             return
@@ -993,9 +1057,13 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             pass
 
         if b"Upgrade: websocket" in data or b"upgrade: websocket" in data:
-            # WS — handle directly on raw socket
-            self._ws_sockets.add(id(request))
-            self._handle_ws_connection_with_data(request, client_address, data)
+            # WS — handle directly on raw socket.
+            sock_id = id(request)
+            self._ws_sockets.add(sock_id)
+            try:
+                self._handle_ws_connection_with_data(request, client_address, data)
+            finally:
+                self._ws_sockets.discard(sock_id)
             return
 
         # HTTP — put the already-read data back via a wrapper socket
@@ -1292,6 +1360,8 @@ class HTTPListenerService(BaseService):
         self._host = self.config.get("host", "0.0.0.0")
         self._port = int(self.config.get("port", 9090))
         self._request_timeout = float(self.config.get("request_timeout", 120.0))
+        self._max_dispatch_threads = self.config.get("max_dispatch_threads")
+        self._header_read_timeout = self.config.get("header_read_timeout")
 
         self._ssl_certfile = self.config.get("ssl_certfile", "")
         self._ssl_keyfile = self.config.get("ssl_keyfile", "")
@@ -1316,6 +1386,8 @@ class HTTPListenerService(BaseService):
             "host": {"type": "string", "required": False, "default": "0.0.0.0", "description": "Bind address"},
             "port": {"type": "integer", "required": True, "default": 9090, "description": "Listen port"},
             "request_timeout": {"type": "float", "required": False, "default": 30.0, "description": "Request timeout (seconds)"},
+            "max_dispatch_threads": {"type": "integer", "required": False, "default": 128, "description": "Maximum concurrent HTTP/WebSocket dispatch threads"},
+            "header_read_timeout": {"type": "float", "required": False, "default": 3.0, "description": "Seconds to wait for request headers before closing slow or half-open clients"},
             "ssl_certfile": {"type": "string", "required": False, "default": "", "description": "Path to SSL certificate (PEM)"},
             "ssl_keyfile": {"type": "string", "required": False, "default": "", "description": "Path to SSL private key (PEM)"},
             "ssl_keyfile_password": {"type": "string", "required": False, "default": "", "description": "Password for encrypted key"},
@@ -1369,6 +1441,8 @@ class HTTPListenerService(BaseService):
             _RequestHandler,
             self._registry,
             self._request_timeout,
+            max_dispatch_threads=self._max_dispatch_threads,
+            header_read_timeout=self._header_read_timeout,
         )
 
         # Auto-detect TLS: don't wrap the server socket globally.

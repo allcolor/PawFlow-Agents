@@ -36,7 +36,9 @@ Shared service (singleton per port). Starts a threaded HTTP server and dispatche
 |-----------|------|---------|-------------|
 | host | string | 0.0.0.0 | Bind address |
 | port | int | 9090 | Listen port |
-| request_timeout | float | 30.0 | Seconds before 504 Gateway Timeout |
+| request_timeout | float | 30.0 | Response wait timeout for flow-backed requests |
+| max_dispatch_threads | int | 128 | Maximum concurrent HTTP/WebSocket dispatch threads; also configurable with `PAWFLOW_HTTP_MAX_DISPATCH_THREADS` |
+| header_read_timeout | float | 3.0 | Seconds to wait for request headers before closing slow or half-open clients; also configurable with `PAWFLOW_HTTP_HEADER_TIMEOUT` |
 
 **Key features:**
 - Route registry with `{param}` path parameters
@@ -44,6 +46,7 @@ Shared service (singleton per port). Starts a threaded HTTP server and dispatche
 - 404 when no route matches
 - 504 when flow doesn't respond in time
 - 503 when service shuts down with pending requests
+- Bounded dispatch threads so browser reconnect storms or half-open sockets cannot allocate unbounded Python threads
 
 ### 2. httpReceiver Task (`tasks/io/http_receiver.py`)
 

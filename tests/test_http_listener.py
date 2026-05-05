@@ -11,9 +11,9 @@ import pytest
 
 from services.http_listener_service import (
     HTTPListenerService, PendingRequest, RouteRegistry,
-    RouteConflictError, RouteEntry, _emit_timing_summary,
-    _request_action_label, _SECURITY_HEADERS, _GlobalRateLimiter,
-    _rate_limit_policy,
+    RouteConflictError, RouteEntry, _HTTPServerWithRegistry,
+    _emit_timing_summary, _request_action_label, _SECURITY_HEADERS,
+    _GlobalRateLimiter, _rate_limit_policy,
 )
 from services.http_auth_service import HTTPAuthService, AuthValidationResult
 from tasks.io.http_receiver import HTTPReceiverTask
@@ -114,6 +114,58 @@ def test_request_action_label_extracts_api_ui_action_only():
         body=json.dumps({"action": "send_message"}).encode(),
     )
     assert _request_action_label(other) == ""
+
+
+class _CloseTrackingSocket:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_http_dispatch_saturation_closes_without_spawning(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_HTTP_MAX_DISPATCH_THREADS", "1")
+    server = _HTTPServerWithRegistry(
+        ("127.0.0.1", 0), object, RouteRegistry(), request_timeout=30)
+    try:
+        assert server._dispatch_slots.acquire(blocking=False)
+        sock = _CloseTrackingSocket()
+
+        server.process_request(sock, ("127.0.0.1", 12345))
+
+        assert sock.closed is True
+        assert server._dispatch_rejected == 1
+        assert server._dispatch_active == 0
+    finally:
+        server._dispatch_slots.release()
+        server.server_close()
+
+
+def test_http_dispatch_slot_released_after_request(monkeypatch):
+    monkeypatch.setenv("PAWFLOW_HTTP_MAX_DISPATCH_THREADS", "1")
+    server = _HTTPServerWithRegistry(
+        ("127.0.0.1", 0), object, RouteRegistry(), request_timeout=30)
+    done = threading.Event()
+    try:
+        def _fake_dispatch(_request, _client_address):
+            done.set()
+
+        server._dispatch_request = _fake_dispatch
+        server.process_request(_CloseTrackingSocket(), ("127.0.0.1", 12345))
+
+        assert done.wait(timeout=2)
+        deadline = time.time() + 2
+        while time.time() < deadline and server._dispatch_active != 0:
+            time.sleep(0.01)
+        assert server._dispatch_active == 0
+        assert server._dispatch_slots.acquire(blocking=False)
+    finally:
+        try:
+            server._dispatch_slots.release()
+        except ValueError:
+            pass
+        server.server_close()
 
 
 # ---------------------------------------------------------------------------

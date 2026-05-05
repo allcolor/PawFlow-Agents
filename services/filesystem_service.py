@@ -15,6 +15,7 @@ Relay usage:
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import json
 import logging
@@ -86,7 +87,7 @@ def _sync_relay_scripts(service, reg_info):
         return
     # Ask relay for its current script hash
     try:
-        remote = service._request("script_hash")
+        remote = service._request("script_hash", _request_timeout=30.0)
         if isinstance(remote, dict) and remote.get("hash") == bundle["hash"]:
             logger.debug("Relay scripts up to date (hash=%s)", bundle["hash"])
             return
@@ -96,7 +97,8 @@ def _sync_relay_scripts(service, reg_info):
     try:
         result = service._request("update_scripts",
                                    scripts=bundle["scripts"],
-                                   script_hash=bundle["hash"])
+                                   script_hash=bundle["hash"],
+                                   _request_timeout=30.0)
         # _request unwraps {"ok": True, "data": {...}} → returns the
         # inner data dict, so check for its shape instead of "ok".
         if isinstance(result, dict) and "updated" in result:
@@ -135,32 +137,42 @@ def _attach_sync_sock_to_loop(sock, loop):
     """
     sock.setblocking(True)
     reader = asyncio.StreamReader(loop=loop)
+    stop_event = threading.Event()
+
+    def _call_reader(method, *args):
+        if stop_event.is_set() or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(method, *args)
+        except RuntimeError:
+            return
 
     def _read_pump():
         try:
-            while True:
+            while not stop_event.is_set():
                 try:
                     data = sock.recv(65536)
                 except OSError as e:
-                    loop.call_soon_threadsafe(reader.set_exception, e)
+                    _call_reader(reader.set_exception, e)
                     return
                 if not data:
-                    loop.call_soon_threadsafe(reader.feed_eof)
+                    _call_reader(reader.feed_eof)
                     return
-                loop.call_soon_threadsafe(reader.feed_data, data)
+                _call_reader(reader.feed_data, data)
         except Exception as e:
-            loop.call_soon_threadsafe(reader.set_exception, e)
+            _call_reader(reader.set_exception, e)
 
     threading.Thread(
         target=_read_pump, daemon=True,
         name=f"ws-sock-read-{id(sock)}").start()
 
     class _SockWriter:
-        __slots__ = ("_sock", "_closed")
+        __slots__ = ("_sock", "_closed", "_stop_event")
 
-        def __init__(self, s):
+        def __init__(self, s, stop):
             self._sock = s
             self._closed = False
+            self._stop_event = stop
 
         def write(self, data):
             if self._closed:
@@ -177,12 +189,13 @@ def _attach_sync_sock_to_loop(sock, loop):
             if self._closed:
                 return
             self._closed = True
+            self._stop_event.set()
             try:
                 self._sock.close()
             except Exception:
                 pass
 
-    return reader, _SockWriter(sock)
+    return reader, _SockWriter(sock, stop_event)
 
 
 async def _ws_recv_frame(reader):
@@ -280,6 +293,8 @@ class RelayService(BaseService):
         # to RelayFileStoreFs instead of RelayServerFs.
         self._filestore_fs = None
         self._filestore_fs_lock = threading.Lock()
+        self._ctx_sync_lock = threading.Lock()
+        self._ctx_sync_active = False
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -373,6 +388,14 @@ class RelayService(BaseService):
                 loop.run_until_complete(
                     self._serve_relay_session(reader, writer, loop, remote))
             finally:
+                with contextlib.suppress(Exception):
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                with contextlib.suppress(Exception):
+                    try:
+                        loop.run_until_complete(
+                            loop.shutdown_default_executor(timeout=2.0))
+                    except TypeError:
+                        loop.run_until_complete(loop.shutdown_default_executor())
                 loop.close()
         except Exception as e:
             logger.error('Relay WS handler error (%s): %s', remote, e, exc_info=True)
@@ -439,8 +462,13 @@ class RelayService(BaseService):
             except Exception as e:
                 logger.debug('_clear_relay failed: %s', e, exc_info=True)
             if relay_tasks:
-                for task in list(relay_tasks):
+                tasks = list(relay_tasks)
+                for task in tasks:
                     task.cancel()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=2.0)
                 relay_tasks.clear()
             try:
                 writer.close()
@@ -450,18 +478,30 @@ class RelayService(BaseService):
 
     def _spawn_ctx_sync(self, reg_info, relay_id):
         service = self
+        with self._ctx_sync_lock:
+            if self._ctx_sync_active:
+                logger.debug('Relay context sync already running for %s', relay_id)
+                return
+            self._ctx_sync_active = True
+
         def _fetch_ctx_and_sync():
             try:
-                ctx = service._request('project_context', '.')
-                service._project_context = ctx
-                logger.info('Project context loaded for %s: %s',
-                             relay_id, ctx.get('project_types', []))
-            except Exception as e:
-                logger.debug('Failed to load project context: %s', e, exc_info=True)
-            try:
-                _sync_relay_scripts(service, reg_info)
-            except Exception as e:
-                logger.debug('Relay script sync failed: %s', e, exc_info=True)
+                try:
+                    ctx = service._request(
+                        'project_context', '.', _request_timeout=30.0)
+                    service._project_context = ctx
+                    logger.info('Project context loaded for %s: %s',
+                                 relay_id, ctx.get('project_types', []))
+                except Exception as e:
+                    logger.debug('Failed to load project context: %s', e, exc_info=True)
+                try:
+                    _sync_relay_scripts(service, reg_info)
+                except Exception as e:
+                    logger.debug('Relay script sync failed: %s', e, exc_info=True)
+            finally:
+                with service._ctx_sync_lock:
+                    service._ctx_sync_active = False
+
         threading.Thread(target=_fetch_ctx_and_sync, daemon=True,
                          name=f'relay-ctx-{relay_id}').start()
 
@@ -675,15 +715,18 @@ class RelayService(BaseService):
                 removed = list(self._relay_pool)
                 self._relay_pool.clear()
             alive = len(self._relay_pool)
+        removed_readers = {conn.get("reader") for conn in removed}
         for conn in removed:
             for task in list(conn.get("tasks") or ()):
                 task.cancel()
-        if alive == 0:
-            with self._pending_lock:
-                for rid, (evt, holder) in self._pending.items():
+        with self._pending_lock:
+            pending_items = list(self._pending.items())
+            for rid, (evt, holder) in pending_items:
+                pending_reader = holder.get("_relay_reader")
+                if alive == 0 or pending_reader in removed_readers:
+                    self._pending.pop(rid, None)
                     holder["error"] = "Relay disconnected"
                     evt.set()
-                self._pending.clear()
         # Notify SSE clients
         try:
             from core.conversation_event_bus import ConversationEventBus
@@ -822,7 +865,8 @@ class RelayService(BaseService):
                 except Exception:
                     pass
 
-    def _send_to_pool(self, pool: List[Dict], payload: bytes):
+    def _send_to_pool(self, pool: List[Dict], payload: bytes,
+                      request_id: str = ""):
         """Send `payload` over the WS pool, most-recently-connected first.
 
         Returns None on success, the last exception on total failure.
@@ -845,6 +889,12 @@ class RelayService(BaseService):
                 else:
                     await _ws_send_frame(w, payload)
 
+            if request_id:
+                with self._pending_lock:
+                    entry = self._pending.get(request_id)
+                    if not entry:
+                        return Exception("Relay disconnected")
+                    entry[1]["_relay_reader"] = conn["reader"]
             try:
                 asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
                 return None
@@ -885,7 +935,7 @@ class RelayService(BaseService):
             **kwargs,
         }).encode("utf-8")
 
-        last_err = self._send_to_pool(pool, payload)
+        last_err = self._send_to_pool(pool, payload, request_id=request_id)
 
         if last_err:
             with self._pending_lock:
@@ -944,7 +994,7 @@ class RelayService(BaseService):
             **kwargs,
         }).encode("utf-8")
 
-        last_err = self._send_to_pool(pool, payload)
+        last_err = self._send_to_pool(pool, payload, request_id=request_id)
 
         if last_err:
             with self._pending_lock:
@@ -960,11 +1010,12 @@ class RelayService(BaseService):
 
         evt.wait(timeout=timeout)
 
+        if not evt.is_set():
+            self.cancel_pending(request_id)
+            raise Exception("Timeout waiting for relay response")
+
         with self._pending_lock:
             self._pending.pop(request_id, None)
-
-        if not evt.is_set():
-            raise Exception("Timeout waiting for relay response")
         if "error" in holder:
             raise Exception(holder["error"])
 
@@ -1002,7 +1053,7 @@ class RelayService(BaseService):
             **kwargs,
         }).encode("utf-8")
 
-        last_err = self._send_to_pool(pool, payload)
+        last_err = self._send_to_pool(pool, payload, request_id=request_id)
 
         if last_err:
             with self._pending_lock:
@@ -1019,8 +1070,7 @@ class RelayService(BaseService):
         # Wait for relay response — no limit unless timeout explicitly given
         _wait_timeout = kwargs.get("timeout")
         if not evt.wait(timeout=_wait_timeout):
-            with self._pending_lock:
-                self._pending.pop(request_id, None)
+            self.cancel_pending(request_id)
             raise Exception(f"Relay timeout for {action} on {self._service_id}")
 
         if "error" in holder:

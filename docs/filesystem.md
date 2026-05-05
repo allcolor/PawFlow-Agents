@@ -84,6 +84,8 @@ python tools/pawflow_relay.py --port 9877 --dir /home/user/project --secret myse
 /service install wsFilesystem myfiles host=localhost,port=9877,secret=mysecret,mode=readwrite
 ```
 
+Relay reconnect handling is connection-scoped. When a relay WebSocket dies, PawFlow cancels only the pending requests sent through that socket; requests already sent through a newer reconnect stay alive. If the pool drops to zero, all pending relay requests are failed immediately so UI calls, context sync, and tool requests cannot accumulate blocked threads during network flaps.
+
 ## Cloud Storage — Google Drive
 
 ### 1. Configure OAuth provider

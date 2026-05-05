@@ -270,8 +270,15 @@ function managerJson(expression) {
 
 function appendLog(name, text) {
   const win = mainWindow || BrowserWindow.getAllWindows()[0];
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('relay-log', { name, text });
+  if (!win || win.isDestroyed()) return;
+  const contents = win.webContents;
+  if (!contents || contents.isDestroyed()) return;
+  try {
+    contents.send('relay-log', { name, text });
+  } catch (err) {
+    if (!String(err && err.message || err).includes('Render frame was disposed')) {
+      console.error('Error sending relay log:', err);
+    }
   }
 }
 

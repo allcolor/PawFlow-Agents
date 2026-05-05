@@ -17,13 +17,30 @@
 
 set -euo pipefail
 
-IMAGE="${PAWFLOW_IMAGE}"
-PAWFLOW_HOME="${PAWFLOW_HOME}"
-CONTAINER="${PAWFLOW_CONTAINER}"
-PORT="${PAWFLOW_PORT}"
-HOST="${PAWFLOW_HOST}"
-EXTRA_ARGS="${PAWFLOW_EXTRA_ARGS}"
+IMAGE="$(printenv PAWFLOW_IMAGE || true)"
+PAWFLOW_HOME="$(printenv PAWFLOW_HOME || true)"
+CONTAINER="$(printenv PAWFLOW_CONTAINER || true)"
+PORT="$(printenv PAWFLOW_PORT || true)"
+HOST="$(printenv PAWFLOW_HOST || true)"
+EXTRA_ARGS="$(printenv PAWFLOW_EXTRA_ARGS || true)"
+BOOTSTRAP_GATEWAY_KEY="$(printenv PAWFLOW_BOOTSTRAP_GATEWAY_KEY || true)"
+if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
+if [[ -z "$PAWFLOW_HOME" ]]; then PAWFLOW_HOME="$HOME/pawflow"; fi
+if [[ -z "$CONTAINER" ]]; then CONTAINER="pawflow-server"; fi
+if [[ -z "$PORT" ]]; then PORT="9090"; fi
+if [[ -z "$HOST" ]]; then HOST="0.0.0.0"; fi
+if [[ -z "$BOOTSTRAP_GATEWAY_KEY" ]]; then BOOTSTRAP_GATEWAY_KEY="RoyBetty"; fi
 DOCKER_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)
+      sed -n '1,16p' "$0"
+      exit 0
+      ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
 
 mkdir -p \
   "$PAWFLOW_HOME/data" \
@@ -60,7 +77,7 @@ docker run -d \
   -v "$PAWFLOW_HOME/config:/app/config" \
   -v "$PAWFLOW_HOME/certs:/app/certs" \
   -v "$PAWFLOW_HOME/logs:/app/logs" \
-  -e PAWFLOW_BOOTSTRAP_GATEWAY_KEY="${PAWFLOW_BOOTSTRAP_GATEWAY_KEY}" \
+  -e PAWFLOW_BOOTSTRAP_GATEWAY_KEY="$BOOTSTRAP_GATEWAY_KEY" \
   "$IMAGE" \
   python cli.py start --host "$HOST" --port "$PORT" $EXTRA_ARGS
 

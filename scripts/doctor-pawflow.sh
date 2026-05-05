@@ -3,7 +3,8 @@
 
 set -euo pipefail
 
-PORT="${PAWFLOW_PORT}"
+PORT="$(printenv PAWFLOW_PORT || true)"
+if [[ -z "$PORT" ]]; then PORT="9090"; fi
 SOURCE_MODE=0
 REQUIRE_SOCKET=0
 FAILS=0

@@ -15,7 +15,27 @@ services:
       - ./plugins:/app/plugins
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/health')"]
+      test:
+        - CMD-SHELL
+        - |
+          python - <<'PY'
+          import ssl
+          import sys
+          import urllib.request
+
+          checks = [
+              ("https://localhost:9090/health", ssl._create_unverified_context()),
+              ("http://localhost:9090/health", None),
+          ]
+          last = None
+          for url, ctx in checks:
+              try:
+                  urllib.request.urlopen(url, context=ctx, timeout=5).close()
+                  sys.exit(0)
+              except Exception as exc:
+                  last = exc
+          raise SystemExit(str(last))
+          PY
       interval: 30s
       timeout: 5s
       retries: 3

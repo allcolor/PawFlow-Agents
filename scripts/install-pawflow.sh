@@ -11,10 +11,14 @@
 
 set -euo pipefail
 
-IMAGE="${PAWFLOW_IMAGE}"
-REPO_URL="${PAWFLOW_REPO_URL}"
-INSTALL_DIR="${PAWFLOW_INSTALL_DIR}"
-PORT="${PAWFLOW_PORT}"
+IMAGE="$(printenv PAWFLOW_IMAGE || true)"
+REPO_URL="$(printenv PAWFLOW_REPO_URL || true)"
+INSTALL_DIR="$(printenv PAWFLOW_INSTALL_DIR || true)"
+PORT="$(printenv PAWFLOW_PORT || true)"
+if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
+if [[ -z "$REPO_URL" ]]; then REPO_URL="https://github.com/allcolor/PawFlow-Agents.git"; fi
+if [[ -z "$INSTALL_DIR" ]]; then INSTALL_DIR="$HOME/pawflow-src"; fi
+if [[ -z "$PORT" ]]; then PORT="9090"; fi
 MODE="image"
 RUN_DOCTOR=1
 

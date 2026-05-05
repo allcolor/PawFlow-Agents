@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+from core.install_bootstrap import get_install_status
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = ROOT / "config" / "relay_image_catalog.json"
@@ -112,8 +114,9 @@ def test_generator_resolves_implied_features_and_writes_installer_artifacts(tmp_
 
 def test_installer_api_advertises_relay_image_profile_step():
     flow = json.loads((ROOT / "data/repository/flows/global/default/pawflow_installer/versions/1.0.0.json").read_text(encoding="utf-8"))
-    api_content = json.loads(flow["tasks"]["install_api"]["parameters"]["content"])
+    api_content = get_install_status()
 
+    assert flow["tasks"]["install_api"]["type"] == "installBootstrap"
     assert "relay_image_profiles" in api_content["steps"]
     assert api_content["client_relay_images"]["catalog"] == "config/relay_image_catalog.json"
     assert api_content["client_relay_images"]["server_profile"] == "server-full"

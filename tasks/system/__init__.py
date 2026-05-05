@@ -18,6 +18,7 @@ def register_system_tasks():
     from tasks.system.fail_task import FailTask
     from tasks.system.update_attribute import UpdateAttributeTask
     from tasks.system.generate_flowfile import GenerateFlowFileTask
+    from tasks.system.install_bootstrap import InstallBootstrapTask
     from tasks.system.cron_trigger import CronTriggerTask
 
     # Register tasks
@@ -27,4 +28,5 @@ def register_system_tasks():
     TaskFactory.register(FailTask)
     TaskFactory.register(UpdateAttributeTask)
     TaskFactory.register(GenerateFlowFileTask)
+    TaskFactory.register(InstallBootstrapTask)
     TaskFactory.register(CronTriggerTask)

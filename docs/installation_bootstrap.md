@@ -92,9 +92,11 @@ generated, startup must fail loudly instead of falling back to plain HTTP.
 
 The installer template is stored at
 `data/repository/flows/global/default/pawflow_installer/versions/1.0.0.json`.
-It currently defines the first-run routes `/install` and `/install/api` and the
-bootstrap checklist. The transactional API that writes final server config is a
-separate implementation step.
+It defines `/install`, dynamic status at `GET /install/api`, and finalization at
+`POST /install/api/finalize`. Finalization requires the current bootstrap key,
+rejects keeping `RoyBetty`, stores only a SHA-256 digest of the replacement key,
+writes `install_complete=true`, and marks the installer deployment stopped for
+the next restart.
 
 ## Wizard Steps
 

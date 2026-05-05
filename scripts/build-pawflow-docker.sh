@@ -11,7 +11,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-IMAGE="${PAWFLOW_IMAGE}"
+IMAGE="$(printenv PAWFLOW_IMAGE || true)"
+if [[ -z "$IMAGE" ]]; then IMAGE="ghcr.io/allcolor/pawflow:latest"; fi
 
 echo "Building PawFlow server image: $IMAGE"
 docker build -t "$IMAGE" "$REPO_DIR"

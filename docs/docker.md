@@ -30,7 +30,8 @@ The installer starts with a self-signed bootstrap certificate generated inside
 the persistent data volume. Your browser will warn until the wizard configures
 the final certificate, either by using provided cert/key files, generating an
 ACME certificate such as Let's Encrypt, or keeping a self-signed certificate for
-private deployments.
+private deployments. The Compose healthcheck probes HTTPS with self-signed trust
+disabled first, then falls back to plain HTTP for non-TLS local runs.
 
 The initial Private Gateway bootstrap key is:
 

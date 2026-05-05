@@ -147,6 +147,17 @@
 | `merge_timeout` | integer | No | 30 | Timeout in seconds |
 | `merge_count` | integer | No | 10 | Number of FlowFiles to merge |
 
+#### 11.1.8. Install Bootstrap Task (`installBootstrap`)
+**Description**: Serve the first-run installer status and finalization API. It is intended for the bundled `PawFlow Installer` flow, not for user flows.
+
+**Behavior**:
+- `GET /install/api` returns the persisted install state without exposing secret values.
+- `POST /install/api/finalize` requires the current bootstrap gateway key and a replacement gateway key.
+- The replacement gateway key is stored only as a SHA-256 digest in `install_state.json`.
+- Successful finalization writes `install_complete=true` and marks the installer deployment stopped for the next restart.
+
+**Parameters**: none.
+
 ### 11.2. Data Processing Tasks
 
 #### 11.2.1. Script Task (`script`)

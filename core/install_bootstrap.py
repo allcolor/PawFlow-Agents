@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -21,6 +22,28 @@ INSTALLER_TEMPLATE = _paths.flow_version_file("default", "pawflow_installer", "1
 DEFAULT_BOOTSTRAP_GATEWAY_KEY = "RoyBetty"
 BOOTSTRAP_CERT_FILE = _paths.SSL_DIR / "bootstrap.crt"
 BOOTSTRAP_KEY_FILE = _paths.SSL_DIR / "bootstrap.key"
+INSTALL_STEPS = [
+    "server",
+    "certificates",
+    "gateway",
+    "auth",
+    "admin",
+    "llm_services",
+    "summarizer_service",
+    "variables",
+    "secrets",
+    "cli_credentials",
+    "relay_image_profiles",
+    "smoke_tests",
+    "finalize",
+]
+CLIENT_RELAY_IMAGES = {
+    "catalog": "config/relay_image_catalog.json",
+    "generator": "scripts/generate-relay-image.py",
+    "server_profile": "server-full",
+    "default_client_profile": "client-minimal",
+    "advanced_features": True,
+}
 
 
 def ensure_bootstrap_self_signed_cert() -> Dict[str, str]:
@@ -93,6 +116,102 @@ def _write_state(state: Dict[str, Any]) -> None:
 
 def is_install_complete() -> bool:
     return bool(_load_state().get("install_complete"))
+
+
+def _public_draft(draft: Dict[str, Any]) -> Dict[str, Any]:
+    public: Dict[str, Any] = {}
+    for section in ("server", "gateway"):
+        value = draft.get(section)
+        if isinstance(value, dict):
+            public[section] = dict(value)
+    return public
+
+
+def get_install_status() -> Dict[str, Any]:
+    """Return installer state without exposing bootstrap or gateway secrets."""
+    state = _load_state()
+    checks = dict(state.get("checks") or {})
+    draft = _public_draft(dict(state.get("draft") or {}))
+    return {
+        "install_complete": bool(state.get("install_complete")),
+        "current_step": state.get("current_step") or "server",
+        "installer_instance_id": state.get("installer_instance_id", INSTALLER_INSTANCE_ID),
+        "completed_steps": list(state.get("completed_steps") or []),
+        "steps": list(INSTALL_STEPS),
+        "client_relay_images": dict(CLIENT_RELAY_IMAGES),
+        "checks": checks,
+        "draft": draft,
+    }
+
+
+def finalize_install(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Finalize first-run bootstrap after replacing the gateway key.
+
+    The current bootstrap key authorizes the public bootstrap API. The new
+    gateway key is never persisted in clear text; only a SHA-256 digest is kept
+    so the state file can prove replacement without becoming a secret store.
+    """
+    state = _load_state()
+    if state.get("install_complete"):
+        return get_install_status()
+
+    expected_key = os.environ.get(
+        "PAWFLOW_BOOTSTRAP_GATEWAY_KEY",
+        DEFAULT_BOOTSTRAP_GATEWAY_KEY,
+    )
+    provided_key = str(
+        payload.get("bootstrap_gateway_key")
+        or payload.get("current_gateway_key")
+        or ""
+    )
+    if provided_key != expected_key:
+        raise PermissionError("invalid bootstrap gateway key")
+
+    new_key = str(
+        payload.get("new_gateway_key")
+        or payload.get("gateway_key")
+        or ""
+    ).strip()
+    if not new_key:
+        raise ValueError("new_gateway_key is required")
+    if new_key in {expected_key, DEFAULT_BOOTSTRAP_GATEWAY_KEY}:
+        raise ValueError("new_gateway_key must replace the bootstrap key")
+    if len(new_key) < 16:
+        raise ValueError("new_gateway_key must be at least 16 characters")
+
+    now = time.time()
+    state.setdefault("version", 1)
+    state["install_complete"] = True
+    state["current_step"] = "complete"
+    state["updated_at"] = now
+    state["completed_at"] = now
+    state["installer_instance_id"] = INSTALLER_INSTANCE_ID
+
+    completed = list(state.get("completed_steps") or [])
+    for step in INSTALL_STEPS:
+        if step not in completed:
+            completed.append(step)
+    state["completed_steps"] = completed
+
+    checks = state.setdefault("checks", {})
+    checks["gateway_replaced"] = True
+    checks["finalized"] = True
+
+    draft = state.setdefault("draft", {})
+    gateway = draft.setdefault("gateway", {})
+    gateway["key_sha256"] = hashlib.sha256(new_key.encode("utf-8")).hexdigest()
+    gateway["replaced_at"] = now
+
+    _write_state(state)
+
+    try:
+        from core.deployment_registry import DeploymentRegistry
+        DeploymentRegistry.get_instance().update_status(INSTALLER_INSTANCE_ID, "stopped")
+    except Exception:
+        logger.warning("Install bootstrap finalized but installer status update failed", exc_info=True)
+
+    logger.info("Install bootstrap finalized")
+    return get_install_status()
 
 
 def ensure_install_bootstrap(port: int = 9090) -> bool:

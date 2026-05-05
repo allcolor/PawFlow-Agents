@@ -1,5 +1,7 @@
 from pathlib import Path
 import json
+import os
+import subprocess
 
 
 def test_server_dockerfile_supports_bootstrap_docker_builds():
@@ -31,17 +33,20 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert doctor_ps1.exists()
 
     run_src = run.read_text(encoding="utf-8")
-    assert "${PAWFLOW_IMAGE}" in run_src
-    assert "${PAWFLOW_HOME}" in run_src
+    assert "printenv PAWFLOW_IMAGE" in run_src
+    assert "printenv PAWFLOW_HOME" in run_src
     assert "PAWFLOW_BOOTSTRAP_GATEWAY_KEY" in run_src
+    assert "BOOTSTRAP_GATEWAY_KEY" in run_src
     assert "RoyBetty" in run_src
+    assert "--help|-h" in run_src
     assert "/var/run/docker.sock:/var/run/docker.sock" in run_src
     assert "--group-add" in run_src
     assert "$PAWFLOW_HOME/data:/app/data" in run_src
     assert "$PAWFLOW_HOME/certs:/app/certs" in run_src
 
     install_src = install.read_text(encoding="utf-8")
-    assert "${PAWFLOW_IMAGE}" in install_src
+    assert "printenv PAWFLOW_IMAGE" in install_src
+    assert "ghcr.io/allcolor/pawflow:latest" in install_src
     assert "doctor-pawflow.sh" in install_src
     assert "--skip-doctor" in install_src
     assert "--source" in install_src
@@ -49,9 +54,11 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "docker pull" in install_src
 
     build_src = build.read_text(encoding="utf-8")
-    assert "${PAWFLOW_IMAGE}" in build_src
+    assert "printenv PAWFLOW_IMAGE" in build_src
+    assert "ghcr.io/allcolor/pawflow:latest" in build_src
 
     doctor_src = doctor.read_text(encoding="utf-8")
+    assert "printenv PAWFLOW_PORT" in doctor_src
     assert "wsl.exe --status" in doctor_src
     assert "Docker Desktop" in doctor_src
     assert "docker info" in doctor_src
@@ -76,6 +83,27 @@ def test_install_scripts_mount_persistent_dirs_and_docker_socket():
     assert "already in use on Windows" in doctor_ps1_src
     assert "already in use inside WSL" in doctor_ps1_src
     assert "Port $Port" in doctor_ps1_src
+
+
+def test_install_script_help_works_without_pawflow_env(tmp_path):
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": os.environ.get("PATH", ""),
+    }
+    for script in (
+        "scripts/install-pawflow.sh",
+        "scripts/run-pawflow-docker.sh",
+        "scripts/doctor-pawflow.sh",
+    ):
+        result = subprocess.run(
+            ["bash", script, "--help"],
+            cwd=Path.cwd(),
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
 
 
 def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
@@ -107,6 +135,14 @@ def test_install_docs_and_agent_prompt_capture_bootstrap_contract():
     assert "summarizer service" in prompt
     assert "variables, secrets" in prompt
     assert "RoyBetty" in prompt
+
+
+def test_compose_healthcheck_accepts_bootstrap_tls():
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "https://localhost:9090/health" in compose
+    assert "ssl._create_unverified_context" in compose
+    assert "http://localhost:9090/health" in compose
 
 
 def test_docker_docs_explain_wsl_vhdx_compaction():
@@ -148,10 +184,13 @@ def test_pawflow_installer_flow_template_exists():
     patterns = {route["pattern"] for route in routes}
     assert "/install" in patterns
     assert "/install/api" in patterns
+    assert "/install/api/finalize" in patterns
 
-    api_content = flow["tasks"]["install_api"]["parameters"]["content"]
-    assert "self_signed_bootstrap" in api_content
-    assert "letsencrypt_acme" in api_content
-    assert "summarizer_service" in api_content
-    assert "variables" in api_content
-    assert "secrets" in api_content
+    assert flow["tasks"]["install_api"]["type"] == "installBootstrap"
+    route_names = set(flow["tasks"]["route_install"]["parameters"]["routes"])
+    assert {"api_status", "api_finalize"}.issubset(route_names)
+
+    ui_content = flow["tasks"]["install_ui"]["parameters"]["content"]
+    assert "fetch('/install/api'" in ui_content
+    assert "fetch('/install/api/finalize'" in ui_content
+    assert "new_gateway_key" in ui_content

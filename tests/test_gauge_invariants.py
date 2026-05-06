@@ -836,6 +836,7 @@ def test_context_gauge_events_always_include_timestamp():
     emitter_src = Path("tasks/ai/agent_emitter.py").read_text(encoding="utf-8")
     compact_src = Path("tasks/ai/agent_compaction.py").read_text(encoding="utf-8")
     usage_src = Path("tasks/ai/context_usage.py").read_text(encoding="utf-8")
+    provider_src = Path("core/llm_providers/claude_code.py").read_text(encoding="utf-8")
 
     assert '"updated_at": time.time()' in usage_src
     assert "usage_event_payload" in core_src
@@ -852,6 +853,16 @@ def test_context_gauge_events_always_include_timestamp():
         emitter_src.index('def on_cancelled')]
     assert '"context_used"' not in done_block
     assert '"context_pct"' not in done_block
+    provider_live_usage = provider_src[
+        provider_src.index("Capture freshest provider usage"):
+        provider_src.index("Claude Code sends INCREMENTAL")]
+    provider_result_meta = provider_src[
+        provider_src.index("Cache CC's reported contextWindow"):
+        provider_src.index("# If one or more preempts")]
+    assert '"context_used"' not in provider_live_usage
+    assert '"context_pct"' not in provider_live_usage
+    assert '"context_used"' not in provider_result_meta
+    assert '"context_pct"' not in provider_result_meta
 
 
 def test_provider_compact_discards_pending_messages_already_in_compacted_context():

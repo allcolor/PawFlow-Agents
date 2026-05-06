@@ -2073,39 +2073,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
                     msg = event.get("message", {})
                     msg_id = msg.get("id", "")
-                    # Capture freshest usage — each assistant event carries
-                    # message.usage with current prompt size (input + cache).
-                    # Emit a live `message_meta` so the webchat gauge updates
-                    # mid-turn instead of waiting for the final `result`.
-                    # Skip when usage didn't actually change (CC sometimes
-                    # re-emits the same assistant event for incremental
-                    # blocks of the same msg_id).
+                    # Capture freshest provider usage for cost/result metadata.
+                    # Do not publish it as the context gauge: the UI gauge is
+                    # PawFlow active-context usage, produced by
+                    # tasks.ai.context_usage, while provider prompt usage has a
+                    # different scope and can legitimately diverge mid-turn.
                     _u = msg.get("usage")
                     if isinstance(_u, dict) and _u != _latest_usage:
                         _latest_usage = _u
-                        _ctx_used_live = (_u.get("input_tokens", 0)
-                                          + _u.get("cache_creation_input_tokens", 0)
-                                          + _u.get("cache_read_input_tokens", 0))
-                        # Only CC's own contextWindow (cached from the
-                        # previous result.modelUsage), scoped per-stream
-                        # to avoid singleton pollution across concurrent
-                        # streams — no service-config or 200k default.
-                        # Until the first result event lands, _ctx_max_live
-                        # stays 0 and the UI skips the gauge (truth over
-                        # pretend number).
-                        _cw_map_live = getattr(self, '_cc_context_window_by_stream', None) or {}
-                        _ctx_max_live = int(_cw_map_live.get(
-                            (conv_id or "", agent_name or ""), 0) or 0)
-                        _ctx_pct_live = (_ctx_used_live / _ctx_max_live
-                                         if _ctx_max_live > 0 else 0.0)
-                        _pub("message_meta", {
-                            "msg_id": msg_id,
-                            "agent_name": agent_name,
-                            "context_used": _ctx_used_live,
-                            "context_max": _ctx_max_live,
-                            "context_pct": _ctx_pct_live,
-                            "live": True,  # flag: mid-turn (real, not estimate)
-                        })
 
                     # Claude Code sends INCREMENTAL updates for the same message:
                     # event 1: [thinking], event 2: [text], event 3: [tool_use]
@@ -2623,16 +2598,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         # (src/utils/context.ts::getContextWindowForModel) —
                         # accounts for 200k default, [1m] suffix beta,
                         # CLAUDE_CODE_MAX_CONTEXT_TOKENS overrides, etc.
-                        # Using it here keeps PawFlow's gauge aligned with
-                        # what CC itself sees as "context full", so the
-                        # percentage where CC auto-compacts (≈98% of the
-                        # effective window, cf. AUTOCOMPACT_BUFFER_TOKENS
-                        # in src/services/compact/autoCompact.ts) matches
-                        # what the user reads on screen. No hardcoded
-                        # model → budget map on our side.
-                        _ctx_used = (_latest_usage.get("input_tokens", 0)
-                                     + _latest_usage.get("cache_creation_input_tokens", 0)
-                                     + _latest_usage.get("cache_read_input_tokens", 0))
+                        # Cache CC's reported contextWindow for the central
+                        # PawFlow gauge denominator. Do not use provider prompt
+                        # usage as `context_used`: active PawFlow context size
+                        # is computed in tasks.ai.context_usage.
                         _cc_mu = _model_usage.get(_result_model) if _model_usage else None
                         _cc_ctx_window = 0
                         if isinstance(_cc_mu, dict):
@@ -2642,9 +2611,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         # No iterate-and-pick-first fallback: that path
                         # silently returned haiku's 200k when modelUsage
                         # held both haiku (side-task) and opus (turn),
-                        # giving a wrong gauge. If _result_model has no
-                        # contextWindow, leave _cc_ctx_window=0 and skip
-                        # the gauge update for this event.
+                        # giving the central gauge a wrong denominator. If
+                        # _result_model has no contextWindow, leave the
+                        # previous per-stream value unchanged.
                         # Per-stream cache keyed by (conv, agent) — the
                         # singleton self._cc_context_window was clobbered
                         # across concurrent streams (memory_extract /
@@ -2658,14 +2627,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             self._cc_context_window_by_stream = _cw_map
                         if _cc_ctx_window > 0:
                             _cw_map[_cw_key] = _cc_ctx_window
-                        _ctx_max = int(_cc_ctx_window
-                                       or _cw_map.get(_cw_key, 0)
-                                       or 0)
-                        # No 200k default. If CC didn't report
-                        # contextWindow on this result, emit ctx_max=0 and
-                        # let the UI skip the gauge — better than a
-                        # fictional budget.
-                        _ctx_pct = (_ctx_used / _ctx_max) if _ctx_max > 0 else 0.0
                         _pub("message_meta", {
                             "msg_id": _last_msg_id,
                             "agent_name": agent_name,
@@ -2681,9 +2642,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             "provider": "claude-code",
                             "tokens_in": _total_in,
                             "tokens_out": _total_out,
-                            "context_used": _ctx_used,
-                            "context_max": _ctx_max,
-                            "context_pct": _ctx_pct,
                             "num_turns": event.get("num_turns", _turn_count),
                             "duration_ms": event.get("duration_ms", 0),
                         })

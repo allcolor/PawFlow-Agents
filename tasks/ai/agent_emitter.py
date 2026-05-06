@@ -93,6 +93,22 @@ class StreamEmitter(AgentEmitter):
         self._conv_ttl = ctx.get("conv_ttl", 0)
         self._channel = ctx.get("channel", "")
         self._last_token_time = time.time()
+        self._heartbeat_lock = threading.Lock()
+        self._active_heartbeats = []
+
+    def _stop_all_heartbeats(self) -> None:
+        with self._heartbeat_lock:
+            handles = list(self._active_heartbeats)
+            self._active_heartbeats.clear()
+        for handle in handles:
+            if not handle:
+                continue
+            try:
+                stop_event, thread, _cancel_flag = handle
+                stop_event.set()
+                thread.join(timeout=1)
+            except Exception:
+                logger.debug("heartbeat stop failed", exc_info=True)
 
     def _emit(self, event_type: str, data: dict):
         if self._task_id:
@@ -208,6 +224,7 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_done(self, result: AgentResult) -> None:
+        self._stop_all_heartbeats()
         # Use all_msg_ids from the full turn (survives flush)
         _all_ids = result.all_msg_ids or []
         _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
@@ -229,6 +246,7 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_error(self, error: Exception) -> None:
+        self._stop_all_heartbeats()
         self._emit("error_event", {
             "message": str(error),
             "agent_name": self._agent_name or "",
@@ -236,6 +254,7 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_interrupted(self, result: AgentResult) -> None:
+        self._stop_all_heartbeats()
         if self._use_conv_store and self.conversation_id:
             try:
                 from core.conversation_writer import ConversationWriter
@@ -248,6 +267,7 @@ class StreamEmitter(AgentEmitter):
         self.on_done(result)
 
     def on_cancelled(self, result: AgentResult, ctx: dict) -> None:
+        self._stop_all_heartbeats()
         # Flush the writer queue BEFORE publishing done. Cancel can fire
         # mid-turn with multiple tool_call/tool_result messages still
         # queued; if `done` overtakes them, the UI marks the turn as
@@ -290,6 +310,7 @@ class StreamEmitter(AgentEmitter):
                 logger.warning(f"[agent] Failed to save cancel checkpoint: {e}")
 
     def on_fatal_error(self, error_msg: str) -> None:
+        self._stop_all_heartbeats()
         self._emit("error_event", {
             "message": error_msg,
             "agent_name": self._agent_name or "",
@@ -346,6 +367,7 @@ class StreamEmitter(AgentEmitter):
         return on_thinking
 
     def start_heartbeat(self, poll_silent: bool) -> Any:
+        self._stop_all_heartbeats()
         stop_event = threading.Event()
         cid = self.event_cid
         bus = self.bus
@@ -379,10 +401,16 @@ class StreamEmitter(AgentEmitter):
 
         t = threading.Thread(target=heartbeat, daemon=True)
         t.start()
-        return (stop_event, t, _cancel_detected)
+        handle = (stop_event, t, _cancel_detected)
+        with self._heartbeat_lock:
+            self._active_heartbeats.append(handle)
+        return handle
 
     def stop_heartbeat(self, handle: Any) -> None:
         if handle:
+            with self._heartbeat_lock:
+                if handle in self._active_heartbeats:
+                    self._active_heartbeats.remove(handle)
             stop_event, t, cancel_flag = handle
             stop_event.set()
             t.join(timeout=1)

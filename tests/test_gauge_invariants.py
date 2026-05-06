@@ -222,24 +222,21 @@ def test_message_meta_context_used_comes_from_central_context_usage():
     assert 'src["tokens_in"] = tok_in' in agent_source
 
 
-def test_context_gauge_publishes_after_each_visible_append():
-    """Append callbacks may publish a fresh cached gauge, but never stale data."""
+def test_context_gauge_is_not_published_from_append_cache():
+    """Append callbacks must not publish cache-only gauge snapshots.
+
+    The context cache can only be known fresh after compute_context_usage runs;
+    append mutates the message list before that recalculation happens. Live
+    gauge updates therefore come from iteration/heartbeat/provider metadata,
+    never from the append hot path.
+    """
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
-    assert "def _publish_live_context_usage" in src
-    publish_body = src[src.index("def _publish_live_context_usage") : src.index("def _append(msg: LLMMessage)")]
     append_body = src[src.index("def _append(msg: LLMMessage)") : src.index("# Repair orphan tool_calls")]
-    assert "_context_usage_suspended" in publish_body
-    assert "compute_context_usage" not in publish_body
-    assert "_agent_source(include_context=False)" in publish_body
-    assert 'usage.get("message_count", -1)' in publish_body
-    assert "live_count = len(messages)" in publish_body
-    assert "cached_count != live_count" in publish_body
-    assert "skip stale append gauge" in publish_body
-    assert "cached_messages=%d" in publish_body
-    assert "live_messages=%d" in publish_body
+    assert "def _publish_live_context_usage" not in src
+    assert "skip stale append gauge" not in src
     assert "messages.append(msg)" in append_body
-    assert "_publish_live_context_usage(" in append_body
-    assert "append_{msg.role}" in append_body
+    assert "_publish_live_context_usage(" not in append_body
+    assert "append_{msg.role}" not in append_body
 
 
 def test_cli_tool_callbacks_do_not_compute_context_usage_on_hot_path():

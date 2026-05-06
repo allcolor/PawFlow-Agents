@@ -498,56 +498,6 @@ class AgentCoreMixin:
             finally:
                 _auto_compact_state["running"] = False
 
-        def _publish_live_context_usage(reason: str, msg_id: str = "") -> None:
-            """Publish the current PawFlow context gauge after a real append."""
-            if not emitter.is_streaming or not conversation_id:
-                return
-            if ctx.get("_context_usage_suspended"):
-                return
-            try:
-                usage = ctx.get("_context_usage_cache") or {}
-                if int(usage.get("max", 0) or 0) <= 0:
-                    return
-                cached_count = int(usage.get("message_count", -1) or -1)
-                live_count = len(messages)
-                if cached_count != live_count:
-                    skipped = int(ctx.get("_context_usage_stale_skip_count") or 0) + 1
-                    ctx["_context_usage_stale_skip_count"] = skipped
-                    if skipped <= 3 or skipped in (10, 25, 50) or skipped % 100 == 0:
-                        logger.info(
-                            "[context-gauge:%s] skip stale append gauge "
-                            "reason=%s msg_id=%s cached_messages=%d "
-                            "live_messages=%d used=%s max=%s mode=%s "
-                            "source=%s skipped=%d",
-                            conversation_id[:8], reason, msg_id,
-                            cached_count, live_count,
-                            usage.get("used", ""), usage.get("max", ""),
-                            usage.get("cache_mode", ""),
-                            usage.get("source", ""), skipped)
-                    return
-                ctx.pop("_context_usage_stale_skip_count", None)
-                src = _agent_source(include_context=False)
-                payload = {
-                    "conversation_id": ctx.get("_event_cid", conversation_id),
-                    "agent_name": ctx.get("active_agent_name", "") or "",
-                    "source": src,
-                    "context_used": int(usage.get("used", 0) or 0),
-                    "context_max": int(usage.get("max", 0) or 0),
-                    "context_pct": float(usage.get("pct", 0.0) or 0.0),
-                    "context_source": usage.get("source", reason),
-                    "context_message_count": usage.get("message_count", 0),
-                    "context_cache_mode": usage.get("cache_mode", ""),
-                    "updated_at": float(usage.get("updated_at", 0.0) or time.time()),
-                    "live": True,
-                }
-                if msg_id:
-                    payload["msg_id"] = msg_id
-                from core.conversation_event_bus import ConversationEventBus
-                ConversationEventBus.instance().publish_event(
-                    ctx.get("_event_cid", conversation_id), "message_meta", payload)
-            except Exception:
-                logger.error("[_append] live context_usage publish failed", exc_info=True)
-
         def _append(msg: LLMMessage):
             _append_started = time.monotonic()
             _enqueue_ms = None
@@ -759,8 +709,6 @@ class AgentCoreMixin:
                             user_id=user_id)
                         _mirror_enqueue_ms = ((time.monotonic() - _mirror_started)
                                               * 1000.0)
-                    _publish_live_context_usage(
-                        f"append_{msg.role}", getattr(msg, "msg_id", "") or "")
                 except Exception as _persist_err:
                     # HARD INVARIANT: visible ⇒ persisted. A failure to enqueue
                     # means the message was (or will be) shown to the user but

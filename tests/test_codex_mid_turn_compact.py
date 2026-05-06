@@ -140,7 +140,7 @@ def test_post_append_cli_compact_uses_provider_restart_path():
     """
     helper = _AGENT_CORE[
         _AGENT_CORE.index("def _maybe_auto_compact_after_append"):
-        _AGENT_CORE.index("def _publish_live_context_usage")
+        _AGENT_CORE.index("def _append")
     ]
     cli_guard = helper[helper.index('if _client_provider in ('):
                        helper.index('compact_owner =')]

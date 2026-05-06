@@ -538,7 +538,10 @@ def test_context_editor_scopes_mutations_to_visible_context():
 def test_context_editor_loaded_rows_show_scrollable_full_message():
     assert "row.onclick = function(event)" in _CONTEXT_EDITOR_JS
     assert "row.querySelector('.ctx-full')" in _CONTEXT_EDITOR_JS
+    assert _CONTEXT_EDITOR_JS.count('class="ctx-preview"') >= 2
+    assert _CONTEXT_EDITOR_JS.count("max-height:96px;overflow-y:auto") >= 2
     assert _CONTEXT_EDITOR_JS.count("max-height:min(60vh,640px);overflow-y:auto") >= 2
+    assert "event.target.closest('.ctx-preview,.ctx-full')" in _CONTEXT_EDITOR_JS
 
 
 def test_empty_assistant_no_tools_never_persists_blank_message():

@@ -14,8 +14,9 @@ from pathlib import Path
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
-from core.handlers.resource_agent import SpawnAgentsHandler
+from core.handlers.resource_agent import FlashAgentHandler, SpawnAgentsHandler
 from core.agent_executor import (
+    AgentResult,
     AgentTask,
     drain_live_delegate_messages,
     queue_live_delegate_message,
@@ -27,6 +28,19 @@ from core.agent_executor import (
 def _make_handler(conversation_id="conv1", user_id="user1",
                   source_agent="agentA", llm_service="svc_a"):
     h = SpawnAgentsHandler()
+    h.set_conversation_id(conversation_id)
+    h.set_user_id(user_id)
+    h.set_source_agent(source_agent, llm_service)
+    h._client_resolver = lambda sid, uid: (MagicMock(), MagicMock())
+    h._default_client = MagicMock()
+    h._registry = MagicMock()
+    h._on_event = MagicMock()
+    return h
+
+
+def _make_flash_handler(conversation_id="conv1", user_id="user1",
+                        source_agent="agentA", llm_service="svc_a"):
+    h = FlashAgentHandler()
     h.set_conversation_id(conversation_id)
     h.set_user_id(user_id)
     h.set_source_agent(source_agent, llm_service)
@@ -72,6 +86,58 @@ class TestRunningDelegateInjection:
         final_drain = src[src.index("# Final drain:"):]
         final_drain = final_drain[:final_drain.index("# Unregister claude-code client")]
         assert "_apply_queued_delegate_turn_mode(_new_user_msgs)" in final_drain
+
+
+class TestFlashDelegate:
+    def test_flash_delegate_builds_ephemeral_agent_task(self):
+        h = _make_flash_handler()
+        h.set_delegate_tc_id("tc_001")
+        with patch("core.agent_executor.get_live_delegate", return_value=None), \
+             patch("core.skill_resolver.inject_skills_into_prompt",
+                   side_effect=lambda prompt, *_args, **_kwargs: prompt + "\nSKILL"), \
+             patch("core.agent_executor.SubAgentExecutor") as mock_exec:
+            mock_exec.return_value.spawn.return_value = [
+                AgentResult(task_id="flash1",
+                            agent_name="agentA::flash::critic")
+            ]
+            result = h.execute({"tasks": [{
+                "id": "flash1",
+                "name": "critic",
+                "prompt": "You critique plans.",
+                "message": "Review this",
+                "tools": ["read"],
+                "skills": ["reviewer"],
+            }]})
+        task = mock_exec.return_value.spawn.call_args.args[0][0]
+        assert task.agent_name == "agentA::flash::critic"
+        assert task.llm_service == "svc_a"
+        assert task.source_llm_service == "svc_a"
+        assert task.source_agent == "agentA"
+        assert task.context_mode == "isolated"
+        assert task.context_messages is None
+        assert task.persist is False
+        assert task.tools == ["read"]
+        assert "temporary flash agent \"critic\"" in task.system_prompt
+        assert "You critique plans." in task.system_prompt
+        assert "SKILL" in task.system_prompt
+        assert "agentA::flash::critic" in result
+
+    def test_flash_delegate_followup_injects_into_live_flash_agent(self):
+        h = _make_flash_handler()
+        live_client = MagicMock()
+        live_client.send_user_message.return_value = False
+        with patch("core.agent_executor.get_live_delegate", return_value={
+            "client": live_client,
+            "task_id": "flash1",
+        }), patch("core.agent_executor.queue_live_delegate_message") as mock_queue:
+            result = h.execute({"tasks": [{
+                "name": "critic",
+                "prompt": "You critique plans.",
+                "message": "Follow up",
+            }]})
+        mock_queue.assert_called_once_with(
+            "conv1", "agentA", "agentA::flash::critic", "Follow up")
+        assert "injected_queued" in result
 
 
 class TestTaskConvIdExtraction:

@@ -22,6 +22,7 @@ SKIP_TOOLS = {
     "ScheduleWakeup",  # agent-loop internal
     "PushNotification",  # agent-loop internal (conv bell)
     "complete_task", "verify_task",  # task lifecycle (agent-only)
+    "flash_delegate",  # agent-internal temporary sub-agents
     "manage_resource",  # resource CRUD
     "create_tool",  # dynamic tool creation
     "pawflow_help",  # help text

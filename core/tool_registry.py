@@ -101,6 +101,7 @@ from core.handlers.plan_handlers import (  # noqa: F401
     VerifyPlanStepHandler,
 )
 from core.handlers.resource_agent import (  # noqa: F401
+    FlashAgentHandler,
     ManageResourceHandler,
     ShowFileHandler,
     SpawnAgentsHandler,
@@ -444,6 +445,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ListSecretsHandler())
     registry.register(ManageResourceHandler())
     registry.register(SpawnAgentsHandler())
+    registry.register(FlashAgentHandler())
     registry.register(ShowFileHandler())
     registry.register(ReadParentContextHandler())
 

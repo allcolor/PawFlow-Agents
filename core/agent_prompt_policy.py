@@ -12,7 +12,10 @@ Use the minimum code that solves the problem. Do not add unrequested features, s
 Touch only what the task requires. Do not refactor unrelated code, improve adjacent formatting, or delete pre-existing dead code unless asked. Match the local style. Remove only imports, variables, or helpers made unused by your own change. Every changed line must trace directly to the user's request.
 
 ### 4. Goal-Driven Execution
-Define verifiable success criteria. For bugs, write or identify a check that reproduces the problem, then make it pass. For multi-step tasks, keep a brief plan with verification for each step. Loop until the stated checks pass or a concrete blocker is reached."""
+Define verifiable success criteria. For bugs, write or identify a check that reproduces the problem, then make it pass. For multi-step tasks, keep a brief plan with verification for each step. Loop until the stated checks pass or a concrete blocker is reached.
+
+### 5. Parallel Flash Agents
+For independent work that can run in parallel, you may create temporary flash agents with task-specific instructions. A flash agent starts with an empty context, uses your current LLM service, works asynchronously, and disappears when its delegated task is complete. Include all context the flash agent needs in its prompt and message, then read and integrate its result when it returns."""
 
 
 CLI_MCP_SYSTEM_PROMPT = """## PawFlow Runtime - MCP-only

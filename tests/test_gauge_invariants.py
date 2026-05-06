@@ -965,6 +965,19 @@ def test_sub_agent_provider_compact_is_provider_agnostic():
     assert "set_extra(\n                                _delegate_conv_id,\n                                f\"claude_session:" not in block
 
 
+def test_flash_delegate_is_registered_and_prompted():
+    registry_src = Path("core/tool_registry.py").read_text(encoding="utf-8")
+    adapter_src = Path("core/tool_task_adapter.py").read_text(encoding="utf-8")
+    prompt_src = Path("core/agent_prompt_policy.py").read_text(encoding="utf-8")
+
+    assert "FlashAgentHandler" in registry_src
+    assert "registry.register(FlashAgentHandler())" in registry_src
+    assert '"flash_delegate"' in adapter_src
+    assert "temporary flash agents" in prompt_src
+    assert "empty context" in prompt_src
+    assert "uses your current LLM service" in prompt_src
+
+
 def test_relay_desktop_has_periodic_healthcheck():
     src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
     assert "def _desktop_is_healthy" in src

@@ -28,7 +28,7 @@ _FILE_WRITE_TOOLS = {"write", "create_file"}
 _FILE_READ_TOOLS = {"read", "view"}
 _FILE_DELETE_TOOLS = {"delete", "rm", "remove_file"}
 _COMMAND_TOOLS = {"bash", "shell", "run_command", "powershell"}
-_DELEGATION_TOOLS = {"spawn_agent", "delegate", "ask_agent", "run_agent"}
+_DELEGATION_TOOLS = {"spawn_agent", "delegate", "flash_delegate", "ask_agent", "run_agent"}
 
 
 def _extract_path(args: Dict[str, Any]) -> str:

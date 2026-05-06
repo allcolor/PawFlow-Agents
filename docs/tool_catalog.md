@@ -111,6 +111,7 @@ PawFlow falls back to the native tool behavior unchanged.
 | Tool | Purpose |
 |---|---|
 | `delegate` | Spawn/delegate work to another agent. |
+| `flash_delegate` | Create temporary task-specific agents for independent parallel work; they use the caller's LLM service and disappear after completion. |
 | `manage_resource` | Create/update/delete/list agents, skills, tools, services, resources. Creates resources in conversation scope when called from an active conversation. |
 | `assign_task` | Assign a recurring autonomous task. |
 | `complete_task` | Report task progress/completion. |
@@ -155,7 +156,7 @@ Skipped by default:
 
 ```text
 get_tool_schema, use_tool, ScheduleWakeup, PushNotification,
-complete_task, verify_task, manage_resource, create_tool,
+complete_task, verify_task, flash_delegate, manage_resource, create_tool,
 pawflow_help, update_plan, create_plan, link_identity,
 browser_action
 ```

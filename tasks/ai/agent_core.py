@@ -508,8 +508,24 @@ class AgentCoreMixin:
                 usage = ctx.get("_context_usage_cache") or {}
                 if int(usage.get("max", 0) or 0) <= 0:
                     return
-                if int(usage.get("message_count", -1) or -1) != len(messages):
+                cached_count = int(usage.get("message_count", -1) or -1)
+                live_count = len(messages)
+                if cached_count != live_count:
+                    skipped = int(ctx.get("_context_usage_stale_skip_count") or 0) + 1
+                    ctx["_context_usage_stale_skip_count"] = skipped
+                    if skipped <= 3 or skipped in (10, 25, 50) or skipped % 100 == 0:
+                        logger.info(
+                            "[context-gauge:%s] skip stale append gauge "
+                            "reason=%s msg_id=%s cached_messages=%d "
+                            "live_messages=%d used=%s max=%s mode=%s "
+                            "source=%s skipped=%d",
+                            conversation_id[:8], reason, msg_id,
+                            cached_count, live_count,
+                            usage.get("used", ""), usage.get("max", ""),
+                            usage.get("cache_mode", ""),
+                            usage.get("source", ""), skipped)
                     return
+                ctx.pop("_context_usage_stale_skip_count", None)
                 src = _agent_source(include_context=False)
                 payload = {
                     "conversation_id": ctx.get("_event_cid", conversation_id),

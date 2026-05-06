@@ -232,7 +232,11 @@ def test_context_gauge_publishes_after_each_visible_append():
     assert "compute_context_usage" not in publish_body
     assert "_agent_source(include_context=False)" in publish_body
     assert 'usage.get("message_count", -1)' in publish_body
-    assert "!= len(messages)" in publish_body
+    assert "live_count = len(messages)" in publish_body
+    assert "cached_count != live_count" in publish_body
+    assert "skip stale append gauge" in publish_body
+    assert "cached_messages=%d" in publish_body
+    assert "live_messages=%d" in publish_body
     assert "messages.append(msg)" in append_body
     assert "_publish_live_context_usage(" in append_body
     assert "append_{msg.role}" in append_body

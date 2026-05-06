@@ -357,6 +357,39 @@ class TestDelete:
         store.delete(cid)
         assert store.list_conversations(user_id="alice") == []
 
+    def test_delete_removes_directory_under_extras_lock(self, conv, monkeypatch):
+        store, cid, _uid = conv
+        raw_lock = store._get_extras_lock(cid)
+        state = {"held": False, "rmtree_saw_held": None}
+
+        class _ProbeLock:
+            def __enter__(self):
+                raw_lock.__enter__()
+                state["held"] = True
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                try:
+                    return raw_lock.__exit__(exc_type, exc, tb)
+                finally:
+                    state["held"] = False
+
+        monkeypatch.setattr(store, "_get_extras_lock", lambda _cid: _ProbeLock())
+
+        import shutil as _shutil
+        real_rmtree = _shutil.rmtree
+        conv_dir = str(store._conv_dir(cid))
+
+        def _rmtree_probe(path, *args, **kwargs):
+            if str(path) == conv_dir:
+                state["rmtree_saw_held"] = state["held"]
+            return real_rmtree(path, *args, **kwargs)
+
+        monkeypatch.setattr(_shutil, "rmtree", _rmtree_probe)
+
+        assert store.delete(cid) is True
+        assert state["rmtree_saw_held"] is True
+
 
 # ── save_agent_context / load_agent_context ──────────────────────────
 

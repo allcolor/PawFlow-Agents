@@ -2837,11 +2837,17 @@ class ConversationStore:
             func(path)
 
         lock = self._get_conv_lock(cid)
+        extras_lock = self._get_extras_lock(cid)
         # Resolve owner BEFORE popping _cid_user so edit-guard and session
         # workdir cleanup can find it.
         _owner = user_id or self._cid_user.get(cid, "")
         with lock:
-            shutil.rmtree(conv_dir, onerror=_force_remove)
+            # set_extra writes extras.json via a separate lock and atomic
+            # extras.tmp -> extras.json rename. Hold that same lock while
+            # removing the directory, otherwise delete can race the tmp file
+            # creation and hit ENOTEMPTY during rmtree.
+            with extras_lock:
+                shutil.rmtree(conv_dir, onerror=_force_remove)
         with self._cache_lock:
             self._cache.pop(cid, None)
         self._conv_locks.pop(cid, None)

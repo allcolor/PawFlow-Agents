@@ -151,6 +151,57 @@ class TestGlobalScopeBlocked:
         assert body.get("status") == "accepted"
         store.delete(conv_id)
 
+    def test_set_param_with_conversation_forces_conversation_scope(self):
+        """set_param with an active conversation must not write user scope."""
+        from core.conversation_store import ConversationStore
+        from tasks.ai.actions.secrets_variables import _handle_secrets_variables
+
+        store = ConversationStore.instance()
+        conv_id = "test_conv_param_default"
+        store.save(conv_id, [{"role": "user", "content": "hi"}], user_id="test_user")
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "set_param", "key": "conv_key", "value": "conv_val",
+            "scope": "user", "conversation_id": conv_id,
+        })
+        with patch("core.config_store.ConfigStore.save_params") as save_params:
+            result = _handle_secrets_variables(
+                task, "set_param", json.loads(ff.get_content()), store,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body.get("ok") is True
+        assert store.get_extra(conv_id, "conv_parameters") == {"conv_key": "conv_val"}
+        save_params.assert_not_called()
+        store.delete(conv_id)
+
+    def test_create_resource_with_conversation_passes_conversation_scope(self):
+        """create_resource with an active conversation must not create user resources."""
+        from core.conversation_store import ConversationStore
+        from tasks.ai.actions.agent_resource import _handle_agent_resource
+
+        store = ConversationStore.instance()
+        conv_id = "test_conv_resource_default"
+        store.save(conv_id, [{"role": "user", "content": "hi"}], user_id="test_user")
+        task = self._get_agent_loop()
+        ff = self._make_flowfile({
+            "action": "create_resource", "resource_type": "skill",
+            "name": "conv_skill", "scope": "user", "conversation_id": conv_id,
+            "data": {"prompt": "test"},
+        })
+        rs = MagicMock()
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = _handle_agent_resource(
+                task, "create_resource", json.loads(ff.get_content()), store,
+                "test_user", ff)
+        assert result is not None
+        body = json.loads(result[0].get_content())
+        assert body == {"ok": True, "scope": "conversation"}
+        rs.create.assert_called_once_with(
+            "skill", "conv_skill", "test_user", {"prompt": "test"},
+            conversation_id=conv_id)
+        store.delete(conv_id)
+
 
 class TestPromoteGlobalBlocked:
     """Verify promote to global is blocked from ManageResourceHandler."""
@@ -171,3 +222,23 @@ class TestPromoteGlobalBlocked:
         })
         # Should either say "admin GUI" (blocked) or "not found"
         assert "admin" in result.lower() or "not found" in result.lower()
+
+    def test_manage_resource_create_with_conversation_forces_conversation_scope(self):
+        from core.tool_registry import create_default_registry
+
+        registry = create_default_registry()
+        handler = registry.get("manage_resource")
+        if handler is None:
+            pytest.skip("manage_resource handler not found")
+        handler._user_id = "test_user"
+        handler._conversation_id = "test_conv"
+        rs = MagicMock()
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = handler.execute({
+                "action": "create", "resource_type": "skill", "name": "conv_skill",
+                "data": {"prompt": "test", "scope": "user"},
+            })
+        assert "(scope: conversation)" in result
+        rs.create.assert_called_once_with(
+            "skill", "conv_skill", "test_user", {"prompt": "test"},
+            conversation_id="test_conv")

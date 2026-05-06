@@ -174,7 +174,8 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             return [flowfile]
         uid = user_id
         data["created_by"] = uid
-        scope = data.pop("scope", body.get("scope", "user"))
+        requested_scope = data.pop("scope", body.get("scope", "user"))
+        scope = "conversation" if conv_id else requested_scope
         try:
             if scope == "conversation" and conv_id:
                 from core.conversation_store import ConversationStore

@@ -111,7 +111,7 @@ PawFlow falls back to the native tool behavior unchanged.
 | Tool | Purpose |
 |---|---|
 | `delegate` | Spawn/delegate work to another agent. |
-| `manage_resource` | Create/update/delete/list agents, skills, tools, services, resources. |
+| `manage_resource` | Create/update/delete/list agents, skills, tools, services, resources. Creates resources in conversation scope when called from an active conversation. |
 | `assign_task` | Assign a recurring autonomous task. |
 | `complete_task` | Report task progress/completion. |
 | `verify_task` | Verify a completed task. |

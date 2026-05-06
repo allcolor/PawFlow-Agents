@@ -197,8 +197,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             svc_type = body.get("service_type", "")
             svc_name = body.get("service_name", "")
             config_str = body.get("config_str", "")
-            scope = body.get("scope", "user")
             conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+            scope = "conversation" if conv_id else body.get("scope", "user")
             profile_name = body.get("profile", "")
             # Profile shortcut: resolve provider/base_url/model from profile
             if profile_name:
@@ -1576,9 +1576,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "deploy_flow":
         template_id = body.get("template_id", "")
-        deploy_scope = body.get("scope", "user")
-        params = body.get("parameters", {})
         conv_id = body.get("conversation_id", "")
+        deploy_scope = "conversation" if conv_id else body.get("scope", "user")
+        params = body.get("parameters", {})
         if deploy_scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps(
                 {"error": "Requires admin role for global scope"}).encode())

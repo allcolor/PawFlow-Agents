@@ -148,8 +148,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
     if action == "set_param":
         key = body.get("key", "").strip()
         value = body.get("value", "")
-        scope = body.get("scope", "user")
         conv_id = body.get("conversation_id", "")
+        scope = "conversation" if conv_id else body.get("scope", "user")
         if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Cannot write global parameters from chat. Use the admin GUI."}).encode())
             flowfile.set_attribute("http.response.status", "403")
@@ -219,8 +219,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
     if action == "set_secret":
         key = body.get("key", "").strip()
         value = body.get("value", "")
-        scope = body.get("scope", "user")
         conv_id = body.get("conversation_id", "")
+        scope = "conversation" if conv_id else body.get("scope", "user")
         if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Cannot write global secrets from chat. Use the admin GUI."}).encode())
             flowfile.set_attribute("http.response.status", "403")

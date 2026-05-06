@@ -108,9 +108,10 @@ class ManageResourceHandler(ToolHandler):
                     return "Error: 'name' is required for create"
                 scope = data.pop("scope", "user") if isinstance(data, dict) else "user"
 
-                # Agent creating another agent → always conv scope,
-                # inherit creator's llm_service
-                if rtype == "agent" and self._agent_name and self._conversation_id:
+                # Agent-side resource creation is conversation-local. A tool
+                # call from an active conversation must not silently persist
+                # reusable resources into user/global scope.
+                if self._conversation_id:
                     scope = "conversation"
 
                 if rtype in ("agent", "skill") and self._agent_name:

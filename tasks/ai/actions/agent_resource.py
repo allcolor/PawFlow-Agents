@@ -112,7 +112,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         conv_id = body.get("conversation_id", "")
         agent = body.get("name", "")
         prompt = body.get("prompt", "")
-        scope = body.get("scope", "user")
+        scope = "conversation" if conv_id else body.get("scope", "user")
         llm_service = body.get("llm_service", "")
         if not agent or not prompt:
             flowfile.set_content(json.dumps({"error": "Missing name or prompt"}).encode())
@@ -290,6 +290,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             }).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+        scope = "conversation" if conv_id else body.get("scope", "user")
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
         uid = user_id
@@ -298,12 +299,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             description = body.get("description", "")
             if description:
                 data["description"] = description
-            if rs.exists("skill", skill_name, uid):
-                rs.update("skill", skill_name, uid, data)
+            scope_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
+            if rs.get("skill", skill_name, uid, **scope_kwargs):
+                rs.update("skill", skill_name, uid, data, **scope_kwargs)
             else:
-                rs.create("skill", skill_name, uid, data)
+                rs.create("skill", skill_name, uid, data, **scope_kwargs)
             flowfile.set_content(json.dumps({
-                "created": True, "name": skill_name,
+                "created": True, "name": skill_name, "scope": scope,
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -888,15 +890,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rtype = body.get("resource_type", "")
         rname = body.get("name", "").strip()
         data = body.get("data", {})
-        scope = body.get("scope", "user")
         conv_id = body.get("conversation_id", "")
+        scope = "conversation" if conv_id else body.get("scope", "user")
         if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             flowfile.set_attribute("http.response.status", "403")
-            return [flowfile]
-        if rtype == "agent" and scope == "conversation":
-            flowfile.set_content(json.dumps({"error": "Agents cannot use conversation scope. Create with user or global scope, then add to conversation via add_agent_to_conv."}).encode())
-            flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         if not rtype or not rname:
             flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
@@ -917,8 +915,12 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 conv_defs[rname] = data
                 cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
             else:
-                rs.create(rtype, rname, target_uid, data)
-            flowfile.set_content(json.dumps({"ok": True}).encode())
+                scope_kwargs = {"conversation_id": conv_id} if scope == "conversation" and conv_id else {}
+                rs.create(rtype, rname, target_uid, data, **scope_kwargs)
+                if rtype == "agent" and scope == "conversation" and conv_id:
+                    from core.conv_agent_config import add_agent_to_conv
+                    add_agent_to_conv(conv_id, rname, definition=rname)
+            flowfile.set_content(json.dumps({"ok": True, "scope": scope}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]

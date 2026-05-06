@@ -691,8 +691,17 @@ class SubAgentExecutor:
                         )
                         break
                     except Exception as _llm_err:
-                        if ("CC auto-compact detected" not in str(_llm_err)
-                                or _compact_attempts >= 2):
+                        try:
+                            from core.llm_client import CCCompactDetected
+                            _compact_detected = isinstance(
+                                _llm_err, CCCompactDetected)
+                        except Exception:
+                            _compact_detected = False
+                        if not _compact_detected:
+                            _compact_detected = (
+                                "CC auto-compact detected" in str(_llm_err)
+                                or "contextCompaction" in str(_llm_err))
+                        if (not _compact_detected or _compact_attempts >= 2):
                             raise
                         _compact_attempts += 1
                         # Same mechanism as the main agent: PawFlow-side
@@ -729,9 +738,8 @@ class SubAgentExecutor:
                                     task.agent_name, _ce)
                         try:
                             from core.conversation_store import ConversationStore
-                            ConversationStore.instance().set_extra(
-                                _delegate_conv_id,
-                                f"claude_session:{task.agent_name}", "")
+                            ConversationStore.instance().invalidate_claude_session_for_agent(
+                                _delegate_conv_id, task.agent_name)
                         except Exception:
                             logger.debug("exception suppressed", exc_info=True)
                         # Recover OAuth tokens (CC may have refreshed during

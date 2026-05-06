@@ -231,6 +231,8 @@ class BgBucketBuilder:
             thread_name_prefix="bg-bucket")
         self._pending: Set[str] = set()
         self._seed_pending: Set[str] = set()
+        self._trigger_pending: Set[str] = set()
+        self._trigger_dirty: Set[str] = set()
         self._pending_lock = threading.Lock()
         # Resolver: user_id -> (client, ctx_max, svc_id) or (None, 0, "")
         self._summarizer_resolver: Optional[Callable[[str], Tuple]] = None
@@ -442,15 +444,54 @@ class BgBucketBuilder:
 
     # ── Public trigger API ────────────────────────────────────────
 
-    def maybe_trigger(self, cid: str, user_id: str) -> None:
-        """Fast O(1) check + async enqueue. Called from
-        ConversationStore._append_shared_ctx and _append_ctx_file after
-        each write, WHILE THE CONV LOCK IS HELD.
+    def maybe_trigger_async(self, cid: str, user_id: str) -> bool:
+        """Queue the trigger decision off the foreground writer path.
 
-        CRITICAL: this method must NEVER touch disk. The caller holds
-        ConversationStore._get_conv_lock(cid) and any file I/O here
-        would stall every other write on that conv. All decisions use
-        in-memory caches fed by note_* hooks.
+        ConversationStore calls this while holding no conv lock, but still
+        before SSE publish. The decision path resolves parameters and may
+        log state transitions, so keep it out of append_message and coalesce
+        repeated requests for the same conversation.
+        """
+        if not cid or not user_id:
+            return False
+        with self._pending_lock:
+            if cid in self._trigger_pending:
+                self._trigger_dirty.add(cid)
+                return True
+            self._trigger_pending.add(cid)
+
+        def _run_trigger():
+            try:
+                while True:
+                    self.maybe_trigger(cid, user_id)
+                    with self._pending_lock:
+                        if cid not in self._trigger_dirty:
+                            self._trigger_pending.discard(cid)
+                            return
+                        self._trigger_dirty.discard(cid)
+            except Exception:
+                logger.warning("[bg-bucket] trigger failed cid=%s",
+                               cid[:8], exc_info=True)
+                with self._pending_lock:
+                    self._trigger_pending.discard(cid)
+                    self._trigger_dirty.discard(cid)
+
+        try:
+            self._executor.submit(_run_trigger)
+        except RuntimeError:
+            with self._pending_lock:
+                self._trigger_pending.discard(cid)
+                self._trigger_dirty.discard(cid)
+            return False
+        return True
+
+    def maybe_trigger(self, cid: str, user_id: str) -> None:
+        """Check cached counters and enqueue a background bucket job.
+
+        ConversationStore calls maybe_trigger_async() from the writer path;
+        this method runs in the bg executor. It must still avoid disk I/O
+        because it can run frequently, but it is no longer allowed to hold
+        the conversation write lock while resolving config or logging.
 
         Trigger conditions (any of):
           1. Token-budget breach: estimated transcript-tokens-since-
@@ -975,10 +1016,10 @@ class BgBucketBuilder:
 
     def _extract_trace(self, cid: str, first_seq: int, last_seq: int
                        ) -> Dict[str, Any]:
-        """Load raw transcript slice and extract tool activity."""
+        """Load only the raw transcript seq window and extract tool activity."""
         from core.conversation_store import ConversationStore
         cs = ConversationStore.instance()
-        transcript = cs.load(cid) or []
+        transcript = cs.load_transcript_seq_range(cid, first_seq, last_seq)
         return extract_tool_activity(transcript, first_seq, last_seq)
 
     def _pick_chunk(self, shared_msgs: List[Dict],

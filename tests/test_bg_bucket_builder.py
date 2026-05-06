@@ -614,6 +614,65 @@ def test_maybe_trigger_submits_background_job_without_foreground_gate(tmp_path, 
     bb._executor.shutdown(wait=False)
 
 
+def test_maybe_trigger_async_coalesces_without_inline_work(monkeypatch):
+    bb = BgBucketBuilder(max_workers=1)
+    submitted = []
+    ran = []
+
+    def _fake_submit(fn, *args, **kwargs):
+        submitted.append((fn, args, kwargs))
+        class _F:
+            def result(self, *a, **k): return None
+        return _F()
+
+    monkeypatch.setattr(bb._executor, "submit", _fake_submit)
+    monkeypatch.setattr(
+        bb, "maybe_trigger",
+        lambda cid, user_id: ran.append((cid, user_id)))
+
+    assert bb.maybe_trigger_async("cid_async", "uid") is True
+    assert bb.maybe_trigger_async("cid_async", "uid") is True
+
+    assert ran == []
+    assert len(submitted) == 1
+    with bb._pending_lock:
+        assert "cid_async" in bb._trigger_pending
+        assert "cid_async" in bb._trigger_dirty
+
+    submitted[0][0](*submitted[0][1], **submitted[0][2])
+
+    assert ran == [("cid_async", "uid"), ("cid_async", "uid")]
+    with bb._pending_lock:
+        assert "cid_async" not in bb._trigger_pending
+        assert "cid_async" not in bb._trigger_dirty
+    bb._executor.shutdown(wait=False)
+
+
+def test_maybe_trigger_async_clears_pending_after_error(monkeypatch):
+    bb = BgBucketBuilder(max_workers=1)
+    submitted = []
+
+    def _fake_submit(fn, *args, **kwargs):
+        submitted.append((fn, args, kwargs))
+        class _F:
+            def result(self, *a, **k): return None
+        return _F()
+
+    def _boom(cid, user_id):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(bb._executor, "submit", _fake_submit)
+    monkeypatch.setattr(bb, "maybe_trigger", _boom)
+
+    assert bb.maybe_trigger_async("cid_async_error", "uid") is True
+    submitted[0][0](*submitted[0][1], **submitted[0][2])
+
+    with bb._pending_lock:
+        assert "cid_async_error" not in bb._trigger_pending
+        assert "cid_async_error" not in bb._trigger_dirty
+    bb._executor.shutdown(wait=False)
+
+
 def test_maybe_trigger_uses_configured_msg_threshold(tmp_path, monkeypatch):
     bb = BgBucketBuilder(max_workers=1)
     submitted: List[str] = []

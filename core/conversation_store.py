@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -46,8 +47,84 @@ logger = logging.getLogger(__name__)
 _CTX_CACHE_MAX_MESSAGES = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_MESSAGES", "500") or "500")
 _CTX_CACHE_MAX_CHARS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CHARS", "1000000") or "1000000")
 _CTX_CACHE_MAX_CONVS = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_CONVS", "20") or "20")
+_CONV_LOCK_DIAG_MS = float(os.getenv("PAWFLOW_CONV_LOCK_DIAG_MS", "100") or "100")
 
 import core.paths as _paths
+
+
+class _ConversationTimedRLock:
+    """RLock wrapper that logs slow holders with the acquiring call-site."""
+
+    def __init__(self, cid: str):
+        self._cid = cid
+        self._lock = threading.RLock()
+        self._state_lock = threading.Lock()
+        self._owner_ident: Optional[int] = None
+        self._owner_label = ""
+        self._owner_started = 0.0
+        self._depth = 0
+
+    @staticmethod
+    def _caller_label() -> str:
+        try:
+            frame = sys._getframe(3)
+        except ValueError:
+            frame = sys._getframe(2)
+        return f"{frame.f_code.co_name}:{frame.f_lineno}"
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        label = self._caller_label()
+        started = time.monotonic()
+        ident = threading.get_ident()
+        with self._state_lock:
+            blocked_by = self._owner_label
+            reentrant = self._owner_ident == ident
+        ok = self._lock.acquire(blocking, timeout)
+        if not ok:
+            return False
+        waited_ms = (time.monotonic() - started) * 1000.0
+        with self._state_lock:
+            if reentrant and self._owner_ident == ident:
+                self._depth += 1
+            else:
+                self._owner_ident = ident
+                self._owner_label = label
+                self._owner_started = time.monotonic()
+                self._depth = 1
+        if waited_ms >= _CONV_LOCK_DIAG_MS and not reentrant:
+            logger.warning(
+                "[conv-lock:%s] waited %.1fms at %s blocked_by=%s",
+                self._cid[:8], waited_ms, label, blocked_by or "?")
+        return True
+
+    def release(self) -> None:
+        ident = threading.get_ident()
+        log_label = ""
+        held_ms = 0.0
+        with self._state_lock:
+            if self._owner_ident == ident and self._depth > 0:
+                self._depth -= 1
+                if self._depth == 0:
+                    log_label = self._owner_label
+                    held_ms = (time.monotonic() - self._owner_started) * 1000.0
+                    self._owner_ident = None
+                    self._owner_label = ""
+                    self._owner_started = 0.0
+        try:
+            self._lock.release()
+        finally:
+            if held_ms >= _CONV_LOCK_DIAG_MS:
+                logger.warning(
+                    "[conv-lock:%s] held %.1fms by %s",
+                    self._cid[:8], held_ms, log_label or "?")
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.release()
+        return False
 
 
 class ConversationStore:
@@ -59,8 +136,10 @@ class ConversationStore:
     def __init__(self, store_dir: str = ""):
         self._store_dir = Path(store_dir or str(_paths.CONVERSATIONS_DIR))
         self._store_dir.mkdir(parents=True, exist_ok=True)
-        self._conv_locks: Dict[str, threading.Lock] = {}
+        self._conv_locks: Dict[str, _ConversationTimedRLock] = {}
         self._conv_locks_lock = threading.Lock()
+        self._extras_locks: Dict[str, threading.RLock] = {}
+        self._extras_locks_lock = threading.Lock()
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._cache_lock = threading.Lock()
         self._ctx_cache: Dict[str, Dict[str, List[Dict]]] = {}  # cid -> {agent -> messages}
@@ -82,11 +161,17 @@ class ConversationStore:
         with cls._lock:
             cls._instance = None
 
-    def _get_conv_lock(self, cid: str) -> threading.RLock:
+    def _get_conv_lock(self, cid: str) -> _ConversationTimedRLock:
         with self._conv_locks_lock:
             if cid not in self._conv_locks:
-                self._conv_locks[cid] = threading.RLock()
+                self._conv_locks[cid] = _ConversationTimedRLock(cid)
             return self._conv_locks[cid]
+
+    def _get_extras_lock(self, cid: str) -> threading.RLock:
+        with self._extras_locks_lock:
+            if cid not in self._extras_locks:
+                self._extras_locks[cid] = threading.RLock()
+            return self._extras_locks[cid]
 
     def _stamp_line(self, cid: str, line: Dict[str, Any]) -> Dict[str, Any]:
         """Stamp the five-field invariant on every persisted record:
@@ -239,55 +324,43 @@ class ConversationStore:
         Uses selective git add (known files only) instead of git add -A
         to avoid scanning the entire working tree on large repos.
 
-        Uses the per-conversation lock to prevent race conditions when
-        multiple agents flush simultaneously.
+        Snapshot runs outside the per-conversation lock. It is best-effort
+        history; holding the hot write lock across git add/diff/commit blocks
+        live tool_call/tool_result publication for seconds on Windows/WSL.
         """
         conv_dir = self._conv_dir(cid)
         if not (conv_dir / ".git").exists():
             return
-        lock = self._get_conv_lock(cid)
-        with lock:
-            try:
-                # Selective add: transcript + shared + extras + all agent contexts
-                files = ["transcript.jsonl", "shared.jsonl", "extras.json", "bindings.json"]
-                for entry in conv_dir.iterdir():
-                    if entry.is_dir() and entry.name != ".git":
-                        ctx = entry / "context.jsonl"
-                        if ctx.exists():
-                            files.append(f"{entry.name}/context.jsonl")
-                # Shared pyramid (bg bucket builder output). Must be
-                # tracked so that:
-                #   - rollback restores the bucket state matching the
-                #     transcript state (otherwise stale summaries drift
-                #     from the conversation they're supposed to summarise).
-                #   - branches carry their own pyramid (switching branches
-                #     without this would leak the source branch's buckets
-                #     into the target).
-                #   - fork inherits pre-computed buckets (git clone
-                #     replicates committed state only — untracked files
-                #     are dropped, which meant a forked conv had to
-                #     rebuild the whole pyramid from scratch).
-                _shared_pyramid = conv_dir / "summaries" / "_shared"
-                if _shared_pyramid.is_dir():
-                    for item in _shared_pyramid.iterdir():
-                        if item.is_file() and item.suffix == ".json":
-                            files.append(
-                                f"summaries/_shared/{item.name}")
-                existing = [f for f in files if (conv_dir / f).exists()]
-                if not existing:
-                    return
-                self._git(cid, "add", "--", *existing, check=False)
-                # Commit only if something staged
-                diff = self._git(cid, "diff", "--cached", "--quiet", check=False)
-                if diff.returncode == 0:
-                    return  # nothing staged
-                msg = message or f"snapshot {time.strftime('%H:%M:%S')}"
-                self._git(cid, "commit", "-m", msg, "-q")
-                logger.debug("[convstore] git snapshot for %s: %s", cid[:8], msg)
-            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-                detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
-                logger.warning("[convstore] git snapshot failed for %s: %s | git stderr: %s",
-                               cid[:8], e, (detail.strip() if isinstance(detail, str) else detail))
+        try:
+            # Selective add: transcript + shared + extras + all agent contexts
+            files = ["transcript.jsonl", "shared.jsonl", "extras.json", "bindings.json"]
+            for entry in conv_dir.iterdir():
+                if entry.is_dir() and entry.name != ".git":
+                    ctx = entry / "context.jsonl"
+                    if ctx.exists():
+                        files.append(f"{entry.name}/context.jsonl")
+            # Shared pyramid (bg bucket builder output). Must be tracked so
+            # rollback/fork/branch operations carry matching bucket state.
+            _shared_pyramid = conv_dir / "summaries" / "_shared"
+            if _shared_pyramid.is_dir():
+                for item in _shared_pyramid.iterdir():
+                    if item.is_file() and item.suffix == ".json":
+                        files.append(f"summaries/_shared/{item.name}")
+            existing = [f for f in files if (conv_dir / f).exists()]
+            if not existing:
+                return
+            self._git(cid, "add", "--", *existing, check=False)
+            # Commit only if something staged
+            diff = self._git(cid, "diff", "--cached", "--quiet", check=False)
+            if diff.returncode == 0:
+                return  # nothing staged
+            msg = message or f"snapshot {time.strftime('%H:%M:%S')}"
+            self._git(cid, "commit", "-m", msg, "-q")
+            logger.debug("[convstore] git snapshot for %s: %s", cid[:8], msg)
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            detail = getattr(e, "stderr", None) or getattr(e, "stdout", None) or ""
+            logger.warning("[convstore] git snapshot failed for %s: %s | git stderr: %s",
+                           cid[:8], e, (detail.strip() if isinstance(detail, str) else detail))
 
     def git_log(self, cid: str, limit: int = 20) -> List[Dict]:
         """List recent git commits for a conversation."""
@@ -870,19 +943,24 @@ class ConversationStore:
                 out.append(m)
         return out
 
-    def _append_shared_ctx(self, cid: str, messages: List[Dict]):
+    def _append_shared_ctx(self, cid: str, messages: List[Dict],
+                           timings: Optional[Dict[str, float]] = None):
         """Append already-shared-normalized messages to shared context.
 
         No dedup: see _append_ctx_file for rationale.
 
-        After the write, pings core.bg_bucket_builder to check if the
-        shared pyramid should be advanced (L1_TRIGGER_MSGS gap). The
-        builder is a no-op if the resolver isn't registered or the
-        gap is too small — cheap O(1) call either way.
+        After the write, updates core.bg_bucket_builder's in-memory counters
+        and queues the trigger decision outside the foreground writer path.
         """
+        def _add_timing(name: str, started: float) -> None:
+            if timings is not None:
+                timings[name] = timings.get(name, 0.0) + (
+                    (time.monotonic() - started) * 1000.0)
+
         path = self._shared_ctx_path(cid)
         _max_seq = 0
         _shared_chars = 0
+        _t0 = time.monotonic()
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
                 self._validate_message(m)
@@ -892,13 +970,14 @@ class ConversationStore:
                 _s = int(xf.get("seq") or 0)
                 if _s > _max_seq:
                     _max_seq = _s
+        _add_timing("shared_write", _t0)
 
-        # Trigger bg pyramid build if applicable. Strictly non-blocking:
-        # maybe_trigger now does an O(1) cache check (no disk I/O) so
-        # holding the conv lock here costs nothing. note_shared_seq
-        # keeps the cache in sync with what we just wrote so the next
-        # trigger's arithmetic is correct.
+        # Keep cache hints synchronous so the queued trigger decision sees
+        # this row, but run the decision itself in the bg executor. Resolving
+        # expression config and logging state transitions are too expensive
+        # for the writer hot path.
         try:
+            _t0 = time.monotonic()
             from core.bg_bucket_builder import BgBucketBuilder
             _bb = BgBucketBuilder.instance()
             if _max_seq:
@@ -909,7 +988,10 @@ class ConversationStore:
                 _bb.note_shared_chars_appended(cid, _shared_chars)
             _uid = self._cid_user.get(cid, "") or ""
             if _uid:
-                _bb.maybe_trigger(cid, _uid)
+                trigger = getattr(_bb, "maybe_trigger_async",
+                                  _bb.maybe_trigger)
+                trigger(cid, _uid)
+            _add_timing("shared_bg_trigger", _t0)
         except Exception:
             logger.debug("bg bucket trigger failed", exc_info=True)
 
@@ -963,15 +1045,14 @@ class ConversationStore:
     def _write_extras(self, cid: str, data: dict):
         """Atomically write extras JSON (tmp + rename).
 
-        Callers MUST hold `_get_conv_lock(cid)`. With every reader also
-        holding the same lock, no concurrent PawFlow file handle exists
-        on the destination. The retry loop below covers a different
-        case specific to Windows: anti-virus / Windows Defender /
-        OneDrive briefly hold an external read handle on freshly-
-        written files, which makes `os.replace` raise WinError 5 even
-        though no PawFlow code is touching the file. A handful of
-        short retries lets the AV scan finish and the rename succeed
-        — still atomic, just observably racy with the scanner.
+        Callers mutating shared extras MUST hold `_get_extras_lock(cid)`.
+        Readers intentionally do not take the hot conversation lock:
+        this file is replaced atomically from a complete tmp file, so a
+        reader sees either the old or the new JSON document. The retry loop
+        covers Windows cases where anti-virus / Windows Defender / OneDrive
+        or a concurrent reader briefly holds a handle on the destination and
+        `os.replace` raises WinError 5. A handful of short retries lets the
+        handle close and the rename succeed.
         """
         import time as _t
         path = self._extras_path(cid)
@@ -994,26 +1075,89 @@ class ConversationStore:
     # ══════════════════════════════════════════════════════════════════
 
     def _read(self, cid: str, read_fn: Callable):
-        """THE ONLY read method. Lock, stream file to read_fn, release."""
-        lock = self._get_conv_lock(cid)
+        """THE ONLY transcript read method.
+
+        Do not hold the conversation write lock while scanning the full
+        transcript. The file is append-only; a concurrent partial final row is
+        ignored by the JSON decoder and will be visible on the next read.
+        """
         path = self._conv_path(cid)
-        with lock:
-            if not path.exists():
-                return read_fn(iter([]))
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    def _iter():
-                        for raw in f:
-                            raw = raw.strip()
-                            if raw:
-                                try:
-                                    yield json.loads(raw)
-                                except json.JSONDecodeError:
-                                    continue
-                    return read_fn(_iter())
-            except OSError as e:
-                logger.error(f"[convstore] read failed {cid}: {e}")
-                return read_fn(iter([]))
+        if not path.exists():
+            return read_fn(iter([]))
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                def _iter():
+                    for raw in f:
+                        raw = raw.strip()
+                        if raw:
+                            try:
+                                yield json.loads(raw)
+                            except json.JSONDecodeError:
+                                continue
+                return read_fn(_iter())
+        except OSError as e:
+            logger.error(f"[convstore] read failed {cid}: {e}")
+            return read_fn(iter([]))
+
+    @staticmethod
+    def _iter_jsonl_reverse(path: Path, chunk_size: int = 1024 * 1024):
+        """Yield JSONL rows from the end of a file without loading it all."""
+        try:
+            with open(path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                pos = f.tell()
+                buf = b""
+                while pos > 0:
+                    n = min(chunk_size, pos)
+                    pos -= n
+                    f.seek(pos)
+                    buf = f.read(n) + buf
+                    lines = buf.split(b"\n")
+                    buf = lines[0]
+                    for raw in reversed(lines[1:]):
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            yield json.loads(raw.decode("utf-8", errors="replace"))
+                        except json.JSONDecodeError:
+                            continue
+                raw = buf.strip()
+                if raw:
+                    try:
+                        yield json.loads(raw.decode("utf-8", errors="replace"))
+                    except json.JSONDecodeError:
+                        return
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            logger.error("[convstore] reverse read failed %s: %s", path, e)
+            return
+
+    def load_transcript_seq_range(self, cid: str, first_seq: int,
+                                  last_seq: int) -> List[Dict]:
+        """Load transcript rows in seq range without a full transcript scan.
+
+        Seq is monotonic in transcript file order, so reverse scanning can stop
+        as soon as it sees a row before ``first_seq``. This is used by bg bucket
+        trace extraction, where ranges are normally near the tail.
+        """
+        if not self.exists(cid):
+            return []
+        first_seq = int(first_seq or 0)
+        last_seq = int(last_seq or 0)
+        if first_seq <= 0 or last_seq < first_seq:
+            return []
+        rows: List[Dict] = []
+        for row in self._iter_jsonl_reverse(self._transcript_path(cid)):
+            seq = int(row.get("seq") or 0)
+            if seq > last_seq:
+                continue
+            if seq < first_seq:
+                break
+            rows.append(row)
+        rows.reverse()
+        return rows
 
 
 
@@ -1025,8 +1169,12 @@ class ConversationStore:
     def _scan_cache(lines):
         c = {"user_id": "", "status": "idle", "created_at": 0,
              "updated_at": 0, "expires_at": 0, "msg_count": 0,
-             "agents": set(), "extra_keys": set(), "extras": {}, "preview": ""}
+             "agents": set(), "extra_keys": set(), "extras": {}, "preview": "",
+             "_max_seq": 0}
         for line in lines:
+            seq = line.get("seq")
+            if isinstance(seq, int) and seq > c["_max_seq"]:
+                c["_max_seq"] = seq
             t = line.get("t", "")
             if t == "meta":
                 c["user_id"] = line.get("user_id", "")
@@ -1064,6 +1212,12 @@ class ConversationStore:
         sees either the old or new value, never missing.
         """
         c = self._read(cid, self._scan_cache)
+        try:
+            from core.llm_client import _seed_persisted_seq
+            _seed_persisted_seq(cid, int(c.get("_max_seq") or 0))
+        except Exception:
+            logger.debug("persisted seq seed failed for %s", cid[:8], exc_info=True)
+        c.pop("_max_seq", None)
         # Merge extras from extras.json file (source of truth)
         extras_data = self._read_extras(cid)
         if extras_data:
@@ -1264,6 +1418,13 @@ class ConversationStore:
 
         Raises on any I/O error (no silent swallow).
         """
+        _append_started = time.monotonic()
+        _timings: Dict[str, float] = {}
+
+        def _mark_timing(name: str, started: float) -> None:
+            _timings[name] = _timings.get(name, 0.0) + (
+                (time.monotonic() - started) * 1000.0)
+
         self._validate_message(msg)
         agent_name = self._canon_agent(agent_name) if agent_name else ""
         role = msg.get("role", "")
@@ -1279,61 +1440,85 @@ class ConversationStore:
         transcript_line = None
         touched_agents = set()
 
+        _mark_timing("pre_lock", _append_started)
         lock = self._get_conv_lock(cid)
+        _t0 = time.monotonic()
         with lock:
+            _mark_timing("lock_wait", _t0)
             # Create conv if missing
+            _t0 = time.monotonic()
             if not self.exists(cid):
                 if not user_id:
                     raise ValueError(
                         "user_id required for new conversation")
                 self.save(cid, [], user_id=user_id, ttl=ttl)
+            _mark_timing("create_or_exists", _t0)
 
             # 1. Transcript — everything except synthetic context injections.
             if src_type != "context":
+                _transcript_t0 = time.monotonic()
                 is_private = has_tool_calls or role == "tool"
                 line = self._stamp_line(cid, {"t": "msg", **msg})
                 if is_private:
                     line["private"] = True
                 transcript_line = line
+                _mark_timing("transcript_prepare", _transcript_t0)
+                _t0 = time.monotonic()
                 with open(self._transcript_path(cid), "a",
                           encoding="utf-8") as f:
                     f.write(json.dumps(line, ensure_ascii=False) + "\n")
+                _mark_timing("transcript_write", _t0)
                 # Feed bg_bucket_builder's token-budget trigger so it
                 # can fire a partial bucket BEFORE the agent's hot-path
                 # /compact has to digest-tail at runtime.
+                _t0 = time.monotonic()
                 self._notify_bg_transcript_chars(
                     cid, self._row_payload_chars(line))
+                _mark_timing("bg_notify", _t0)
+                _mark_timing("transcript", _transcript_t0)
 
             if display_only:
                 pass  # transcript only, no context files
             elif src_type == "agent_delegate":
                 # Private A↔B routing (requests project to shared,
                 # replies stay private between from/to).
+                _t0 = time.monotonic()
                 touched_agents.update(
                     self._route_delegate_message(cid, msg, agent_name))
+                _mark_timing("delegate_route", _t0)
             else:
                 # 2. Author's own context (brut, keeps tool_calls /
                 #    tool results; also target of context injections).
                 if route_agent:
+                    _t0 = time.monotonic()
                     if src_type != "context":
                         self._seed_agent_context_from_shared_if_missing(
                             cid, route_agent)
                     self._append_ctx_file(cid, route_agent, [msg])
                     touched_agents.add(route_agent)
+                    _mark_timing("own_ctx", _t0)
 
                 # 3. Shared + broadcast to other agents — only for
                 #    conversation messages (filter_for_shared drops
                 #    tool results and context injections; strips
                 #    tool_calls but keeps text).
                 if src_type != "context" and role != "tool":
+                    _t0 = time.monotonic()
                     shared_candidates = self.filter_for_shared([msg])
+                    _mark_timing("shared_filter", _t0)
                     if shared_candidates:
+                        _t0 = time.monotonic()
                         shared_msgs = [self._transform_for_shared(m)
                                        for m in shared_candidates]
-                        self._append_shared_ctx(cid, shared_msgs)
+                        self._append_shared_ctx(cid, shared_msgs, _timings)
+                        _mark_timing("shared_append", _t0)
+                        _t0 = time.monotonic()
                         known_agents = self._cache_agents_for_append(cid)
                         if route_agent:
                             known_agents.add(route_agent)
+                        _mark_timing("known_agents", _t0)
+                        _broadcast_count = 0
+                        _t0 = time.monotonic()
                         for other in known_agents:
                             if not other or other == agent_name:
                                 continue
@@ -1342,10 +1527,50 @@ class ConversationStore:
                                 for m in shared_candidates]
                             self._append_ctx_file(cid, other, transformed)
                             touched_agents.add(other)
+                            _broadcast_count += 1
+                        _mark_timing("broadcast", _t0)
+                        _timings["broadcast_count"] = float(_broadcast_count)
 
         # Refresh cache (msg_count, agents set) after any write.
+        _t0 = time.monotonic()
         self._invalidate_ctx_cache(cid)
+        _mark_timing("ctx_cache_invalidate", _t0)
+        _t0 = time.monotonic()
         self._note_cache_append(cid, transcript_line, touched_agents)
+        _mark_timing("cache_note", _t0)
+        _total_ms = (time.monotonic() - _append_started) * 1000.0
+        if _total_ms >= 100.0:
+            logger.warning(
+                "[convstore:%s] append slow role=%s msg_id=%s total_ms=%.1f "
+                "pre_lock=%.1f lock_wait=%.1f create_or_exists=%.1f "
+                "transcript=%.1f transcript_prepare=%.1f "
+                "transcript_write=%.1f bg_notify=%.1f own_ctx=%.1f "
+                "shared_filter=%.1f "
+                "shared_append=%.1f shared_write=%.1f "
+                "shared_bg_trigger=%.1f known_agents=%.1f broadcast=%.1f "
+                "broadcast_count=%d delegate_route=%.1f "
+                "ctx_cache_invalidate=%.1f cache_note=%.1f touched_agents=%d",
+                cid[:8], role, msg.get("msg_id", "?"), _total_ms,
+                _timings.get("pre_lock", 0.0),
+                _timings.get("lock_wait", 0.0),
+                _timings.get("create_or_exists", 0.0),
+                _timings.get("transcript", 0.0),
+                _timings.get("transcript_prepare", 0.0),
+                _timings.get("transcript_write", 0.0),
+                _timings.get("bg_notify", 0.0),
+                _timings.get("own_ctx", 0.0),
+                _timings.get("shared_filter", 0.0),
+                _timings.get("shared_append", 0.0),
+                _timings.get("shared_write", 0.0),
+                _timings.get("shared_bg_trigger", 0.0),
+                _timings.get("known_agents", 0.0),
+                _timings.get("broadcast", 0.0),
+                int(_timings.get("broadcast_count", 0.0)),
+                _timings.get("delegate_route", 0.0),
+                _timings.get("ctx_cache_invalidate", 0.0),
+                _timings.get("cache_note", 0.0),
+                len(touched_agents),
+            )
 
     def _route_delegate_message(self, cid: str, msg: Dict,
                                 agent_name: str) -> set:
@@ -1497,6 +1722,33 @@ class ConversationStore:
         raw = self.load(cid)
         if not raw:
             return None
+        return self._personalize_transcript_for_agent(raw, canon)
+
+    def load_transcript_tail_for_agent(self, cid: str, agent_name: str,
+                                       limit: int = 1000) -> Optional[List[Dict]]:
+        """Return a recent transcript tail personalized for one agent.
+
+        Provider-triggered compaction only needs recent raw fidelity; old
+        history comes from the shared bucket header. Read from the tail so a
+        compact boundary never has to materialize a giant transcript just to
+        walk back to the last few dozen useful messages.
+        """
+        if not self.exists(cid):
+            return None
+        try:
+            limit_i = max(1, int(limit or 1000))
+        except (TypeError, ValueError):
+            limit_i = 1000
+        page = self.load_page(cid, limit=limit_i, offset=0) or {}
+        raw = page.get("messages") or []
+        if not raw:
+            return None
+        canon = self._canon_agent(agent_name) if agent_name else ""
+        return self._personalize_transcript_for_agent(raw, canon)
+
+    def _personalize_transcript_for_agent(self, raw: List[Dict],
+                                          canon: str) -> List[Dict]:
+        """Personalize already-loaded transcript messages for one agent."""
 
         # First pass: collect tool_call_ids that belong to THIS agent so we
         # can keep matching tool results and drop everybody else's.
@@ -2053,9 +2305,8 @@ class ConversationStore:
             })
             with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
-            self._notify_bg_transcript_chars(
-                cid, self._row_payload_chars(line))
-            self._maybe_persist_context_usage_from_patch(cid, line)
+        self._notify_bg_transcript_chars(cid, self._row_payload_chars(line))
+        self._maybe_persist_context_usage_from_patch(cid, line)
 
     def _maybe_persist_context_usage_from_patch(self, cid: str, line: Dict[str, Any]) -> None:
         source = line.get("source")
@@ -2063,8 +2314,10 @@ class ConversationStore:
         if not entry:
             return
         name, usage_entry = entry
-        data = self._read_extras(cid)
-        self._merge_context_usage_locked(cid, data, name, usage_entry)
+        lock = self._get_extras_lock(cid)
+        with lock:
+            data = self._read_extras(cid)
+            self._merge_context_usage_locked(cid, data, name, usage_entry)
 
     @staticmethod
     def _context_usage_entry_from_source(source: Any, ts: Any = None):
@@ -2110,16 +2363,17 @@ class ConversationStore:
                 self._cache[cid]["updated_at"] = time.time()
         return True
 
-    def _repair_context_usage_from_transcript_locked(self, cid: str,
-                                                     data: Dict[str, Any]) -> Dict[str, Any]:
-        usage = dict(data.get("context_usage") or {})
+    def _scan_context_usage_from_transcript(self, cid: str,
+                                            usage: Dict[str, Any]) -> Tuple[Dict[str, Any], float]:
+        """Scan transcript context usage without holding the conv lock."""
+        usage = dict(usage or {})
         path = self._transcript_path(cid)
         try:
             transcript_mtime = os.path.getmtime(path)
         except FileNotFoundError:
-            return usage
+            return usage, 0.0
         if self._context_usage_repair_mtime.get(cid, 0) >= transcript_mtime:
-            return usage
+            return usage, transcript_mtime
         try:
             with open(path, "r", encoding="utf-8") as f:
                 for raw in f:
@@ -2137,16 +2391,36 @@ class ConversationStore:
                             or float(prev.get("updated_at") or 0) <= float(usage_entry.get("updated_at") or 0)):
                         usage[name] = usage_entry
         except FileNotFoundError:
+            return usage, 0.0
+        return usage, transcript_mtime
+
+    def _repair_context_usage_from_transcript(self, cid: str,
+                                              data: Dict[str, Any]) -> Dict[str, Any]:
+        usage = dict(data.get("context_usage") or {})
+        usage, transcript_mtime = self._scan_context_usage_from_transcript(
+            cid, usage)
+        if not transcript_mtime:
             return usage
         self._context_usage_repair_mtime[cid] = transcript_mtime
         if usage != data.get("context_usage"):
-            data["context_usage"] = usage
-            self._write_extras(cid, data)
-            with self._cache_lock:
-                if cid in self._cache:
-                    self._cache[cid]["extra_keys"].add("context_usage")
-                    self._cache[cid].setdefault("extras", {})["context_usage"] = usage
-                    self._cache[cid]["updated_at"] = time.time()
+            lock = self._get_extras_lock(cid)
+            with lock:
+                latest = self._read_extras(cid)
+                latest_usage = dict(latest.get("context_usage") or {})
+                for name, usage_entry in usage.items():
+                    prev = latest_usage.get(name)
+                    if (not isinstance(prev, dict)
+                            or float(prev.get("updated_at") or 0) <= float(usage_entry.get("updated_at") or 0)):
+                        latest_usage[name] = usage_entry
+                usage = latest_usage
+                if latest_usage != latest.get("context_usage"):
+                    latest["context_usage"] = latest_usage
+                    self._write_extras(cid, latest)
+                    with self._cache_lock:
+                        if cid in self._cache:
+                            self._cache[cid]["extra_keys"].add("context_usage")
+                            self._cache[cid].setdefault("extras", {})["context_usage"] = usage
+                            self._cache[cid]["updated_at"] = time.time()
         return usage
 
     def message_count(self, cid: str) -> int:
@@ -2167,12 +2441,10 @@ class ConversationStore:
     def get_extra_cached(self, cid: str, key: str, default: Any = None) -> Any:
         """Get extra from extras.json file."""
         key = self._canon_extra_key(key)
-        lock = self._get_conv_lock(cid)
-        with lock:
-            data = self._read_extras(cid)
-            if key == "context_usage":
-                return self._repair_context_usage_from_transcript_locked(cid, data) or default
-            return data.get(key, default)
+        data = self._read_extras(cid)
+        if key == "context_usage":
+            return self._repair_context_usage_from_transcript(cid, data) or default
+        return data.get(key, default)
 
     def get_extra_snapshot(self, cid: str, key: str,
                            default: Any = None) -> Any:
@@ -2197,22 +2469,19 @@ class ConversationStore:
         if not self.exists(cid):
             return default
         key = self._canon_extra_key(key)
-        lock = self._get_conv_lock(cid)
-        with lock:
-            data = self._read_extras(cid)
-            if key == "context_usage":
-                return self._repair_context_usage_from_transcript_locked(cid, data) or default
-            return data.get(key, default)
+        data = self._read_extras(cid)
+        if key == "context_usage":
+            return self._repair_context_usage_from_transcript(cid, data) or default
+        return data.get(key, default)
 
     def get_extras(self, cid: str, user_id: str = "") -> Optional[dict]:
         if not self.exists(cid):
             return None
-        lock = self._get_conv_lock(cid)
-        with lock:
-            data = self._read_extras(cid)
-            if "context_usage" in data:
-                self._repair_context_usage_from_transcript_locked(cid, data)
-            return dict(data)
+        data = self._read_extras(cid)
+        if "context_usage" in data:
+            data["context_usage"] = self._repair_context_usage_from_transcript(
+                cid, data)
+        return dict(data)
 
     def set_extra(self, cid: str, key: str, value: Any,
                   user_id: str = "") -> bool:
@@ -2222,7 +2491,7 @@ class ConversationStore:
                 self._cache.pop(cid, None)
             return False
         key = self._canon_extra_key(key)
-        lock = self._get_conv_lock(cid)
+        lock = self._get_extras_lock(cid)
         with lock:
             data = self._read_extras(cid)
             data[key] = value
@@ -2576,6 +2845,7 @@ class ConversationStore:
         with self._cache_lock:
             self._cache.pop(cid, None)
         self._conv_locks.pop(cid, None)
+        self._extras_locks.pop(cid, None)
         self._cid_user.pop(cid, None)
         # Clean up all conv-scoped resources
         try:

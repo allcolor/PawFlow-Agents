@@ -72,6 +72,112 @@ class TestCreateConversation:
         assert isinstance(cid, str)
         assert len(cid) == 16
 
+    def test_load_transcript_seq_range_reads_only_requested_window(self, conv):
+        store, cid, uid = conv
+        for i in range(8):
+            store.append_message(
+                cid,
+                _msg(content=f"m{i}", source={"type": "user", "target_agent": "bot"}),
+                agent_name="bot",
+                user_id=uid,
+            )
+
+        all_msgs = store.load(cid)
+        first_seq = all_msgs[2]["seq"]
+        last_seq = all_msgs[5]["seq"]
+
+        window = store.load_transcript_seq_range(cid, first_seq, last_seq)
+
+        expected = all_msgs[2:6]
+        assert [m["content"] for m in window] == [m["content"] for m in expected]
+        assert [m["seq"] for m in window] == [m["seq"] for m in expected]
+
+    def test_load_transcript_tail_for_agent_reads_recent_window(self, conv):
+        store, cid, uid = conv
+        for i in range(12):
+            store.append_message(
+                cid,
+                _msg(content=f"m{i}", source={"type": "user", "target_agent": "bot"}),
+                agent_name="bot",
+                user_id=uid,
+            )
+
+        tail = store.load_transcript_tail_for_agent(cid, "bot", limit=4)
+
+        assert [m["content"] for m in tail] == ["m8", "m9", "m10", "m11"]
+        assert len(store.load(cid)) > len(tail)
+
+    def test_patch_message_keeps_post_write_hooks_outside_append_lock(
+            self, conv, monkeypatch):
+        store, cid, uid = conv
+        store.append_message(
+            cid,
+            _msg(content="original", source={"type": "user", "target_agent": "bot"}),
+            agent_name="bot",
+            user_id=uid,
+        )
+        msg_id = store.load(cid)[-1]["msg_id"]
+
+        raw_lock = store._get_conv_lock(cid)
+        state = {"locked": False, "notify_locked": None, "usage_locked": None}
+
+        class _ProbeLock:
+            def __enter__(self):
+                state["locked"] = True
+                return raw_lock.__enter__()
+
+            def __exit__(self, exc_type, exc, tb):
+                try:
+                    return raw_lock.__exit__(exc_type, exc, tb)
+                finally:
+                    state["locked"] = False
+
+        monkeypatch.setattr(store, "_get_conv_lock", lambda _cid: _ProbeLock())
+        monkeypatch.setattr(
+            store, "_notify_bg_transcript_chars",
+            lambda *_args: state.__setitem__("notify_locked", state["locked"]))
+        monkeypatch.setattr(
+            store, "_maybe_persist_context_usage_from_patch",
+            lambda *_args: state.__setitem__("usage_locked", state["locked"]))
+
+        store.patch_message(cid, msg_id, content="patched")
+
+        assert state["notify_locked"] is False
+        assert state["usage_locked"] is False
+
+    def test_set_extra_does_not_take_conversation_lock(self, conv, monkeypatch):
+        store, cid, _uid = conv
+
+        def _fail_conv_lock(_cid):
+            raise AssertionError("set_extra must use the extras lock")
+
+        monkeypatch.setattr(store, "_get_conv_lock", _fail_conv_lock)
+
+        assert store.set_extra(cid, "title", "Updated") is True
+        assert store.get_extra(cid, "title") == "Updated"
+
+    def test_patch_context_usage_does_not_take_conversation_lock(
+            self, conv, monkeypatch):
+        store, cid, _uid = conv
+
+        def _fail_conv_lock(_cid):
+            raise AssertionError("context_usage extras write must not use conv lock")
+
+        monkeypatch.setattr(store, "_get_conv_lock", _fail_conv_lock)
+
+        store._maybe_persist_context_usage_from_patch(cid, {
+            "ts": 123.0,
+            "source": {
+                "name": "assistant",
+                "context_used": 42,
+                "context_max": 100,
+                "context_pct": 0.42,
+            },
+        })
+
+        usage = store.get_extra(cid, "context_usage")
+        assert usage["assistant"]["used"] == 42
+
     def test_save_requires_user_id(self, store):
         cid = store.generate_id()
         with pytest.raises(ValueError, match="user_id"):
@@ -184,6 +290,19 @@ class TestExtras:
         val = {"nested": [1, 2, 3], "flag": True}
         store.set_extra(cid, "data", val)
         assert store.get_extra(cid, "data") == val
+
+    def test_extra_reads_do_not_take_conversation_lock(self, conv, monkeypatch):
+        store, cid, uid = conv
+        store.set_extra(cid, "title", "My Chat")
+
+        def _fail_lock(_cid):
+            raise AssertionError("extra reads must not take the conv lock")
+
+        monkeypatch.setattr(store, "_get_conv_lock", _fail_lock)
+
+        assert store.get_extra(cid, "title") == "My Chat"
+        assert store.get_extra_cached(cid, "title") == "My Chat"
+        assert store.get_extras(cid)["title"] == "My Chat"
 
 
 # ── list_conversations ───────────────────────────────────────────────

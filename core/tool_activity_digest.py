@@ -97,9 +97,9 @@ def extract_tool_activity(
     """Walk the transcript slice [first_seq..last_seq] and build a
     structured tool-activity record.
 
-    The input is expected to be already loaded transcript dicts (as
-    returned by ConversationStore.load). Only messages whose seq falls
-    inside the inclusive range contribute.
+    The input is expected to be already loaded transcript dicts, preferably
+    a bounded seq window from ConversationStore.load_transcript_seq_range.
+    Only messages whose seq falls inside the inclusive range contribute.
 
     Return shape:
         {

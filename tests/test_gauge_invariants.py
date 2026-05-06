@@ -223,7 +223,7 @@ def test_message_meta_context_used_comes_from_central_context_usage():
 
 
 def test_context_gauge_publishes_after_each_visible_append():
-    """Append callbacks may publish a cached gauge, but must not recalculate it."""
+    """Append callbacks may publish a fresh cached gauge, but never stale data."""
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     assert "def _publish_live_context_usage" in src
     publish_body = src[src.index("def _publish_live_context_usage") : src.index("def _append(msg: LLMMessage)")]
@@ -231,6 +231,8 @@ def test_context_gauge_publishes_after_each_visible_append():
     assert "_context_usage_suspended" in publish_body
     assert "compute_context_usage" not in publish_body
     assert "_agent_source(include_context=False)" in publish_body
+    assert 'usage.get("message_count", -1)' in publish_body
+    assert "!= len(messages)" in publish_body
     assert "messages.append(msg)" in append_body
     assert "_publish_live_context_usage(" in append_body
     assert "append_{msg.role}" in append_body
@@ -928,6 +930,19 @@ def test_agent_background_llm_calls_pass_provider_agnostic_scope():
         assert marker in Path(path).read_text(encoding="utf-8")
 
 
+def test_sub_agent_provider_compact_is_provider_agnostic():
+    src = Path("core/agent_executor.py").read_text(encoding="utf-8")
+    block = src[src.index("except Exception as _llm_err:"):
+                src.index("# Recover OAuth tokens", src.index("except Exception as _llm_err:"))]
+
+    assert "from core.llm_client import CCCompactDetected" in block
+    assert "isinstance(" in block
+    assert "_llm_err, CCCompactDetected" in block
+    assert "contextCompaction" in block
+    assert "invalidate_claude_session_for_agent" in block
+    assert "set_extra(\n                                _delegate_conv_id,\n                                f\"claude_session:" not in block
+
+
 def test_relay_desktop_has_periodic_healthcheck():
     src = Path("pawflow_relay/worker.py").read_text(encoding="utf-8")
     assert "def _desktop_is_healthy" in src
@@ -947,6 +962,30 @@ def test_bg_bucket_runs_as_independent_background_work():
     assert "foreground agent active/starting" not in src
     assert "skip auto memory extract" not in src
     assert "pausing bucket catch-up" not in src
+
+
+def test_bg_bucket_trace_does_not_load_full_transcript():
+    src = Path("core/bg_bucket_builder.py").read_text(encoding="utf-8")
+    start = src.index("    def _extract_trace")
+    end = src.index("    def _pick_chunk", start)
+    body = src[start:end]
+
+    assert "load_transcript_seq_range" in body
+    assert ".load(cid)" not in body
+    assert "cs.load(" not in body
+
+
+def test_provider_compact_uses_bounded_transcript_tail():
+    start = _AGENT_CORE_PY.index("provider compact detected")
+    end = _AGENT_CORE_PY.index("PawFlow compact done", start)
+    body = _AGENT_CORE_PY[start:end]
+
+    assert "load_transcript_tail_for_agent" in body
+    assert "load_transcript_for_agent" in body  # legacy fallback only
+    assert body.index("load_transcript_tail_for_agent") < body.index(
+        "load_transcript_for_agent")
+    assert "Loaded %d recent transcript messages for provider compaction" in body
+    assert "Loaded %d messages from shared context for compaction" not in body
 
 
 def test_context_editor_never_treats_transcript_as_agent_context():

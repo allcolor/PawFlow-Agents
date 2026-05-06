@@ -14,6 +14,8 @@ from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
 logger = logging.getLogger(__name__)
 
+_PROVIDER_COMPACT_TAIL_MESSAGES = 1000
+
 # Context-ack phrases injected as pre-filled assistant messages.
 # The LLM sometimes echoes them as its first output — strip them.
 _CONTEXT_ACK_PATTERNS = (
@@ -453,6 +455,15 @@ class AgentCoreMixin:
                 logger.warning(
                     "[compact] auto threshold crossed after %s: %d >= %d (%.0f%%)",
                     reason, used, trigger_tokens, trigger_fraction * 100)
+                if _client_provider in ("claude-code", "codex-app-server", "gemini"):
+                    # Stateful CLI/live providers must not be killed from a
+                    # streaming callback. Propagate the threshold crossing to
+                    # the normal provider-compact path: it tears down the old
+                    # instance, compacts PawFlow, starts a fresh session with
+                    # the compacted context, then lets the provider keep it
+                    # live for the next user message.
+                    raise CCCompactDetected(
+                        "PawFlow post-append compact threshold crossed")
                 compact_owner = ctx.get("resolved_svc") or client or compact_client
                 compacted = self._compact(
                     copy.deepcopy(messages), compact_owner, max_ctx,
@@ -468,6 +479,8 @@ class AgentCoreMixin:
                 if compacted and len(compacted) <= len(messages):
                     _adopt_compacted_context(
                         compacted, reason="post_append")
+            except CCCompactDetected:
+                raise
             except Exception as compact_err:
                 logger.error(
                     "[compact] auto compact after %s failed: %s",
@@ -494,6 +507,8 @@ class AgentCoreMixin:
             try:
                 usage = ctx.get("_context_usage_cache") or {}
                 if int(usage.get("max", 0) or 0) <= 0:
+                    return
+                if int(usage.get("message_count", -1) or -1) != len(messages):
                     return
                 src = _agent_source(include_context=False)
                 payload = {
@@ -1629,23 +1644,30 @@ class AgentCoreMixin:
                                 logger.warning(
                                     "[agent:%s] writer flush before compact "
                                     "failed: %s", conversation_id[:8], _fl_err)
-                            # 1. Load SHARED context from disk (not the agent-specific one).
-                            # Compaction always starts from the shared timeline: the
-                            # per-agent context is a personalized view that already
-                            # contains the previous compaction's leftovers. Sourcing
-                            # from shared gives a fresh summary each time, preventing
-                            # old summaries from piling up on top of new ones.
+                            # 1. Load a bounded recent transcript tail. Old history
+                            # comes from the shared bucket header assembled inside
+                            # _compact(); provider compact only needs raw fidelity for
+                            # recent messages. Do not materialize the full transcript
+                            # here: long sessions can have tens of thousands of rows
+                            # and millions of token-equivalent chars.
                             from core.conversation_store import ConversationStore
                             _store = ConversationStore.instance()
-                            _full_ctx = _store.load_transcript_for_agent(
-                                conversation_id, _agent_name)
+                            _tail_loader = getattr(
+                                _store, "load_transcript_tail_for_agent", None)
+                            if callable(_tail_loader):
+                                _full_ctx = _tail_loader(
+                                    conversation_id, _agent_name,
+                                    limit=_PROVIDER_COMPACT_TAIL_MESSAGES)
+                            else:
+                                _full_ctx = _store.load_transcript_for_agent(
+                                    conversation_id, _agent_name)
                             if not _full_ctx:
                                 _full_ctx = _store.load_agent_context(
                                     conversation_id, _agent_name)
                             if not _full_ctx:
                                 raise RuntimeError("No context to compact")
                             _full_messages = self._deserialize_messages(_full_ctx, conversation_id=conversation_id)
-                            logger.info("[agent:%s] Loaded %d messages from shared context for compaction",
+                            logger.info("[agent:%s] Loaded %d recent transcript messages for provider compaction",
                                         conversation_id[:8], len(_full_messages))
 
                             # 2. FORCE compact — CC said it's saturating, so we compact

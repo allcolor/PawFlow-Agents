@@ -131,6 +131,30 @@ def test_auto_compact_threshold_is_enforced_after_visible_appends():
     assert "force=True" in helper
 
 
+def test_post_append_cli_compact_uses_provider_restart_path():
+    """Live CLI providers must not be killed from inside stream callbacks.
+
+    Crossing the PawFlow threshold mid-turn should raise the same compact signal
+    as provider-native compaction, so agent_core restarts the CLI session and the
+    provider can keep the fresh compacted instance live after the turn.
+    """
+    helper = _AGENT_CORE[
+        _AGENT_CORE.index("def _maybe_auto_compact_after_append"):
+        _AGENT_CORE.index("def _publish_live_context_usage")
+    ]
+    cli_guard = helper[helper.index('if _client_provider in ('):
+                       helper.index('compact_owner =')]
+    except_block = helper[helper.index("except CCCompactDetected:"):
+                          helper.index("except Exception as compact_err:")]
+    assert '"claude-code"' in cli_guard
+    assert '"codex-app-server"' in cli_guard
+    assert '"gemini"' in cli_guard
+    assert "raise CCCompactDetected(" in cli_guard
+    assert "self._compact(" not in cli_guard
+    assert "raise" in except_block
+    assert "auto compact after" not in except_block
+
+
 def test_proactive_compact_replaces_active_messages_for_cli_providers():
     """Codex/Gemini pre-send compaction must update the live message list.
 
@@ -184,7 +208,9 @@ def test_codex_forced_compact_passes_active_budget_config():
 
 def test_codex_forced_compact_adopts_persisted_agent_context_before_restart():
     """Provider compact must replace active PawFlow context before restart."""
-    h_start = _AGENT_CORE.index("except CCCompactDetected:")
+    marker = "provider compact detected"
+    h_start = _AGENT_CORE.rindex("except CCCompactDetected:", 0,
+                                 _AGENT_CORE.index(marker))
     h_end = _AGENT_CORE.index("emitter.check_cancelled()", h_start)
     handler = _AGENT_CORE[h_start:h_end]
     assert "\n                            messages = list(self._compact(" not in handler

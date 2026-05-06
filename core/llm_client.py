@@ -279,6 +279,16 @@ def _record_persisted_seq(conversation_id: str, seq: int) -> None:
             _msg_seq_persisted[conversation_id] = seq
 
 
+def _seed_persisted_seq(conversation_id: str, seq: int) -> None:
+    """Seed the persisted seq cache from a caller that already scanned disk."""
+    if not conversation_id or not isinstance(seq, int):
+        return
+    with _msg_seq_lock:
+        cur = _msg_seq_persisted.get(conversation_id, 0)
+        if seq > cur:
+            _msg_seq_persisted[conversation_id] = seq
+
+
 def stamp_message(msg: Dict[str, Any],
                    conversation_id: str) -> Dict[str, Any]:
     """Set ts + msg_id on a message dict at CREATION time.

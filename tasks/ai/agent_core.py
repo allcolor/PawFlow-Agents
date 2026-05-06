@@ -298,7 +298,8 @@ class AgentCoreMixin:
                 _cw_map.get(_cw_key, 0), fallback=0)
 
         def _agent_source(tok_in=0, tok_out=0, model_override="",
-                           tok_cache_creation=0, tok_cache_read=0):
+                           tok_cache_creation=0, tok_cache_read=0,
+                           include_context: bool = True):
             import re as _re
             src = {
                 "type": "agent", "name": ctx.get("active_agent_name", ""),
@@ -312,14 +313,15 @@ class AgentCoreMixin:
             if tok_in or tok_out:
                 src["tokens_in"] = tok_in
                 src["tokens_out"] = tok_out
-            try:
-                from tasks.ai.context_usage import compute_context_usage
-                _ctx_usage = compute_context_usage(
-                    conversation_id, ctx.get("active_agent_name", ""),
-                    user_id=user_id, source="pawflow_context")
-            except Exception:
-                logger.debug("context gauge calculation failed", exc_info=True)
-                _ctx_usage = None
+            _ctx_usage = None
+            if include_context:
+                try:
+                    from tasks.ai.context_usage import compute_context_usage
+                    _ctx_usage = compute_context_usage(
+                        conversation_id, ctx.get("active_agent_name", ""),
+                        user_id=user_id, source="pawflow_context")
+                except Exception:
+                    logger.debug("context gauge calculation failed", exc_info=True)
             if _ctx_usage and int(_ctx_usage.get("max", 0) or 0) > 0:
                 src["context_used"] = int(_ctx_usage.get("used", 0) or 0)
                 src["context_max"] = int(_ctx_usage.get("max", 0) or 0)
@@ -438,7 +440,8 @@ class AgentCoreMixin:
                 return
             trigger_tokens = int(max_ctx * trigger_fraction)
             try:
-                usage = _auto_compact_usage(max_ctx, "auto_compact_threshold")
+                usage = (ctx.get("_context_usage_cache")
+                         or ctx.get("_auto_compact_usage_cache") or {})
                 used = int(usage.get("used", 0) or 0)
             except Exception:
                 logger.debug("[compact] auto threshold estimate failed", exc_info=True)
@@ -450,15 +453,6 @@ class AgentCoreMixin:
                 logger.warning(
                     "[compact] auto threshold crossed after %s: %d >= %d (%.0f%%)",
                     reason, used, trigger_tokens, trigger_fraction * 100)
-                if use_conv_store and conversation_id:
-                    try:
-                        from core.conversation_writer import ConversationWriter
-                        ConversationWriter.for_conversation(
-                            conversation_id).flush(timeout=15.0)
-                    except Exception as flush_err:
-                        logger.warning(
-                            "[compact] writer flush before auto compact failed: %s",
-                            flush_err)
                 compact_owner = ctx.get("resolved_svc") or client or compact_client
                 compacted = self._compact(
                     copy.deepcopy(messages), compact_owner, max_ctx,
@@ -498,44 +492,25 @@ class AgentCoreMixin:
             if ctx.get("_context_usage_suspended"):
                 return
             try:
-                src = _agent_source()
-                if int(src.get("context_max", 0) or 0) <= 0:
+                usage = ctx.get("_context_usage_cache") or {}
+                if int(usage.get("max", 0) or 0) <= 0:
                     return
+                src = _agent_source(include_context=False)
                 payload = {
                     "conversation_id": ctx.get("_event_cid", conversation_id),
                     "agent_name": ctx.get("active_agent_name", "") or "",
                     "source": src,
-                    "context_used": int(src.get("context_used", 0) or 0),
-                    "context_max": int(src.get("context_max", 0) or 0),
-                    "context_pct": float(src.get("context_pct", 0.0) or 0.0),
-                    "context_source": src.get("context_source", reason),
-                    "context_message_count": src.get("context_message_count", 0),
-                    "context_cache_mode": src.get("context_cache_mode", ""),
-                    "updated_at": float((src.get("context_cache") or {}).get("updated_at", 0.0) or time.time()),
+                    "context_used": int(usage.get("used", 0) or 0),
+                    "context_max": int(usage.get("max", 0) or 0),
+                    "context_pct": float(usage.get("pct", 0.0) or 0.0),
+                    "context_source": usage.get("source", reason),
+                    "context_message_count": usage.get("message_count", 0),
+                    "context_cache_mode": usage.get("cache_mode", ""),
+                    "updated_at": float(usage.get("updated_at", 0.0) or time.time()),
                     "live": True,
                 }
                 if msg_id:
                     payload["msg_id"] = msg_id
-                try:
-                    from core.conversation_store import ConversationStore as _CS
-                    _store = _CS.instance()
-                    _pcid = ctx.get("_event_cid", conversation_id)
-                    _agent_for_persist = payload["agent_name"]
-                    if _agent_for_persist:
-                        _cu_map = _store.get_extra(_pcid, "context_usage") or {}
-                        _cu_entry = dict(src.get("context_cache") or {})
-                        _cu_entry.update({
-                            "used": payload["context_used"],
-                            "max": payload["context_max"],
-                            "pct": payload["context_pct"],
-                            "updated_at": payload["updated_at"],
-                        })
-                        _cu_map[_agent_for_persist] = _cu_entry
-                        _store.set_extra(_pcid, "context_usage", _cu_map)
-                except Exception:
-                    logger.error(
-                        "[_append] live context_usage persist failed",
-                        exc_info=True)
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
                     ctx.get("_event_cid", conversation_id), "message_meta", payload)
@@ -543,6 +518,9 @@ class AgentCoreMixin:
                 logger.error("[_append] live context_usage publish failed", exc_info=True)
 
         def _append(msg: LLMMessage):
+            _append_started = time.monotonic()
+            _enqueue_ms = None
+            _mirror_enqueue_ms = None
             # FORCE STOP is a hard barrier. Provider/tool callbacks can still
             # arrive briefly after the live process has been asked to die; none
             # of those late messages may be persisted or published.
@@ -727,9 +705,12 @@ class AgentCoreMixin:
                         len(msg.tool_calls) if msg.tool_calls else 0,
                         [s["type"] for s in _sse] if _sse else [],
                     )
-                    ConversationWriter.for_conversation(conversation_id).enqueue_message(
+                    _writer = ConversationWriter.for_conversation(conversation_id)
+                    _enqueue_started = time.monotonic()
+                    _writer.enqueue_message(
                         _store_msg, agent_name=_agent_for_route,
                         user_id=user_id, sse_events=_sse if _sse else None)
+                    _enqueue_ms = (time.monotonic() - _enqueue_started) * 1000.0
                     # Task sub-conversation: mirror to parent conv so the
                     # user sees task progress in their main feed. Tag with
                     # task_id + task_iteration for UI grouping.
@@ -741,9 +722,12 @@ class AgentCoreMixin:
                         _msrc["task_id"] = _tid
                         _msrc["task_iteration"] = ctx.get("_task_iteration", 1)
                         _mirror["source"] = _msrc
+                        _mirror_started = time.monotonic()
                         ConversationWriter.for_conversation(_parent_cid).enqueue_message(
                             _mirror, agent_name=_agent_for_route,
                             user_id=user_id)
+                        _mirror_enqueue_ms = ((time.monotonic() - _mirror_started)
+                                              * 1000.0)
                     _publish_live_context_usage(
                         f"append_{msg.role}", getattr(msg, "msg_id", "") or "")
                 except Exception as _persist_err:
@@ -788,52 +772,10 @@ class AgentCoreMixin:
                             _payload["updated_at"] = float((
                                 _src.get("context_cache") or {}).get("updated_at")
                                 or time.time())
-                            # Persist-then-pub: the gauge value must land
-                            # on disk BEFORE the SSE fires so a reload
-                            # after crash shows the same gauge value the
-                            # user just saw (visible = persisted).
-                            #
-                            # But ONLY when we have a real context_max.
-                            # When the provider hasn't self-reported its
-                            # window yet (first-turn CC before the first
-                            # result event lands) the cascade yields
-                            # context_max=0. Persisting that clobbers the
-                            # previous turn's real max=1M with max=0 and
-                            # the UI drops the gauge. Keep the persisted
-                            # map sticky: only write when we have truth.
-                            try:
-                                from core.conversation_store import ConversationStore as _CS
-                                _store = _CS.instance()
-                                _pcid = ctx.get("_event_cid", conversation_id)
-                                _agent_for_persist = _src.get("name", "")
-                                if _agent_for_persist and int(_src.get("context_max", 0)) > 0:
-                                    _cu_map = _store.get_extra(_pcid, "context_usage") or {}
-                                    _cu_entry = dict(_src.get("context_cache") or {})
-                                    if not _cu_entry:
-                                        _cu_entry = {
-                                            "used": _src["context_used"],
-                                            "max": _src["context_max"],
-                                            "pct": _src["context_pct"],
-                                        }
-                                    _cu_entry.update({
-                                        "used": _src["context_used"],
-                                        "max": _src["context_max"],
-                                        "pct": _src["context_pct"],
-                                        "updated_at": _payload["updated_at"],
-                                    })
-                                    _cu_map[_agent_for_persist] = _cu_entry
-                                    _store.set_extra(_pcid, "context_usage", _cu_map)
-                            except Exception as _cu_err:
-                                # Never-swallow: log loudly, still publish
-                                # the gauge SSE so the UI doesn't freeze.
-                                # Extras-lock contention is recoverable
-                                # (next turn rewrites the value).
-                                logger.error(
-                                    "[_append] message_meta context_usage "
-                                    "persist failed cid=%s agent=%s: %s",
-                                    ctx.get("_event_cid", conversation_id),
-                                    _agent_for_persist, _cu_err,
-                                    exc_info=True)
+                            # Hot path: provider callbacks must not write
+                            # extras.json or wait on conversation-store locks.
+                            # Durable context_usage is refreshed by the
+                            # regular iteration/heartbeat paths.
                         ConversationEventBus.instance().publish_event(
                             ctx.get("_event_cid", conversation_id), "message_meta", _payload)
                     except Exception as _meta_err:
@@ -845,7 +787,21 @@ class AgentCoreMixin:
                             "msg_id=%s: %s",
                             getattr(msg, "msg_id", "?"), _meta_err,
                             exc_info=True)
+            _before_compact_ms = (time.monotonic() - _append_started) * 1000.0
+            _compact_started = time.monotonic()
             _maybe_auto_compact_after_append(msg, msg.role)
+            _compact_ms = (time.monotonic() - _compact_started) * 1000.0
+            logger.info(
+                "[_append-perf] role=%s msg_id=%s enqueue_ms=%s "
+                "mirror_enqueue_ms=%s pre_compact_ms=%.1f compact_ms=%.1f total_ms=%.1f",
+                msg.role,
+                getattr(msg, "msg_id", "?"),
+                "" if _enqueue_ms is None else f"{_enqueue_ms:.1f}",
+                "" if _mirror_enqueue_ms is None else f"{_mirror_enqueue_ms:.1f}",
+                _before_compact_ms,
+                _compact_ms,
+                (time.monotonic() - _append_started) * 1000.0,
+            )
 
         # Repair orphan tool_calls — assistant messages with tool_calls
         # whose tool results are missing (broken by compact/clear)
@@ -1335,7 +1291,7 @@ class AgentCoreMixin:
                         _bus = emitter.bus
                         _cid = ctx.get("_event_cid", conversation_id)
                         turn_msgs = []
-                        _src = _agent_source()
+                        _src = _agent_source(include_context=False)
                         _agent = _src.get("name", "")
 
                         # display_only messages are NOT persisted in the transcript.
@@ -1526,7 +1482,7 @@ class AgentCoreMixin:
                         """
                         from core.llm_client import LLMToolCall, unwrap_mcp_tool
 
-                        _src = _agent_source()
+                        _src = _agent_source(include_context=False)
                         if event_type == "tool_use":
                             _raw_name = payload.get("name", "")
                             _raw_args = payload.get("arguments", {}) or {}

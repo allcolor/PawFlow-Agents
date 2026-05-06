@@ -12,7 +12,7 @@ import subprocess
 import sys as _sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 # Ensure tools/ is on sys.path so bare imports work from project root (tests)
 _tools_dir = os.path.dirname(os.path.abspath(__file__))
@@ -49,6 +49,58 @@ def _rel(abs_path: str, root: str) -> str:
         return str(Path(abs_path).relative_to(Path(root).resolve())).replace("\\", "/")
     except ValueError:
         return abs_path
+
+
+def _expand_glob_braces(pattern: str, max_patterns: int = 256) -> List[str]:
+    """Expand shell-style glob braces without invoking a shell.
+
+    pathlib glob/rglob supports `**` and character classes but not `{a,b}`.
+    PawFlow tools accept patterns like `{core,services}/**/*.py`, so expand
+    braces before passing each concrete pattern to pathlib.
+    """
+    def _split_options(body: str) -> List[str]:
+        parts = []
+        start = 0
+        depth = 0
+        for idx, ch in enumerate(body):
+            if ch == "{":
+                depth += 1
+            elif ch == "}" and depth > 0:
+                depth -= 1
+            elif ch == "," and depth == 0:
+                parts.append(body[start:idx])
+                start = idx + 1
+        parts.append(body[start:])
+        return parts
+
+    def _expand_one(value: str) -> List[str]:
+        start = value.find("{")
+        if start < 0:
+            return [value]
+        depth = 0
+        end = -1
+        for idx in range(start, len(value)):
+            ch = value[idx]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = idx
+                    break
+        if end < 0:
+            return [value]
+        prefix = value[:start]
+        suffix = value[end + 1:]
+        expanded = []
+        for option in _split_options(value[start + 1:end]):
+            for tail in _expand_one(suffix):
+                expanded.append(prefix + option + tail)
+                if len(expanded) >= max_patterns:
+                    return expanded
+        return expanded
+
+    return _expand_one(pattern or "*")[:max_patterns]
 
 
 def action_list_dir(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
@@ -350,10 +402,21 @@ def action_search(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         limit = 500
     limit = min(limit, 5000)
     p = Path(path)
+    patterns = _expand_glob_braces(pattern)
+    matches = []
+    seen = set()
     if recursive:
-        matches = [str(m.relative_to(p)).replace("\\", "/") for m in p.rglob(pattern)]
+        iterator = (m for pat in patterns for m in p.rglob(pat))
     else:
-        matches = [str(m.relative_to(p)).replace("\\", "/") for m in p.glob(pattern)]
+        iterator = (m for pat in patterns for m in p.glob(pat))
+    for m in iterator:
+        rel = str(m.relative_to(p)).replace("\\", "/")
+        if rel in seen:
+            continue
+        seen.add(rel)
+        matches.append(rel)
+        if len(matches) >= limit:
+            break
     return matches[:limit]
 
 

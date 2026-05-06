@@ -235,6 +235,13 @@ Useful local URLs:
 | `ws://localhost:9090/ws/relay` | PawFlow relay WebSocket |
 | `ws://localhost:9090/ws/tools/_tool_relay` | Internal tool relay WebSocket |
 
+Conversation persistence uses `ConversationWriter` as an asynchronous FIFO per
+conversation. Provider callbacks must only enqueue work and return; writer lag
+must never throttle tool calls, streaming callbacks, or message production. The
+writer drains ready queue items in batches, publishes SSE only after successful
+disk writes, and `ConversationStore.append_message()` updates hot metadata in
+memory instead of rescanning `transcript.jsonl` after each append.
+
 ---
 
 ## Running the Tests

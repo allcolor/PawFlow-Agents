@@ -7,7 +7,7 @@ import os
 import shutil as _shutil
 import subprocess
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional, Tuple
 
 # Size limits
 MAX_EXEC_OUTPUT = 10 * 1024 * 1024  # 10 MB for stdout/stderr
@@ -93,6 +93,31 @@ def _resolve_shell(name: str) -> str:
                 "python3": "python", "js": "node"}
     canonical = _aliases.get(name.lower(), name.lower())
     return shells.get(canonical, "")
+
+
+def is_unc_path(path: str) -> bool:
+    raw = str(path or "")
+    return raw.startswith("\\\\") or raw.startswith("//")
+
+
+def windows_shell_cwd(command: str, cwd: str,
+                      shell_name: str = "",
+                      executable: str = "") -> Tuple[str, Optional[str]]:
+    """Return a Windows-safe command/cwd pair for shell execution.
+
+    cmd.exe cannot use a UNC path as its current directory. When local=True
+    forwards execution to the Windows host helper and the project lives under
+    a WSL UNC path, run through pushd instead; pushd maps the UNC path to a
+    temporary drive for the command, then popd releases it.
+    """
+    if os.name != "nt" or not is_unc_path(cwd):
+        return command, cwd
+    shell_key = (shell_name or "cmd").lower()
+    exe_name = Path(executable or "cmd.exe").name.lower()
+    if shell_key not in ("", "cmd") and exe_name != "cmd.exe":
+        return command, cwd
+    quoted = cwd.replace('"', '""')
+    return f'pushd "{quoted}" >nul && {command} & popd', None
 
 
 def run_cancellable(request_id: str, cmd, *, timeout=None, **popen_kwargs):

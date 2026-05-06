@@ -10,7 +10,6 @@ Usage:
 """
 
 import logging
-import os
 import queue
 import threading
 import time
@@ -19,7 +18,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _IDLE_TIMEOUT = 300  # 5 minutes idle → writer thread exits
-_WRITER_QUEUE_MAXSIZE = max(1, int(os.getenv("PAWFLOW_CONV_WRITER_QUEUE_MAXSIZE", "10000") or "10000"))
+_WRITER_BATCH_MAX = 64
 
 
 def _require_ts_seq(m: Dict) -> None:
@@ -113,7 +112,7 @@ class ConversationWriter:
 
     def __init__(self, cid: str):
         self._cid = cid
-        self._queue: queue.Queue = queue.Queue(maxsize=_WRITER_QUEUE_MAXSIZE)
+        self._queue: queue.Queue = queue.Queue()
         self._stop = False
         self._alive = True
         self._thread = threading.Thread(
@@ -172,6 +171,32 @@ class ConversationWriter:
         self._queue.put({"_flush": True, "_done_event": evt})
         evt.wait(timeout=timeout)
 
+    def _publish_sse_events(self, item: Dict[str, Any]) -> None:
+        sse_events = item.get("sse_events")
+        if not sse_events:
+            return
+        from core.conversation_event_bus import ConversationEventBus
+        bus = ConversationEventBus.instance()
+        for sse_evt in sse_events:
+            # SSE target cid may differ from writer cid
+            # (e.g. task sub-conv writes routed to parent).
+            _evt_cid = sse_evt.get("cid") or self._cid
+            _sub_count = -1
+            try:
+                _sub_count = bus.subscriber_count(_evt_cid)
+            except Exception:
+                pass
+            logger.info(
+                "[conv-writer:%s] publish %s → cid=%s subs=%d",
+                self._cid[:8], sse_evt["type"], _evt_cid[:8], _sub_count)
+            try:
+                bus.publish_event(
+                    _evt_cid, sse_evt["type"], sse_evt.get("data"))
+            except Exception as sse_err:
+                logger.warning(
+                    "[conv-writer:%s] SSE publish failed: %s",
+                    self._cid[:8], sse_err)
+
     def _writer_loop(self):
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
@@ -188,58 +213,62 @@ class ConversationWriter:
                         return
                 continue
 
-            evt = item.get("_done_event")
             if item.get("_flush"):
+                evt = item.get("_done_event")
                 if evt:
                     evt.set()
                 continue
 
-            try:
-                op = item.get("op", "append_message")
-                if op != "append_message":
-                    raise ValueError(
-                        f"[conv-writer] unknown op: {op!r} (only 'append_message' supported)")
-                store.append_message(
-                    self._cid, item["msg"],
-                    agent_name=item.get("agent_name", ""),
-                    user_id=item.get("user_id", ""),
-                    ttl=item.get("ttl", 0))
-                # Publish SSE events AFTER successful write
-                sse_events = item.get("sse_events")
-                if sse_events:
-                    from core.conversation_event_bus import ConversationEventBus
-                    bus = ConversationEventBus.instance()
-                    for sse_evt in sse_events:
-                        # SSE target cid may differ from writer cid
-                        # (e.g. task sub-conv writes routed to parent).
-                        _evt_cid = sse_evt.get("cid") or self._cid
-                        # Diagnostic subscriber count is best-effort. A
-                        # missing/misbehaving method must NOT swallow the
-                        # publish below — that turned SSE into a silent
-                        # drop when _FakeBus (and any bus variant without
-                        # subscriber_count) raised AttributeError inside
-                        # the old outer try/except.
-                        _sub_count = -1
-                        try:
-                            _sub_count = bus.subscriber_count(_evt_cid)
-                        except Exception:
-                            pass
-                        logger.info(
-                            "[conv-writer:%s] publish %s → cid=%s subs=%d",
-                            self._cid[:8], sse_evt["type"],
-                            _evt_cid[:8], _sub_count)
-                        try:
-                            bus.publish_event(
-                                _evt_cid, sse_evt["type"], sse_evt.get("data"))
-                        except Exception as sse_err:
-                            logger.warning(
-                                "[conv-writer:%s] SSE publish failed: %s",
-                                self._cid[:8], sse_err)
-            except Exception as e:
-                logger.error("[conv-writer:%s] write failed: %s",
-                             self._cid[:8], e, exc_info=True)
-            finally:
+            batch = [item]
+            flush_events = []
+            while len(batch) < _WRITER_BATCH_MAX:
+                try:
+                    next_item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if next_item.get("_flush"):
+                    evt = next_item.get("_done_event")
+                    if evt:
+                        flush_events.append(evt)
+                    break
+                batch.append(next_item)
+
+            _batch_started = time.monotonic()
+            written = []
+            for write_item in batch:
+                try:
+                    op = write_item.get("op", "append_message")
+                    if op != "append_message":
+                        raise ValueError(
+                            f"[conv-writer] unknown op: {op!r} (only 'append_message' supported)")
+                    store.append_message(
+                        self._cid, write_item["msg"],
+                        agent_name=write_item.get("agent_name", ""),
+                        user_id=write_item.get("user_id", ""),
+                        ttl=write_item.get("ttl", 0))
+                    written.append(write_item)
+                except Exception as e:
+                    logger.error("[conv-writer:%s] write failed: %s",
+                                 self._cid[:8], e, exc_info=True)
+
+            _write_ms = (time.monotonic() - _batch_started) * 1000.0
+            _publish_started = time.monotonic()
+            for write_item in written:
+                self._publish_sse_events(write_item)
+            _publish_ms = (time.monotonic() - _publish_started) * 1000.0
+
+            logger.info(
+                "[conv-writer:%s] batch size=%d written=%d queued=%d "
+                "write_ms=%.1f publish_ms=%.1f total_ms=%.1f",
+                self._cid[:8], len(batch), len(written), self._queue.qsize(),
+                _write_ms, _publish_ms,
+                (time.monotonic() - _batch_started) * 1000.0)
+
+            for write_item in batch:
+                evt = write_item.get("_done_event")
                 if evt:
                     evt.set()
+            for evt in flush_events:
+                evt.set()
 
         self._alive = False

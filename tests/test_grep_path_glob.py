@@ -129,6 +129,28 @@ def test_glob_handler_accepts_limit(tmp_path):
     assert len(lines) == 2
 
 
+def test_glob_handler_accepts_brace_pattern(tmp_path):
+    (tmp_path / "core").mkdir()
+    (tmp_path / "services").mkdir()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "core" / "a.py").write_text("x", encoding="utf-8")
+    (tmp_path / "services" / "b.py").write_text("x", encoding="utf-8")
+    (tmp_path / "docs" / "c.py").write_text("x", encoding="utf-8")
+
+    handler = GlobHandler()
+    handler.set_workdir(str(tmp_path))
+    handler.set_is_claude_code(True)
+
+    result = handler.execute({
+        "pattern": "{core,services}/**/*.py",
+        "path": str(tmp_path),
+    })
+
+    assert "core/a.py" in result
+    assert "services/b.py" in result
+    assert "docs/c.py" not in result
+
+
 def test_relay_action_search_accepts_limit(tmp_path):
     for idx in range(5):
         (tmp_path / f"file_{idx}.py").write_text("x", encoding="utf-8")
@@ -140,3 +162,19 @@ def test_relay_action_search_accepts_limit(tmp_path):
     })
 
     assert len(results) == 3
+
+
+def test_relay_action_search_accepts_brace_pattern(tmp_path):
+    (tmp_path / "core").mkdir()
+    (tmp_path / "services").mkdir()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "core" / "a.py").write_text("x", encoding="utf-8")
+    (tmp_path / "services" / "b.py").write_text("x", encoding="utf-8")
+    (tmp_path / "docs" / "c.py").write_text("x", encoding="utf-8")
+
+    results = action_search(str(tmp_path), str(tmp_path), {
+        "pattern": "{core,services}/**/*.py",
+        "recursive": True,
+    })
+
+    assert results == ["core/a.py", "services/b.py"]

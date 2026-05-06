@@ -223,15 +223,27 @@ def test_message_meta_context_used_comes_from_central_context_usage():
 
 
 def test_context_gauge_publishes_after_each_visible_append():
-    """The live gauge must move during tool loops, not only at heartbeat/done."""
+    """Append callbacks may publish a cached gauge, but must not recalculate it."""
     src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
     assert "def _publish_live_context_usage" in src
     publish_body = src[src.index("def _publish_live_context_usage") : src.index("def _append(msg: LLMMessage)")]
     append_body = src[src.index("def _append(msg: LLMMessage)") : src.index("# Repair orphan tool_calls")]
     assert "_context_usage_suspended" in publish_body
+    assert "compute_context_usage" not in publish_body
+    assert "_agent_source(include_context=False)" in publish_body
     assert "messages.append(msg)" in append_body
     assert "_publish_live_context_usage(" in append_body
     assert "append_{msg.role}" in append_body
+
+
+def test_cli_tool_callbacks_do_not_compute_context_usage_on_hot_path():
+    src = Path("tasks/ai/agent_core.py").read_text(encoding="utf-8")
+    turn_callback = src[src.index("def _claude_code_turn_callback") : src.index("def _apply_queued_delegate_turn_mode")]
+    live_block = src[src.index("def _cli_block_callback") : src.index("def _llm_call")]
+    assert "_agent_source(include_context=False)" in turn_callback
+    assert "compute_context_usage" not in turn_callback
+    assert "_agent_source(include_context=False)" in live_block
+    assert "compute_context_usage" not in live_block
 
 
 def test_manual_compact_suspends_stale_live_gauge_until_refresh():

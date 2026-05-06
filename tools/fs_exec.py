@@ -17,6 +17,7 @@ from fs_common import (
     _to_host_path,
     detect_available_shells,
     run_cancellable as _run_cancellable,
+    windows_shell_cwd,
 )
 from pawflow_relay.proc_registry import (
     register_inflight_proc,
@@ -134,6 +135,8 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         if not executable and os.name == "nt":
             # Default: cmd.exe with UTF-8 codepage
             command = f"chcp 65001 >nul 2>&1 & {command}"
+        command, run_cwd = windows_shell_cwd(
+            command, root_dir, shell_name=shell_name, executable=executable or "")
         result = _run_cancellable(
             req.get("request_id", ""),
             command, shell=True,
@@ -141,7 +144,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=timeout,
-            cwd=root_dir,
+            cwd=run_cwd,
             env=env,
         )
     stdout = result.stdout or ""
@@ -220,9 +223,11 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
                 raise ValueError(f"Shell '{shell_name}' not found.")
         if not executable and os.name == "nt":
             command = f"chcp 65001 >nul 2>&1 & {command}"
+        command, run_cwd = windows_shell_cwd(
+            command, root_dir, shell_name=shell_name, executable=executable or "")
         cmd = command
         popen_kwargs["shell"] = True
-        popen_kwargs["cwd"] = root_dir
+        popen_kwargs["cwd"] = run_cwd
         popen_kwargs["env"] = env
         if executable:
             popen_kwargs["executable"] = executable

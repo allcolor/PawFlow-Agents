@@ -86,6 +86,10 @@ python tools/pawflow_relay.py --port 9877 --dir /home/user/project --secret myse
 
 Relay reconnect handling is connection-scoped. When a relay WebSocket dies, PawFlow cancels only the pending requests sent through that socket; requests already sent through a newer reconnect stay alive. If the pool drops to zero, all pending relay requests are failed immediately so UI calls, context sync, and tool requests cannot accumulate blocked threads during network flaps.
 
+On Windows/WSL2 network changes, a relay socket may surface the network failure through the reader before the next payload frame arrives. The relay receiver treats a stored reader exception as a disconnect, not as an idle keepalive timeout; this prevents ping/retry hot loops and releases the relay session cleanly.
+
+When a Docker relay is started with `--allow-local`, `local=true` operations are forwarded to the host helper. For Windows hosts whose project root is a UNC path such as `\\wsl$\...`, cmd-based execution uses `pushd`/`popd` instead of setting the process current directory to the UNC path, because `cmd.exe` cannot run with a UNC cwd.
+
 ## Cloud Storage — Google Drive
 
 ### 1. Configure OAuth provider
@@ -157,7 +161,7 @@ Example: `allowed_paths=src,docs` + `denied_paths=src/secret` → can read `src/
 - `exists(path)` — Check if path exists
 
 ### Advanced
-- `search(path, pattern, recursive)` — Find files by glob pattern
+- `search(path, pattern, recursive)` — Find files by glob pattern. Patterns support `**` and shell-style brace alternatives such as `{core,services}/**/*.py`.
 - `grep(path, regex, recursive)` — Search file contents by regex. A space-separated `path` containing multiple existing roots scans each root.
 - `find_replace(path, pattern, replacement)` — Regex replace in a file
 

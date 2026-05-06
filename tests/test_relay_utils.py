@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pawflow_relay.utils import translate_path
+from tools.fs_common import windows_shell_cwd
 
 
 class TestTranslatePathPosix:
@@ -54,3 +55,31 @@ class TestTranslatePathWindows:
         # Non-WSL UNC (e.g. a real SMB share) has no Linux equivalent — leave it
         # alone rather than silently produce a wrong path.
         assert self._translate(r"\\server\share\path") == "//server/share/path"
+
+
+def test_windows_shell_cwd_uses_pushd_for_cmd_unc_paths():
+    with patch("tools.fs_common.os.name", "nt"):
+        command, cwd = windows_shell_cwd(
+            "python -V",
+            r"\\wsl$\Ubuntu-24.04\home\qan\Projets\PawFlow",
+            shell_name="cmd",
+            executable=r"C:\Windows\System32\cmd.exe",
+        )
+
+    assert cwd is None
+    assert command.startswith('pushd "\\\\wsl$\\Ubuntu-24.04')
+    assert "python -V" in command
+    assert command.endswith(" & popd")
+
+
+def test_windows_shell_cwd_leaves_powershell_unc_cwd_alone():
+    with patch("tools.fs_common.os.name", "nt"):
+        command, cwd = windows_shell_cwd(
+            "Get-Location",
+            r"\\wsl$\Ubuntu-24.04\home\qan\Projets\PawFlow",
+            shell_name="powershell",
+            executable="powershell.exe",
+        )
+
+    assert command == "Get-Location"
+    assert cwd == r"\\wsl$\Ubuntu-24.04\home\qan\Projets\PawFlow"

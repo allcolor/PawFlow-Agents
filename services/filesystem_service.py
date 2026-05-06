@@ -59,7 +59,7 @@ def _short_args(args: dict) -> str:
 # Relay script files to sync (relative to tools/ directory)
 _RELAY_SCRIPT_FILES = [
     "pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
-    "fs_screen.py", "fs_mcp.py",
+    "fs_screen.py", "fs_mcp.py", "fs_common.py",
 ]
 
 

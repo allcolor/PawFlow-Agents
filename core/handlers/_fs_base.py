@@ -27,6 +27,53 @@ _FS_ALIASES = frozenset({"filestore", "store", "server"})
 _FS_TYPES = ("relay", "filesystem", "googleDrive", "oneDrive")
 
 
+def _expand_glob_braces(pattern: str, max_patterns: int = 256) -> List[str]:
+    """Expand shell-style glob braces for Python glob/fnmatch callers."""
+    def _split_options(body: str) -> List[str]:
+        parts = []
+        start = 0
+        depth = 0
+        for idx, ch in enumerate(body):
+            if ch == "{":
+                depth += 1
+            elif ch == "}" and depth > 0:
+                depth -= 1
+            elif ch == "," and depth == 0:
+                parts.append(body[start:idx])
+                start = idx + 1
+        parts.append(body[start:])
+        return parts
+
+    def _expand_one(value: str) -> List[str]:
+        start = value.find("{")
+        if start < 0:
+            return [value]
+        depth = 0
+        end = -1
+        for idx in range(start, len(value)):
+            ch = value[idx]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = idx
+                    break
+        if end < 0:
+            return [value]
+        prefix = value[:start]
+        suffix = value[end + 1:]
+        expanded = []
+        for option in _split_options(value[start + 1:end]):
+            for tail in _expand_one(suffix):
+                expanded.append(prefix + option + tail)
+                if len(expanded) >= max_patterns:
+                    return expanded
+        return expanded
+
+    return _expand_one(pattern or "*")[:max_patterns]
+
+
 def find_fs_service(user_id: str, service_name: str = ""):
     """Standalone service lookup (for non-handler code like HTTP actions).
 
@@ -521,16 +568,22 @@ class BaseFsHandler(ToolHandler):
         return f"Created directory: {path}"
 
     def _workdir_glob(self, pattern: str, path: str = ".", limit: int = 500) -> str:
-        import fnmatch
+        from pathlib import Path
         full = self._sandbox_path(path, self._workdir)
+        patterns = _expand_glob_braces(pattern)
         matches = []
-        for root, dirs, files in os.walk(full):
-            for f in files:
-                if fnmatch.fnmatch(f, pattern):
-                    rel = os.path.relpath(os.path.join(root, f), self._workdir)
-                    matches.append(rel.replace("\\", "/"))
-                    if len(matches) >= limit:
-                        return "\n".join(matches)
+        seen = set()
+        for pat in patterns:
+            for match in Path(full).glob(pat):
+                if not match.is_file():
+                    continue
+                rel = os.path.relpath(str(match), self._workdir).replace("\\", "/")
+                if rel in seen:
+                    continue
+                seen.add(rel)
+                matches.append(rel)
+                if len(matches) >= limit:
+                    return "\n".join(matches)
         return "\n".join(matches) if matches else "(no matches)"
 
     def _workdir_grep(self, pattern: str, path: str = ".",

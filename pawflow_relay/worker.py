@@ -1327,7 +1327,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _script_dir = os.path.dirname(os.path.dirname(
                 os.path.abspath(__file__)))
             _h = hashlib.sha256()
-            for _sf in ["pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py", "fs_screen.py", "fs_mcp.py"]:
+            for _sf in ["pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
+                        "fs_screen.py", "fs_mcp.py", "fs_common.py"]:
                 _sp = os.path.join(_script_dir, _sf)
                 if os.path.exists(_sp):
                     with open(_sp, "rb") as _f:
@@ -1348,7 +1349,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _readonly_skipped = []
             for _fname, _content_b64 in _scripts.items():
                 if _fname not in ("pawflow_relay_launcher.py", "fs_actions.py", "fs_exec.py",
-                                  "fs_screen.py", "fs_mcp.py"):
+                                  "fs_screen.py", "fs_mcp.py", "fs_common.py"):
                     continue  # Only accept known relay files
                 _dst = os.path.join(_script_dir, _fname)
                 _data = base64.b64decode(_content_b64)
@@ -1362,12 +1363,18 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     # "update" — host edits are already visible. Skip
                     # silently instead of failing the whole sync.
                     if getattr(_e, "errno", 0) == 30:
-                        _readonly_skipped.append(_fname)
+                        try:
+                            with open(_dst, "rb") as _f:
+                                _current = _f.read()
+                        except OSError:
+                            _current = None
+                        if _current != _data:
+                            _readonly_skipped.append(_fname)
                     else:
                         raise
             # Hot-reload importable modules (not pawflow_relay.py itself)
             import importlib
-            for _mod_name in ["fs_actions", "fs_exec", "fs_screen", "fs_mcp"]:
+            for _mod_name in ["fs_common", "fs_actions", "fs_exec", "fs_screen", "fs_mcp"]:
                 if f"{_mod_name}.py" in _updated and _mod_name in sys.modules:
                     try:
                         importlib.reload(sys.modules[_mod_name])

@@ -141,6 +141,21 @@ class TestMessageCount:
                                  user_id=uid)
         assert store.message_count(cid) == 3
 
+    def test_append_message_updates_hot_cache_without_reload(self, conv):
+        store, cid, uid = conv
+        def _unexpected_reload(_cid):
+            raise AssertionError("append_message must not rescan transcript.jsonl")
+        store._reload_cache = _unexpected_reload
+
+        for i in range(3):
+            store.append_message(
+                cid,
+                _msg(content=f"m{i}", source={
+                    "type": "user", "name": uid, "target_agent": "bot"}),
+                user_id=uid)
+
+        assert store.message_count(cid) == 3
+
 
 # ── get_extra / set_extra ────────────────────────────────────────────
 

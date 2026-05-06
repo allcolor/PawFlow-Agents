@@ -125,6 +125,36 @@ def test_enqueue_message_routes_through_append_message(fake_store):
     assert rmsg["content"] == "hi"
 
 
+def test_enqueue_message_does_not_wait_for_slow_writer(fake_store, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _slow_append(cid, msg, agent_name="", user_id="", ttl=0):
+        entered.set()
+        release.wait(timeout=5.0)
+        fake_store.routed.append((cid, agent_name, dict(msg)))
+
+    monkeypatch.setattr(fake_store, "append_message", _slow_append)
+    cid = "conv-non-blocking-producer"
+    w = ConversationWriter.for_conversation(cid)
+    w.enqueue_message(_msg(content="block writer"))
+    assert entered.wait(timeout=1.0)
+
+    producer_done = threading.Event()
+
+    def _producer():
+        for i in range(200):
+            w.enqueue_message(_msg(content=f"queued-{i}"))
+        producer_done.set()
+
+    t = threading.Thread(target=_producer)
+    t.start()
+    assert producer_done.wait(timeout=1.0)
+    t.join(timeout=1.0)
+    release.set()
+    assert ConversationWriter.shutdown_all(wait_timeout=10.0)
+
+
 def test_enqueue_message_requires_ts_and_seq(fake_store):
     """Missing ts/seq on a routed message is a producer bug -- must raise
     at enqueue time, not silently enqueue a corrupt record."""

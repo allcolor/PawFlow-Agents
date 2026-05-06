@@ -1088,6 +1088,39 @@ class ConversationStore:
             self._cache[cid] = c
         return c
 
+    def _cache_agents_for_append(self, cid: str) -> set:
+        """Return known agents without rescanning the transcript hot path."""
+        with self._cache_lock:
+            cached = self._cache.get(cid)
+            if cached is not None:
+                return set(cached.get("agents", set()))
+        return set(self._reload_cache(cid).get("agents", set()))
+
+    def _note_cache_append(self, cid: str, transcript_line: Optional[Dict],
+                           agents: set) -> None:
+        """Apply append_message side effects to the in-memory cache.
+
+        append_message is the hot path for every streamed assistant block,
+        tool_call, and tool_result. Rescanning transcript.jsonl after each
+        append makes long conversations slower on every write; the fields
+        affected by an append are trivial to update in memory.
+        """
+        with self._cache_lock:
+            cached = self._cache.get(cid)
+            if cached is None:
+                return
+            if transcript_line is not None:
+                cached["msg_count"] = int(cached.get("msg_count") or 0) + 1
+                if not cached.get("preview") and transcript_line.get("role") == "user":
+                    content = transcript_line.get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        cached["preview"] = content[:80]
+                cached["updated_at"] = max(
+                    cached.get("updated_at", 0), transcript_line.get("ts", 0))
+            if agents:
+                cached.setdefault("agents", set()).update(
+                    self._canon_agent(a) for a in agents if a)
+
     def _ensure_loaded(self):
         if self._loaded:
             return
@@ -1243,6 +1276,8 @@ class ConversationStore:
         display_only = bool(msg.get("display_only"))
         has_tool_calls = bool(msg.get("tool_calls"))
         now = time.time()
+        transcript_line = None
+        touched_agents = set()
 
         lock = self._get_conv_lock(cid)
         with lock:
@@ -1259,6 +1294,7 @@ class ConversationStore:
                 line = self._stamp_line(cid, {"t": "msg", **msg})
                 if is_private:
                     line["private"] = True
+                transcript_line = line
                 with open(self._transcript_path(cid), "a",
                           encoding="utf-8") as f:
                     f.write(json.dumps(line, ensure_ascii=False) + "\n")
@@ -1273,7 +1309,8 @@ class ConversationStore:
             elif src_type == "agent_delegate":
                 # Private A↔B routing (requests project to shared,
                 # replies stay private between from/to).
-                self._route_delegate_message(cid, msg, agent_name)
+                touched_agents.update(
+                    self._route_delegate_message(cid, msg, agent_name))
             else:
                 # 2. Author's own context (brut, keeps tool_calls /
                 #    tool results; also target of context injections).
@@ -1282,6 +1319,7 @@ class ConversationStore:
                         self._seed_agent_context_from_shared_if_missing(
                             cid, route_agent)
                     self._append_ctx_file(cid, route_agent, [msg])
+                    touched_agents.add(route_agent)
 
                 # 3. Shared + broadcast to other agents — only for
                 #    conversation messages (filter_for_shared drops
@@ -1293,24 +1331,24 @@ class ConversationStore:
                         shared_msgs = [self._transform_for_shared(m)
                                        for m in shared_candidates]
                         self._append_shared_ctx(cid, shared_msgs)
-                        # Fresh disk scan — save_agent_context doesn't
-                        # invalidate the main cache, so a newly-created
-                        # agent would be invisible otherwise.
-                        cache = self._reload_cache(cid)
-                        for other in cache.get("agents", set()):
+                        known_agents = self._cache_agents_for_append(cid)
+                        if route_agent:
+                            known_agents.add(route_agent)
+                        for other in known_agents:
                             if not other or other == agent_name:
                                 continue
                             transformed = [
                                 self._transform_for_other_agent(m, other)
                                 for m in shared_candidates]
                             self._append_ctx_file(cid, other, transformed)
+                            touched_agents.add(other)
 
         # Refresh cache (msg_count, agents set) after any write.
         self._invalidate_ctx_cache(cid)
-        self._reload_cache(cid)
+        self._note_cache_append(cid, transcript_line, touched_agents)
 
     def _route_delegate_message(self, cid: str, msg: Dict,
-                                agent_name: str) -> None:
+                                agent_name: str) -> set:
         """Route an agent_delegate message to from's ctx, to's ctx, and
         (for requests only) to shared + other agents.
 
@@ -1320,8 +1358,9 @@ class ConversationStore:
         _from = src.get("from", "") or agent_name
         _to = src.get("to", "")
         if not _to:
-            return
+            return set()
         _kind = src.get("kind")
+        touched_agents = {self._canon_agent(_from), self._canon_agent(_to)}
 
         # FROM's own ctx — [delegate <from> → <to>]:
         _for_from = dict(msg)
@@ -1345,7 +1384,7 @@ class ConversationStore:
 
         # Replies stay private between from/to — don't leak to shared.
         if _kind == "reply":
-            return
+            return touched_agents
 
         # Request broadcasts to shared + other agents (not from/to,
         # they already got their tailored copy above).
@@ -1357,14 +1396,17 @@ class ConversationStore:
             f"[{_from} to agent {_to}]:")
         self._append_shared_ctx(cid, [_for_shared])
 
-        cache = self._reload_cache(cid)
-        _delegate_parties = {_from, _to}
-        for other in cache.get("agents", set()):
+        known_agents = self._cache_agents_for_append(cid)
+        known_agents.update(touched_agents)
+        _delegate_parties = {self._canon_agent(_from), self._canon_agent(_to)}
+        for other in known_agents:
             if not other or other in _delegate_parties:
                 continue
             transformed = self._transform_for_other_agent(
                 _for_shared, other)
             self._append_ctx_file(cid, other, [transformed])
+            touched_agents.add(other)
+        return touched_agents
 
     # ── Context ops ───────────────────────────────────────────────────
 

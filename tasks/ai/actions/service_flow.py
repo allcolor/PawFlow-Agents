@@ -84,6 +84,165 @@ def _store_gemini_tokens(service_id, access_token, refresh_token, expires_at,
     logger.info("Gemini credential added to pool for '%s'", service_id)
 
 
+_PARAM_SCHEMA_KEYS = {
+    "type", "default", "description", "options", "sensitive", "service_type",
+    "provider", "provider_field", "required",
+}
+
+
+def _schema_entry_from_value(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict) and _PARAM_SCHEMA_KEYS.intersection(value):
+        entry = dict(value)
+        entry.setdefault("type", "string")
+        return entry
+    if isinstance(value, bool):
+        return {"type": "boolean", "default": value}
+    if isinstance(value, int) and not isinstance(value, bool):
+        return {"type": "integer", "default": value}
+    if isinstance(value, float):
+        return {"type": "float", "default": value}
+    if isinstance(value, (dict, list)):
+        return {"type": "object", "default": value}
+    return {"type": "string", "default": "" if value is None else value}
+
+
+def _normalize_flow_parameters(raw_params: Any) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(raw_params, dict):
+        return {}
+    if isinstance(raw_params.get("properties"), dict):
+        required = set(raw_params.get("required") or [])
+        out = {}
+        for name, spec in raw_params["properties"].items():
+            entry = dict(spec) if isinstance(spec, dict) else _schema_entry_from_value(spec)
+            if name in required:
+                entry["required"] = True
+            out[name] = entry
+        return out
+    return {name: _schema_entry_from_value(value)
+            for name, value in raw_params.items()
+            if not str(name).startswith("_")}
+
+
+def _template_roots(user_id: str):
+    from core.paths import REPOSITORY_DIR
+    roots = [REPOSITORY_DIR / "flows" / "global"]
+    if user_id:
+        roots.append(REPOSITORY_DIR / "flows" / "users" / user_id)
+    return roots
+
+
+def _resolve_flow_template_path(template_id: str, user_id: str):
+    if not template_id:
+        return None
+    for root in _template_roots(user_id):
+        if not root.is_dir():
+            continue
+        for latest in root.rglob("latest.json"):
+            flow_dir = latest.parent
+            try:
+                ptr = json.loads(latest.read_text(encoding="utf-8"))
+                version = (ptr.get("version") or "").strip()
+                if not version:
+                    continue
+                vfile = flow_dir / "versions" / f"{version}.json"
+                if not vfile.is_file():
+                    continue
+                raw = json.loads(vfile.read_text(encoding="utf-8"))
+                if (raw.get("id") or flow_dir.name) == template_id:
+                    return vfile
+            except Exception:
+                continue
+    return None
+
+
+def _service_parameter_schema(service_type: str) -> Dict[str, Any]:
+    if not service_type:
+        return {}
+    try:
+        from tasks import register_all_tasks
+        register_all_tasks()
+        from core import ServiceFactory
+        cls = ServiceFactory.get(service_type)
+        instance = object.__new__(cls)
+        instance.config = {}
+        schema = instance.get_parameter_schema()
+        return schema if isinstance(schema, dict) else {}
+    except Exception:
+        return {}
+
+
+def _flow_services_schema(raw: Dict[str, Any], service_overrides=None,
+                          service_configs=None) -> Dict[str, Dict[str, Any]]:
+    service_overrides = service_overrides or {}
+    service_configs = service_configs or {}
+    out = {}
+    for service_id, service_def in sorted((raw.get("services") or {}).items()):
+        if not isinstance(service_def, dict):
+            continue
+        service_type = service_def.get("type", "") or ""
+        default_params = dict(service_def.get("parameters") or {})
+        values = dict(default_params)
+        values.update(service_configs.get(service_id) or {})
+        schema = _service_parameter_schema(service_type)
+        if (service_type == "llmConnection" and "model" in values and
+                "default_model" in schema and "default_model" not in values):
+            values["default_model"] = values["model"]
+        schema = dict(schema)
+        for key, value in values.items():
+            if key in schema:
+                continue
+            if service_type == "llmConnection" and key == "model" and "default_model" in schema:
+                continue
+            schema[key] = _schema_entry_from_value(value)
+        out[service_id] = {
+            "service_id": service_id,
+            "service_type": service_type,
+            "parameters_schema": schema,
+            "parameter_values": values,
+            "default_parameters": default_params,
+            "override": service_overrides.get(service_id, ""),
+        }
+    return out
+
+
+def _flow_deploy_schema_payload(raw: Dict[str, Any], *, parameters=None,
+                                service_overrides=None,
+                                service_configs=None) -> Dict[str, Any]:
+    parameters = parameters or {}
+    schema = _normalize_flow_parameters(raw.get("parameters", {}))
+    values = {}
+    for name, spec in schema.items():
+        if isinstance(spec, dict) and "default" in spec:
+            values[name] = spec.get("default")
+    values.update({k: v for k, v in parameters.items()
+                   if not str(k).startswith("_")})
+    return {
+        "template_id": raw.get("id", ""),
+        "name": raw.get("name", raw.get("id", "")),
+        "version": raw.get("version", ""),
+        "scope": raw.get("scope", "independent"),
+        "parameters_schema": schema,
+        "parameter_values": values,
+        "services": _flow_services_schema(
+            raw, service_overrides=service_overrides,
+            service_configs=service_configs),
+    }
+
+
+def _set_instance_config(inst, parameters=None, service_overrides=None,
+                         service_configs=None) -> None:
+    if parameters is not None:
+        preserved = {k: v for k, v in (inst.parameters or {}).items()
+                     if str(k).startswith("_")}
+        inst.parameters = {**preserved, **(parameters or {})}
+    if service_overrides is not None:
+        inst.service_overrides = {k: v for k, v in (service_overrides or {}).items()
+                                  if v and v != "local"}
+    if service_configs is not None:
+        inst.service_configs = {k: v for k, v in (service_configs or {}).items()
+                                if isinstance(v, dict)}
+
+
 
 def _handle_service_flow(self, action, body, store, user_id, flowfile):
     """Handle service flow actions. Returns [flowfile] or None."""
@@ -110,6 +269,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     _started = False
                 services.append({
                     "service_id": sid,
+                    "ref": f"global:{sid}",
                     "service_type": sdef.service_type,
                     "enabled": _enabled,
                     "started": _started,
@@ -126,6 +286,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     _started = False
                 entry = {
                     "service_id": sid,
+                    "ref": f"user:{user_id}:{sid}",
                     "service_type": sdef.service_type,
                     "enabled": sdef.enabled,
                     "started": _started,
@@ -1511,7 +1672,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     return [flowfile]
                 reg._restore_instance(iid, inst.flow_path,
                                        inst.max_workers, inst.max_retries,
-                                       parameters=inst.parameters)
+                                       parameters=inst.parameters,
+                                       service_overrides=inst.service_overrides,
+                                       service_configs=inst.service_configs)
                 flowfile.set_content(json.dumps({"ok": True, "status": "running"}).encode())
             elif action == "undeploy_flow":
                 ex = reg.get(iid)
@@ -1574,11 +1737,35 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
 
+    if action == "get_flow_deploy_schema":
+        template_id = body.get("template_id", "")
+        if not template_id:
+            flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
+            return [flowfile]
+        try:
+            tpath = _resolve_flow_template_path(template_id, user_id)
+            if not tpath:
+                flowfile.set_content(json.dumps(
+                    {"error": f"Template '{template_id}' not found in "
+                              "data/repository/flows/"}).encode())
+                return [flowfile]
+            raw = json.loads(tpath.read_text(encoding="utf-8"))
+            payload = _flow_deploy_schema_payload(raw)
+            payload["file_path"] = str(tpath)
+            flowfile.set_content(json.dumps(
+                payload, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+
     if action == "deploy_flow":
         template_id = body.get("template_id", "")
         conv_id = body.get("conversation_id", "")
         deploy_scope = "conversation" if conv_id else body.get("scope", "user")
         params = body.get("parameters", {})
+        service_overrides = body.get("service_overrides", {})
+        service_configs = body.get("service_configs", {})
         if deploy_scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps(
                 {"error": "Requires admin role for global scope"}).encode())
@@ -1587,35 +1774,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
             return [flowfile]
         try:
-            from core.paths import REPOSITORY_DIR
             from core.deployment_registry import DeploymentRegistry
-            # Resolve template_id (matches raw["id"] or the flow_dir name)
-            # by walking the same scope tree used by list_available_flows.
-            tpath = None
-            roots = [REPOSITORY_DIR / "flows" / "global"]
-            if user_id:
-                roots.append(REPOSITORY_DIR / "flows" / "users" / user_id)
-            for root in roots:
-                if not root.is_dir():
-                    continue
-                for latest in root.rglob("latest.json"):
-                    flow_dir = latest.parent
-                    try:
-                        ptr = json.loads(latest.read_text(encoding="utf-8"))
-                        version = (ptr.get("version") or "").strip()
-                        if not version:
-                            continue
-                        vfile = flow_dir / "versions" / f"{version}.json"
-                        if not vfile.is_file():
-                            continue
-                        raw = json.loads(vfile.read_text(encoding="utf-8"))
-                        if (raw.get("id") or flow_dir.name) == template_id:
-                            tpath = vfile
-                            break
-                    except Exception:
-                        continue
-                if tpath:
-                    break
+            tpath = _resolve_flow_template_path(template_id, user_id)
             if not tpath:
                 flowfile.set_content(json.dumps(
                     {"error": f"Template '{template_id}' not found in "
@@ -1652,6 +1812,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 parameters=params,
                 source="agent",
                 conversation_id=conv_id if deploy_scope == "conversation" else None,
+                service_overrides=service_overrides,
+                service_configs=service_configs,
             )
             flowfile.set_content(json.dumps(
                 {"ok": True, "instance_id": iid, "scope": deploy_scope,
@@ -1702,24 +1864,35 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not inst:
                 flowfile.set_content(json.dumps({"error": "Instance not found"}).encode())
                 return [flowfile]
-            # Load template parameters schema for reference
+            # Load template deployment schema for reference
             template_params = {}
+            deploy_schema = {}
             try:
                 from pathlib import Path as _Path
                 raw = json.loads(_Path(inst.flow_path).read_text(encoding="utf-8"))
                 template_params = raw.get("parameters", {})
+                deploy_schema = _flow_deploy_schema_payload(
+                    raw, parameters=inst.parameters,
+                    service_overrides=inst.service_overrides,
+                    service_configs=inst.service_configs)
             except Exception:
                 pass
-            flowfile.set_content(json.dumps({
+            payload = {
                 "instance_id": inst.instance_id,
                 "flow_name": inst.flow_name,
                 "flow_id": inst.flow_id,
                 "status": inst.status,
                 "parameters": inst.parameters,
                 "template_parameters": template_params,
+                "parameters_schema": deploy_schema.get("parameters_schema", {}),
+                "parameter_values": deploy_schema.get("parameter_values", {}),
+                "services": deploy_schema.get("services", {}),
+                "service_overrides": inst.service_overrides,
+                "service_configs": inst.service_configs,
                 "owner": inst.owner,
                 "scope": "conversation" if inst.conversation_id else "user" if inst.owner else "global",
-            }, ensure_ascii=False).encode())
+            }
+            flowfile.set_content(json.dumps(payload, ensure_ascii=False).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
@@ -1801,6 +1974,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "update_flow_params":
         iid = body.get("instance_id", "")
         params = body.get("parameters", {})
+        service_overrides = body.get("service_overrides")
+        service_configs = body.get("service_configs")
+        replace_parameters = bool(body.get("replace_parameters"))
         if not iid:
             flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
             return [flowfile]
@@ -1814,7 +1990,16 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if user_id and inst.owner and inst.owner != user_id:
                 flowfile.set_content(json.dumps({"error": "Permission denied"}).encode())
                 return [flowfile]
-            inst.parameters.update(params)
+            if replace_parameters:
+                _set_instance_config(
+                    inst, parameters=params,
+                    service_overrides=service_overrides,
+                    service_configs=service_configs)
+            else:
+                inst.parameters.update(params)
+                _set_instance_config(
+                    inst, service_overrides=service_overrides,
+                    service_configs=service_configs)
             dr._save_instance(inst)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:

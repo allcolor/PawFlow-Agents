@@ -485,6 +485,9 @@ class FlowManagerHandler(ToolHandler):
             if inst.parameters:
                 clean.setdefault("parameters", {}).update(inst.parameters)
             flow = FlowParser.parse(clean)
+            from core.executor_registry import _apply_service_bindings
+            _apply_service_bindings(
+                flow, inst.service_overrides, inst.service_configs)
 
             reg = ExecutorRegistry.get_instance()
             # Stop existing executor if any

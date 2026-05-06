@@ -73,36 +73,40 @@ function _showFlowStartDialog(instanceId, editOnly) {
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   action$('get_flow_instance', { instance_id: instanceId }).subscribe({
-    next: (data) => {
+    next: async (data) => {
       if (data.error) { panel.querySelector('div:last-child').innerHTML = `<div style="color:#e94560;">${data.error}</div>`; return; }
-      // Merge template defaults with instance overrides
-      const tplParams = data.template_parameters || {};
-      const instParams = data.parameters || {};
-      const merged = { ...tplParams, ...instParams };
       let fieldsHtml = '';
-      for (const [k, v] of Object.entries(merged)) {
-        const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
-        fieldsHtml += `<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">${escapeHtml(k)}</label>
-          <input class="flow-param-input" data-key="${escapeHtml(k)}" value="${escapeHtml(val)}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
+      try {
+        fieldsHtml = await _renderFlowDeploymentConfig(data);
+      } catch (e) {
+        panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">Error: ' + (e.message || e) + '</div>';
+        return;
       }
-      if (!fieldsHtml) fieldsHtml = '<div style="color:#555;font-size:12px;">No parameters</div>';
       const btnLabel = editOnly ? 'Save' : 'Start';
-      panel.querySelector('div:last-child').innerHTML = fieldsHtml
+      panel.querySelector('div:last-child').innerHTML = '<div id="flow-instance-config">' + fieldsHtml + '</div>'
         + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
           <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
           <button id="flowStartBtn" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${btnLabel}</button>
         </div>`;
       document.getElementById('flowStartBtn').onclick = () => {
-        const params = {};
-        document.querySelectorAll('.flow-param-input').forEach(el => {
-          params[el.dataset.key] = el.value;
-        });
-        // Save params first, then optionally start
-        action$('update_flow_params', { instance_id: instanceId, parameters: params }).subscribe({
+        let cfg;
+        try {
+          cfg = _collectFlowDeploymentConfig(document.getElementById('flow-instance-config'));
+        } catch (e) {
+          alert('Invalid JSON in parameters: ' + e.message);
+          return;
+        }
+        action$('update_flow_params', {
+          instance_id: instanceId,
+          parameters: cfg.parameters,
+          replace_parameters: true,
+          service_overrides: cfg.service_overrides,
+          service_configs: cfg.service_configs,
+        }).subscribe({
           next: (d) => {
             if (d.error) { addMsg('error', d.error); return; }
             if (editOnly) {
-              addMsg('system', 'Parameters updated for ' + instanceId);
+              addMsg('system', 'Flow configuration updated for ' + instanceId);
               document.getElementById('resourceEditorOverlay').remove();
               loadResources();
             } else {

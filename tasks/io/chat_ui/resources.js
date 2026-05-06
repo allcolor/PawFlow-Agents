@@ -1081,6 +1081,144 @@ function _showAgentSkillsDialog(agentName) {
 }
 
 // ── Deploy flow dialog ───────────────────────────────────────────
+function _flowFieldValueHtml(value) {
+  if (value == null) return '';
+  if (typeof value === 'object') return escapeHtml(JSON.stringify(value, null, 2));
+  return escapeHtml(String(value));
+}
+
+function _flowFieldValue(schema, values, key) {
+  if (values && values[key] != null) return values[key];
+  const spec = schema[key] || {};
+  return spec.default != null ? spec.default : '';
+}
+
+function _renderFlowSchemaFields(schema, values, cssClass, serviceId) {
+  let html = '';
+  for (const [key, spec0] of Object.entries(schema || {})) {
+    const spec = spec0 || {};
+    const type = spec.type || 'string';
+    const value = _flowFieldValue(schema, values || {}, key);
+    const dataAttrs = ' class="' + cssClass + '" data-key="' + escapeHtml(key)
+      + '" data-type="' + escapeHtml(type) + '"'
+      + (serviceId ? ' data-service-id="' + escapeHtml(serviceId) + '"' : '');
+    html += '<div style="margin-bottom:8px;">'
+      + '<label style="color:#aaa;font-size:11px;">' + escapeHtml(key)
+      + (spec.required ? ' <span style="color:#e94560;">*</span>' : '') + '</label>';
+    if (spec.description) html += '<div style="color:#666;font-size:10px;margin-top:1px;">' + escapeHtml(spec.description) + '</div>';
+    if (type === 'boolean') {
+      html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input type="checkbox"'
+        + dataAttrs + (value ? ' checked' : '') + ' style="accent-color:#6c5ce7;">'
+        + '<span style="color:#e0e0e0;font-size:12px;">Enabled</span></label>';
+    } else if (type === 'select' && spec.options) {
+      html += '<select' + dataAttrs + ' style="' + _svcInputStyle + '">';
+      for (const opt0 of spec.options) {
+        const optVal = typeof opt0 === 'object' ? opt0.value : opt0;
+        const optLabel = typeof opt0 === 'object' ? (opt0.label || opt0.value) : opt0;
+        html += '<option value="' + escapeHtml(String(optVal)) + '"'
+          + (String(value) === String(optVal) ? ' selected' : '') + '>'
+          + escapeHtml(String(optLabel)) + '</option>';
+      }
+      html += '</select>';
+    } else if (type === 'textarea' || type === 'map' || type === 'object') {
+      html += '<textarea' + dataAttrs + ' style="' + _svcInputStyle + 'min-height:80px;font-family:monospace;resize:vertical;">'
+        + _flowFieldValueHtml(value) + '</textarea>';
+    } else if (type === 'integer' || type === 'float') {
+      html += '<input type="number"' + (type === 'float' ? ' step="any"' : '')
+        + dataAttrs + ' value="' + _flowFieldValueHtml(value) + '" style="' + _svcInputStyle + 'width:140px;">';
+    } else {
+      html += '<input type="' + (spec.sensitive ? 'password' : 'text') + '"'
+        + dataAttrs + ' value="' + _flowFieldValueHtml(value) + '" style="' + _svcInputStyle + '">';
+    }
+    html += '</div>';
+  }
+  return html;
+}
+
+function _readFlowConfigField(el) {
+  const type = el.dataset.type || 'string';
+  if (type === 'boolean') return el.checked;
+  if (type === 'integer') return parseInt(el.value) || 0;
+  if (type === 'float') return parseFloat(el.value) || 0;
+  if (type === 'map' || type === 'object') return JSON.parse(el.value || '{}');
+  return el.value;
+}
+
+function _collectFlowDeploymentConfig(root) {
+  const parameters = {};
+  root.querySelectorAll('.flow-param-field').forEach(el => {
+    parameters[el.dataset.key] = _readFlowConfigField(el);
+  });
+  const service_overrides = {};
+  const service_configs = {};
+  root.querySelectorAll('.flow-service-card').forEach(card => {
+    const sid = card.dataset.serviceId;
+    const mode = (card.querySelector('.flow-service-mode') || {}).value || 'local';
+    if (mode && mode !== 'local') {
+      service_overrides[sid] = mode;
+    } else {
+      const cfg = {};
+      card.querySelectorAll('.flow-service-param-field').forEach(el => {
+        cfg[el.dataset.key] = _readFlowConfigField(el);
+      });
+      service_configs[sid] = cfg;
+    }
+  });
+  return { parameters, service_overrides, service_configs };
+}
+
+function _onFlowServiceModeChange(sel) {
+  const card = sel.closest('.flow-service-card');
+  if (!card) return;
+  const local = card.querySelector('.flow-service-local');
+  if (local) local.style.display = (sel.value && sel.value !== 'local') ? 'none' : 'block';
+}
+
+async function _renderFlowDeploymentConfig(schemaData) {
+  const paramsSchema = schemaData.parameters_schema || {};
+  const paramValues = schemaData.parameter_values || {};
+  let html = '<div style="border-top:1px solid #333;padding-top:8px;margin-top:8px;">'
+    + '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>';
+  if (Object.keys(paramsSchema).length) {
+    html += _renderFlowSchemaFields(paramsSchema, paramValues, 'flow-param-field');
+  } else {
+    html += '<div style="color:#666;font-size:12px;margin-bottom:8px;">No flow parameters.</div>';
+  }
+  html += '</div>';
+
+  const services = schemaData.services || {};
+  if (Object.keys(services).length) {
+    html += '<div style="border-top:1px solid #333;padding-top:8px;margin-top:8px;">'
+      + '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Services</div>';
+    for (const [sid, svc] of Object.entries(services)) {
+      const current = svc.override || 'local';
+      let options = '<option value="local"' + (current === 'local' ? ' selected' : '') + '>Configure local service</option>';
+      try {
+        const listed = await rxjs.firstValueFrom(listServices$(svc.service_type || ''));
+        for (const s of (listed.services || [])) {
+          const ref = s.ref || (s.scope === 'global' ? 'global:' + s.service_id : s.service_id);
+          const label = s.service_id + (s.scope ? ' [' + s.scope + ']' : '') + (s.provider ? ' - ' + s.provider : '');
+          options += '<option value="' + escapeHtml(ref) + '"' + (current === ref ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+        }
+      } catch (e) {}
+      if (current && current !== 'local' && options.indexOf('value="' + escapeHtml(current) + '"') < 0) {
+        options += '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + ' (missing)</option>';
+      }
+      const localDisplay = current && current !== 'local' ? 'display:none;' : '';
+      html += '<div class="flow-service-card" data-service-id="' + escapeHtml(sid) + '" style="background:#0f0f23;border:1px solid #333;border-radius:6px;padding:8px;margin-bottom:8px;">'
+        + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+        + '<div style="color:#e0e0e0;font-size:12px;font-weight:600;">' + escapeHtml(sid) + '</div>'
+        + '<div style="color:#666;font-size:11px;">' + escapeHtml(svc.service_type || '') + '</div></div>'
+        + '<select class="flow-service-mode" onchange="_onFlowServiceModeChange(this)" style="' + _svcInputStyle + '">' + options + '</select>'
+        + '<div class="flow-service-local" style="margin-top:8px;' + localDisplay + '">'
+        + _renderFlowSchemaFields(svc.parameters_schema || {}, svc.parameter_values || {}, 'flow-service-param-field', sid)
+        + '</div></div>';
+    }
+    html += '</div>';
+  }
+  return html;
+}
+
 async function showDeployFlowDialog() {
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();
@@ -1088,7 +1226,7 @@ async function showDeployFlowDialog() {
   overlay.id = 'resourceEditorOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:560px;max-height:85vh;overflow-y:auto;border:1px solid #333;';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <h3 style="margin:0;color:#e0e0e0;font-size:14px;">Deploy Flow</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
@@ -1102,9 +1240,13 @@ async function showDeployFlowDialog() {
       panel.querySelector('div:last-child').innerHTML = '<div style="color:#888;font-size:12px;">No flow templates found in flows/ directory.</div>';
       return;
     }
-    let optionsHtml = templates.map(t =>
-      `<option value="${t.id}" data-scope="${t.scope || 'independent'}">${t.name} (${t.tasks_count} tasks)${t.version ? ' v' + t.version : ''} [${t.scope || 'independent'}]</option>`
-    ).join('');
+    let optionsHtml = templates.map(t => {
+      const versionLabel = t.version ? ' v' + t.version : '';
+      const scopeLabel = t.scope || 'independent';
+      return '<option value="' + escapeHtml(t.id) + '" data-scope="' + escapeHtml(scopeLabel) + '">'
+        + escapeHtml(t.name) + ' (' + escapeHtml(String(t.tasks_count)) + ' tasks)' + escapeHtml(versionLabel)
+        + ' [' + escapeHtml(scopeLabel) + ']</option>';
+    }).join('');
     panel.querySelector('div:last-child').innerHTML = `
       <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Template</label>
         <select id="deploy-template" onchange="_onDeployTemplateChange()" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">${optionsHtml}</select></div>
@@ -1114,12 +1256,12 @@ async function showDeployFlowDialog() {
           <option value="user">User</option>
           <option value="conversation">Conversation</option>
         </select></div>
-      <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Parameters (JSON, optional)</label>
-        <textarea id="deploy-params" placeholder='{"key": "value"}' style="width:100%;min-height:60px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;"></textarea></div>
+      <div id="deploy-config" style="margin-bottom:8px;color:#888;font-size:12px;">Loading deployment schema...</div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
         <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
         <button onclick="_submitDeployFlow()" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Deploy</button>
       </div>`;
+    _onDeployTemplateChange();
   } catch (e) {
     panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">Error loading templates: ' + e.message + '</div>';
   }
@@ -1127,17 +1269,25 @@ async function showDeployFlowDialog() {
 function _submitDeployFlow() {
   const templateId = document.getElementById('deploy-template').value;
   const scope = document.getElementById('deploy-scope').value;
-  let params = {};
-  const paramsText = (document.getElementById('deploy-params').value || '').trim();
-  if (paramsText) {
-    try { params = JSON.parse(paramsText); } catch { alert('Invalid JSON in parameters'); return; }
+  let cfg;
+  try {
+    cfg = _collectFlowDeploymentConfig(document.getElementById('deploy-config'));
+  } catch (e) {
+    alert('Invalid JSON in parameters: ' + e.message);
+    return;
   }
-  action$('deploy_flow', { template_id: templateId, scope, parameters: params }).subscribe(d => {
+  action$('deploy_flow', {
+    template_id: templateId,
+    scope,
+    parameters: cfg.parameters,
+    service_overrides: cfg.service_overrides,
+    service_configs: cfg.service_configs,
+  }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else { addMsg('system', `Flow deployed: ${d.instance_id} (${scope})`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
   });
 }
-function _onDeployTemplateChange() {
+async function _onDeployTemplateChange() {
   var sel = document.getElementById('deploy-template');
   var opt = sel.options[sel.selectedIndex];
   var flowScope = opt ? opt.getAttribute('data-scope') || 'independent' : 'independent';
@@ -1151,12 +1301,21 @@ function _onDeployTemplateChange() {
     info.innerHTML = '<span style="color:#58a6ff;">This flow requires a user context.</span>';
     scopeSel.disabled = false;
   } else {
-    info.innerHTML = '<span style="color:#3fb950;">Independent flow — no runtime dependencies.</span>';
+    info.innerHTML = '<span style="color:#3fb950;">Independent flow - no runtime dependencies.</span>';
     scopeSel.disabled = false;
   }
+  var config = document.getElementById('deploy-config');
+  if (!config || !sel.value) return;
+  config.innerHTML = '<div style="color:#888;font-size:12px;">Loading deployment schema...</div>';
+  try {
+    const schema = await rxjs.firstValueFrom(action$('get_flow_deploy_schema', { template_id: sel.value }));
+    if (schema.error) { config.innerHTML = '<div style="color:#e94560;">' + escapeHtml(schema.error) + '</div>'; return; }
+    config.innerHTML = await _renderFlowDeploymentConfig(schema);
+  } catch (e) {
+    config.innerHTML = '<div style="color:#e94560;">Error loading deployment schema: ' + escapeHtml(e.message || e) + '</div>';
+  }
 }
-// Trigger on initial load
-setTimeout(function() { if (document.getElementById('deploy-template')) _onDeployTemplateChange(); }, 100);
+
 
 // ── Prompt use (click to paste) ─────────────────────────────────
 function _usePrompt(name, hasParams) {

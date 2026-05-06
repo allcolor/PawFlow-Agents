@@ -31,6 +31,36 @@ def _get_deployment_registry():
         return None
 
 
+def _apply_service_bindings(flow, service_overrides=None, service_configs=None):
+    """Apply deployment-local service config and service forwarding."""
+    service_configs = service_configs or {}
+    for service_id, config in service_configs.items():
+        svc = flow.services.get(service_id)
+        if svc is not None and hasattr(svc, "config") and isinstance(config, dict):
+            svc.config.update(config)
+
+    service_overrides = service_overrides or {}
+    if not service_overrides:
+        return
+    from core.service_registry import ServiceRegistry
+    reg = ServiceRegistry.get_instance()
+    for flow_service_id, ref in service_overrides.items():
+        if not ref or ref == "local" or flow_service_id not in flow.services:
+            continue
+        live = None
+        if ref.startswith("user:"):
+            parts = ref.split(":", 2)
+            if len(parts) == 3:
+                _, uid, sid = parts
+                live = reg.get_live_instance("user", uid, sid)
+        elif ref.startswith("global:"):
+            live = reg.get_live_instance("global", "", ref.split(":", 1)[1])
+        else:
+            live = reg.get_live_instance("global", "", ref)
+        if live is not None:
+            flow.services[flow_service_id] = live
+
+
 class ExecutorRegistry:
     """Thread-safe global registry for continuous executors.
 
@@ -155,7 +185,9 @@ class ExecutorRegistry:
                 self._restore_instance(iid, inst.flow_path,
                                        inst.max_workers, inst.max_retries,
                                        flow_fqn=getattr(inst, 'flow_fqn', ''),
-                                       parameters=inst.parameters)
+                                       parameters=inst.parameters,
+                                       service_overrides=inst.service_overrides,
+                                       service_configs=inst.service_configs)
 
         # Clean up legacy state file if present
         legacy = Path(STATE_FILE)
@@ -166,7 +198,9 @@ class ExecutorRegistry:
     def _restore_instance(self, instance_id: str, flow_path: str,
                           max_workers: int = 4, max_retries: int = 3,
                           flow_fqn: str = "",
-                          parameters: Optional[Dict[str, Any]] = None) -> bool:
+                          parameters: Optional[Dict[str, Any]] = None,
+                          service_overrides: Optional[Dict[str, str]] = None,
+                          service_configs: Optional[Dict[str, Dict[str, Any]]] = None) -> bool:
         """Restore a single executor from the repository or flow_path."""
         try:
             from tasks import register_all_tasks
@@ -195,6 +229,7 @@ class ExecutorRegistry:
             clean = {k: v for k, v in raw.items() if not k.startswith("_")}
             from engine.parser import FlowParser
             flow = FlowParser.parse(clean)
+            _apply_service_bindings(flow, service_overrides, service_configs)
 
             # Allow flow parameters to override max_workers
             _eff_workers = max_workers

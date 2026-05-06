@@ -480,6 +480,60 @@ def test_list_context_usage_prefers_active_context_over_disk():
     assert usage["used"] > 0
 
 
+def test_cli_resumed_context_usage_uses_stored_context_plus_live_delta():
+    from core.llm_client import LLMMessage
+    from tasks.ai.context_usage import compute_context_usage
+
+    stored_messages = [
+        {"role": "user", "content": "stored user " * 20, "msg_id": "s1"},
+        {"role": "assistant", "content": "stored assistant " * 20, "msg_id": "s2"},
+        {"role": "tool", "content": "stored tool " * 20, "msg_id": "s3"},
+    ]
+    live_messages = [
+        LLMMessage(role="user", content="live delta " * 20,
+                   conversation_id="conv-live"),
+    ]
+    fake_exec = SimpleNamespace(
+        _active_contexts={
+            "conv-live:assistant": {
+                "active_agent_name": "assistant",
+                "messages": live_messages,
+                "_is_cli_provider": True,
+                "_cli_has_session": True,
+                "resolved_svc": SimpleNamespace(config={"max_context_size": 10000}),
+            },
+        },
+        _active_contexts_lock=threading.Lock())
+
+    class _Store:
+        def load_agent_context(self, *_args, **_kwargs):
+            return stored_messages
+
+        def load_transcript_for_agent(self, *_args, **_kwargs):
+            raise AssertionError("stored agent context should be used first")
+
+    with patch("tasks.ai.agent_loop.AgentLoopTask._live_instance", fake_exec):
+        usage = compute_context_usage(
+            "conv-live", "assistant", user_id="user", store=_Store(),
+            source="test")
+
+    assert usage["message_count"] == len(stored_messages) + len(live_messages)
+    assert usage["used"] > 0
+
+
+def test_claude_final_patch_republishes_context_message_meta():
+    block = _AGENT_CORE_PY[
+        _AGENT_CORE_PY.index("# Patch last assistant message with token data"):
+        _AGENT_CORE_PY.index("emitter.stop_heartbeat(_iter_hb)",
+                             _AGENT_CORE_PY.index("# Patch last assistant message with token data"))]
+    assert "patch_message(" in block
+    assert '"context_used" in _cc_src' in block
+    assert 'publish_event(' in block
+    assert '"message_meta"' in block
+    assert '"context_message_count"' in block
+    assert '"context_cache_mode"' in block
+
+
 def test_idle_polling_cannot_stack_unbounded_work():
     assert "_syncActiveSub" in _ACTIVE_AGENTS_JS
     assert "_SYNC_ACTIVE_STALE_MS" in _ACTIVE_AGENTS_JS

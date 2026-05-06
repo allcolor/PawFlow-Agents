@@ -78,15 +78,46 @@ def _service_config(conversation_id: str, agent_name: str, user_id: str,
         return {}, 0
 
 
+def _message_identity(msg: Any) -> Tuple[str, str, str]:
+    if isinstance(msg, dict):
+        return (
+            str(msg.get("msg_id") or msg.get("id") or ""),
+            str(msg.get("role") or ""),
+            str(msg.get("content") or ""),
+        )
+    return (
+        str(getattr(msg, "msg_id", "") or getattr(msg, "id", "") or ""),
+        str(getattr(msg, "role", "") or ""),
+        str(getattr(msg, "content", "") or ""),
+    )
+
+
+def _stored_context_messages(conversation_id: str, agent_name: str,
+                             store: Any) -> Any:
+    ctx_data = store.load_agent_context(conversation_id, agent_name)
+    if ctx_data is None:
+        ctx_data = store.load_transcript_for_agent(conversation_id, agent_name) or []
+    return ctx_data or []
+
+
 def _context_messages(conversation_id: str, agent_name: str, user_id: str,
                       store: Any, active_ctx: Optional[Dict[str, Any]]) -> Tuple[Any, Optional[Dict[str, Any]], bool]:
     """Return messages, cache, and whether messages are already LLMMessage objects."""
     if active_ctx:
-        return active_ctx.get("messages") or [], active_ctx.get("_context_usage_cache"), True
-    ctx_data = store.load_agent_context(conversation_id, agent_name)
-    if ctx_data is None:
-        ctx_data = store.load_transcript_for_agent(conversation_id, agent_name) or []
-    return ctx_data, None, False
+        live_messages = active_ctx.get("messages") or []
+        if active_ctx.get("_is_cli_provider") and active_ctx.get("_cli_has_session"):
+            stored = list(_stored_context_messages(
+                conversation_id, agent_name, store) or [])
+            seen = {_message_identity(msg) for msg in stored}
+            merged = list(stored)
+            for msg in live_messages:
+                ident = _message_identity(msg)
+                if ident not in seen:
+                    merged.append(msg)
+                    seen.add(ident)
+            return merged, active_ctx.get("_context_usage_cache"), False
+        return live_messages, active_ctx.get("_context_usage_cache"), True
+    return _stored_context_messages(conversation_id, agent_name, store), None, False
 
 
 def compute_context_usage(conversation_id: str, agent_name: str, *,

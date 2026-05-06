@@ -2002,6 +2002,35 @@ class AgentCoreMixin:
                                             conversation_id, _cc_last_mid, source=_cc_src)
                                     except Exception:
                                         logger.debug("exception suppressed", exc_info=True)
+                                if "context_used" in _cc_src:
+                                    try:
+                                        from core.conversation_event_bus import ConversationEventBus
+                                        _ctx_cache = _cc_src.get("context_cache") or {}
+                                        ConversationEventBus.instance().publish_event(
+                                            ctx.get("_event_cid", conversation_id),
+                                            "message_meta", {
+                                                "conversation_id": ctx.get("_event_cid", conversation_id),
+                                                "msg_id": _cc_last_mid,
+                                                "agent_name": _cc_src.get("name", ""),
+                                                "source": _cc_src,
+                                                "model": _cc_src.get("model", ""),
+                                                "provider": _cc_src.get("provider", ""),
+                                                "tokens_in": _cc_src.get("tokens_in", 0),
+                                                "tokens_out": _cc_src.get("tokens_out", 0),
+                                                "context_used": _cc_src["context_used"],
+                                                "context_max": _cc_src["context_max"],
+                                                "context_pct": _cc_src["context_pct"],
+                                                "context_source": _cc_src.get("context_source", ""),
+                                                "context_message_count": _cc_src.get("context_message_count", 0),
+                                                "context_cache_mode": _cc_src.get("context_cache_mode", ""),
+                                                "updated_at": float(
+                                                    _ctx_cache.get("updated_at") or time.time()),
+                                            })
+                                    except Exception as _meta_err:
+                                        logger.error(
+                                            "[claude-code] context message_meta publish failed "
+                                            "msg_id=%s: %s", _cc_last_mid, _meta_err,
+                                            exc_info=True)
                             emitter.stop_heartbeat(_iter_hb)
                             break
                         _has_thinking = bool(getattr(response, 'thinking', ''))

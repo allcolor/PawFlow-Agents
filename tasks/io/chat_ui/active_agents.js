@@ -14,9 +14,7 @@ function agentKey(name) { return (name || '').toLowerCase(); }
 window._contextUsage = window._contextUsage || {};
 
 // Unified gauge renderer — used by active-agents panel, header badge, and
-// Resource Panel Agents section. `usage` is {used, max, pct, estimated?}.
-// When estimated=true the value comes from client-side accumulation between
-// two real `message_meta` updates and is prefixed with '~'.
+// Resource Panel Agents section. `usage` is {used, max, pct} from the server.
 function renderCtxGauge(usage, opts) {
   if (!usage || !usage.max) return '';
   opts = opts || {};
@@ -27,16 +25,12 @@ function renderCtxGauge(usage, opts) {
   const maxK = Math.round(usage.max / 1000);
   const color = (pct >= 0.80) ? '#f0ad4e' : '#4ecdc4';
   const barPx = Math.round(pct * width);
-  const tilde = usage.estimated ? '~' : '';
-  const title = 'Context ' + tilde + usedK + 'k/' + maxK + 'k ('
-    + tilde + pctInt + '%)' + (usage.estimated ? ' (estimated)' : '');
+  const title = 'Context ' + usedK + 'k/' + maxK + 'k (' + pctInt + '%)';
   return '<span class="ctx-gauge" title="' + title + '" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
     + '<span style="display:inline-block;width:' + width + 'px;height:6px;background:#222;border-radius:3px;overflow:hidden;">'
-    + '<span style="display:block;width:' + barPx + 'px;height:100%;background:' + color
-    + (usage.estimated ? ';opacity:0.55' : '') + ';"></span>'
+    + '<span style="display:block;width:' + barPx + 'px;height:100%;background:' + color + ';"></span>'
     + '</span>'
-    + '<span style="font-size:10px;color:' + color
-    + (usage.estimated ? ';opacity:0.7' : '') + ';">' + tilde + pctInt + '%</span>'
+    + '<span style="font-size:10px;color:' + color + ';">' + pctInt + '%</span>'
     + '</span>';
 }
 
@@ -91,12 +85,8 @@ function setContextUsage(agentName, usage) {
     used: realUsed,
     max: newMax,
     pct: pct,
-    estimated: false,
-    _baselineUsed: realUsed,
     _updatedAt: incomingAt || (Date.now() / 1000),
   };
-  window._contextEstChars = window._contextEstChars || {};
-  window._contextEstChars[key] = 0;
   if (typeof activeInteractions !== 'undefined' && activeInteractions[key]) {
     activeInteractions[key].contextUsed = realUsed;
     activeInteractions[key].contextMax = newMax;
@@ -113,35 +103,6 @@ function hydrateContextUsage() {
       setContextUsage(agentName, usageMap[agentName]);
     });
   });
-}
-
-// Bump the cached gauge by an estimated `chars/4` tokens. Marks the entry
-// as `estimated=true`; the next real `message_meta` will clear that flag.
-// Used between two real updates so the gauge animates with each text chunk
-// / tool_call / tool_result instead of waiting for the provider's usage.
-function bumpContextEstimate(agentName, chars) {
-  if (!agentName || !chars) return;
-  const key = agentKey(agentName);
-  const cached = window._contextUsage[key];
-  // Need a real baseline (max + used) to estimate against. If we never
-  // received a message_meta yet we have nothing to extrapolate from.
-  if (!cached || !cached.max) return;
-  window._contextEstChars = window._contextEstChars || {};
-  window._contextEstChars[key] = (window._contextEstChars[key] || 0) + chars;
-  // Compute against the pinned baseline (last real value), NOT the
-  // currently-displayed `cached.used` which itself already includes a
-  // previous bump — that would compound exponentially.
-  const baseline = (cached._baselineUsed != null) ? cached._baselineUsed : (cached.used || 0);
-  const estTokens = Math.round(window._contextEstChars[key] / 4);
-  const newUsed = baseline + estTokens;
-  window._contextUsage[key] = {
-    used: newUsed,
-    max: cached.max,
-    pct: cached.max > 0 ? newUsed / cached.max : 0,
-    estimated: true,
-    _baselineUsed: baseline,
-  };
-  _refreshGaugeSurfaces(key);
 }
 
 function _refreshGaugeSurfaces(key) {

@@ -1,9 +1,9 @@
 """Lock the chat-UI context gauge invariants.
 
 Real server gauge updates are authoritative and may move up or down. A
-post-compact decrease must not be blocked by stale UI state. Client-side
-estimates are derived from the last real baseline, while older server polls
-are rejected by timestamp when available.
+post-compact decrease must not be blocked by stale UI state. The frontend
+must not estimate gauge values; older server polls are rejected by timestamp
+when available.
 """
 
 from __future__ import annotations
@@ -270,10 +270,17 @@ def test_manual_compact_suspends_stale_live_gauge_until_refresh():
 def test_frontend_context_pct_is_always_used_over_max():
     active_src = Path("tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
     setter = active_src[
-        active_src.index("function setContextUsage") : active_src.index("// Bump the cached gauge")
+        active_src.index("function setContextUsage") : active_src.index("function _refreshGaugeSurfaces")
     ]
     assert "const pct = newMax > 0 ? realUsed / newMax : 0;" in setter
     assert "usage.pct || usage.context_pct" not in setter
+
+
+def test_frontend_context_gauge_has_no_client_estimator():
+    assert "function bumpContextEstimate" not in _ACTIVE_AGENTS_JS
+    assert "_contextEstChars" not in _ACTIVE_AGENTS_JS
+    assert "estimated" not in _ACTIVE_AGENTS_JS
+    assert "bumpContextEstimate(" not in _SSE_JS
 
 
 def test_context_command_shared_view_exposes_display_role_not_raw_llm_role():

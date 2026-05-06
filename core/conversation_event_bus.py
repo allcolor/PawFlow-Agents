@@ -180,6 +180,40 @@ class ConversationEventBus:
             logger.warning("EventBus: removed %d stale SSE subscriber(s) for conv=%s",
                            len(dead), conversation_id[:8])
 
+    def _log_context_gauge_update(self, conversation_id: str,
+                                  event_type: str, data) -> None:
+        if not isinstance(data, dict):
+            return
+        if "context_used" not in data or "context_max" not in data:
+            return
+        try:
+            used = int(data.get("context_used") or 0)
+            max_tokens = int(data.get("context_max") or 0)
+            pct_calc = (used / max_tokens) if max_tokens > 0 else 0.0
+            pct_payload = float(data.get("context_pct") or 0.0)
+        except (TypeError, ValueError):
+            logger.info(
+                "[context-gauge:%s] send event=%s invalid payload used=%r max=%r pct=%r",
+                conversation_id[:8], event_type,
+                data.get("context_used"), data.get("context_max"),
+                data.get("context_pct"))
+            return
+        source = data.get("context_source") or ""
+        src = data.get("source") if isinstance(data.get("source"), dict) else {}
+        if not source:
+            source = src.get("context_source") or src.get("provider") or src.get("type") or ""
+        logger.info(
+            "[context-gauge:%s] send event=%s agent=%s msg_id=%s "
+            "formula=used/max used=%d max=%d pct_calc=%.4f pct_payload=%.4f "
+            "source=%s cache_mode=%s message_count=%s updated_at=%s ts=%s live=%s",
+            conversation_id[:8], event_type,
+            data.get("agent_name") or src.get("name") or "",
+            data.get("msg_id") or "", used, max_tokens, pct_calc, pct_payload,
+            source, data.get("context_cache_mode") or "",
+            data.get("context_message_count", ""),
+            data.get("updated_at", ""), data.get("ts", ""),
+            data.get("live", ""))
+
     def publish_event(self, conversation_id: str, event_type: str, data=None):
         """Convenience: create SSEEvent and publish.
 
@@ -187,6 +221,7 @@ class ConversationEventBus:
         """
         if isinstance(data, dict) and "ts" not in data:
             data["ts"] = time.time()
+        self._log_context_gauge_update(conversation_id, event_type, data)
         self.publish(conversation_id, SSEEvent(event=event_type, data=data or ""))
 
     def subscriber_count(self, conversation_id: str) -> int:

@@ -237,11 +237,6 @@ function connectSSE(cid, onReady, opts) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agent = data.agent_name || streamingAgent || '';
-    // Live context-fill estimate — each text chunk grows the prompt the
-    // NEXT API call will see. Cleared on `message_meta` (real value).
-    if (typeof bumpContextEstimate === 'function' && agent && data.text) {
-      bumpContextEstimate(agent, data.text.length);
-    }
     // Finalize thinking block when first text token arrives
     finalizeThinking(agent);
     streamingAgent = agent;  // legacy global
@@ -749,12 +744,6 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // Live context-fill estimate: tool_call args go into the next prompt.
-    if (typeof bumpContextEstimate === 'function' && data.agent_name) {
-      const argLen = JSON.stringify(data.arguments || {}).length;
-      bumpContextEstimate(data.agent_name,
-        (data.tool || '').length + argLen + 20);
-    }
     // Finalize thinking block before showing tool call
     finalizeThinking(data.agent_name || '');
     if (typeof _noteLiveHistoryAppend === 'function') {
@@ -820,11 +809,6 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // Live context-fill estimate: tool_result body goes into the next prompt.
-    if (typeof bumpContextEstimate === 'function' && data.agent_name) {
-      const resLen = (data.result || '').length;
-      bumpContextEstimate(data.agent_name, resLen);
-    }
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
     if (typeof _noteLiveHistoryAppend === 'function') {
       _noteLiveHistoryAppend(data.message_count, 1, data.msg_id || '');

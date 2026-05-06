@@ -287,6 +287,31 @@ class TestConversationEventBus(unittest.TestCase):
         assert len(chunks) == 1
         assert b"event: done" in chunks[0]
 
+    def test_context_gauge_update_is_logged_with_formula(self):
+        bus = ConversationEventBus.instance()
+        payload = {
+            "agent_name": "assistant",
+            "msg_id": "m1",
+            "context_used": 65000,
+            "context_max": 100000,
+            "context_pct": 0.65,
+            "context_source": "unit_test",
+            "context_cache_mode": "full",
+            "context_message_count": 12,
+            "updated_at": 123.4,
+        }
+        with self.assertLogs("core.conversation_event_bus", level="INFO") as logs:
+            bus.publish_event("conv123456", "message_meta", payload)
+        text = "\n".join(logs.output)
+        assert "[context-gauge:conv1234] send event=message_meta" in text
+        assert "agent=assistant" in text
+        assert "msg_id=m1" in text
+        assert "formula=used/max used=65000 max=100000" in text
+        assert "pct_calc=0.6500 pct_payload=0.6500" in text
+        assert "source=unit_test" in text
+        assert "cache_mode=full" in text
+        assert "message_count=12" in text
+
     def test_publish_sse_event_object(self):
         bus = ConversationEventBus.instance()
         writer = bus.subscribe("conv1")

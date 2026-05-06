@@ -100,6 +100,11 @@ def is_unc_path(path: str) -> bool:
     return raw.startswith("\\\\") or raw.startswith("//")
 
 
+def _path_name(path: str) -> str:
+    raw = str(path or "")
+    return raw.replace("\\", "/").rstrip("/").split("/")[-1]
+
+
 def windows_shell_cwd(command: str, cwd: str,
                       shell_name: str = "",
                       executable: str = "") -> Tuple[str, Optional[str]]:
@@ -113,7 +118,7 @@ def windows_shell_cwd(command: str, cwd: str,
     if os.name != "nt" or not is_unc_path(cwd):
         return command, cwd
     shell_key = (shell_name or "cmd").lower()
-    exe_name = Path(executable or "cmd.exe").name.lower()
+    exe_name = _path_name(executable or "cmd.exe").lower()
     if shell_key not in ("", "cmd") and exe_name != "cmd.exe":
         return command, cwd
     quoted = cwd.replace('"', '""')

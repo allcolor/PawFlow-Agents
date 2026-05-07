@@ -785,6 +785,98 @@ document.getElementById('bp').addEventListener('click',function(){
 </body>
 </html>"""
 
+
+_SKIN_BLADERUNNER = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blade Runner Gateway</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh; overflow: hidden; color: #f7e8d2;
+    font-family: 'Courier New', monospace;
+    background:
+      radial-gradient(circle at 20%% 15%%, rgba(0,229,255,0.18), transparent 28%%),
+      radial-gradient(circle at 80%% 20%%, rgba(255,106,0,0.22), transparent 30%%),
+      linear-gradient(180deg, #05020a 0%%, #16071d 48%%, #08030d 100%%);
+  }
+  body:before {
+    content: ''; position: fixed; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(
+      180deg, rgba(255,255,255,0.035) 0, rgba(255,255,255,0.035) 1px,
+      transparent 1px, transparent 5px);
+    mix-blend-mode: overlay; opacity: 0.42;
+  }
+  body:after {
+    content: ''; position: fixed; inset: auto -10%% 0 -10%%; height: 38vh;
+    background: linear-gradient(180deg, transparent, rgba(255,106,0,0.14));
+    filter: blur(16px); pointer-events: none;
+  }
+  .rain { position: fixed; inset: 0; pointer-events: none; opacity: 0.22;
+          background-image: linear-gradient(115deg, transparent 0 88%%, rgba(0,229,255,0.45) 89%% 91%%, transparent 92%%);
+          background-size: 34px 72px; animation: rain 0.7s linear infinite; }
+  @keyframes rain { to { background-position: -34px 72px; } }
+  .wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center;
+          padding: 32px; position: relative; z-index: 1; }
+  .card {
+    width: min(460px, 100%%); padding: 28px;
+    background: rgba(8,3,13,0.86); border: 1px solid #ff6a00;
+    box-shadow: 0 0 34px rgba(255,106,0,0.22), inset 0 0 28px rgba(0,229,255,0.06);
+  }
+  .eyebrow { color: #00e5ff; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; }
+  h1 { margin: 12px 0 6px; font-size: 28px; letter-spacing: 2px; color: #ffb000;
+       text-shadow: 0 0 18px rgba(255,176,0,0.55); }
+  .copy { color: #b08aa7; font-size: 13px; line-height: 1.5; margin-bottom: 22px; }
+  input[type=password] {
+    width: 100%%; padding: 14px 15px; background: #040107;
+    border: 1px solid #3a1432; color: #f7e8d2; outline: none;
+    font-family: inherit; font-size: 15px; caret-color: #00e5ff;
+  }
+  input[type=password]:focus { border-color: #00e5ff; box-shadow: 0 0 18px rgba(0,229,255,0.24); }
+  input::placeholder { color: #735269; }
+  button {
+    width: 100%%; margin-top: 14px; padding: 13px 16px; border: 0; cursor: pointer;
+    background: linear-gradient(90deg, #ff6a00, #ffb000); color: #08030d;
+    font-weight: 800; font-family: inherit; letter-spacing: 2px; text-transform: uppercase;
+    box-shadow: 0 0 22px rgba(255,106,0,0.32);
+  }
+  button:disabled { background: #322039; color: #735269; cursor: not-allowed; box-shadow: none; }
+  .err { min-height: 20px; margin-top: 12px; color: #ff2d55; font-size: 13px;
+         text-shadow: 0 0 10px rgba(255,45,85,0.5); }
+  .cd { min-height: 18px; margin-top: 10px; color: #00e5ff; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="rain"></div>
+<div class="wrap">
+  <form class="card" method="POST" action="/_gateway">
+    <input type="hidden" name="next" value="%(next_url)s">
+    <div class="eyebrow">Private Gateway</div>
+    <h1>Blade Runner</h1>
+    <p class="copy">Access is restricted. Submit the key before the signal fades.</p>
+    <input type="password" name="secret" placeholder="Voight-Kampff code" autocomplete="off" autofocus>
+    <button type="submit" id="b">Enter</button>
+    <div class="err">%(error)s</div>
+    <div class="cd" id="cd"></div>
+  </form>
+</div>
+<script>
+(function(){
+  var cd=%(cooldown)d,b=document.getElementById('b'),cdEl=document.getElementById('cd');
+  function tick(){
+    if(cd<=0){b.disabled=false;cdEl.textContent='';return;}
+    b.disabled=true;cdEl.textContent='Signal locked. Retry in '+Math.ceil(cd)+'s';
+    cd--;setTimeout(tick,1000);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>"""
+
+
 _SKINS = {
     "default": _CHALLENGE_HTML,
     "google": _SKIN_GOOGLE,
@@ -793,6 +885,7 @@ _SKINS = {
     "netflix": _SKIN_NETFLIX,
     "captcha": _SKIN_CAPTCHA,
     "matrix": _SKIN_MATRIX,
+    "bladerunner": _SKIN_BLADERUNNER,
 }
 
 

@@ -44,6 +44,10 @@ Media tools may send prompts, source images, videos, audio, or voice samples to 
 
 Use PawFlow secret storage or environment variables for API keys. Never hard-code secrets in flows, agent prompts, or docs. When writing examples, use `${SECRET_NAME}` placeholders.
 
+## Private Gateway Skins
+
+The private gateway challenge page is selected by the global `gateway_skin` parameter. Built-in skins include `default`, `google`, `wifi`, `terminal`, `netflix`, `captcha`, `matrix`, and `bladerunner`.
+
 ## Production Checklist
 
 - Run with `PAWFLOW_PUBLIC_MODE=true` or `PAWFLOW_ENV=production` so unsafe boot settings become fatal.

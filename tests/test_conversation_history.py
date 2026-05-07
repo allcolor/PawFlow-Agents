@@ -331,7 +331,7 @@ class TestAgentLoopActions(unittest.TestCase):
         assert body["conversation_id"] == "c1"
         assert "messages" in body
         assert body["message_count"] == 3
-        assert body["group_technical_messages"] is False
+        assert body["group_technical_messages"] is True
 
     def test_load_history_resolves_technical_grouping_expression(self):
         from core.conv_agent_config import add_agent_to_conv

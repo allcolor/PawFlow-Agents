@@ -164,7 +164,7 @@ function _insertMessageChronologically(container, el, sortTs) {
   else container.appendChild(el);
 }
 
-window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = false;
+window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = true;
 window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING = 0;
 
 function suspendTechnicalMessageGrouping() {

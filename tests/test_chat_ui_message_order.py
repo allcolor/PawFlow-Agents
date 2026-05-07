@@ -23,7 +23,7 @@ def test_notification_rows_use_same_ordering_path():
 
 
 def test_technical_grouping_is_expression_driven_and_post_rendered():
-    assert "window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = false" in MESSAGES_JS
+    assert "window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = true" in MESSAGES_JS
     assert "function applyTechnicalMessageGrouping()" in MESSAGES_JS
     assert "window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING = 0" in MESSAGES_JS
     assert "function suspendTechnicalMessageGrouping()" in MESSAGES_JS

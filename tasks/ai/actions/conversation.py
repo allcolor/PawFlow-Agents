@@ -65,12 +65,12 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         try:
             from core.expression import resolve_expression
             _group_technical_raw = resolve_expression(
-                "$" + '{chat.group_technical_messages:default("false")}',
+                "$" + '{chat.group_technical_messages:default("true")}',
                 owner=user_id,
                 conversation_id=conv_id,
             )
         except Exception:
-            _group_technical_raw = "false"
+            _group_technical_raw = "true"
         group_technical_messages = str(_group_technical_raw).strip().lower() in (
             "1", "true", "yes", "on",
         )

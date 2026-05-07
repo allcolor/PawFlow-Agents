@@ -1,7 +1,7 @@
 """Workspace bind mounts for CLI provider containers.
 
 PawFlow routes filesystem operations through MCP relay tools. These mounts are
-an opt-in compatibility fallback for CLI providers that accidentally try local
+a compatibility fallback for CLI providers that accidentally try local
 filesystem tools despite the MCP-only prompt.
 """
 
@@ -21,9 +21,9 @@ _VALID_MODES = {"off", "ro", "rw"}
 def normalize_workspace_mount_mode(value: str = "") -> str:
     """Return a validated workspace mount mode.
 
-    Empty values fall back to PAWFLOW_CLI_WORKSPACE_MOUNT and then to "off".
+    Empty values fall back to PAWFLOW_CLI_WORKSPACE_MOUNT and then to "rw".
     """
-    raw = (value or os.environ.get(_ENV_KEY, "") or "off").strip().lower()
+    raw = (value or os.environ.get(_ENV_KEY, "") or "rw").strip().lower()
     if raw not in _VALID_MODES:
         logger.warning(
             "Invalid %s=%r; using 'off'", _ENV_KEY, raw)

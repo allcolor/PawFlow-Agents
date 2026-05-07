@@ -7,9 +7,9 @@ from core.cli_workspace_mounts import (
 )
 
 
-def test_workspace_mount_mode_defaults_to_off(monkeypatch):
+def test_workspace_mount_mode_defaults_to_rw(monkeypatch):
     monkeypatch.delenv("PAWFLOW_CLI_WORKSPACE_MOUNT", raising=False)
-    assert normalize_workspace_mount_mode() == "off"
+    assert normalize_workspace_mount_mode() == "rw"
 
 
 def test_workspace_mount_mode_prefers_explicit_value(monkeypatch):

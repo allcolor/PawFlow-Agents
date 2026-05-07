@@ -228,15 +228,15 @@ Operational notes:
 
 ## CLI Workspace Fallback Mounts
 
-CLI providers normally access project files only through PawFlow MCP tools. For compatibility with provider-native filesystem tools that cannot be fully disabled, server startup can opt into fallback workspace bind mounts:
+CLI providers normally access project files only through PawFlow MCP tools. For compatibility with provider-native filesystem tools that cannot be fully disabled, server startup can control fallback workspace bind mounts:
 
 ```bash
 pawflow start --workspace-mount off|ro|rw
 ```
 
-If the flag is omitted, `PAWFLOW_CLI_WORKSPACE_MOUNT` is used. The default is `off`.
+If the flag is omitted, `PAWFLOW_CLI_WORKSPACE_MOUNT` is used. The default is `rw`.
 
-When enabled, new Claude Code, Codex, and Gemini provider containers mount the default relay workspace at `/workspace`. All linked relays with a local `host_root` are also mounted under `/relay/<relay-id>`. Read-only mode appends Docker `:ro`; read-write mode is explicit because writes through provider-native tools bypass PawFlow MCP auditing and edit guards. Changing relay bindings invalidates affected live CLI sessions so the next session receives fresh mounts.
+When enabled, new Claude Code, Codex, and Gemini provider containers mount the default relay workspace at `/workspace`. All linked relays with a local `host_root` are also mounted under `/relay/<relay-id>`. Read-only mode appends Docker `:ro`; read-write mode allows provider-native tools to write through the fallback mount. Changing relay bindings invalidates affected live CLI sessions so the next session receives fresh mounts.
 
 ## Documentation Checklist For New Providers
 

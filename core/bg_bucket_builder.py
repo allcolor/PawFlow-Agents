@@ -176,6 +176,16 @@ class BgBucketBuilder:
             logger.debug("[bg-bucket] failed to resolve summarizer bg config",
                          exc_info=True)
         raw = dict(_BG_COMPACT_DEFAULTS)
+        try:
+            from core.expression import resolve_expression
+            for name in list(raw):
+                template = "${" + _BG_COMPACT_PARAM_PREFIX + name + "}"
+                value = resolve_expression(template, owner=user_id, conversation_id=cid)
+                if value not in (None, "", template):
+                    raw[name] = value
+        except Exception:
+            logger.debug("[bg-bucket] failed to resolve bg compact parameters",
+                         exc_info=True)
         return {
             "l1_trigger_msgs": self._coerce_positive_int(
                 "l1_trigger_msgs", raw["l1_trigger_msgs"], L1_TRIGGER_MSGS),

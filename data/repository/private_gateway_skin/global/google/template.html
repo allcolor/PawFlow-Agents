@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: arial, sans-serif; background: #fff; display: flex;
+         flex-direction: column; align-items: center; justify-content: center;
+         min-height: 100vh; }
+  .logo { font-size: 92px; font-weight: 400; margin-bottom: 20px; }
+  .logo span:nth-child(1) { color: #4285f4; }
+  .logo span:nth-child(2) { color: #ea4335; }
+  .logo span:nth-child(3) { color: #fbbc05; }
+  .logo span:nth-child(4) { color: #4285f4; }
+  .logo span:nth-child(5) { color: #34a853; }
+  .logo span:nth-child(6) { color: #ea4335; }
+  .search-box { display: flex; align-items: center; width: 580px; max-width: 90vw;
+                 border: 1px solid #dfe1e5; border-radius: 24px; padding: 5px 14px;
+                 box-shadow: 0 1px 6px rgba(32,33,36,.28); }
+  .search-box:hover { box-shadow: 0 1px 6px rgba(32,33,36,.4); }
+  .search-box svg { flex-shrink: 0; fill: #9aa0a6; }
+  .search-box input { flex: 1; border: none; outline: none; font-size: 16px;
+                       padding: 10px 8px; background: transparent; color: #202124; }
+  .btns { margin-top: 18px; display: flex; gap: 12px; }
+  .btns button { background: #f8f9fa; border: 1px solid #f8f9fa; border-radius: 4px;
+                  font-size: 14px; color: #3c4043; padding: 8px 16px; cursor: pointer; }
+  .btns button:hover { border-color: #dadce0; box-shadow: 0 1px 1px rgba(0,0,0,.1); }
+  .err { color: #ea4335; font-size: 13px; margin-top: 8px; min-height: 1.2em; }
+  .cd { color: #70757a; font-size: 13px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="logo">
+  <span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span>
+</div>
+<form method="POST" action="/_gateway" id="f">
+  <input type="hidden" name="next" value="%(next_url)s">
+  <div class="search-box">
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24">
+      <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+    </svg>
+    <input type="text" name="secret" id="s" autocomplete="off" autofocus>
+  </div>
+  <div class="err" id="e">%(error)s</div>
+  <div class="btns">
+    <button type="submit" id="b">Google Search</button>
+    <button type="button" onclick="document.getElementById('s').value='';document.getElementById('s').focus()">I'm Feeling Lucky</button>
+  </div>
+</form>
+<div class="cd" id="cd"></div>
+<script>
+(function(){
+  var cd = %(cooldown)d, b = document.getElementById('b'),
+      cdEl = document.getElementById('cd');
+  function tick() {
+    if (cd <= 0) { b.disabled = false; cdEl.textContent = ''; return; }
+    b.disabled = true;
+    cdEl.textContent = 'Please wait ' + Math.ceil(cd) + 's';
+    cd--;
+    setTimeout(tick, 1000);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>

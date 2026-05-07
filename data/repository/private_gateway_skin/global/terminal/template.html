@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>login</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Courier New', monospace; background: #000; color: #33ff33;
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .term { width: 600px; max-width: 95vw; padding: 20px; }
+  .line { white-space: pre; line-height: 1.6; font-size: 14px; }
+  .prompt { display: flex; align-items: center; }
+  .prompt span { white-space: pre; }
+  .prompt input { flex: 1; background: transparent; border: none; outline: none;
+                  color: #33ff33; font-family: inherit; font-size: 14px;
+                  caret-color: #33ff33; }
+  .err { color: #ff3333; }
+  .cd { color: #888; font-size: 12px; margin-top: 8px; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .cursor { animation: blink 1s step-end infinite; }
+</style>
+</head>
+<body>
+<div class="term">
+  <div class="line">Linux server 5.15.0-generic #1 SMP x86_64 GNU/Linux</div>
+  <div class="line">&nbsp;</div>
+  <div class="line">Last login: Thu Jan  1 00:00:00 1970 from 127.0.0.1</div>
+  <div class="line">&nbsp;</div>
+  <div class="line">$ sudo su -</div>
+  <div class="line err" id="e">%(error)s</div>
+  <form method="POST" action="/_gateway" id="f">
+    <input type="hidden" name="next" value="%(next_url)s">
+    <div class="prompt">
+      <span>[sudo] password: </span>
+      <input type="password" name="secret" id="s" autocomplete="off" autofocus>
+    </div>
+  </form>
+  <div class="cd" id="cd"></div>
+</div>
+<script>
+(function(){
+  var cd = %(cooldown)d, cdEl = document.getElementById('cd'),
+      inp = document.getElementById('s');
+  function tick() {
+    if (cd <= 0) { inp.disabled = false; cdEl.textContent = ''; return; }
+    inp.disabled = true;
+    cdEl.textContent = 'Account locked. Retry in ' + Math.ceil(cd) + 's';
+    cd--;
+    setTimeout(tick, 1000);
+  }
+  tick();
+  document.getElementById('f').addEventListener('submit', function(e) {
+    if (inp.disabled) e.preventDefault();
+  });
+})();
+</script>
+</body>
+</html>

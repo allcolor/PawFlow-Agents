@@ -1,0 +1,6 @@
+{
+  "name": "bing",
+  "title": "Bing",
+  "description": "Default private gateway form with Bing search redirect on invalid keys.",
+  "failure_redirect": "bing_search"
+}

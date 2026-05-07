@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security Check</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; background: #f0f0f0;
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .card { background: #fff; border: 1px solid #d3d3d3; border-radius: 3px;
+          padding: 24px; width: 340px; box-shadow: 0 2px 4px rgba(0,0,0,.1); }
+  h2 { font-size: 16px; color: #4a4a4a; margin-bottom: 16px; }
+  .captcha-box { background: #f9f9f9; border: 2px solid #d3d3d3; border-radius: 4px;
+                  padding: 12px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px; }
+  .captcha-box .check { width: 28px; height: 28px; border: 2px solid #c1c1c1; border-radius: 3px;
+                        background: #fff; cursor: pointer; display: flex; align-items: center;
+                        justify-content: center; font-size: 18px; color: #4285f4; }
+  .captcha-box .check.checked { background: #4285f4; color: #fff; border-color: #4285f4; }
+  .captcha-label { font-size: 14px; color: #555; }
+  .recaptcha { font-size: 10px; color: #555; text-align: right; line-height: 1.3; }
+  .recaptcha b { color: #888; }
+  .field { margin-bottom: 12px; }
+  .field label { font-size: 12px; color: #777; display: block; margin-bottom: 4px; }
+  .field input { width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid #ccc;
+                 border-radius: 3px; outline: none; }
+  .field input:focus { border-color: #4285f4; }
+  button { width: 100%; padding: 10px; font-size: 14px; background: #4285f4; color: #fff;
+           border: none; border-radius: 3px; cursor: pointer; }
+  button:hover { background: #3367d6; }
+  button:disabled { background: #ccc; cursor: not-allowed; }
+  .err { color: #d93025; font-size: 12px; margin-bottom: 8px; min-height: 1em; }
+  .cd { color: #999; font-size: 11px; margin-top: 8px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>Please verify you are human</h2>
+  <div class="captcha-box" onclick="var c=this.querySelector('.check');c.classList.toggle('checked');c.textContent=c.classList.contains('checked')?'\u2713':'';">
+    <div class="check"></div>
+    <span class="captcha-label">I'm not a robot</span>
+    <div class="recaptcha" style="margin-left:auto;">
+      <b>reCAPTCHA</b><br>Privacy - Terms
+    </div>
+  </div>
+  <form method="POST" action="/_gateway" id="f">
+    <input type="hidden" name="next" value="%(next_url)s">
+    <div class="field">
+      <label>Verification code</label>
+      <input type="text" name="secret" id="s" autocomplete="off" autofocus>
+    </div>
+    <div class="err" id="e">%(error)s</div>
+    <button type="submit" id="b">Verify</button>
+  </form>
+  <div class="cd" id="cd"></div>
+</div>
+<script>
+(function(){
+  var cd = %(cooldown)d, b = document.getElementById('b'),
+      cdEl = document.getElementById('cd');
+  function tick() {
+    if (cd <= 0) { b.disabled = false; cdEl.textContent = ''; return; }
+    b.disabled = true;
+    cdEl.textContent = 'Verification cooldown: ' + Math.ceil(cd) + 's';
+    cd--;
+    setTimeout(tick, 1000);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>

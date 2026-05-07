@@ -183,6 +183,17 @@ stylesheet consumes those variables. Custom themes can be created from raw CSS
 or from a ZIP containing CSS plus image/font assets; ZIP asset URLs are inlined
 when the theme CSS is loaded for the browser.
 
+## Private Gateway Skins
+
+The private gateway challenge page is selected by the global `gateway_skin`
+parameter. Skins are repository resources stored under
+`data/repository/private_gateway_skin` using the normal scope hierarchy. Each
+skin directory contains `skin.json` metadata and `template.html`; templates can
+use `{{ next_url }}`, `{{ error }}`, and `{{ cooldown }}` placeholders. Shipped
+global skins are `default`, `google`, `bing`, `wifi`, `terminal`, `netflix`,
+`captcha`, `matrix`, and `bladerunner`. Plugin-provided skins can add directories with the
+same layout without changing `services/private_gateway.py`.
+
 ## Flow Task Availability
 
 `ToolTaskAdapter` registers most tools as `tool.<name>` tasks. Some tools are intentionally skipped because they are agent-internal, meta-tools, or resource/control actions that do not make sense as flow nodes.

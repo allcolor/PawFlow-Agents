@@ -1,0 +1,6 @@
+{
+  "name": "netflix",
+  "title": "Netflix",
+  "description": "Netflix-style sign-in challenge skin.",
+  "failure_redirect": "https://www.netflix.com/login"
+}

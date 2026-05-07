@@ -9,6 +9,7 @@ Resource types:
 - mcp:      { name, url, auth?, discovered_tools? }
 - task_def: { name, prompt, criteria?, default_interval?, description?, created_by? }
 - theme:    directory resource with theme.json, CSS files, and optional assets
+- private_gateway_skin: directory resource with skin.json and template.html
 """
 
 import logging
@@ -29,6 +30,7 @@ _TYPE_MAP = {
     "prompt": "prompts",
     "tool": "tools",
     "theme": "theme",
+    "private_gateway_skin": "private_gateway_skin",
 }
 
 
@@ -43,6 +45,7 @@ _REQUIRED_FIELDS = {
     "prompt": ("prompt",),
     "tool": ("source",),
     "theme": (),
+    "private_gateway_skin": (),
 }
 
 # Default values per type
@@ -91,6 +94,11 @@ _DEFAULTS = {
         "description": "",
         "css": "",
         "source_filename": "",
+    },
+    "private_gateway_skin": {
+        "title": "",
+        "description": "",
+        "template": "",
     },
 }
 

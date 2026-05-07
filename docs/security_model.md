@@ -46,7 +46,7 @@ Use PawFlow secret storage or environment variables for API keys. Never hard-cod
 
 ## Private Gateway Skins
 
-The private gateway challenge page is selected by the global `gateway_skin` parameter. Built-in skins include `default`, `google`, `wifi`, `terminal`, `netflix`, `captcha`, `matrix`, and `bladerunner`.
+The private gateway challenge page is selected by the global `gateway_skin` parameter. Skins are repository resources under `data/repository/private_gateway_skin` with the same scope hierarchy as other resources. Each skin lives in a directory containing `skin.json` metadata and `template.html`; templates can use `{{ next_url }}`, `{{ error }}`, and `{{ cooldown }}` placeholders. Built-in global skins include `default`, `google`, `bing`, `wifi`, `terminal`, `netflix`, `captcha`, `matrix`, and `bladerunner`.
 
 ## Production Checklist
 

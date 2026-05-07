@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wi-Fi Login</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Tahoma, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .card { background: #fff; border-radius: 12px; padding: 40px 32px; width: 380px;
+          box-shadow: 0 20px 60px rgba(0,0,0,.3); text-align: center; }
+  .wifi-icon { font-size: 48px; margin-bottom: 12px; }
+  h1 { font-size: 20px; color: #333; margin-bottom: 4px; }
+  .sub { color: #888; font-size: 13px; margin-bottom: 24px; }
+  input[type=text] { width: 100%; padding: 12px 16px; font-size: 15px; border: 2px solid #e0e0e0;
+                     border-radius: 8px; outline: none; margin-bottom: 16px; }
+  input:focus { border-color: #667eea; }
+  button { width: 100%; padding: 12px; font-size: 16px; font-weight: 600;
+           background: linear-gradient(135deg, #667eea, #764ba2); color: #fff;
+           border: none; border-radius: 8px; cursor: pointer; }
+  button:hover { opacity: .9; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .err { color: #e74c3c; font-size: 13px; margin-bottom: 12px; min-height: 1.2em; }
+  .cd { color: #999; font-size: 12px; margin-top: 12px; }
+  .footer { color: #bbb; font-size: 11px; margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="wifi-icon">📶</div>
+  <h1>Welcome to Free Wi-Fi</h1>
+  <div class="sub">Enter access code to connect</div>
+  <form method="POST" action="/_gateway" id="f">
+    <input type="hidden" name="next" value="%(next_url)s">
+    <input type="text" name="secret" id="s" placeholder="Access code" autocomplete="off" autofocus>
+    <div class="err" id="e">%(error)s</div>
+    <button type="submit" id="b">🌐 Connect to Internet</button>
+  </form>
+  <div class="cd" id="cd"></div>
+  <div class="footer">Powered by NetConnect™ Hospitality Solutions</div>
+</div>
+<script>
+(function(){
+  var cd = %(cooldown)d, b = document.getElementById('b'),
+      cdEl = document.getElementById('cd');
+  function tick() {
+    if (cd <= 0) { b.disabled = false; cdEl.textContent = ''; return; }
+    b.disabled = true;
+    cdEl.textContent = 'Connection cooldown: ' + Math.ceil(cd) + 's';
+    cd--;
+    setTimeout(tick, 1000);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>

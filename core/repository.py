@@ -36,6 +36,7 @@ SCOPE_GLOBAL = "global"
 SCOPE_USER = "user"
 SCOPE_CONV = "conv"
 VALID_SCOPES = (SCOPE_GLOBAL, SCOPE_USER, SCOPE_CONV)
+_DIRECTORY_TYPES = frozenset({"theme", "private_gateway_skin"})
 
 # Promote direction: conv < user < global
 _SCOPE_ORDER = {SCOPE_CONV: 0, SCOPE_USER: 1, SCOPE_GLOBAL: 2}
@@ -81,7 +82,7 @@ class ScopedRepository:
               user_id: str = "", conv_id: str = "") -> Dict[str, Any]:
         """Create a definition. Raises ValueError if it already exists."""
         self._validate(rtype, scope, user_id, conv_id)
-        if rtype == "theme":
+        if rtype in _DIRECTORY_TYPES:
             path = repo_dir(rtype, scope, user_id, conv_id) / name
             if path.exists():
                 raise ValueError(
@@ -90,8 +91,8 @@ class ScopedRepository:
             entry["name"] = name
             entry.setdefault("created_at", time.time())
             entry["updated_at"] = time.time()
-            self._write_theme(path, entry)
-            return self._read_theme(path) or entry
+            self._write_directory_resource(rtype, path, entry)
+            return self._read_directory_resource(rtype, path) or entry
 
         path = repo_file(rtype, name, scope, user_id, conv_id)
         if path.exists():
@@ -109,8 +110,9 @@ class ScopedRepository:
     def get(self, rtype: str, name: str, scope: str,
             user_id: str = "", conv_id: str = "") -> Optional[Dict[str, Any]]:
         """Read a definition from a specific scope."""
-        if rtype == "theme":
-            return self._read_theme(repo_dir(rtype, scope, user_id, conv_id) / name)
+        if rtype in _DIRECTORY_TYPES:
+            return self._read_directory_resource(
+                rtype, repo_dir(rtype, scope, user_id, conv_id) / name)
         path = repo_file(rtype, name, scope, user_id, conv_id)
         return self._read(rtype, path)
 
@@ -118,15 +120,15 @@ class ScopedRepository:
                data: Dict[str, Any],
                user_id: str = "", conv_id: str = "") -> Dict[str, Any]:
         """Update a definition. Raises KeyError if not found."""
-        if rtype == "theme":
+        if rtype in _DIRECTORY_TYPES:
             path = repo_dir(rtype, scope, user_id, conv_id) / name
-            existing = self._read_theme(path)
+            existing = self._read_directory_resource(rtype, path)
             if existing is None:
                 raise KeyError(f"{rtype}/{name} not found in scope {scope}")
             existing.update(data)
             existing["updated_at"] = time.time()
-            self._write_theme(path, existing)
-            return self._read_theme(path) or existing
+            self._write_directory_resource(rtype, path, existing)
+            return self._read_directory_resource(rtype, path) or existing
 
         path = repo_file(rtype, name, scope, user_id, conv_id)
         existing = self._read(rtype, path)
@@ -140,7 +142,7 @@ class ScopedRepository:
     def delete(self, rtype: str, name: str, scope: str,
                user_id: str = "", conv_id: str = "") -> bool:
         """Delete a definition. Returns True if deleted."""
-        if rtype == "theme":
+        if rtype in _DIRECTORY_TYPES:
             path = repo_dir(rtype, scope, user_id, conv_id) / name
             if not path.exists():
                 return False
@@ -159,10 +161,10 @@ class ScopedRepository:
         directory = repo_dir(rtype, scope, user_id, conv_id)
         if not directory.exists():
             return []
-        if rtype == "theme":
+        if rtype in _DIRECTORY_TYPES:
             results = []
             for p in sorted(x for x in directory.iterdir() if x.is_dir()):
-                entry = self._read_theme(p)
+                entry = self._read_directory_resource(rtype, p)
                 if entry is not None:
                     entry["_scope"] = self._scope_label(scope, user_id, conv_id)
                     results.append(entry)
@@ -236,7 +238,7 @@ class ScopedRepository:
         if rtype == "flows":
             return self._move_or_copy_flow(
                 name, from_scope, to_scope, user_id, conv_id, move)
-        if rtype == "theme":
+        if rtype in _DIRECTORY_TYPES:
             src = repo_dir(rtype, from_scope, user_id, conv_id) / name
             dst = repo_dir(rtype, to_scope, user_id, conv_id) / name
             if not src.exists():
@@ -489,6 +491,47 @@ class ScopedRepository:
         self._write_json(path / "theme.json", meta)
         if css:
             (path / "theme.css").write_text(css, encoding="utf-8")
+
+    def _read_private_gateway_skin(self, path: Path) -> Optional[Dict[str, Any]]:
+        """Read a directory-based private gateway skin resource."""
+        template_file = path / "template.html"
+        if not template_file.exists():
+            return None
+        meta = self._read_json(path / "skin.json") or {}
+        entry = dict(meta)
+        entry.setdefault("name", path.name)
+        entry.setdefault("title", entry.get("name", path.name))
+        entry.setdefault("description", "")
+        entry["template"] = template_file.read_text(
+            encoding="utf-8", errors="replace")
+        entry["template_length"] = len(entry["template"])
+        return entry
+
+    def _write_private_gateway_skin(self, path: Path, data: Dict[str, Any]):
+        """Write a directory-based private gateway skin resource."""
+        template = data.get("template", "")
+        meta = {k: v for k, v in data.items()
+                if k not in ("template", "template_length")}
+        path.mkdir(parents=True, exist_ok=True)
+        self._write_json(path / "skin.json", meta)
+        if template:
+            (path / "template.html").write_text(template, encoding="utf-8")
+
+    def _read_directory_resource(self, rtype: str, path: Path) -> Optional[Dict[str, Any]]:
+        if rtype == "theme":
+            return self._read_theme(path)
+        if rtype == "private_gateway_skin":
+            return self._read_private_gateway_skin(path)
+        raise ValueError(f"Invalid directory resource type: {rtype}")
+
+    def _write_directory_resource(self, rtype: str, path: Path, data: Dict[str, Any]):
+        if rtype == "theme":
+            self._write_theme(path, data)
+            return
+        if rtype == "private_gateway_skin":
+            self._write_private_gateway_skin(path, data)
+            return
+        raise ValueError(f"Invalid directory resource type: {rtype}")
 
     def _read_json(self, path: Path) -> Optional[Dict[str, Any]]:
         if not path.exists():

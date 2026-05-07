@@ -1,0 +1,6 @@
+{
+  "name": "google",
+  "title": "Google",
+  "description": "Google-style search challenge skin.",
+  "failure_redirect": "google_search"
+}

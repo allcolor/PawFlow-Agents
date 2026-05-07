@@ -235,7 +235,8 @@ function _unwrapTechnicalGroups(container) {
 }
 
 function _technicalGroupSummary(count) {
-  return 'Technical details · ' + count + ' event' + (count === 1 ? '' : 's');
+  const eventLabel = t(count === 1 ? 'technicalDetailsEventSingular' : 'technicalDetailsEventPlural');
+  return t('technicalDetailsSummary', { count, eventLabel });
 }
 
 function _extractNonTechnicalChildren(group) {

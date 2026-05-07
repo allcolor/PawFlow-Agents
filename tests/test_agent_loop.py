@@ -372,7 +372,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 94  # + upscale_video, remove_background, describe_image, remix_image, speech_to_video, clone_voice, speak, delete_voice, ScheduleWakeup, PushNotification, Monitor, EnterPlanMode, ExitPlanMode, flash_delegate
+        assert len(defs) == 95  # + search
         assert any(d.get("name") == "flash_delegate" for d in defs)
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
@@ -451,7 +451,7 @@ class TestAgentLoopTask(unittest.TestCase):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
         tools = registry.list_tools()
-        assert len(tools) == 94  # + upscale_video, remove_background, describe_image, remix_image, speech_to_video, clone_voice, speak, delete_voice, ScheduleWakeup, PushNotification, Monitor, EnterPlanMode, ExitPlanMode, flash_delegate
+        assert len(tools) == 95  # + search
         assert any(t.name == "flash_delegate" for t in tools)
 
     def test_tool_registry_custom(self):

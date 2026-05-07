@@ -179,7 +179,7 @@ function connectSSE(cid, onReady, opts) {
       details.style.cssText = 'margin:4px 0;border-left:3px solid #6b7280;padding:4px 8px;opacity:0.7;';
       const summary = document.createElement('summary');
       summary.style.cssText = 'cursor:pointer;font-size:12px;color:#9ca3af;font-style:italic;user-select:none;';
-      summary.textContent = 'Thinking...';
+      summary.textContent = t('thinking') + '...';
       details.appendChild(summary);
       const content = document.createElement('div');
       content.style.cssText = 'font-size:12px;color:#9ca3af;font-style:italic;white-space:pre-wrap;max-height:300px;overflow-y:auto;';
@@ -235,7 +235,7 @@ function connectSSE(cid, onReady, opts) {
         te.el.remove();
         if (group && typeof _updateTechnicalGroupSummary === 'function') _updateTechnicalGroupSummary(group);
       } else {
-        te.summary.textContent = 'Thought for ' + elapsed.toFixed(1) + 's';
+        te.summary.textContent = t('thoughtFor', { sec: elapsed.toFixed(1) });
         te.el.setAttribute('open', '');
       }
       if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
@@ -294,9 +294,9 @@ function connectSSE(cid, onReady, opts) {
       if (actions) s.el.appendChild(actions);
       else s.el.insertAdjacentHTML('beforeend',
           '<span class="msg-actions">'
-          + '<button onclick="setReplyTo(this)" title="Reply">\u21A9</button>'
-          + '<button onclick="copyMsg(this)" title="Copy">\uD83D\uDCCB</button>'
-          + '<button onclick="deleteMsg(this)" title="Delete">\uD83D\uDDD1</button>'
+          + '<button onclick="setReplyTo(this)" title="' + escapeHtml(t('reply')) + '">\u21A9</button>'
+          + '<button onclick="copyMsg(this)" title="' + escapeHtml(t('copy')) + '">\uD83D\uDCCB</button>'
+          + '<button onclick="deleteMsg(this)" title="' + escapeHtml(t('delete')) + '">\uD83D\uDDD1</button>'
           + '</span>');
       if (meta) s.el.appendChild(meta);
     }
@@ -607,7 +607,7 @@ function connectSSE(cid, onReady, opts) {
     if (data.task_id && _delegateSubBlocks[data.task_id]) {
       const el = document.createElement('details');
       el.className = 'delegate-thinking';
-      el.innerHTML = '<summary>\u{1F4AD} Thinking...</summary>'
+      el.innerHTML = '<summary>\u{1F4AD} ' + escapeHtml(t('thinking')) + '...</summary>'
         + '<div class="delegate-thinking-content">' + escapeHtml(data.thinking || '') + '</div>';
       _subBlockAppend(data.task_id, el);
     }

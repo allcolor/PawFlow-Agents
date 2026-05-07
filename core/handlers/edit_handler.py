@@ -24,8 +24,9 @@ class EditHandler(BaseFsHandler):
             "Performs exact string replacements in a file (old_string -> new_string), "
             "or line-based replacement (start_line/end_line + new_string).\n\n"
             "Usage:\n"
-            " - You MUST use read at least once before editing a file. This tool will "
-            "error if you attempt an edit without reading the file first.\n"
+            " - Exact unique replacements are attempted directly. If old_string does "
+            "not match, the tool returns diagnostics so you can re-read the relevant "
+            "range instead of retrying blindly.\n"
             " - When editing text from read output, preserve the exact indentation "
             "(tabs/spaces) as it appears in the file. Do not include line number prefixes "
             "in old_string or new_string.\n"
@@ -35,6 +36,9 @@ class EditHandler(BaseFsHandler):
             " - The edit will FAIL if old_string is not unique in the file. Provide a "
             "larger string with more surrounding context to make it unique, or use "
             "replace_all to change every occurrence.\n"
+            " - Whitespace-only drift (line endings, trailing whitespace, tab/space "
+            "indentation) is tolerated when it resolves to a unique match. Set "
+            "fuzzy=true to allow high-confidence fuzzy matching for one occurrence.\n"
             " - Use replace_all for renaming variables or strings across the entire file.\n"
             " - Use the filesystem parameter to specify a non-default filesystem service."
         )
@@ -52,6 +56,8 @@ class EditHandler(BaseFsHandler):
                 "old_str": {"type": "string", "description": "Alias for old_string"},
                 "new_str": {"type": "string", "description": "Alias for new_string"},
                 "replace_all": {"type": "boolean", "description": "Replace all occurrences (default: first only)"},
+                "fuzzy": {"type": "boolean", "description": "Allow one high-confidence fuzzy match when exact/whitespace matching fails"},
+                "fuzzy_threshold": {"type": "number", "description": "Minimum fuzzy similarity score (default: 0.92)"},
                 "start_line": {"type": "integer", "description": "Start line for line-based edit (1-based)"},
                 "end_line": {"type": "integer", "description": "End line for line-based edit"},
                 "filesystem": {"type": "string", "description": "Filesystem service name. Omit for default."},
@@ -87,19 +93,17 @@ class EditHandler(BaseFsHandler):
         start_line = int(arguments.get("start_line", 0) or 0)
         end_line = int(arguments.get("end_line", 0) or 0)
 
-        # Pre-flight guards (skip for line-based edits — they're
-        # addressed by line number, no old_string to dedup on).
+        # Pre-flight duplicate guard. Read-before-edit is intentionally not
+        # enforced here: an exact unique old_string is already proof that the
+        # edit target matches the caller's view. If it does not match, the
+        # relay returns diagnostics and the duplicate guard stops blind retries.
         from core.handlers._edit_guard import (
-            check_read_before_edit, check_duplicate_failure,
-            record_edit_failure, track_write,
+            check_duplicate_failure, record_edit_failure, track_write,
         )
         _uid = self._user_id
         _cid = self._conversation_id
         _agent = self._agent_name
         if not (start_line > 0 and end_line > 0):
-            _guard = check_read_before_edit(_uid, _cid, _agent, path)
-            if _guard:
-                return f"Error: {_guard}"
             _dup = check_duplicate_failure(_uid, _cid, _agent, path, old_string)
             if _dup:
                 return f"Error: {_dup}"
@@ -142,7 +146,9 @@ class EditHandler(BaseFsHandler):
                 try:
                     result = svc.edit(
                         path, old_string, new_string, replace_all,
-                        local=bool(arguments.get("local", False)))
+                        local=bool(arguments.get("local", False)),
+                        fuzzy=bool(arguments.get("fuzzy", False)),
+                        fuzzy_threshold=arguments.get("fuzzy_threshold"))
                 except Exception as e:
                     # Record failure so the next identical old_string attempt
                     # gets refused by check_duplicate_failure.
@@ -150,14 +156,19 @@ class EditHandler(BaseFsHandler):
                     return f"Error editing '{path}': {e}"
                 diff = result.get("diff", [])
                 if diff:
+                    match_type = result.get("match_type")
+                    match_suffix = f", match={match_type}" if match_type and match_type != "exact" else ""
                     diff_text = (f"Edited {result.get('path', path)} "
                                  f"(line {result.get('line', '?')}), "
-                                 f"{result.get('replacements', 0)} replacement(s):\n")
+                                 f"{result.get('replacements', 0)} replacement(s)"
+                                 f"{match_suffix}:\n")
                     for d in diff:
                         prefix = "- " if d["type"] == "remove" else "+ " if d["type"] == "add" else "  "
                         diff_text += f"{d['line']:4d} {prefix}{d['text']}\n"
                     return diff_text
-                return f"Edited {result.get('path', path)}: {result.get('replacements', 0)} replacement(s)"
+                match_type = result.get("match_type")
+                match_suffix = f" ({match_type} match)" if match_type and match_type != "exact" else ""
+                return f"Edited {result.get('path', path)}: {result.get('replacements', 0)} replacement(s){match_suffix}"
         except Exception as e:
             return f"Error editing '{path}': {e}"
 

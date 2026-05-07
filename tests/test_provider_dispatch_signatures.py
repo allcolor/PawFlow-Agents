@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 
 import core.llm_client  # registers providers
-from core.llm_client import LLMClient
+from core.llm_client import LLMClient, unwrap_mcp_tool
 
 
 def _parse_dispatch_branches() -> dict:
@@ -284,6 +284,17 @@ def test_mcp_bridge_aliases_gemini_builtin_list_directory_to_list_dir():
                       src.index("# Case-insensitive alias lookup")]
     assert '"list_directory": "list_dir"' in alias_block
     assert '"read_file": "read"' in alias_block
+    assert '"search": "grep"' not in alias_block
+
+
+def test_mcp_use_tool_preserves_registered_search_tool_name():
+    name, args = unwrap_mcp_tool(
+        "mcp__pawflow__use_tool",
+        {"tool_name": "search", "arguments": {"pattern": "placeholder"}},
+    )
+
+    assert name == "search"
+    assert args == {"pattern": "placeholder"}
 
 
 def test_gemini_acp_permission_result_accepts_pawflow_allow_option():

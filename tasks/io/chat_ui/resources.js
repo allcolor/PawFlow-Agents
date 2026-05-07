@@ -1732,8 +1732,8 @@ function _usePrompt(name, hasParams) {
         + `<input id="prompt-param-${key}" value="${escapeHtml(String(def))}" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
     }
     formHtml += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-      <button onclick="document.getElementById('promptParamOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-      <button id="promptParamPaste" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Paste</button>
+      <button onclick="document.getElementById('promptParamOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
+      <button id="promptParamPaste" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('promptPaste'))}</button>
     </div>`;
     panel.innerHTML = formHtml;
     ov.appendChild(panel);

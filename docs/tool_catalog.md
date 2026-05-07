@@ -13,13 +13,17 @@ Filesystem-backed tools accept two routing controls in their runtime schema:
 
 Use `get_tool_schema(tool_name)` for the exact native selector names and required fields.
 
+Discovery preference: use `search` when you need glob filtering, regex matching, and contextual snippets in one call. Use `glob` for file lists and `grep` for simple content matches.
+
+Editing preference: use `apply_patch` for patch-shaped changes and `batch_edit` for coordinated replacements, then `edit` for small targeted changes, then `write` only when creating or fully replacing a file.
+
 | Tool | Purpose |
 |---|---|
-| `read` | Read a file through the active filesystem/relay. |
+| `read` | Read a file through the active filesystem/relay; use `mode="outline"` for compact code structure with bodies stubbed. |
 | `write` | Write a file. |
-| `edit` | Exact string or line-based file edit. |
-| `batch_edit` | Apply multiple exact replacements. |
-| `apply_patch` | Apply a unified diff patch. |
+| `edit` | Exact string or line-based file edit. Exact unique replacements no longer require a prior read; whitespace drift is tolerated, and `fuzzy=true` enables one high-confidence fuzzy match. |
+| `batch_edit` | Apply multiple replacements atomically across files, with aggregate replacement totals. |
+| `apply_patch` | Apply a unified diff or `*** Begin Patch` block. `path` is optional when the patch contains file paths. |
 | `find_replace` | Regex find/replace. |
 | `delete` | Delete a file or directory. |
 | `mkdir` | Create a directory. |
@@ -28,6 +32,7 @@ Use `get_tool_schema(tool_name)` for the exact native selector names and require
 | `list_dir` | List directory contents. |
 | `glob` | Find files by glob. |
 | `grep` | Search file contents. |
+| `search` | Combined glob + regex + ranked snippets for fewer discovery calls. |
 | `copy` | Copy files between filesystem services/FileStore. |
 | `notebook_edit` | Edit a Jupyter notebook cell. |
 

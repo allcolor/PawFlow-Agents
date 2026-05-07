@@ -76,6 +76,11 @@ class ReadHandler(BaseFsHandler):
                     "type": "string",
                     "description": "Page range for PDF files (e.g. '1-5').",
                 },
+                "mode": {
+                    "type": "string",
+                    "enum": ["full", "outline"],
+                    "description": "Use outline for compact code structure with bodies stubbed.",
+                },
                 "source": {
                     "type": "string",
                     "description": "Filesystem service name. Omit for default.",
@@ -91,6 +96,7 @@ class ReadHandler(BaseFsHandler):
         if not path:
             return "Error: 'path' is required"
         source = arguments.get("source", "")
+        mode = arguments.get("mode", "full") or "full"
 
         # fs:// URL parsing
         _svc_name, path = self._parse_fs_url(path)
@@ -119,11 +125,11 @@ class ReadHandler(BaseFsHandler):
 
         # FileStore
         if svc == "filestore":
-            return self._filestore_read(path, offset, limit)
+            return self._filestore_read(path, offset, limit, mode=mode)
 
         # Workdir
         if workdir:
-            return self._workdir_read(path, offset, limit)
+            return self._workdir_read(path, offset, limit, mode=mode)
 
         # No target
         if svc is None:
@@ -135,7 +141,7 @@ class ReadHandler(BaseFsHandler):
         except Exception as e:
             return f"Error reading '{path}': {e}"
 
-        # Track for Read-before-Edit enforcement.
+        # Track reads so failed edit retries can be cleared after a fresh view.
         from core.handlers._edit_guard import track_read
         track_read(self._user_id, self._conversation_id,
                    self._agent_name, path,
@@ -193,6 +199,9 @@ class ReadHandler(BaseFsHandler):
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             return f"(binary file, {len(data)} bytes)"
+
+        if mode == "outline":
+            return self._format_outline_read(fname, text)
 
         # RTK compact read for relay-backed text files. Preserve native
         # pagination when callers request a non-zero offset/range because RTK

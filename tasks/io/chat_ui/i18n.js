@@ -79,6 +79,7 @@ function _builtinEnglishCatalog() {
     languageTitle: 'Language', languageEn: 'English', languageFr: 'French', languageEs: 'Spanish',
     pageTitle: 'PawFlow Agent Chat', ready: 'Ready', send: 'Send', logout: 'Logout',
     placeholder: 'Type a message... (Enter to send, Shift+Enter for newline)',
+    placeholderDisabled: 'Create a conversation first (click + New)',
     conversations: 'Conversations', newChat: '+ New', resources: 'Resources',
   };
 }

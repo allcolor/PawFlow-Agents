@@ -134,7 +134,7 @@ function trackAgentStart(agentName, msgPreview) {
     lastTool: existing.lastTool || '',
     activeTools: existing.activeTools || [],
     totalTools: existing.totalTools || 0,
-    status: existing.status || 'thinking...',
+    status: existing.status || t('thinking') + '...',
     msgPreview: msgPreview || existing.msgPreview || '',
     contextUsed: existing.contextUsed || 0,
     contextMax: existing.contextMax || 0,
@@ -164,7 +164,7 @@ function trackAgentTool(agentName, toolName) {
   if (!activeInteractions[key]) trackAgentStart(agentName);
   const info = activeInteractions[key];
   info.lastTool = toolName || info.lastTool || '';
-  info.status = toolName ? 'using ' + toolName : 'using tool';
+  info.status = toolName ? t('usingTool', { tool: toolName }) : t('usingTool', { tool: t('tool') });
   info.activeTools = toolName ? [toolName] : (info.activeTools || []);
   info.totalTools = (info.totalTools || 0) + 1;
   info.updatedAt = Date.now();
@@ -175,7 +175,7 @@ function trackAgentToolDone(agentName, toolName) {
   if (!key || !activeInteractions[key]) return;
   const info = activeInteractions[key];
   info.activeTools = [];
-  info.status = 'thinking...';
+  info.status = t('thinking') + '...';
   info.updatedAt = Date.now();
   updateActivePanel();
 }
@@ -226,7 +226,7 @@ function updateActivePanel() {
     }
     const statusText = statusParts.length > 0
       ? statusParts.join(' \u00b7 ')
-      : (info.status || 'thinking...');
+      : (info.status || t('thinking') + '...');
     const preview = (!info.iteration && info.msgPreview) ? escapeHtml(info.msgPreview.substring(0, 40)) : '';
     const hue = Math.abs([...displayName].reduce((h,c) => (h * 31 + c.charCodeAt(0)) | 0, 0)) % 360;
     const color = 'hsl(' + hue + ',70%,65%)';
@@ -302,9 +302,9 @@ function updateActivePanel() {
       + ctxHtml
       + '<span class="a-time">' + timeStr + '</span>'
       + '<span class="a-actions">'
-      + '<button title="Interrupt (force answer)" onclick="interruptSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x23F8;</button>'
+      + '<button title="' + escapeHtml(t('stopTitle')) + '" onclick="interruptSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x23F8;</button>'
       + restartBtn
-      + '<button class="btn-stop" title="Stop" onclick="stopSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x25A0;</button>'
+      + '<button class="btn-stop" title="' + escapeHtml(t('stop')) + '" onclick="stopSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x25A0;</button>'
       + '</span></div>';
   }).join('');
   if (scrollNav) {

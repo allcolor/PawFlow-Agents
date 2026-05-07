@@ -48,11 +48,15 @@ class BatchEditHandler(BaseFsHandler):
                             "old_string": {"type": "string"},
                             "new_string": {"type": "string"},
                             "replace_all": {"type": "boolean", "description": "Replace every occurrence for this edit"},
+                            "fuzzy": {"type": "boolean", "description": "Allow one high-confidence fuzzy match for this edit"},
+                            "fuzzy_threshold": {"type": "number", "description": "Minimum fuzzy similarity score"},
                         },
                         "required": ["path", "old_string", "new_string"],
                     },
                 },
                 "replace_all": {"type": "boolean", "description": "Default replace_all value for edits that omit it"},
+                "fuzzy": {"type": "boolean", "description": "Default fuzzy value for edits that omit it"},
+                "fuzzy_threshold": {"type": "number", "description": "Default fuzzy threshold (default: 0.92)"},
                 "filesystem": {"type": "string", "description": "Filesystem service name. Omit for default."},
             },
             "required": ["edits"],
@@ -97,15 +101,33 @@ class BatchEditHandler(BaseFsHandler):
 
         try:
             service_name = fs or getattr(svc, '_service_id', '')
-            results = []
             for edit in edits:
                 path = edit.get("path", "")
                 self._checkpoint_before(svc, path, service_name=service_name)
-                result = svc.edit(path, edit.get("old_string", ""),
-                                  edit.get("new_string", ""),
-                                  bool(edit.get("replace_all", arguments.get("replace_all", False))),
-                                  local=bool(arguments.get("local", False)))
-                results.append(f"{path}: {result.get('replacements', 0)} replacement(s)")
-            return "\n".join(results)
+            result = svc.batch_edit(
+                edits,
+                replace_all=bool(arguments.get("replace_all", False)),
+                local=bool(arguments.get("local", False)),
+                fuzzy=bool(arguments.get("fuzzy", False)),
+                fuzzy_threshold=arguments.get("fuzzy_threshold"),
+            )
+            if isinstance(result, dict):
+                files = result.get("files_modified") or []
+                total = int(result.get("total_replacements", 0) or 0)
+                lines = [
+                    f"Batch edited {result.get('files_modified_count', len(files))} file(s), "
+                    f"{result.get('edits_applied', len(edits))} edit(s), "
+                    f"{total} replacement(s)."
+                ]
+                for detail in result.get("details", [])[:20]:
+                    match = detail.get("match_type") or "exact"
+                    suffix = f", {match}" if match != "exact" else ""
+                    lines.append(
+                        f"- {detail.get('path')}: {detail.get('replacements', 0)} "
+                        f"replacement(s) at line {detail.get('line', '?')}{suffix}")
+                if len(result.get("details", [])) > 20:
+                    lines.append(f"... {len(result.get('details', [])) - 20} more edit(s)")
+                return "\n".join(lines)
+            return str(result)
         except Exception as e:
             return f"Error: {e}"

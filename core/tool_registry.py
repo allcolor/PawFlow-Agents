@@ -496,6 +496,7 @@ def create_default_registry() -> ToolRegistry:
     from core.handlers.list_dir import ListDirHandler
     from core.handlers.glob_handler import GlobHandler
     from core.handlers.grep_handler import GrepHandler
+    from core.handlers.search import SearchHandler
     from core.handlers.bash import BashHandler
     from core.handlers.notebook import NotebookEditHandler
     from core.handlers.copy import CopyHandler
@@ -503,7 +504,7 @@ def create_default_registry() -> ToolRegistry:
     for _h_cls in (ReadHandler, WriteHandler, EditHandler, BatchEditHandler,
                    ApplyPatchHandler, FindReplaceHandler, DeleteHandler,
                    MkdirHandler, StatHandler, ExistsHandler, ListDirHandler,
-                   GlobHandler, GrepHandler, BashHandler, NotebookEditHandler,
+                   GlobHandler, GrepHandler, SearchHandler, BashHandler, NotebookEditHandler,
                    CopyHandler, SeeHandler):
         registry.register(_h_cls())
 

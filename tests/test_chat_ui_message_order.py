@@ -92,6 +92,21 @@ def test_autoscroll_only_stops_on_user_scroll_intent():
     assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
 
 
+def test_primary_chat_controls_are_i18n_bound():
+    assert 'id="input"' in TEMPLATE_HTML
+    assert 'data-i18n-placeholder="placeholder"' in TEMPLATE_HTML
+    assert 'id="sendBtn"' in TEMPLATE_HTML
+    assert 'data-i18n="send"' in TEMPLATE_HTML
+    assert 'id="stopBtn"' in TEMPLATE_HTML
+    assert 'data-i18n-title="stopTitle"' in TEMPLATE_HTML
+    assert "title=\"Reply\"" not in MESSAGES_JS
+    assert "title=\"Copy\"" not in MESSAGES_JS
+    assert "title=\"Delete\"" not in MESSAGES_JS
+    assert "Thinking..." not in SSE_JS
+    assert "Thought for " not in SSE_JS
+
+
+
 def test_active_agents_sse_hint_restores_panel_before_poll():
     active_agents_js = Path("tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
     assert "function trackAgentStart(agentName, msgPreview) { /* no-op */ }" not in active_agents_js

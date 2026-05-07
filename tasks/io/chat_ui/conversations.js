@@ -47,24 +47,24 @@ function renderConvList(convs) {
   const list = document.getElementById('convList');
   list.innerHTML = '';
   if (convs.length === 0) {
-    list.innerHTML = '<div style="padding:20px;text-align:center;color:#6c6c8a;font-size:13px;">No conversations yet.<br>Click <b>+ Nouveau</b> to start.</div>';
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:#6c6c8a;font-size:13px;">' + escapeHtml(t('noConversationsHint')) + '</div>';
     if (!conversationId) _setInputEnabled(false);
   }
   for (const c of convs) {
     const el = document.createElement('div');
     el.className = 'conv-item' + (c.conversation_id === conversationId ? ' active' : '');
     el.dataset.cid = c.conversation_id;
-    const title = c.title || c.preview || 'New conversation';
+    const title = c.title || c.preview || t('newConversation');
     const date = new Date(c.updated_at * 1000);
     const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     const runtimeStatus = _convRuntimeStatus(c.conversation_id, c.status);
-    const statusDot = runtimeStatus === 'active' ? '<span class="conv-status active" title="Working"></span>'
-      : runtimeStatus === 'blocked' ? '<span class="conv-status blocked" title="Blocked"></span>' : '';
-    const branchBadge = c.branch ? '<span class="conv-branch" title="Branch: ' + escapeHtml(c.branch) + '">\u{1F33F} ' + escapeHtml(c.branch) + '</span>' : '';
+    const statusDot = runtimeStatus === 'active' ? '<span class="conv-status active" title="' + escapeHtml(t('working')) + '"></span>'
+      : runtimeStatus === 'blocked' ? '<span class="conv-status blocked" title="' + escapeHtml(t('blocked')) + '"></span>' : '';
+    const branchBadge = c.branch ? '<span class="conv-branch" title="' + escapeHtml(t('branchTitle', { branch: c.branch })) + '">\u{1F33F} ' + escapeHtml(c.branch) + '</span>' : '';
     el.innerHTML = '<div class="conv-preview" ondblclick="renameConvInline(event,\'' + c.conversation_id + '\')">' 
       + statusDot + '<span class="conv-title">' + escapeHtml(title) + '</span>' + branchBadge + '</div>'
-      + '<div class="conv-meta">' + c.message_count + ' messages \u00b7 ' + timeStr + '</div>'
-      + '<button class="conv-delete" title="Delete" onclick="deleteConv(event,\'' + c.conversation_id + '\')">\u00d7</button>';
+      + '<div class="conv-meta">' + escapeHtml(t('contextMessages', { n: c.message_count })) + ' \u00b7 ' + timeStr + '</div>'
+      + '<button class="conv-delete" title="' + escapeHtml(t('delete')) + '" onclick="deleteConv(event,\'' + c.conversation_id + '\')">\u00d7</button>';
     el.onclick = () => resumeConv(c.conversation_id);
     el.oncontextmenu = (function(cid, status) { return function(ev) { ev.preventDefault(); showConvMenu(ev, cid, status); }; })(c.conversation_id, runtimeStatus);
     list.appendChild(el);
@@ -755,28 +755,28 @@ function _showImportConvDialog(info, fmt) {
     var _btnCss = 'padding:4px 10px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg2,#1e1e2e);color:inherit;cursor:pointer;font-size:16px;font-weight:600;';
 
     box.innerHTML =
-      '<span id="_impCloseX" style="position:absolute;top:8px;right:12px;cursor:pointer;color:#888;font-size:18px;" title="Cancel">\u2715</span>'
-      + '<div style="font-weight:600;font-size:1.1em;">Import Conversation</div>'
-      + '<div style="color:#888;font-size:11px;">' + info.message_count + ' messages \u2014 format: ' + escapeHtml(fmt) + '</div>'
-      + '<div><label style="font-size:11px;color:#888;">Title</label>'
-      + '<input id="_impTitle" type="text" value="Imported conversation" style="width:100%;padding:6px 10px;border-radius:5px;border:1px solid var(--border,#444);background:var(--bg,#141420);color:inherit;font-size:0.95em;box-sizing:border-box;"></div>'
-      + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">Agent Mapping</div>'
+      '<span id="_impCloseX" style="position:absolute;top:8px;right:12px;cursor:pointer;color:#888;font-size:18px;" title="' + escapeHtml(t('contextCancel')) + '">\u2715</span>'
+      + '<div style="font-weight:600;font-size:1.1em;">' + escapeHtml(t('importConversation')) + '</div>'
+      + '<div style="color:#888;font-size:11px;">' + escapeHtml(t('contextMessages', { n: info.message_count })) + ' \u2014 ' + escapeHtml(t('formatLabel', { format: fmt })) + '</div>'
+      + '<div><label style="font-size:11px;color:#888;">' + escapeHtml(t('title')) + '</label>'
+      + '<input id="_impTitle" type="text" value="' + escapeHtml(t('importedConversationTitle')) + '" style="width:100%;padding:6px 10px;border-radius:5px;border:1px solid var(--border,#444);background:var(--bg,#141420);color:inherit;font-size:0.95em;box-sizing:border-box;"></div>'
+      + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">' + escapeHtml(t('agentMapping')) + '</div>'
       + '<div style="display:flex;gap:12px;align-items:stretch;">'
       +   '<div id="_impAgentTree" style="' + _listCss + 'flex:1;"></div>'
-      +   '<div id="_impAgentDetail" style="flex:1;border:1px solid var(--border,#444);border-radius:4px;padding:10px;background:var(--bg,#141420);min-height:100px;max-height:240px;overflow-y:auto;font-size:12px;color:#aaa;display:flex;align-items:center;justify-content:center;">Select an agent to configure</div>'
+      +   '<div id="_impAgentDetail" style="flex:1;border:1px solid var(--border,#444);border-radius:4px;padding:10px;background:var(--bg,#141420);min-height:100px;max-height:240px;overflow-y:auto;font-size:12px;color:#aaa;display:flex;align-items:center;justify-content:center;">' + escapeHtml(t('selectAgentConfigure')) + '</div>'
       + '</div>'
-      + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">Relays</div>'
+      + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">' + escapeHtml(t('relays')) + '</div>'
       + '<div style="display:flex;gap:8px;align-items:stretch;">'
-      +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Available</div><div id="_impRelaysAvail" style="' + _relCss + '"></div></div>'
+      +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">' + escapeHtml(t('available')) + '</div><div id="_impRelaysAvail" style="' + _relCss + '"></div></div>'
       +   '<div style="display:flex;flex-direction:column;justify-content:center;gap:4px;">'
-      +     '<button id="_impRelayAdd" style="' + _btnCss + '" title="Link">\u25B6</button>'
-      +     '<button id="_impRelayRem" style="' + _btnCss + '" title="Unlink">\u25C0</button>'
+      +     '<button id="_impRelayAdd" style="' + _btnCss + '" title="' + escapeHtml(t('link')) + '">\u25B6</button>'
+      +     '<button id="_impRelayRem" style="' + _btnCss + '" title="' + escapeHtml(t('unlink')) + '">\u25C0</button>'
       +   '</div>'
-      +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Linked <span style="font-size:9px;color:#4ecdc4;">\u2605 = default</span></div><div id="_impRelaysSel" style="' + _relCss + '"></div></div>'
+      +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">' + escapeHtml(t('linkedRelaysDefaultHint')) + '</div><div id="_impRelaysSel" style="' + _relCss + '"></div></div>'
       + '</div>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">'
-      +   '<button id="_impCancelBtn" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer;">Cancel</button>'
-      +   '<button id="_impGoBtn" style="padding:6px 14px;border-radius:5px;border:none;background:var(--accent,#7c6af7);color:#fff;cursor:pointer;font-weight:600;">Import</button>'
+      +   '<button id="_impCancelBtn" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+      +   '<button id="_impGoBtn" style="padding:6px 14px;border-radius:5px;border:none;background:var(--accent,#7c6af7);color:#fff;cursor:pointer;font-weight:600;">' + escapeHtml(t('import')) + '</button>'
       + '</div>';
 
     overlay.appendChild(box);
@@ -806,7 +806,7 @@ function _showImportConvDialog(info, fmt) {
       tree.innerHTML = '';
       var hdr = document.createElement('div');
       hdr.style.cssText = 'font-size:10px;color:#666;padding:2px 4px;';
-      hdr.textContent = 'Imported agents (' + Object.keys(agentInstances).length + ')';
+      hdr.textContent = t('importedAgentsCount', { n: Object.keys(agentInstances).length });
       tree.appendChild(hdr);
       Object.keys(agentInstances).forEach(iname => {
         var inst = agentInstances[iname];
@@ -818,7 +818,7 @@ function _showImportConvDialog(info, fmt) {
         label.textContent = iname;
         var badge = document.createElement('span');
         badge.style.cssText = 'font-size:10px;color:#888;';
-        badge.textContent = inst.definition ? '\u2192 ' + inst.definition : '\u26A0 unmapped';
+        badge.textContent = inst.definition ? '\u2192 ' + inst.definition : '\u26A0 ' + t('unmapped');
         row.appendChild(label);
         row.appendChild(badge);
         row.onclick = () => { _commitCurrentDetail(); focusedAgent = iname; _renderTree(); _renderDetail(); };
@@ -852,7 +852,7 @@ function _showImportConvDialog(info, fmt) {
     function _renderDetail() {
       var panel = document.getElementById('_impAgentDetail');
       if (!focusedAgent || !agentInstances[focusedAgent]) {
-        panel.innerHTML = '<span style="color:#666;">Select an agent to configure</span>';
+        panel.innerHTML = '<span style="color:#666;">' + escapeHtml(t('selectAgentConfigure')) + '</span>';
         panel.style.display = 'flex'; panel.style.alignItems = 'center'; panel.style.justifyContent = 'center';
         return;
       }
@@ -868,14 +868,14 @@ function _showImportConvDialog(info, fmt) {
       ).join('');
 
       var html = '<div style="font-weight:600;font-size:13px;color:#fff;margin-bottom:8px;">' + escapeHtml(focusedAgent) + '</div>';
-      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">Instance Name</label>';
+      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">' + escapeHtml(t('instanceName')) + '</label>';
       html += '<input id="_impInstName" value="' + escapeHtml(focusedAgent) + '" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;box-sizing:border-box;"/></div>';
-      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">Definition *</label>';
+      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">' + escapeHtml(t('definitionRequired')) + '</label>';
       html += '<select id="_impDefSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;">' + defOptions + '</select></div>';
-      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">LLM Service *</label>';
+      html += '<div style="margin-bottom:6px;"><label style="font-size:10px;color:#888;">' + escapeHtml(t('llmServiceRequired')) + '</label>';
       html += '<select id="_impLlmSelect" style="width:100%;padding:4px 6px;border-radius:4px;border:1px solid var(--border,#444);background:var(--bg2,#1e1e2e);color:inherit;font-size:12px;">' + svcOpts + '</select></div>';
       if (paramKeys.length) {
-        html += '<div style="margin-bottom:6px;"><div style="font-size:10px;color:#888;margin-bottom:4px;">Parameters</div>';
+        html += '<div style="margin-bottom:6px;"><div style="font-size:10px;color:#888;margin-bottom:4px;">' + escapeHtml(t('parameters')) + '</div>';
         paramKeys.forEach(k => {
           var spec = paramSchema[k] || {};
           var val = inst.params[k] || spec.default || '';
@@ -935,7 +935,7 @@ function _showImportConvDialog(info, fmt) {
         var radio = document.createElement('span');
         radio.innerHTML = isDefault ? '\u2605' : '\u2606';
         radio.style.cssText = 'cursor:pointer;color:' + (isDefault ? '#4ecdc4' : '#555') + ';margin-right:4px;font-size:14px;';
-        radio.title = 'Set as default';
+        radio.title = t('setDefaultRelay');
         radio.onclick = function(e) { e.stopPropagation(); defaultRelay = rid; _renderRelays(); };
         d.insertBefore(radio, d.firstChild);
         sel.appendChild(d);
@@ -965,17 +965,17 @@ function _showImportConvDialog(info, fmt) {
     document.getElementById('_impCancelBtn').onclick = _cancelImport;
     document.getElementById('_impGoBtn').onclick = () => {
       _commitCurrentDetail();  // flush visible panel into agentInstances
-      if (!Object.keys(agentInstances).length) { alert('At least one agent is required.'); return; }
-      var title = (document.getElementById('_impTitle').value || '').trim() || 'Imported';
+      if (!Object.keys(agentInstances).length) { alert(t('atLeastOneAgentRequired')); return; }
+      var title = (document.getElementById('_impTitle').value || '').trim() || t('imported');
       overlay.remove();
-      document.getElementById('status').textContent = 'Importing...';
+      document.getElementById('status').textContent = t('importing');
       action$('conv_import_execute', {
         temp_id: info.temp_id, format: fmt,
         agent_mapping: agentInstances, title,
         relays: selRelays, default_relay: defaultRelay,
       }).subscribe(result => {
-        if (result.error) { addMsg('error', 'Import failed: ' + result.error); document.getElementById('status').textContent = t('ready'); return; }
-        addMsg('system', 'Conversation imported successfully');
+        if (result.error) { addMsg('error', t('importFailed', { error: result.error })); document.getElementById('status').textContent = t('ready'); return; }
+        addMsg('system', t('importSuccess'));
         // Open the new conv FIRST (opens its SSE, sets conversationId),
         // THEN refresh the sidebar. Reverse order races: the
         // list_conversations reply gets scoped to the OLD conv and is

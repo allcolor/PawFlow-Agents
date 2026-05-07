@@ -512,9 +512,9 @@ function addMsg(role, text, extra) {
   let actionsHtml = '';
   if (role === 'user' || role === 'assistant') {
     actionsHtml = '<span class="msg-actions">'
-      + '<button onclick="setReplyTo(this)" title="Reply">\u21A9</button>'
-      + '<button onclick="copyMsg(this)" title="Copy">\u{1F4CB}</button>'
-      + '<button onclick="deleteMsg(this)" title="Delete">\u{1F5D1}</button>'
+      + '<button onclick="setReplyTo(this)" title="' + escapeHtml(t('reply')) + '">\u21A9</button>'
+      + '<button onclick="copyMsg(this)" title="' + escapeHtml(t('copy')) + '">\u{1F4CB}</button>'
+      + '<button onclick="deleteMsg(this)" title="' + escapeHtml(t('delete')) + '">\u{1F5D1}</button>'
       + '</span>';
   }
 
@@ -569,8 +569,8 @@ function addMsg(role, text, extra) {
       if (args && args.command) _inner.dataset.command = args.command.substring(0, 200);
       const isLive = extra && extra.live;
       const bulletClass = isLive ? 'pending' : 'done';
-      const bgBtn = (tcId && isLive) ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="Run in background">\u2192 BG</button>' : '';
-      const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="Kill">\u2718</button>' : '';
+      const bgBtn = (tcId && isLive) ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="' + escapeHtml(t('runInBackground')) + '">\u2192 BG</button>' : '';
+      const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="' + escapeHtml(t('kill')) + '">\u2718</button>' : '';
       if (toolName === 'edit' && args && args.path) {
         _inner.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
       } else if (toolName === 'apply_patch' && args && args.path) {
@@ -637,8 +637,8 @@ function addMsg(role, text, extra) {
 
     const isLive = extra && extra.live;
     const bulletClass = isLive ? 'pending' : 'done';
-    const bgBtn = (tcId && isLive) ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="Run in background">\u2192 BG</button>' : '';
-    const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="Kill">\u2718</button>' : '';
+    const bgBtn = (tcId && isLive) ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="' + escapeHtml(t('runInBackground')) + '">\u2192 BG</button>' : '';
+    const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="' + escapeHtml(t('kill')) + '">\u2718</button>' : '';
     if (toolName === 'edit' && args && args.path) {
       el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
     } else if (toolName === 'apply_patch' && args && args.path) {

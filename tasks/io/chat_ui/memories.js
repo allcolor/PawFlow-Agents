@@ -54,8 +54,8 @@ function showMemoryOverlay(memories) {
         '<span style="background:#2a2a4a;color:#a0a0c0;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:3px">' + t + '</span>'
       ).join('');
       const age = _formatAge(m.updated_at || m.created_at);
-      const editBtn = '<button onclick="event.stopPropagation();memEdit(' + i + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
-      const delBtn = '<button onclick="event.stopPropagation();memDelete(\'' + m.id + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
+      const editBtn = '<button onclick="event.stopPropagation();memEdit(' + i + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('contextEdit')) + '">&#9998;</button>';
+      const delBtn = '<button onclick="event.stopPropagation();memDelete(\'' + m.id + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('delete')) + '">&#128465;</button>';
       const text = (m.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       msgsHtml += '<div id="mem-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="this.querySelector(\'.mem-full\')&&(this.querySelector(\'.mem-full\').style.display=this.querySelector(\'.mem-full\').style.display===\'block\'?\'none\':\'block\')">'
         + '<div style="display:flex;align-items:center;gap:4px">' + scopeBadge + tagsHtml
@@ -69,10 +69,10 @@ function showMemoryOverlay(memories) {
 
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
     + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">Agent Memories</h3>'
-    + '<span style="color:#6c6c8a;font-size:12px">' + memories.length + ' entries</span>'
+    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + escapeHtml(t('memories')) + '</h3>'
+    + '<span style="color:#6c6c8a;font-size:12px">' + escapeHtml(t('entriesCount', { n: memories.length })) + '</span>'
     + filterHtml
-    + '<button onclick="memAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ Add</button>'
+    + '<button onclick="memAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ ' + escapeHtml(t('add')) + '</button>'
     + '<button onclick="document.getElementById(\'memoryOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px">&times;</button>'
     + '</div>'
     + '<div id="mem-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
@@ -96,7 +96,7 @@ function memFilterChanged() {
 }
 
 function memDelete(memId) {
-  if (!confirm('Delete this memory?')) return;
+  if (!confirm(t('memoryDeleteConfirm'))) return;
   fireAction('delete_memory', { memory_id: memId });
   // Refresh after a short delay to let the action complete
   setTimeout(() => cmdShowMemories(), 500);
@@ -110,12 +110,12 @@ function memEdit(idx) {
   row.innerHTML = '<div style="padding:4px">'
     + '<textarea id="mem-edit-text" style="width:100%;min-height:60px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px;font-size:12px;resize:vertical">' + (m.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</textarea>'
     + '<div style="display:flex;gap:6px;margin-top:4px;align-items:center">'
-    + '<label style="color:#6c6c8a;font-size:11px">Tags:</label>'
+    + '<label style="color:#6c6c8a;font-size:11px">' + escapeHtml(t('tags')) + ':</label>'
     + '<input id="mem-edit-tags" value="' + (m.tags || []).join(', ') + '" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
-    + '<label style="color:#6c6c8a;font-size:11px">Agent:</label>'
+    + '<label style="color:#6c6c8a;font-size:11px">' + escapeHtml(t('agent')) + ':</label>'
     + '<input id="mem-edit-agent" value="' + (m.agent || '') + '" placeholder="(global)" style="width:80px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
-    + '<button onclick="memSaveEdit(\'' + m.id + '\')" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Save</button>'
-    + '<button onclick="cmdShowMemories()" style="background:#333;color:#aaa;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>'
+    + '<button onclick="memSaveEdit(\'' + m.id + '\')" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + escapeHtml(t('contextSave')) + '</button>'
+    + '<button onclick="cmdShowMemories()" style="background:#333;color:#aaa;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + escapeHtml(t('contextCancel')) + '</button>'
     + '</div></div>';
 }
 

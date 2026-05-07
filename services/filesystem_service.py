@@ -1177,14 +1177,29 @@ class RelayService(BaseService):
                              replacement=replacement, local=local)
 
     def edit(self, path: str, old_string: str, new_string: str,
-             replace_all: bool = False, local: bool = False):
-        return self._request("edit", path, old_string=old_string,
-                              new_string=new_string, replace_all=replace_all,
-                              local=local)
+             replace_all: bool = False, local: bool = False,
+             fuzzy: bool = False, fuzzy_threshold=None):
+        kwargs = {
+            "old_string": old_string,
+            "new_string": new_string,
+            "replace_all": replace_all,
+            "local": local,
+        }
+        if fuzzy:
+            kwargs["fuzzy"] = True
+        if fuzzy_threshold is not None:
+            kwargs["fuzzy_threshold"] = fuzzy_threshold
+        return self._request("edit", path, **kwargs)
 
-    def batch_edit(self, edits: list, replace_all: bool = False, local: bool = False):
-        return self._request("batch_edit", ".", edits=edits,
-                             replace_all=replace_all, local=local)
+    def batch_edit(self, edits: list, replace_all: bool = False,
+                   local: bool = False, fuzzy: bool = False,
+                   fuzzy_threshold=None):
+        kwargs = {"edits": edits, "replace_all": replace_all, "local": local}
+        if fuzzy:
+            kwargs["fuzzy"] = True
+        if fuzzy_threshold is not None:
+            kwargs["fuzzy_threshold"] = fuzzy_threshold
+        return self._request("batch_edit", ".", **kwargs)
 
     def apply_patch(self, patch: str, local: bool = False):
         return self._request("apply_patch", ".", patch=patch, local=local)

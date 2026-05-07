@@ -12,27 +12,31 @@ class ApplyPatchHandler(BaseFsHandler):
 
     @property
     def description(self):
-        return "Apply a unified diff patch to a file."
+        return (
+            "Apply a unified diff patch. The path parameter is optional when "
+            "the patch itself contains file paths (for example Codex/OpenAI "
+            "*** Begin Patch blocks with *** Update File lines)."
+        )
 
     @property
     def parameters_schema(self):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "File path to patch"},
+                "path": {"type": "string", "description": "Optional file path to patch; omit when patch contains file paths"},
                 "patch": {"type": "string", "description": "Unified diff string"},
                 "filesystem": {"type": "string", "description": "Filesystem service name. Omit for default."},
             },
-            "required": ["path", "patch"],
+            "required": ["patch"],
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
         arguments = self._resolve_expressions(arguments)
-        path = arguments.get("path", "")
+        path = arguments.get("path", "") or "."
         patch = arguments.get("patch", "")
-        if not path or not patch:
-            return "Error: 'path' and 'patch' are required"
+        if not patch:
+            return "Error: 'patch' is required"
         fs = arguments.get("filesystem", "")
 
         _svc_name, path = self._parse_fs_url(path)

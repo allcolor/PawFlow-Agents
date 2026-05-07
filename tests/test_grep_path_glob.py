@@ -1,5 +1,6 @@
 from core.handlers.grep_handler import GrepHandler
 from core.handlers.glob_handler import GlobHandler
+from core.handlers.search import SearchHandler
 from tools.fs_actions import action_grep, action_search
 
 
@@ -91,6 +92,23 @@ def test_relay_action_grep_accepts_comma_separated_include(tmp_path):
     assert [row["path"] for row in results] == ["pkg/mod.py", "pkg/view.js"]
 
 
+def test_relay_action_grep_accepts_brace_include(tmp_path):
+    (tmp_path / "core").mkdir()
+    (tmp_path / "services").mkdir()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "core" / "a.py").write_text("needle = 'core'\n", encoding="utf-8")
+    (tmp_path / "services" / "b.py").write_text("needle = 'services'\n", encoding="utf-8")
+    (tmp_path / "docs" / "c.py").write_text("needle = 'docs'\n", encoding="utf-8")
+
+    results = action_grep(str(tmp_path), str(tmp_path), {
+        "regex": "needle",
+        "include": "{core,services}/**/*.py",
+        "recursive": True,
+    })
+
+    assert [row["path"] for row in results] == ["core/a.py", "services/b.py"]
+
+
 def test_grep_handler_accepts_include_alias(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()
@@ -148,6 +166,31 @@ def test_glob_handler_accepts_brace_pattern(tmp_path):
 
     assert "core/a.py" in result
     assert "services/b.py" in result
+    assert "docs/c.py" not in result
+
+
+def test_search_handler_accepts_brace_glob(tmp_path):
+    (tmp_path / "core").mkdir()
+    (tmp_path / "services").mkdir()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "core" / "a.py").write_text("needle = 'core'\n", encoding="utf-8")
+    (tmp_path / "services" / "b.py").write_text("needle = 'services'\n", encoding="utf-8")
+    (tmp_path / "docs" / "c.py").write_text("needle = 'docs'\n", encoding="utf-8")
+
+    handler = SearchHandler()
+    handler.set_workdir(str(tmp_path))
+    handler.set_is_claude_code(True)
+
+    result = handler.execute({
+        "pattern": "needle",
+        "path": str(tmp_path),
+        "glob": "{core,services}/**/*.py",
+        "context": 0,
+    })
+
+    assert "Search results for 'needle': 2 match(es) in 2 file(s)" in result
+    assert "## core/a.py" in result
+    assert "## services/b.py" in result
     assert "docs/c.py" not in result
 
 

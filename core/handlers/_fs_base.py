@@ -9,6 +9,7 @@ Provides:
 - Binary output capping
 """
 
+import ast
 import json
 import logging
 import os
@@ -421,7 +422,8 @@ class BaseFsHandler(ToolHandler):
 
     # ── FileStore operations ──
 
-    def _filestore_read(self, path: str, offset: int = 0, limit: int = 0) -> str:
+    def _filestore_read(self, path: str, offset: int = 0, limit: int = 0,
+                        mode: str = "full") -> str:
         """Read from server FileStore — same pagination as relay read."""
         from core.file_store import FileStore
         store = FileStore.instance()
@@ -443,6 +445,8 @@ class BaseFsHandler(ToolHandler):
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             return f"Binary file: {fname} ({len(data):,} bytes, {ct})"
+        if mode == "outline":
+            return self._format_outline_read(fname, text)
         return self._format_text_read(fname, text, offset, limit)
 
     def _filestore_list(self) -> str:
@@ -485,7 +489,8 @@ class BaseFsHandler(ToolHandler):
 
     # ── Workdir operations (local server filesystem) ──
 
-    def _workdir_read(self, path: str, offset: int = 0, limit: int = 0) -> str:
+    def _workdir_read(self, path: str, offset: int = 0, limit: int = 0,
+                      mode: str = "full") -> str:
         """Read a file from the agent workdir."""
         full = self._sandbox_path(path, self._workdir)
         if not os.path.exists(full):
@@ -495,7 +500,7 @@ class BaseFsHandler(ToolHandler):
         with open(full, "rb") as f:
             data = f.read()
         fname = os.path.basename(full)
-        # Track for Read-before-Edit enforcement.
+        # Track reads so failed edit retries can be cleared after a fresh view.
         from core.handlers._edit_guard import track_read
         track_read(self._user_id, self._conversation_id,
                    self._agent_name, path, data)
@@ -503,6 +508,8 @@ class BaseFsHandler(ToolHandler):
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             return f"(binary file, {len(data)} bytes)"
+        if mode == "outline":
+            return self._format_outline_read(fname, text)
         return self._format_text_read(fname, text, offset, limit)
 
     def _workdir_write(self, path: str, content: str) -> str:
@@ -678,6 +685,58 @@ class BaseFsHandler(ToolHandler):
                        f" (MUST paginate, max {_max_page} chars/page)")
         header += "]"
         return header + "\n" + "".join(output_lines)
+
+    def _format_outline_read(self, fname: str, text: str) -> str:
+        """Return a compact source outline with function/class bodies stubbed."""
+        lower = fname.lower()
+        if lower.endswith(".py"):
+            try:
+                tree = ast.parse(text)
+            except SyntaxError:
+                return self._format_text_read(fname, text, 0, 200)
+            lines = text.split("\n")
+            keep = set()
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    keep.add(node.lineno)
+                elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    keep.add(node.lineno)
+                    for deco in getattr(node, "decorator_list", []) or []:
+                        keep.add(getattr(deco, "lineno", node.lineno))
+                    for child in getattr(node, "body", [])[:2]:
+                        if isinstance(child, ast.Expr) and isinstance(getattr(child, "value", None), ast.Constant):
+                            keep.add(child.lineno)
+            output = []
+            emitted_stub_for = set()
+            for idx, line in enumerate(lines, start=1):
+                stripped = line.strip()
+                if idx in keep or stripped.startswith(("@", "class ", "def ", "async def ", "import ", "from ")):
+                    output.append(f"{idx:4d}\t{line}")
+                    if stripped.startswith(("class ", "def ", "async def ")):
+                        indent = line[:len(line) - len(line.lstrip())]
+                        stub_line = indent + "    ..."
+                        if idx not in emitted_stub_for:
+                            output.append(f"{idx:4d}\t{stub_line}")
+                            emitted_stub_for.add(idx)
+            return f"[{fname}: outline, {len(lines)} lines, {len(text):,} chars]\n" + "\n".join(output)
+
+        if lower.endswith((".js", ".jsx", ".ts", ".tsx")):
+            sig = re.compile(
+                r"^\s*(export\s+)?(async\s+)?(function\s+\w+|class\s+\w+|"
+                r"(const|let|var)\s+\w+\s*=\s*(async\s*)?(\([^)]*\)|\w+)\s*=>|"
+                r"import\s+|export\s+\{)"
+            )
+            lines = text.split("\n")
+            output = []
+            for idx, line in enumerate(lines, start=1):
+                if sig.search(line):
+                    output.append(f"{idx:4d}\t{line.rstrip()}")
+                    if "{" in line and not line.rstrip().endswith(";"):
+                        indent = line[:len(line) - len(line.lstrip())]
+                        output.append(f"{idx:4d}\t{indent}  ...")
+            return f"[{fname}: outline, {len(lines)} lines, {len(text):,} chars]\n" + "\n".join(output)
+
+        return self._format_text_read(fname, text, 0, 200)
 
     # ── Expression resolution ──
 

@@ -88,7 +88,7 @@ _TOOL_ALIASES = {
     # CC hallucinations (common LLM mistakes)
     "run_command": "bash", "shell": "bash", "execute": "bash",
     "run": "bash", "terminal": "bash", "exec": "bash",
-    "search": "grep", "find_files": "glob", "list_files": "glob",
+    "find_files": "glob", "list_files": "glob",
     "cat": "read", "view": "read", "open": "read",
     "create_file": "write", "save": "write",
     "replace": "edit", "patch": "edit", "modify": "edit",

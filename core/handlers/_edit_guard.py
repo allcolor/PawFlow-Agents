@@ -1,12 +1,11 @@
-"""Edit pre-flight checks — enforces Read-before-Edit + duplicate-retry refusal.
+"""Edit guard state — read tracking + duplicate-retry refusal.
 
 Two guardrails against the failure modes agents hit repeatedly:
 
-1. **Read-before-Edit**: An agent MUST have read a file (within this
-   conversation) before editing it. Matches Claude Code's native edit
-   contract. Scoped per-AGENT — a read by agent A in the same conv
-   does NOT grant agent B permission to edit: each agent has its own
-   mental model built from its own reads.
+1. **Read tracking**: reads are tracked per agent/conversation/path so tools
+   can clear stale failure state and legacy callers can still enforce a
+   read-before-edit policy if needed. The main edit handler is opportunistic:
+   an exact unique `old_string` is enough proof to apply the edit.
 
 2. **Duplicate-retry refusal**: If the same (path, old_string) pair
    fails twice in a row without an intervening re-read, refuse

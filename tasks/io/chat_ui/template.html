@@ -529,7 +529,7 @@ if (typeof hljs !== 'undefined') {
 <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">&#9776;</button>
 <div class="sidebar collapsed" id="sidebar">
   <div class="sidebar-header">
-    <h2>Conversations</h2>
+    <h2 data-i18n="conversations">Conversations</h2>
     <div style="position:relative;display:inline-block;">
       <button class="btn-new" style="border-radius:6px 0 0 6px" onclick="newChat()" data-i18n="newChat">+ New</button><button class="btn-new" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'" style="border-left:1px solid rgba(255,255,255,0.3);border-radius:0 6px 6px 0;padding:4px 6px;">▼</button>
       <div style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#1a1a2e;border:1px solid #333;border-radius:6px;min-width:200px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.5);">
@@ -540,17 +540,17 @@ if (typeof hljs !== 'undefined') {
   </div>
   <div class="conv-list" id="convList"></div>
   <div class="sidebar-settings">
-    <label id="ttlLabel">Expiry</label>
+    <label id="ttlLabel" data-i18n="ttlLabel">Expiry</label>
     <select id="ttlSelect">
-      <option value="0">Unlimited</option>
-      <option value="3600">1 hour</option>
-      <option value="21600">6 hours</option>
-      <option value="86400">24 hours</option>
-      <option value="604800">7 days</option>
+      <option value="0" data-i18n="ttlNone">Unlimited</option>
+      <option value="3600" data-i18n="ttl1h">1 hour</option>
+      <option value="21600" data-i18n="ttl6h">6 hours</option>
+      <option value="86400" data-i18n="ttl24h">24 hours</option>
+      <option value="604800" data-i18n="ttl7d">7 days</option>
     </select>
-    <label id="convThemeLabel" style="margin-top:8px">Conversation theme</label>
-    <select id="conversationThemeSelect" onchange="onConversationThemeSelectChange(this.value)" title="Conversation theme">
-      <option value="">Use global theme</option>
+    <label id="convThemeLabel" style="margin-top:8px" data-i18n="convThemeLabel">Conversation theme</label>
+    <select id="conversationThemeSelect" onchange="onConversationThemeSelectChange(this.value)" title="Conversation theme" data-i18n-title="convThemeLabel">
+      <option value="" data-i18n="useGlobalTheme">Use global theme</option>
     </select>
   </div>
   <div class="sidebar-settings" id="resourcesPanel" style="display:none">
@@ -568,22 +568,23 @@ if (typeof hljs !== 'undefined') {
 <div class="main">
 <div class="header">
   <h1>PawFlow Agent</h1>
-  <span class="status" id="status">Ready</span>
+  <span class="status" id="status" data-i18n="ready">Ready</span>
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
-    <select id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)" title="Global chat theme"
+    <select id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)" title="Global chat theme" data-i18n-title="globalThemeTitle"
             style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:220px">
       <option value="global:pawflow_dark">PawFlow Dark</option>
     </select>
-    <select id="languageSelect" onchange="setLanguage(this.value)" title="Language" aria-label="Language"
+    <select id="languageSelect" onchange="setLanguage(this.value)" title="Language" aria-label="Language" data-i18n-title="languageTitle" data-i18n-aria-label="languageTitle"
             style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:120px">
     </select>
     <button id="technicalGroupingToggle" class="tech-group-toggle" type="button" aria-pressed="false"
             aria-label="Group technical details. Click to group tool calls and thinking in collapsible boxes, then reload the conversation."
             title="Group technical details. Click to group tool calls and thinking in collapsible boxes, then reload the conversation."
+            data-i18n-title="groupTechnicalDisabledTitle" data-i18n-aria-label="groupTechnicalDisabledTitle"
             onclick="onTechnicalGroupingToggle()">&#x25A1;</button>
-    <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode"
+    <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode" data-i18n-title="permissionModeTitle"
             style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
       <option value="default" data-i18n-permission="permissionDefault">&#x1F512; Default</option>
       <option value="approve_edits" data-i18n-permission="permissionApproveEdits">&#x270F; Approve edits</option>
@@ -662,7 +663,7 @@ if (typeof hljs !== 'undefined') {
         </div>
       </div>
     </div>
-    <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none">Logout</button>
+    <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none" data-i18n="logout">Logout</button>
   </div>
 </div>
 <!-- Chat tab content -->
@@ -696,10 +697,10 @@ if (typeof hljs !== 'undefined') {
     <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" data-i18n-title="promptLibraryTitle" style="font-size:16px !important">&#x1F4DD;</button>
     <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
-    <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
+    <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" data-i18n-placeholder="placeholder"
               rows="1" onkeydown="handleKey(event)"></textarea>
-    <button id="sendBtn" onclick="send()">Send</button>
-    <button id="stopBtn" onclick="interruptCurrent()" style="display:none" title="Interrupt (force answer)">&#9632;</button>
+    <button id="sendBtn" onclick="send()" data-i18n="send">Send</button>
+    <button id="stopBtn" onclick="interruptCurrent()" style="display:none" title="Interrupt (force answer)" data-i18n-title="stopTitle">&#9632;</button>
   </div>
 </div>
 </div><!-- /tab-content chat -->

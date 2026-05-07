@@ -5,6 +5,7 @@ The relay is responsible for path resolution and access control.
 """
 
 import base64
+import difflib
 import json
 import os
 import re
@@ -496,16 +497,37 @@ def _grep_effective_globs(glob_pattern: Any, recursive: bool) -> list[str]:
     if isinstance(glob_pattern, (list, tuple, set)):
         raw_parts = [str(g).strip() for g in glob_pattern]
     else:
-        raw_parts = [g.strip() for g in str(glob_pattern).replace(",", " ").split()]
+        raw_parts = _split_glob_parts(str(glob_pattern))
     globs = []
     for part in raw_parts:
         if not part:
             continue
-        normalized = part.replace("\\", "/")
-        if recursive and "/" not in normalized and not normalized.startswith("**/"):
-            normalized = f"**/{normalized}"
-        globs.append(normalized)
+        for expanded in _expand_glob_braces(part):
+            normalized = expanded.replace("\\", "/")
+            if recursive and "/" not in normalized and not normalized.startswith("**/"):
+                normalized = f"**/{normalized}"
+            globs.append(normalized)
     return globs
+
+
+def _split_glob_parts(value: str) -> list[str]:
+    parts = []
+    start = 0
+    depth = 0
+    for idx, ch in enumerate(value):
+        if ch == "{":
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+        elif depth == 0 and (ch == "," or ch.isspace()):
+            part = value[start:idx].strip()
+            if part:
+                parts.append(part)
+            start = idx + 1
+    tail = value[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
 
 
 def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
@@ -592,6 +614,99 @@ def action_find_replace(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     if count > 0:
         p.write_text(new_text, encoding="utf-8")
     return {"replacements": count, "path": _rel(path, root_dir)}
+
+
+def _line_key(line: str) -> str:
+    """Normalize one line for safe whitespace-only edit matching."""
+    return line.expandtabs(4).rstrip()
+
+
+def _window_start(lines: List[str], index: int) -> int:
+    return sum(len(line) for line in lines[:index])
+
+
+def _find_window_matches(text: str, old_string: str, *, fuzzy: bool = False,
+                         fuzzy_threshold: float = 0.92) -> List[Dict[str, Any]]:
+    """Find exact, whitespace-safe, or explicit fuzzy candidates.
+
+    Exact string matching remains authoritative. Whitespace-safe matching is
+    limited to line-ending, trailing-whitespace, and tab/space indentation
+    drift, where applying the actual file substring is deterministic. General
+    fuzzy matching only runs when requested by the caller.
+    """
+    matches: List[Dict[str, Any]] = []
+    start = 0
+    while True:
+        pos = text.find(old_string, start)
+        if pos < 0:
+            break
+        matches.append({
+            "kind": "exact",
+            "start": pos,
+            "end": pos + len(old_string),
+            "actual": old_string,
+            "score": 1.0,
+        })
+        start = pos + max(1, len(old_string))
+    if matches:
+        return matches
+
+    old_lines = old_string.splitlines(True)
+    text_lines = text.splitlines(True)
+    if not old_lines or not text_lines:
+        return []
+    old_key = [_line_key(line.rstrip("\r\n")) for line in old_lines]
+    span = len(old_lines)
+
+    for i in range(0, len(text_lines) - span + 1):
+        actual = "".join(text_lines[i:i + span])
+        key = [_line_key(line.rstrip("\r\n")) for line in text_lines[i:i + span]]
+        if key == old_key:
+            start_pos = _window_start(text_lines, i)
+            matches.append({
+                "kind": "whitespace",
+                "start": start_pos,
+                "end": start_pos + len(actual),
+                "actual": actual,
+                "score": 1.0,
+            })
+    if matches or not fuzzy:
+        return matches
+
+    best: List[Dict[str, Any]] = []
+    for span_len in {span, max(1, span - 1), span + 1}:
+        if span_len > len(text_lines):
+            continue
+        for i in range(0, len(text_lines) - span_len + 1):
+            actual = "".join(text_lines[i:i + span_len])
+            score = difflib.SequenceMatcher(None, old_string, actual).ratio()
+            if score >= fuzzy_threshold:
+                start_pos = _window_start(text_lines, i)
+                best.append({
+                    "kind": "fuzzy",
+                    "start": start_pos,
+                    "end": start_pos + len(actual),
+                    "actual": actual,
+                    "score": score,
+                })
+    if not best:
+        return []
+    best.sort(key=lambda item: item["score"], reverse=True)
+    top_score = best[0]["score"]
+    return [item for item in best if top_score - item["score"] < 0.02]
+
+
+def _apply_replacements(text: str, matches: List[Dict[str, Any]],
+                        new_string: str, replace_all: bool) -> str:
+    selected = matches if replace_all else matches[:1]
+    out = []
+    pos = 0
+    for match in sorted(selected, key=lambda item: item["start"]):
+        out.append(text[pos:match["start"]])
+        out.append(new_string)
+        pos = match["end"]
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def _diagnose_edit_mismatch(old_string: str, text: str, filename: str) -> str:
@@ -738,24 +853,34 @@ def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 
     old_string = req.get("old_string", "")
     replace_all = req.get("replace_all", False)
+    fuzzy = bool(req.get("fuzzy", False))
+    fuzzy_threshold = float(req.get("fuzzy_threshold", 0.92) or 0.92)
     if not old_string:
         raise ValueError(
             "Missing 'old_string' parameter (or provide start_line/end_line "
             "for a line-based edit)")
     text = p.read_text(encoding="utf-8")
-    count = text.count(old_string)
+    matches = _find_window_matches(
+        text, old_string, fuzzy=fuzzy, fuzzy_threshold=fuzzy_threshold)
+    count = len(matches)
     if count == 0:
         raise ValueError(_diagnose_edit_mismatch(old_string, text, p.name))
     if count > 1 and not replace_all:
-        raise ValueError(f"old_string found {count} times (use replace_all=true)")
+        kinds = ", ".join(sorted({m["kind"] for m in matches}))
+        raise ValueError(
+            f"old_string found {count} times ({kinds}; use replace_all=true)")
+    if replace_all and any(m["kind"] == "fuzzy" for m in matches):
+        raise ValueError("fuzzy replace_all is not supported; make the match exact or use one edit per occurrence")
 
     # Build diff context (±3 lines around the first replacement)
     lines = text.splitlines(True)
     diff_lines = []
-    old_lines = old_string.splitlines(True)
+    first_match = matches[0]
+    matched_old = first_match["actual"]
+    old_lines = matched_old.splitlines(True)
     new_lines = new_string.splitlines(True)
     # Find line number of first occurrence
-    pos = text.find(old_string)
+    pos = first_match["start"]
     line_num = text[:pos].count("\n") + 1 if pos >= 0 else 0
     ctx_start = max(0, line_num - 4)
     ctx_end = min(len(lines), line_num + len(old_lines) + 3)
@@ -768,16 +893,15 @@ def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
                            "type": "add"})
 
     # Apply replacement
-    if replace_all:
-        new_text = text.replace(old_string, new_string)
-    else:
-        new_text = text.replace(old_string, new_string, 1)
+    new_text = _apply_replacements(text, matches, new_string, bool(replace_all))
     p.write_text(new_text, encoding="utf-8")
     return {
         "replacements": count if replace_all else 1,
         "path": _rel(path, root_dir),
         "diff": diff_lines,
         "line": line_num,
+        "match_type": first_match["kind"],
+        "similarity": round(float(first_match.get("score", 1.0)), 4),
     }
 
 
@@ -787,7 +911,7 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     if not edits:
         raise ValueError("Missing 'edits' parameter (list of {path, old_string, new_string})")
 
-    # Phase 1: Read all files and validate
+    # Phase 1: Read files once.
     file_contents = {}
     for i, edit in enumerate(edits):
         fpath = edit.get("path", "")
@@ -802,28 +926,65 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
             if not p.is_file():
                 raise ValueError(f"Edit {i}: file not found: {fpath}")
             file_contents[abs_path] = p.read_text(encoding="utf-8")
-        text = file_contents[abs_path]
-        count = text.count(old_string)
-        replace_all = bool(edit.get("replace_all", req.get("replace_all", False)))
-        if count == 0:
-            raise ValueError(f"Edit {i}: old_string not found in {fpath}")
-        if count > 1 and not replace_all:
-            raise ValueError(f"Edit {i}: old_string found {count} times in {fpath} (use replace_all=true)")
 
-    # Phase 2: Apply all edits in memory
-    for edit in edits:
-        abs_path = str(Path(root_dir).resolve() / edit["path"])
+    # Phase 2: Validate and apply in memory, sequentially. This keeps the
+    # operation atomic while allowing multiple edits in the same file where a
+    # later edit targets content produced or shifted by an earlier edit.
+    working = dict(file_contents)
+    details = []
+    total_replacements = 0
+    for i, edit in enumerate(edits):
+        fpath = edit.get("path", "")
+        abs_path = str(Path(root_dir).resolve() / fpath)
+        text = working[abs_path]
+        old_string = edit.get("old_string", "")
         replace_all = bool(edit.get("replace_all", req.get("replace_all", False)))
-        file_contents[abs_path] = file_contents[abs_path].replace(
-            edit["old_string"], edit.get("new_string", ""), -1 if replace_all else 1)
+        fuzzy = bool(edit.get("fuzzy", req.get("fuzzy", False)))
+        fuzzy_threshold = float(edit.get(
+            "fuzzy_threshold", req.get("fuzzy_threshold", 0.92)) or 0.92)
+        matches = _find_window_matches(
+            text, old_string, fuzzy=fuzzy, fuzzy_threshold=fuzzy_threshold)
+        count = len(matches)
+        if count == 0:
+            raise ValueError(
+                f"Edit {i}: " + _diagnose_edit_mismatch(old_string, text, fpath))
+        if count > 1 and not replace_all:
+            kinds = ", ".join(sorted({m["kind"] for m in matches}))
+            raise ValueError(
+                f"Edit {i}: old_string found {count} times in {fpath} "
+                f"({kinds}; use replace_all=true)")
+        if replace_all and any(m["kind"] == "fuzzy" for m in matches):
+            raise ValueError(
+                f"Edit {i}: fuzzy replace_all is not supported in {fpath}; "
+                "make the match exact or use one edit per occurrence")
+        replacements = count if replace_all else 1
+        first = matches[0]
+        working[abs_path] = _apply_replacements(
+            text, matches, edit.get("new_string", ""), replace_all)
+        total_replacements += replacements
+        details.append({
+            "index": i,
+            "path": fpath,
+            "replacements": replacements,
+            "match_type": first["kind"],
+            "similarity": round(float(first.get("score", 1.0)), 4),
+            "line": text[:first["start"]].count("\n") + 1,
+        })
 
     # Phase 3: Write all files
-    for abs_path, content in file_contents.items():
+    for abs_path, content in working.items():
         Path(abs_path).write_text(content, encoding="utf-8")
 
     modified = list(set(str(Path(ap).relative_to(Path(root_dir).resolve())).replace("\\", "/")
-                        for ap in file_contents))
-    return {"edits_applied": len(edits), "files_modified": modified}
+                        for ap in working))
+    modified.sort()
+    return {
+        "edits_applied": len(edits),
+        "total_replacements": total_replacements,
+        "files_modified": modified,
+        "files_modified_count": len(modified),
+        "details": details,
+    }
 
 
 def _patch_target(root_dir: str, raw_path: str):

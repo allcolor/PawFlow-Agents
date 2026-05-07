@@ -658,6 +658,8 @@ class TestMetaToolAliases(unittest.TestCase):
             })
 
             assert result["edits_applied"] == 2
+            assert result["total_replacements"] == 4
+            assert result["files_modified_count"] == 2
             assert (root / "a.txt").read_text(encoding="utf-8") == "bar bar\n"
             assert (root / "b.txt").read_text(encoding="utf-8") == "baz baz\n"
 
@@ -677,8 +679,64 @@ class TestMetaToolAliases(unittest.TestCase):
             })
 
             assert result["edits_applied"] == 2
+            assert result["total_replacements"] == 4
             assert (root / "a.txt").read_text(encoding="utf-8") == "bar bar\n"
             assert (root / "b.txt").read_text(encoding="utf-8") == "baz baz\n"
+
+    def test_edit_relay_action_tolerates_whitespace_drift(self):
+        from tools.fs_actions import action_edit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            f = root / "a.py"
+            f.write_text("def hello():\n    print('hi')   \n    return True\n", encoding="utf-8")
+
+            result = action_edit(str(root), str(f), {
+                "old_string": "def hello():\n\tprint('hi')\n\treturn True\n",
+                "new_string": "def hello():\n    return False\n",
+            })
+
+            assert result["match_type"] == "whitespace"
+            assert result["replacements"] == 1
+            assert f.read_text(encoding="utf-8") == "def hello():\n    return False\n"
+
+    def test_batch_edit_relay_action_reports_per_file_totals(self):
+        from tools.fs_actions import action_batch_edit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.txt").write_text("one\n", encoding="utf-8")
+            (root / "b.txt").write_text("one\n", encoding="utf-8")
+
+            result = action_batch_edit(str(root), str(root), {
+                "edits": [
+                    {"path": "a.txt", "old_string": "one", "new_string": "two"},
+                    {"path": "b.txt", "old_string": "one", "new_string": "three"},
+                ],
+            })
+
+            assert result["edits_applied"] == 2
+            assert result["total_replacements"] == 2
+            assert result["files_modified"] == ["a.txt", "b.txt"]
+            assert [d["replacements"] for d in result["details"]] == [1, 1]
+
+    def test_apply_patch_schema_does_not_require_path(self):
+        from core.handlers.apply_patch import ApplyPatchHandler
+
+        schema = ApplyPatchHandler().parameters_schema
+
+        assert schema["required"] == ["patch"]
+
+    def test_read_outline_stubs_python_bodies(self):
+        from core.handlers.read import ReadHandler
+
+        source = "import os\n\ndef f(x):\n    y = x + 1\n    return y\n"
+        out = ReadHandler()._format_outline_read("a.py", source)
+
+        assert "import os" in out
+        assert "def f(x):" in out
+        assert "..." in out
+        assert "return y" not in out
 
 
     def test_relay_list_dir_action_supports_recursive_limit(self):
@@ -876,7 +934,7 @@ class TestCreateDefaultRegistry(unittest.TestCase):
     def test_known_builtins_present(self):
         reg = create_default_registry()
         for name in ("execute_script", "web_search", "share_file",
-                      "remember", "recall", "create_plan"):
+                      "remember", "recall", "create_plan", "search"):
             assert reg.get(name) is not None, f"Missing builtin handler: {name}"
 
 

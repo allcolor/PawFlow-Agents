@@ -929,10 +929,7 @@ function _attachToolResult(tcEl, resultText) {
   const _det = resultDiv.querySelector('details');
   if (_det) setTimeout(() => { _det.removeAttribute('open'); }, 1500);
   // Auto-scroll
-  if (isNearBottom()) {
-    const container = document.getElementById('messages');
-    if (container) container.scrollTop = container.scrollHeight;
-  }
+  if (isNearBottom()) scrollBottom();
 }
 
 function backgroundTool(tcId) {
@@ -1569,32 +1566,72 @@ function toggleTrace(headerEl) {
   headerEl.textContent = (isHidden ? '\u25bc ' : '\u25b6 ') + headerEl.textContent.substring(2);
 }
 
-// Auto-scroll state: true by default, turned off when user scrolls up manually
+// Auto-scroll state: true by default. Only explicit user scroll input may turn
+// it off; DOM growth/reflow must not be interpreted as the user scrolling up.
 let _autoScroll = true;
 function isNearBottom() { return _autoScroll; }
 
-// Detect manual scroll-up by user
 (function() {
   const m = document.getElementById('messages');
   if (!m) return;
-  let _lastScrollTop = 0;
+  let userScrollIntentUntil = 0;
+  let scrollbarDragActive = false;
+
+  function atBottom() {
+    return m.scrollHeight - m.scrollTop - m.clientHeight <= 5;
+  }
+
+  function markUserScrollIntent() {
+    userScrollIntentUntil = Date.now() + 700;
+  }
+
+  function hasUserScrollIntent() {
+    return scrollbarDragActive || Date.now() <= userScrollIntentUntil;
+  }
+
+  function isScrollbarPointerEvent(e) {
+    const rect = m.getBoundingClientRect();
+    const scrollbarWidth = Math.max(12, m.offsetWidth - m.clientWidth);
+    return e.clientX >= rect.right - scrollbarWidth - 2;
+  }
+
+  m.addEventListener('wheel', markUserScrollIntent, { passive: true });
+  m.addEventListener('touchstart', markUserScrollIntent, { passive: true });
+  m.addEventListener('pointerdown', (e) => {
+    if (isScrollbarPointerEvent(e)) {
+      scrollbarDragActive = true;
+      markUserScrollIntent();
+    }
+  });
+  window.addEventListener('pointerup', () => {
+    if (scrollbarDragActive) markUserScrollIntent();
+    scrollbarDragActive = false;
+  });
+  m.addEventListener('keydown', (e) => {
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', 'Space'].includes(e.key)) {
+      markUserScrollIntent();
+    }
+  });
+
   m.addEventListener('scroll', () => {
-    const atBottom = m.scrollHeight - m.scrollTop - m.clientHeight <= 5;
-    if (atBottom) {
+    if (atBottom()) {
       _autoScroll = true;
-    } else if (m.scrollTop < _lastScrollTop) {
-      // User scrolled UP → disable auto-scroll
+    } else if (hasUserScrollIntent()) {
       _autoScroll = false;
     }
-    _lastScrollTop = m.scrollTop;
   });
 })();
+
+function setMessagesScrollTop(value) {
+  const m = document.getElementById('messages');
+  if (m) m.scrollTop = value;
+}
 
 function scrollBottom(force) {
   if (force) _autoScroll = true;
   if (_autoScroll) {
     const m = document.getElementById('messages');
-    m.scrollTop = m.scrollHeight;
+    setMessagesScrollTop(m.scrollHeight);
   }
   updateScrollNav();
 }

@@ -40,7 +40,7 @@ _SECURITY_HEADERS = {
         "img-src 'self' data: blob:; "
         "media-src 'self' data: blob:; "
         "connect-src 'self' ws: wss:; "
-        "frame-src 'self' http: https:; "
+        "frame-src 'self' blob: http: https:; "
         "frame-ancestors 'self'; "
         "object-src 'none'; base-uri 'self'"
     ),

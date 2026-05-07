@@ -79,6 +79,19 @@ def test_technical_grouping_toggle_sets_conversation_parameter_and_reloads():
     assert 'Group tech</button>' not in TEMPLATE_HTML
 
 
+def test_autoscroll_only_stops_on_user_scroll_intent():
+    assert "let _autoScroll = true" in MESSAGES_JS
+    assert "function setMessagesScrollTop(value)" in MESSAGES_JS
+    assert "m.addEventListener('wheel', markUserScrollIntent" in MESSAGES_JS
+    assert "m.addEventListener('pointerdown'" in MESSAGES_JS
+    assert "isScrollbarPointerEvent(e)" in MESSAGES_JS
+    assert "m.addEventListener('touchstart', markUserScrollIntent" in MESSAGES_JS
+    assert "m.addEventListener('keydown'" in MESSAGES_JS
+    assert "hasUserScrollIntent()" in MESSAGES_JS
+    assert "m.scrollTop < _lastScrollTop" not in MESSAGES_JS
+    assert "container.scrollTop = container.scrollHeight - prevHeight" not in CONVERSATIONS_JS
+
+
 def test_active_agents_sse_hint_restores_panel_before_poll():
     active_agents_js = Path("tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
     assert "function trackAgentStart(agentName, msgPreview) { /* no-op */ }" not in active_agents_js

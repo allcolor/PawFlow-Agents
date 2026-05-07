@@ -475,7 +475,7 @@ function loadMoreMessages() {
       }
       container.insertBefore(frag, insertPoint);
       if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
-      container.scrollTop = container.scrollHeight - prevHeight;
+      setMessagesScrollTop(container.scrollHeight - prevHeight);
       _updateLoadMoreBanner();
       loadingMore = false;
     });

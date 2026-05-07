@@ -374,6 +374,19 @@ class TestClassifyMessagesSource(unittest.TestCase):
         self.assertEqual(classified[0]["timestamp"], 1234.5)
         self.assertEqual(classified[0]["msg_id"], "m1")
 
+    def test_empty_display_thinking_is_not_replayed_as_technical_row(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        raw = [
+            {"role": "thinking", "content": "", "ts": 1234.0},
+            {"role": "thinking", "content": "real reasoning", "ts": 1235.0},
+        ]
+
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+
+        self.assertEqual(len(classified), 1)
+        self.assertEqual(classified[0]["type"], "thinking")
+        self.assertEqual(classified[0]["content"], "real reasoning")
+
     def test_tool_display_entries_keep_ts_without_synthetic_msg_ids(self):
         """Tool calls use tc_id; tool results keep their JSONL msg_id."""
         from tasks.ai.agent_loop import AgentLoopTask

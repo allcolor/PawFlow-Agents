@@ -644,6 +644,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
         # Check for selected agent persona and assigned skills
         _selected_agent_def = None
+        selected = _target_agent or _active_agent_name or _context_agent or ""
         if use_conv_store and conversation_id:
             try:
                 from core.conversation_store import ConversationStore

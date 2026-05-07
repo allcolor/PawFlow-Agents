@@ -331,6 +331,37 @@ class TestAgentLoopActions(unittest.TestCase):
         assert body["conversation_id"] == "c1"
         assert "messages" in body
         assert body["message_count"] == 3
+        assert body["group_technical_messages"] is False
+
+    def test_load_history_resolves_technical_grouping_expression(self):
+        from core.conv_agent_config import add_agent_to_conv
+        store = ConversationStore.instance()
+        store.save("c1", [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Checking", "tool_calls": [
+                {"id": "tc1", "name": "read", "arguments": {"path": "/tmp/a"}},
+            ]},
+            {"role": "tool", "content": "done", "tool_call_id": "tc1"},
+            {"role": "assistant", "content": "Done"},
+        ], ttl=60, user_id="alice@test.com")
+        store.set_extra(
+            "c1", "conv_parameters",
+            {"chat.group_technical_messages": "true"},
+            user_id="alice@test.com",
+        )
+        add_agent_to_conv("c1", "assistant", llm_service="default",
+                          definition="assistant")
+
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "load_history",
+            "conversation_id": "c1",
+        }).encode())
+        ff.set_attribute("http.auth.principal", "alice@test.com")
+        results = task.execute(ff)
+
+        body = json.loads(results[0].get_content().decode())
+        assert body["group_technical_messages"] is True
 
     def test_load_history_wrong_user(self):
         """load_history runs sync — wrong user gets 404."""

@@ -408,6 +408,17 @@ class TestServeChatUITask(unittest.TestCase):
         results = task.execute(ff)
         assert "/custom/chat" in results[0].get_content().decode()
 
+    def test_initial_theme_css_uses_saved_theme_cookie(self):
+        from tasks.io.serve_chat_ui import ServeChatUITask
+        task = ServeChatUITask({"agent_path": "/api/agent"})
+        ff = FlowFile(content=b"")
+        ff.set_attribute("http.header.cookie", "pawflow_theme_ref=global%3Amatrix")
+        results = task.execute(ff)
+        content = results[0].get_content().decode()
+        assert 'id="custom-theme"' in content
+        assert 'window.PAWFLOW_INITIAL_THEME_REF="global:matrix"' in content
+        assert "--pf-bg:" in content
+
 
 # ── Flow JSON structure ──────────────────────────────────────────────
 

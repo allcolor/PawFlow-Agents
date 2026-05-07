@@ -5,7 +5,7 @@ const CONV_THEME_COOKIE = 'pawflow_conv_theme_refs';
 const DEFAULT_THEME_REF = 'global:pawflow_dark';
 
 let _themeLoadSeq = 0;
-let _activeThemeRef = '';
+let _activeThemeRef = window.PAWFLOW_INITIAL_THEME_REF || '';
 let _activeThemeContext = '';
 
 function _themeGetCookie(name) {

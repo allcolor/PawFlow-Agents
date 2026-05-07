@@ -246,6 +246,7 @@ function showTyping() {
   const el = document.createElement('div');
   el.className = 'typing';
   el.id = 'typing';
+  el.dataset.transientUi = '1';
   const color = randomColor();
   el.innerHTML = '<span class="spinner" style="color:' + color + '">✻</span>'
     + '<span class="verb" style="color:' + color + '">' + randomVerb() + '...</span>';
@@ -273,6 +274,7 @@ function showContextOp(label) {
   const el = document.createElement('div');
   el.className = 'typing';
   el.id = 'contextOpTyping';
+  el.dataset.transientUi = '1';
   const c = randomColor();
   el.innerHTML = '<span class="spinner" style="color:' + c + '">✻</span>'
     + '<em style="color:' + c + '">' + label + '</em> '

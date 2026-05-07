@@ -82,6 +82,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .header .btn:hover { background: #e94560; color: white; }
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.header .tech-group-toggle { background: var(--pf-panel); color: var(--pf-muted); border: 1px solid var(--pf-border);
+                            border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; display: none; }
+.header .tech-group-toggle.active { background: var(--pf-accent); border-color: var(--pf-accent); color: var(--pf-bg); }
+.header .tech-group-toggle:disabled { opacity: 0.6; cursor: wait; }
 .header .user-info { font-size: 12px; color: #8888aa; }
 .messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-width: 0; width: 100%; }
 .messages { flex: 1; width: 100%; min-width: 0; overflow-y: overlay; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px;
@@ -107,6 +111,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .msg.agent-result { align-self: flex-start; background: #1a1a2e; color: #a0a0c0; font-size: 12px; border-left: 2px solid #6c5ce7; padding: 6px 10px; }
 .msg.tool { align-self: flex-start; background: #0f1629; color: #808090; font-size: 12px;
             border-left: 2px solid #0f3460; padding: 4px 10px; max-width: 85%; }
+.technical-group { align-self: flex-start; max-width: 90%; background: var(--pf-panel); color: var(--pf-muted);
+                   border: 1px solid var(--pf-border); border-left: 3px solid var(--pf-accent);
+                   border-radius: 8px; padding: 0; margin: 6px 0; }
+.technical-group-header { cursor: pointer; padding: 7px 10px; font-size: 12px; user-select: none;
+                          color: var(--pf-muted); }
+.technical-group-body { padding: 4px 10px 8px; border-top: 1px solid var(--pf-border); }
+.technical-group-body > .msg { max-width: 100%; margin: 4px 0; }
 .tc-bullet { font-size: 14px; margin-right: 4px; }
 .tc-bullet.pending { color: #4ecdc4; animation: tc-pulse 1.5s ease-in-out infinite; }
 @keyframes tc-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
@@ -564,6 +575,8 @@ if (typeof hljs !== 'undefined') {
             style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:220px">
       <option value="global:pawflow_dark">PawFlow Dark</option>
     </select>
+    <button id="technicalGroupingToggle" class="tech-group-toggle" type="button" aria-pressed="false"
+            title="Group technical details for this conversation" onclick="onTechnicalGroupingToggle()">Group tech</button>
     <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode"
             style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
       <option value="default">&#x1F512; Default</option>

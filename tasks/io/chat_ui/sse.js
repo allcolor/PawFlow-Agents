@@ -39,6 +39,16 @@ function connectSSE(cid, onReady, opts) {
 
   // ── Task block grouping ─────────────────────────────────────────
   const _taskBlocks = {};
+  const _turnStartIndicators = {};
+
+  function _showTurnStartIndicator(agentName, ts, label) {
+    const name = agentName || 'assistant';
+    const key = agentKey(name);
+    const now = Date.now();
+    if (_turnStartIndicators[key] && now - _turnStartIndicators[key] < 3000) return;
+    _turnStartIndicators[key] = now;
+    addMsg('system-compact', '\u25b6 ' + (label || displayAgentName(name)), {ts: ts || now / 1000});
+  }
 
   // Expose a reset hook so resumeConv (which clears #messages but
   // keeps the SSE socket open) can drop stale DOM references — without
@@ -46,6 +56,7 @@ function connectSSE(cid, onReady, opts) {
   // freshly-reloaded transcript ends up out of order or truncated.
   window._sseClearLiveBlocks = function() {
     for (const k in _taskBlocks) delete _taskBlocks[k];
+    for (const k in _turnStartIndicators) delete _turnStartIndicators[k];
     for (const k in _delegateGroups) delete _delegateGroups[k];
     for (const k in _delegateSubBlocks) delete _delegateSubBlocks[k];
   };
@@ -156,6 +167,7 @@ function connectSSE(cid, onReady, opts) {
       return;
     }
     // New turn starting — clear cancel suppression so tool events show again
+    _showTurnStartIndicator(agentName, data.ts || data.timestamp || 0);
     trackAgentStart(agentName);
   });
 
@@ -166,10 +178,15 @@ function connectSSE(cid, onReady, opts) {
     const data = JSON.parse(e.data);
     const agent = data.agent_name || '';
     const aKey = agentKey(agent);
+    const textDelta = data.text || '';
+    if (!textDelta && !thinkingElements[aKey]) return;
     if (!thinkingElements[aKey]) {
       // Create collapsible details element
       const details = document.createElement('details');
       details.className = 'msg thinking-block';
+      details.dataset.messageRole = 'thinking';
+      details.dataset.live = '1';
+      details.dataset.sortTs = String((typeof _messageSortTs === 'function') ? _messageSortTs(data) : Date.now() / 1000);
       details.setAttribute('open', '');
       details.style.cssText = 'margin:4px 0;border-left:3px solid #6b7280;padding:4px 8px;opacity:0.7;';
       const summary = document.createElement('summary');
@@ -207,12 +224,14 @@ function connectSSE(cid, onReady, opts) {
           else _msgContainer.appendChild(details);
         }
       }
+      if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
       thinkingElements[aKey] = {el: details, content: content, summary: summary, text: '', startTime: Date.now()};
       scrollBottom();
     }
     const te = thinkingElements[aKey];
-    te.text += data.text;
+    te.text += textDelta;
     te.content.textContent = te.text;
+    if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     scrollBottom();
   });
 
@@ -223,12 +242,15 @@ function connectSSE(cid, onReady, opts) {
     if (te) {
       const elapsed = (Date.now() - te.startTime) / 1000;
       // Remove empty thinking blocks — keep all that have content
+      const group = te.el.closest && te.el.closest('.technical-group');
       if (!te.text.trim()) {
         te.el.remove();
+        if (group && typeof _updateTechnicalGroupSummary === 'function') _updateTechnicalGroupSummary(group);
       } else {
         te.summary.textContent = 'Thought for ' + elapsed.toFixed(1) + 's';
-        te.el.removeAttribute('open');  // collapse
+        te.el.setAttribute('open', '');
       }
+      if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
       delete thinkingElements[aKey];
     }
   }
@@ -291,6 +313,11 @@ function connectSSE(cid, onReady, opts) {
       if (meta) s.el.appendChild(meta);
     }
     contentEl.innerHTML = badge + renderMarkdown(displayText);
+    if (displayText.trim() && s.el && s.el.dataset) delete s.el.dataset.transientUi;
+    if (displayText.trim() && s.el && !s.el.dataset.technicalGroupsCollapsed) {
+      collapseTechnicalGroups();
+      s.el.dataset.technicalGroupsCollapsed = '1';
+    }
     scrollBottom(shouldScroll);
     document.getElementById('status').textContent = t('streaming');
   });
@@ -419,7 +446,7 @@ function connectSSE(cid, onReady, opts) {
     else if (data.path) parts.push(data.source + ' ' + data.path);
     if (data.size > 0) parts.push((data.size / 1024).toFixed(1) + ' KB');
     if (parts.length) {
-      addMsg('system-compact', '\u25b6 ' + parts.join(' \u00b7 '));
+      _showTurnStartIndicator(data.agent || 'assistant', data.ts || data.timestamp || 0, parts.join(' \u00b7 '));
       scrollBottom();
     }
   });
@@ -435,6 +462,8 @@ function connectSSE(cid, onReady, opts) {
     if (_delegateGroups[delegateTcId]) return _delegateGroups[delegateTcId];
     const details = document.createElement('details');
     details.className = 'msg delegate-block delegate-group';
+    details.dataset.messageRole = 'sub_agent_trace';
+    details.dataset.sortTs = String(Date.now() / 1000);
     details.setAttribute('open', '');
     const summary = document.createElement('summary');
     summary.className = 'delegate-header';
@@ -463,6 +492,7 @@ function connectSSE(cid, onReady, opts) {
       if (typingEl) container.insertBefore(details, typingEl);
       else container.appendChild(details);
     }
+    if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     scrollBottom();
     _delegateGroups[delegateTcId] = { el: details, content, summary, total: total || 1, doneCount: 0, subBlocks: {} };
     return _delegateGroups[delegateTcId];
@@ -791,7 +821,9 @@ function connectSSE(cid, onReady, opts) {
     }
     // Group under parent agent tool_call if this is a sub-agent tool
     if (data.parent_tc_id && tcEl) {
-      const parentEl = document.querySelector('[data-tc-id="' + data.parent_tc_id + '"]');
+      const parentEl = (typeof findToolCallElement === 'function')
+        ? findToolCallElement(data.parent_tc_id)
+        : document.querySelector('[data-tc-id="' + data.parent_tc_id + '"]');
       if (parentEl) {
         let childContainer = parentEl.querySelector('.tc-children');
         if (!childContainer) {
@@ -803,6 +835,7 @@ function connectSSE(cid, onReady, opts) {
         childContainer.appendChild(tcEl);
       }
     }
+    if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
     if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: (_TOOL_DISPLAY[data.tool] || data.tool)});
   });
 
@@ -818,9 +851,12 @@ function connectSSE(cid, onReady, opts) {
     if (tcId && _delegateGroups['__tc__' + tcId]) return;
     // Try to attach to matching tool_call element
     if (tcId) {
-      const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+      const tcEl = (typeof findToolCallElement === 'function')
+        ? findToolCallElement(tcId)
+        : document.querySelector('[data-tc-id="' + tcId + '"]');
       if (tcEl) {
         _attachToolResult(tcEl, data.result || '');
+        if (tcEl.dataset) delete tcEl.dataset.live;
         if (data.msg_id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
         return;
       }
@@ -842,6 +878,7 @@ function connectSSE(cid, onReady, opts) {
       const tb = _getTaskBlock(data.task_id, data.task_iteration, data.agent_name || '');
       if (tb) { tb.content.appendChild(trEl); scrollBottom(); }
     }
+    if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
   });
 
   eventSource.addEventListener('bg_task_update', (e) => {
@@ -849,7 +886,9 @@ function connectSSE(cid, onReady, opts) {
     const data = JSON.parse(e.data);
     const tcId = data.tc_id || '';
     if (tcId) {
-      const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+      const tcEl = (typeof findToolCallElement === 'function')
+        ? findToolCallElement(tcId)
+        : document.querySelector('[data-tc-id="' + tcId + '"]');
       if (tcEl) {
         if (data.status === 'done' || data.status === 'cancelled' || data.status === 'error') {
           const fallback = data.status === 'cancelled' ? '[Cancelled]' : data.status === 'error' ? '[Error]' : '[Done]';

@@ -164,6 +164,251 @@ function _insertMessageChronologically(container, el, sortTs) {
   else container.appendChild(el);
 }
 
+window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = false;
+window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING = 0;
+
+function suspendTechnicalMessageGrouping() {
+  window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING = (window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING || 0) + 1;
+}
+
+function resumeTechnicalMessageGrouping(applyNow) {
+  window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING = Math.max(0, (window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING || 0) - 1);
+  if (applyNow && !window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING) applyTechnicalMessageGrouping();
+}
+
+function setTechnicalMessageGrouping(enabled) {
+  window.PAWFLOW_GROUP_TECHNICAL_MESSAGES = !!enabled;
+  applyTechnicalMessageGrouping();
+}
+
+function _visibleTextWithoutMessageChrome(el) {
+  if (!el) return '';
+  const clone = el.cloneNode(true);
+  clone.querySelectorAll('.msg-actions, .msg-meta').forEach(n => n.remove());
+  return String(clone.textContent || '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function _isAgentChromeOnlyElement(el) {
+  if (!el) return false;
+  const text = _visibleTextWithoutMessageChrome(el);
+  return /^(assistant|user)(\s+\d{1,2}:\d{2}(:\d{2})?)?$/i.test(text);
+}
+
+function _isAssistantPlaceholderElement(el) {
+  if (!el) return false;
+  const role = el.dataset ? (el.dataset.messageRole || '') : '';
+  const messageChrome = role === 'assistant' || role === 'user'
+    || el.classList.contains('assistant') || el.classList.contains('subagent');
+  const text = _visibleTextWithoutMessageChrome(el);
+  if (!text) return messageChrome;
+  if (_isAgentChromeOnlyElement(el)) return true;
+  return messageChrome && (text === 'assistant' || text === 'user');
+}
+
+function _isTechnicalMessageElement(el) {
+  if (!el || !el.classList || el.classList.contains('technical-group')) return false;
+  if (el.id === 'typing' || el.id === 'contextOpTyping' || el.id === 'loadMoreBanner') return false;
+  if (el.dataset && (el.dataset.transientUi === '1' || el.dataset.technicalBoundary === '1')) return false;
+  if (el.classList.contains('typing') || el.classList.contains('active-row') || el.classList.contains('active-panel')) return false;
+  if (_isAssistantPlaceholderElement(el)) return false;
+  const role = el.dataset ? (el.dataset.messageRole || '') : '';
+  if ([
+    'tool_call', 'tool', 'tool_result', 'thinking', 'sub_agent_trace',
+    'agent-result', 'flowfile_in',
+  ].includes(role)) return true;
+  return el.classList.contains('tool')
+    || el.classList.contains('thinking-block')
+    || el.classList.contains('task-block')
+    || el.classList.contains('delegate-block')
+    || el.classList.contains('sub_agent_trace')
+    || el.classList.contains('agent-result');
+}
+
+function _unwrapTechnicalGroups(container) {
+  for (const group of Array.from(container.querySelectorAll(':scope > .technical-group'))) {
+    const body = group.querySelector('.technical-group-body');
+    if (body) {
+      while (body.firstChild) container.insertBefore(body.firstChild, group);
+    }
+    group.remove();
+  }
+}
+
+function _technicalGroupSummary(count) {
+  return 'Technical details · ' + count + ' event' + (count === 1 ? '' : 's');
+}
+
+function _extractNonTechnicalChildren(group) {
+  if (!group || !group.parentNode) return;
+  const body = group.querySelector('.technical-group-body');
+  if (!body) return;
+  for (const child of Array.from(body.children)) {
+    if (!_isTechnicalMessageElement(child)) {
+      group.parentNode.insertBefore(child, group);
+    }
+  }
+}
+
+function _updateTechnicalGroupSummary(group) {
+  if (!group) return;
+  _extractNonTechnicalChildren(group);
+  const body = group.querySelector('.technical-group-body');
+  const summary = group.querySelector('summary');
+  if (!body || !summary) return;
+  const count = body.children.length;
+  if (!count) {
+    group.remove();
+    return;
+  }
+  summary.textContent = _technicalGroupSummary(count);
+}
+
+function _isLiveTechnicalElement(el) {
+  if (!el || !el.dataset) return false;
+  return el.dataset.live === '1'
+    || !!(el.querySelector && el.querySelector('.tc-bullet.pending'));
+}
+
+function _hasVisibleTechnicalContent(el) {
+  if (!el) return false;
+  if (_isAgentChromeOnlyElement(el)) return false;
+  if (_isLiveTechnicalElement(el)) return true;
+  if (el.classList && el.classList.contains('thinking-block')) {
+    const parts = Array.from(el.children).filter(child => child.tagName !== 'SUMMARY');
+    return parts.some(child => String(child.textContent || '').trim());
+  }
+  if (el.classList && (el.classList.contains('task-block') || el.classList.contains('delegate-block'))) {
+    return !!String(el.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+  if (el.classList && el.classList.contains('tool')) {
+    return !!(el.dataset && (el.dataset.tool || el.dataset.path || el.dataset.command))
+      || !!el.querySelector('.tc-result, .tc-output, .tool-result, pre');
+  }
+  const clone = el.cloneNode(true);
+  clone.querySelectorAll('.msg-time, .source-badge, .msg-meta, .msg-actions').forEach(n => n.remove());
+  return !!String(clone.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function _openLiveTechnicalElement(el) {
+  if (!el) return;
+  if (el.tagName === 'DETAILS') el.setAttribute('open', '');
+  if (el.classList && el.classList.contains('thinking-block')) el.setAttribute('open', '');
+  if (el.querySelectorAll) {
+    el.querySelectorAll('.tc-bullet.pending').forEach(bullet => {
+      const details = bullet.closest && bullet.closest('details');
+      if (details && el.contains(details)) details.setAttribute('open', '');
+    });
+    el.querySelectorAll('[data-live="1"]').forEach(liveEl => {
+      if (liveEl.tagName === 'DETAILS') liveEl.setAttribute('open', '');
+      if (liveEl.classList && liveEl.classList.contains('thinking-block')) liveEl.setAttribute('open', '');
+    });
+  }
+}
+
+function _markTechnicalGroupSettled(group) {
+  if (!group || !group.querySelectorAll) return;
+  group.querySelectorAll('[data-live="1"]').forEach(liveEl => {
+    if (liveEl.dataset) delete liveEl.dataset.live;
+    if (liveEl.classList && liveEl.classList.contains('thinking-block')) liveEl.removeAttribute('open');
+  });
+}
+
+function collapseTechnicalGroups() {
+  const container = document.getElementById('messages');
+  if (!container) return;
+  container.querySelectorAll(':scope > .technical-group').forEach(group => {
+    _markTechnicalGroupSettled(group);
+    group.removeAttribute('open');
+  });
+}
+
+function _createTechnicalGroupBefore(container, anchor) {
+  const group = document.createElement('details');
+  group.className = 'msg technical-group';
+  group.dataset.sortTs = anchor && anchor.dataset ? (anchor.dataset.sortTs || String(Date.now() / 1000)) : String(Date.now() / 1000);
+  const summary = document.createElement('summary');
+  summary.className = 'technical-group-header';
+  summary.textContent = _technicalGroupSummary(0);
+  const body = document.createElement('div');
+  body.className = 'technical-group-body';
+  group.appendChild(summary);
+  group.appendChild(body);
+  const safeAnchor = anchor && anchor.parentNode === container ? anchor : null;
+  container.insertBefore(group, safeAnchor);
+  return group;
+}
+
+function applyTechnicalMessageGrouping() {
+  if (window.PAWFLOW_SUSPEND_TECHNICAL_GROUPING) return;
+  const container = document.getElementById('messages');
+  if (!container) return;
+  if (!window.PAWFLOW_GROUP_TECHNICAL_MESSAGES) {
+    _unwrapTechnicalGroups(container);
+    return;
+  }
+
+  let group = null;
+  for (const child of Array.from(container.children)) {
+    if (child.id === 'typing' || child.id === 'loadMoreBanner') {
+      if (group) _updateTechnicalGroupSummary(group);
+      if (group && !group.isConnected) group = null;
+      group = null;
+      continue;
+    }
+    if (child.classList && child.classList.contains('technical-group')) {
+      if (group && group !== child) {
+        const body = group.querySelector('.technical-group-body');
+        const childBody = child.querySelector('.technical-group-body');
+        if (body && childBody) {
+          while (childBody.firstChild) body.appendChild(childBody.firstChild);
+          child.remove();
+          _updateTechnicalGroupSummary(group);
+          continue;
+        }
+      }
+      _updateTechnicalGroupSummary(child);
+      group = child.isConnected ? child : null;
+      continue;
+    }
+    if (!_isTechnicalMessageElement(child)) {
+      if (group) _updateTechnicalGroupSummary(group);
+      if (group && !group.isConnected) group = null;
+      group = null;
+      continue;
+    }
+    if (!_hasVisibleTechnicalContent(child)) {
+      if (window.DEBUG_TECHNICAL_GROUPING) console.debug('[technical-grouping] drop empty technical element', {
+        role: child.dataset && child.dataset.messageRole,
+        className: child.className,
+        text: String(child.textContent || '').trim().substring(0, 120),
+      });
+      child.remove();
+      continue;
+    }
+    if (!group) group = _createTechnicalGroupBefore(container, child);
+    const body = group.querySelector('.technical-group-body');
+    const liveChild = _isLiveTechnicalElement(child);
+    if (body) body.appendChild(child);
+    if (liveChild) {
+      _openLiveTechnicalElement(child);
+      group.setAttribute('open', '');
+    }
+    _updateTechnicalGroupSummary(group);
+  }
+  if (group) _updateTechnicalGroupSummary(group);
+}
+
+function _toolCallSelector(tcId) {
+  return '[data-tc-id="' + (window.CSS && CSS.escape ? CSS.escape(tcId) : String(tcId).replace(/"/g, '\\"')) + '"]';
+}
+
+function findToolCallElement(tcId, root) {
+  if (!tcId) return null;
+  const base = root || document;
+  try { return base.querySelector(_toolCallSelector(tcId)); }
+  catch (_err) { return base.querySelector('[data-tc-id="' + tcId + '"]'); }
+}
+
 function addMsg(role, text, extra) {
   // Dedup by msg_id — if we've already displayed this message, skip
   const msgId = (extra && extra.msg_id) || '';
@@ -174,7 +419,7 @@ function addMsg(role, text, extra) {
     _seenMsgIds.add(msgId);
   }
   if (role === 'tool_call' && extra && extra.tc_id
-      && document.querySelector('[data-tc-id="' + extra.tc_id + '"]')) {
+      && findToolCallElement(extra.tc_id)) {
     return null;
   }
   // Background-tool results are written to transcript as role=user (that
@@ -232,6 +477,11 @@ function addMsg(role, text, extra) {
     if (srcName) cssClass = 'subagent';
   }
   el.className = 'msg ' + cssClass;
+  el.dataset.messageRole = role;
+  if (role === 'assistant' || role === 'user') el.dataset.technicalBoundary = '1';
+  if ((role === 'assistant' || role === 'user') && !String(text || '').trim()) el.dataset.transientUi = '1';
+  if (extra && extra.live) el.dataset.live = '1';
+  if ((role === 'user' || role === 'assistant') && String(text || '').trim()) collapseTechnicalGroups();
   if (msgId) el.dataset.msgid = msgId;
   el.dataset.insertedAt = String(Date.now());
   el.addEventListener('click', function(e) {
@@ -330,7 +580,7 @@ function addMsg(role, text, extra) {
     } else if (role === 'tool_result') {
       const tcId = (extra && extra.tc_id) || '';
       if (tcId) {
-        const tcEl = (_existing || document).querySelector('[data-tc-id="' + tcId + '"]');
+        const tcEl = findToolCallElement(tcId, _existing || document);
         if (tcEl) { _attachToolResult(tcEl, text || ''); el.style.display = 'none'; return el; }
       }
       _inner.innerHTML = timeHtml + '<pre class="tool-result">' + escapeHtml((text || '').substring(0, 2000)) + '</pre>';
@@ -400,7 +650,7 @@ function addMsg(role, text, extra) {
     const resultText = text || '';
     // Try to attach to the matching tool_call element
     if (tcId) {
-      const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+      const tcEl = findToolCallElement(tcId);
       if (tcEl) {
         _attachToolResult(tcEl, resultText);
         el.style.display = 'none';  // hide this standalone element
@@ -516,6 +766,7 @@ function addMsg(role, text, extra) {
       img.addEventListener('load', () => scrollBottom(true), { once: true });
     }
   }
+  if (window.PAWFLOW_GROUP_TECHNICAL_MESSAGES) applyTechnicalMessageGrouping();
   return el;
 }
 
@@ -687,7 +938,7 @@ function backgroundTool(tcId) {
   if (!conversationId || !tcId) return;
   action$('background_tool', { tc_id: tcId }).subscribe(d => {
     if (d.ok) {
-      const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+      const tcEl = findToolCallElement(tcId);
       if (tcEl) {
         const btn = tcEl.querySelector('.tc-bg-btn');
         if (btn) btn.remove();
@@ -710,7 +961,7 @@ function backgroundTool(tcId) {
 function killTool(tcId) {
   if (!conversationId || !tcId) return;
   // Optimistic UI: mark as killed
-  const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+  const tcEl = findToolCallElement(tcId);
   if (tcEl) {
     tcEl.querySelectorAll('.tc-kl-btn, .tc-bg-btn').forEach(b => b.remove());
     const bullet = tcEl.querySelector('.tc-bullet');

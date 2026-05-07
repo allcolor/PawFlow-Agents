@@ -306,6 +306,8 @@ class AgentSerializationMixin:
                 # Skip meta tools from display
                 if role in ("tool_call", "tool_result") and m.get("tool_name") in _META_TOOLS:
                     continue
+                if role == "thinking" and not str(content).strip():
+                    continue
                 # display_only messages from claude-code turns — pass through as-is
                 entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx,
                          "display_only": True}

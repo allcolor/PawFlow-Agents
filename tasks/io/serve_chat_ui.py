@@ -9,9 +9,11 @@ Flow pattern:
 """
 
 import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Dict, Any, List
+from urllib.parse import unquote
 
 from core import FlowFile, TaskFactory
 from core.base_task import BaseTask
@@ -35,6 +37,45 @@ _JS_MODULES = [
 ]
 
 _html_cache: str = ""
+
+
+def _cookie_value(cookie_header: str, name: str) -> str:
+    for part in (cookie_header or "").split(";"):
+        key, sep, value = part.strip().partition("=")
+        if sep and key == name:
+            return unquote(value)
+    return ""
+
+
+def _safe_style_text(css: str) -> str:
+    return (css or "").replace("</style", "<\\/style")
+
+
+def _initial_theme_block(flowfile: FlowFile) -> str:
+    cookie_header = flowfile.get_attribute("http.header.cookie") or ""
+    theme_ref = _cookie_value(cookie_header, "pawflow_theme_ref") or "global:pawflow_dark"
+    if theme_ref.startswith("builtin:"):
+        theme_ref = "global:" + theme_ref.split(":", 1)[1]
+    user_id = flowfile.get_attribute("auth.user_id") or "__global__"
+    try:
+        from core.chat_themes import resolve_theme
+        theme = resolve_theme(theme_ref, user_id=user_id, conversation_id="")
+        if not theme and theme_ref != "global:pawflow_dark":
+            theme_ref = "global:pawflow_dark"
+            theme = resolve_theme(theme_ref, user_id=user_id, conversation_id="")
+        css = _safe_style_text((theme or {}).get("css", ""))
+    except Exception:
+        css = ""
+    if not css:
+        return ""
+    return (
+        "<style id=\"custom-theme\">\n"
+        + css
+        + "\n</style>\n"
+        + "<script>window.PAWFLOW_INITIAL_THEME_REF="
+        + json.dumps(theme_ref)
+        + ";</script>\n"
+    )
 
 
 def _compute_js_version() -> str:
@@ -121,6 +162,9 @@ class ServeChatUITask(BaseTask):
         login_url = self.config.get("login_url", "")
         sse_path = self.config.get("sse_path", "/api/agent/events")
         html = _load_html()
+        initial_theme = _initial_theme_block(flowfile)
+        if initial_theme:
+            html = html.replace("</head>", initial_theme + "</head>", 1)
         html = html.replace("{{AGENT_PATH}}", agent_path)
         html = html.replace("{{LOGIN_URL}}", login_url)
         html = html.replace("{{SSE_PATH}}", sse_path)

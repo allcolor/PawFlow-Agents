@@ -171,6 +171,43 @@ function _clearConvState() {
   if (typeof _syncToggleBtn === 'function') _syncToggleBtn();
 }
 
+const TECHNICAL_GROUPING_PARAM = 'chat.group_technical_messages';
+
+function updateTechnicalGroupingToggle(enabled) {
+  const btn = document.getElementById('technicalGroupingToggle');
+  if (!btn) return;
+  const active = !!enabled;
+  btn.style.display = conversationId ? 'inline-flex' : 'none';
+  btn.classList.toggle('active', active);
+  btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  btn.textContent = active ? 'Grouped tech' : 'Group tech';
+}
+
+function onTechnicalGroupingToggle() {
+  if (!conversationId) return;
+  const btn = document.getElementById('technicalGroupingToggle');
+  const next = !window.PAWFLOW_GROUP_TECHNICAL_MESSAGES;
+  if (btn) btn.disabled = true;
+  action$('set_param', {
+    conversation_id: conversationId,
+    scope: 'conversation',
+    key: TECHNICAL_GROUPING_PARAM,
+    value: next ? 'true' : 'false',
+  }).subscribe({
+    next: data => {
+      if (data && data.error) {
+        addMsg('error', data.error);
+        return;
+      }
+      if (typeof setTechnicalMessageGrouping === 'function') setTechnicalMessageGrouping(next);
+      updateTechnicalGroupingToggle(next);
+      resumeConv(conversationId, true);
+    },
+    error: e => addMsg('error', 'Failed to update technical grouping: ' + e.message),
+    complete: () => { if (btn) btn.disabled = false; },
+  });
+}
+
 // THE single canonical "load this conv" path. ONE function, period.
 //
 // What "loading a conv" means (user's mental model, verbatim):
@@ -228,6 +265,7 @@ function renderEmptyState() {
   var pp = document.getElementById('plansPanel'); if (pp) pp.style.display = 'none';
   if (typeof permissionMode !== 'undefined') permissionMode = 'default';
   if (typeof updatePermissionBadge === 'function') updatePermissionBadge();
+  updateTechnicalGroupingToggle(false);
   highlightConv(null);
   _setInputEnabled(false);
   var inp = document.getElementById('input'); if (inp) inp.focus();
@@ -268,28 +306,39 @@ function _renderHistory(data) {
   if (data.conversation_id && data.conversation_id !== conversationId) {
     return;
   }
+  const groupTechnicalMessages = !!data.group_technical_messages;
+  if (typeof setTechnicalMessageGrouping === 'function') {
+    setTechnicalMessageGrouping(groupTechnicalMessages);
+  }
+  updateTechnicalGroupingToggle(groupTechnicalMessages);
   _histTaskBlocks = {};  // reset on full render
   nicknameMap = data.nicknames || {};
-  for (const m of (data.messages || [])) {
-    let content = m.content || '';
-    if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
-      content = content.replace(/^\[[^\]]+\]:\s*/, '');
+  if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
+  try {
+    for (const m of (data.messages || [])) {
+      let content = m.content || '';
+      if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+        content = content.replace(/^\[[^\]]+\]:\s*/, '');
+      }
+      const el = addMsg(m.type || m.role, content, m);
+      // task_id can be top-level (SSE) or in source (stored messages)
+      // Use task_iteration to create separate blocks per iteration.
+      // Delegate traces are their own top-level block — never wrap them
+      // in a generic task-block (delegate is not a task).
+      const _isDelegateTrace = (m.type === 'sub_agent_trace' || m.role === 'sub_agent_trace');
+      const _taskId = _isDelegateTrace ? '' : (m.task_id || (m.source && m.source.task_id) || '');
+      if (_taskId && el) {
+        const agentName = (m.source && m.source.name) || '';
+        const _iter = (m.source && m.source.task_iteration) || 1;
+        const _blockKey = _taskId + '::iter' + _iter;
+        const tb = _getHistTaskBlock(_blockKey, agentName);
+        tb.content.appendChild(el);
+      }
     }
-    const el = addMsg(m.type || m.role, content, m);
-    // task_id can be top-level (SSE) or in source (stored messages)
-    // Use task_iteration to create separate blocks per iteration.
-    // Delegate traces are their own top-level block — never wrap them
-    // in a generic task-block (delegate is not a task).
-    const _isDelegateTrace = (m.type === 'sub_agent_trace' || m.role === 'sub_agent_trace');
-    const _taskId = _isDelegateTrace ? '' : (m.task_id || (m.source && m.source.task_id) || '');
-    if (_taskId && el) {
-      const agentName = (m.source && m.source.name) || '';
-      const _iter = (m.source && m.source.task_iteration) || 1;
-      const _blockKey = _taskId + '::iter' + _iter;
-      const tb = _getHistTaskBlock(_blockKey, agentName);
-      tb.content.appendChild(el);
-    }
+  } finally {
+    if (typeof resumeTechnicalMessageGrouping === 'function') resumeTechnicalMessageGrouping(false);
   }
+  if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
   serverMsgCount = data.message_count || 0;
   currentOffset = data.raw_count || (data.messages || []).length;
   hasMoreMessages = data.has_more || false;
@@ -371,7 +420,7 @@ function loadMoreMessages() {
       if (data.error) { loadingMore = false; _updateLoadMoreBanner(); return; }
       hasMoreMessages = data.has_more || false;
       currentOffset += data.raw_count || (data.messages || []).length;
-      const insertPoint = banner ? banner.nextSibling : container.firstChild;
+      const insertPoint = banner && banner.parentNode === container ? banner.nextSibling : container.firstChild;
       // Build elements in a fragment, then insert at the right position.
       // Task messages go into their task block (existing or new).
       // Non-task messages go into the fragment for insertion.
@@ -379,24 +428,29 @@ function loadMoreMessages() {
       // Build elements first, then insert — prepending one-by-one reverses order
       const _taskEls = {};  // taskId → [elements in order]
       const _fragEls = [];
-      for (const m of (data.messages || [])) {
-        let content = m.content || '';
-        if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
-          content = content.replace(/^\[[^\]]+\]:\s*/, '');
+      if (typeof suspendTechnicalMessageGrouping === 'function') suspendTechnicalMessageGrouping();
+      try {
+        for (const m of (data.messages || [])) {
+          let content = m.content || '';
+          if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+            content = content.replace(/^\[[^\]]+\]:\s*/, '');
+          }
+          const el = addMsg(m.type || m.role, content, m);
+          const _isDelegateTrace = (m.type === 'sub_agent_trace' || m.role === 'sub_agent_trace');
+          const _taskId = _isDelegateTrace ? '' : (m.task_id || (m.source && m.source.task_id) || '');
+          if (!el) continue;
+          if (el.parentNode) el.parentNode.removeChild(el);
+          if (_taskId) {
+            const _iter = (m.source && m.source.task_iteration) || 1;
+            const _blockKey = _taskId + '::iter' + _iter;
+            if (!_taskEls[_blockKey]) _taskEls[_blockKey] = [];
+            _taskEls[_blockKey].push({el, agentName: (m.source && m.source.name) || ''});
+          } else {
+            _fragEls.push(el);
+          }
         }
-        const el = addMsg(m.type || m.role, content, m);
-        const _isDelegateTrace = (m.type === 'sub_agent_trace' || m.role === 'sub_agent_trace');
-        const _taskId = _isDelegateTrace ? '' : (m.task_id || (m.source && m.source.task_id) || '');
-        if (!el) continue;
-        if (el.parentNode) el.parentNode.removeChild(el);
-        if (_taskId) {
-          const _iter = (m.source && m.source.task_iteration) || 1;
-          const _blockKey = _taskId + '::iter' + _iter;
-          if (!_taskEls[_blockKey]) _taskEls[_blockKey] = [];
-          _taskEls[_blockKey].push({el, agentName: (m.source && m.source.name) || ''});
-        } else {
-          _fragEls.push(el);
-        }
+      } finally {
+        if (typeof resumeTechnicalMessageGrouping === 'function') resumeTechnicalMessageGrouping(false);
       }
       // Prepend task elements in correct order (as a batch)
       for (const [tid, entries] of Object.entries(_taskEls)) {
@@ -417,6 +471,7 @@ function loadMoreMessages() {
         frag.appendChild(el);
       }
       container.insertBefore(frag, insertPoint);
+      if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
       container.scrollTop = container.scrollHeight - prevHeight;
       _updateLoadMoreBanner();
       loadingMore = false;
@@ -484,7 +539,10 @@ function _recoverConversation(cid) {
               addMsg(mType, pollContent, m);
               rendered++;
             }
-            if (rendered > 0) console.log('[poll] rendered', rendered, 'recovered messages');
+            if (rendered > 0) {
+              if (typeof applyTechnicalMessageGrouping === 'function') applyTechnicalMessageGrouping();
+              console.log('[poll] rendered', rendered, 'recovered messages');
+            }
             const last = newMsgs[newMsgs.length - 1];
             const lastType = last ? (last.type || last.role) : '';
             if (lastType === 'user' || lastType === 'tool_call' || lastType === 'tool_result') {

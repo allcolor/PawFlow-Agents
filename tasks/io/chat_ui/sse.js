@@ -39,16 +39,6 @@ function connectSSE(cid, onReady, opts) {
 
   // ── Task block grouping ─────────────────────────────────────────
   const _taskBlocks = {};
-  const _turnStartIndicators = {};
-
-  function _showTurnStartIndicator(agentName, ts, label) {
-    const name = agentName || 'assistant';
-    const key = agentKey(name);
-    const now = Date.now();
-    if (_turnStartIndicators[key] && now - _turnStartIndicators[key] < 3000) return;
-    _turnStartIndicators[key] = now;
-    addMsg('system-compact', '\u25b6 ' + (label || displayAgentName(name)), {ts: ts || now / 1000});
-  }
 
   // Expose a reset hook so resumeConv (which clears #messages but
   // keeps the SSE socket open) can drop stale DOM references — without
@@ -56,7 +46,6 @@ function connectSSE(cid, onReady, opts) {
   // freshly-reloaded transcript ends up out of order or truncated.
   window._sseClearLiveBlocks = function() {
     for (const k in _taskBlocks) delete _taskBlocks[k];
-    for (const k in _turnStartIndicators) delete _turnStartIndicators[k];
     for (const k in _delegateGroups) delete _delegateGroups[k];
     for (const k in _delegateSubBlocks) delete _delegateSubBlocks[k];
   };
@@ -167,7 +156,6 @@ function connectSSE(cid, onReady, opts) {
       return;
     }
     // New turn starting — clear cancel suppression so tool events show again
-    _showTurnStartIndicator(agentName, data.ts || data.timestamp || 0);
     trackAgentStart(agentName);
   });
 
@@ -446,7 +434,7 @@ function connectSSE(cid, onReady, opts) {
     else if (data.path) parts.push(data.source + ' ' + data.path);
     if (data.size > 0) parts.push((data.size / 1024).toFixed(1) + ' KB');
     if (parts.length) {
-      _showTurnStartIndicator(data.agent || 'assistant', data.ts || data.timestamp || 0, parts.join(' \u00b7 '));
+      addMsg('system-compact', '\u25b6 ' + parts.join(' \u00b7 '));
       scrollBottom();
     }
   });

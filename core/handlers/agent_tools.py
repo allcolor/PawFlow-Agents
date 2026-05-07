@@ -445,7 +445,8 @@ class MCPToolHandler(ConfigurableToolHandler):
                  timeout: int = 30,
                  transport: str = "http",
                  server_id: str = "",
-                 relay_service=None):
+                 relay_service=None,
+                 local: bool = False):
         super().__init__(tool_name, tool_description, tool_parameters)
         self._server_url = server_url
         self._mcp_tool_name = mcp_tool_name or tool_name
@@ -454,6 +455,7 @@ class MCPToolHandler(ConfigurableToolHandler):
         self._transport = transport  # "http" or "stdio"
         self._server_id = server_id
         self._relay_service = relay_service  # RelayService for relay calls
+        self._local = bool(local)
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         if self._transport == "stdio":
@@ -469,6 +471,7 @@ class MCPToolHandler(ConfigurableToolHandler):
                 "server_id": self._server_id,
                 "tool_name": self._mcp_tool_name,
                 "arguments": arguments,
+                "local": self._local,
             })
             if isinstance(result, dict):
                 if result.get("isError"):

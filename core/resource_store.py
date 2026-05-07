@@ -57,6 +57,7 @@ _DEFAULTS = {
         "transport": "http",    # "http" or "stdio"
         "via": "",              # "relay" or "direct"
         "relay_service": "",
+        "local": False,           # stdio via relay: run on host helper
         "command": "",          # stdio transport: command to run
         "args": [],             # stdio transport: command arguments
         "env": {},              # stdio/http: extra environment variables

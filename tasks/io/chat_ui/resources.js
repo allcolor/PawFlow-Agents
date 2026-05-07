@@ -175,6 +175,34 @@ function _repoSectionHeader(title, rtype, opts) {
 }
 function _sectionFooter() { return '</div>'; }
 
+function _flowPackageSectionId(packageName) {
+  const raw = String(packageName || 'default').toLowerCase();
+  return '_flow_pkg_' + raw.replace(/[^a-z0-9_]+/g, '_');
+}
+
+function _renderFlowPackageGroup(packageName, flows) {
+  const sectionId = _flowPackageSectionId(packageName);
+  const collapsed = _collapsedSections[sectionId] || false;
+  const arrow = collapsed ? '\u25B6' : '\u25BC';
+  const display = collapsed ? 'none' : 'block';
+  let html = `<div style="margin:2px 0 4px 8px;">
+    <div style="display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;" onclick="_toggleSection('${sectionId}')">
+      <span id="res-arrow-${sectionId}" style="font-size:10px;color:#888;">${arrow}</span>
+      <span style="font-size:12px;color:#d0d0e8;font-weight:600;flex:1;">${escapeHtml(packageName || 'default')}</span>
+    </div>
+    <div id="res-section-${sectionId}" style="display:${display};margin-top:2px;">`;
+  flows.forEach(t => {
+    const ver = t.version ? ` v${escapeHtml(t.version)}` : '';
+    const desc = t.description ? ` title="${escapeHtml(t.description)}"` : '';
+    html += `<div style="display:flex;align-items:center;gap:4px;margin-left:14px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog('${escapeHtml(t.id)}')">
+      ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(t.name)}${ver}</span>
+      <span style="color:#555;font-size:10px;">[${t.tasks_count} tasks]</span>
+    </div>`;
+  });
+  html += '</div></div>';
+  return html;
+}
+
 function _showRelayLinkDialog() {
   action$('relay_list_available').subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
@@ -351,6 +379,10 @@ async function _renderResourcesData(data) {
         // Hydrate the global cache through the same monotonic path used by
         // Resource polling must not touch the context gauge. The gauge is
         // updated only by live context events and the explicit /context view.
+        liveHtml += '<div data-agent-name="' + aName + '" style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"'
+          + ' oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + escapeHtml(a.scope || '') + '\',' + (a.autoconv ? 'true' : 'false') + ');return false;">'
+          + '<span style="cursor:pointer;color:' + primaryColor + ';font-size:11px;" title="' + primaryTitle + '"'
+          + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + primaryArrow + '</span>'
           + _scopeBadge(a.scope)
           + '<span style="color:' + textColor + ';font-size:12px;cursor:pointer;flex:1;"'
           + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + aName + '</span>'
@@ -663,6 +695,7 @@ async function _renderResourcesData(data) {
     });
     if (!_collapsedSections['_mcp_repo']) {
       const mcps = data.mcp_servers || [];
+      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:#8fa8ff;font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 Configure availability</div>';
       if (mcps.length) {
         mcps.forEach(m => {
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp','${escapeHtml(m.name)}','${m.scope||''}');return false;">
@@ -682,6 +715,7 @@ async function _renderResourcesData(data) {
     });
     if (!_collapsedSections['_tool']) {
       const tools = window._cachedTools || [];
+      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:#8fa8ff;font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 Configure availability</div>';
       tools.forEach(t => {
         repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog('${escapeHtml(t.name)}')">
           <span style="color:#6c5ce7;font-size:11px">\u26A1</span>
@@ -700,13 +734,19 @@ async function _renderResourcesData(data) {
     });
     { const tpls = data.flow_templates || [];
       if (tpls.length) {
+        const byPackage = new Map();
         tpls.forEach(t => {
-          const ver = t.version ? ` v${escapeHtml(t.version)}` : '';
-          const desc = t.description ? ` title="${escapeHtml(t.description)}"` : '';
-          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog('${escapeHtml(t.id)}')">
-            ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(t.name)}${ver}</span>
-            <span style="color:#555;font-size:10px;">[${t.tasks_count} tasks]</span>
-          </div>`;
+          const packageName = t.package || 'default';
+          if (!byPackage.has(packageName)) byPackage.set(packageName, []);
+          byPackage.get(packageName).push(t);
+        });
+        Array.from(byPackage.keys()).sort((a, b) => a.localeCompare(b)).forEach(packageName => {
+          const flows = byPackage.get(packageName).slice().sort((a, b) => {
+            const byName = String(a.name || '').localeCompare(String(b.name || ''));
+            if (byName) return byName;
+            return String(a.version || '').localeCompare(String(b.version || ''));
+          });
+          repoHtml += _renderFlowPackageGroup(packageName, flows);
         });
       } else {
         repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No flow templates under flows/</div>';
@@ -820,6 +860,7 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
   }
   if (rtype === 'agent') {
     item('\u25B6 Select', () => cmdAgentSelect(name));
+    item('\u2699 Tools / MCP override...', () => _showToolMcpFilterDialog(name, 'agent'));
     if (autoconv) {
       item('\u23F9 Autoconv off', () => {
         action$('random_thought', { sub: 'off', agent: name }).subscribe(d => {
@@ -879,6 +920,171 @@ function _deleteResource(rtype, name, scope) {
   });
 }
 
+function _toolMcpRows(items, selectedNames, cls, disabled, mode, dynamicNames) {
+  const dis = disabled ? ' disabled' : '';
+  const roStyle = disabled ? 'opacity:0.55;cursor:not-allowed;' : '';
+  dynamicNames = dynamicNames || [];
+  if (!items.length) return '<div style="color:#555;font-size:11px;margin:3px 0 6px 18px;">None</div>';
+  return items.map(function(item) {
+    const name = item.name || '';
+    const isExternalDynamic = item.source === 'dynamic' && item.scope !== 'conversation';
+    let isChecked = false;
+    if (mode === 'mcp_allow' || mode === 'tool_selected') {
+      isChecked = selectedNames.indexOf(name) >= 0;
+    } else if (mode === 'tool_default') {
+      isChecked = isExternalDynamic
+        ? dynamicNames.indexOf(name) >= 0
+        : selectedNames.indexOf(name) < 0;
+    }
+    const checked = isChecked ? ' checked' : '';
+    const meta = item.source || item.transport || item.scope || '';
+    return '<label style="display:flex;align-items:center;gap:6px;margin:2px 0 2px 18px;font-size:12px;color:#cfd0df;' + roStyle + '">'
+      + '<input type="checkbox" class="' + cls + '" data-name="' + escapeHtml(name) + '" data-source="' + escapeHtml(item.source || '') + '" data-scope="' + escapeHtml(item.scope || '') + '"' + checked + dis + ' style="accent-color:#6c5ce7;"/> '
+      + '<span style="color:#e0e0e0;">' + escapeHtml(name) + '</span>'
+      + (meta ? '<span style="color:#666;font-size:10px;">' + escapeHtml(meta) + '</span>' : '')
+      + '</label>';
+  }).join('');
+}
+
+function _defaultSelectedTools(items, filters) {
+  const disabledTools = filters.disabled_tools || [];
+  const enabledDynamic = filters.enabled_dynamic_tools || [];
+  return (items || []).filter(function(item) {
+    const name = item.name || '';
+    const isExternalDynamic = item.source === 'dynamic' && item.scope !== 'conversation';
+    return isExternalDynamic ? enabledDynamic.indexOf(name) >= 0 : disabledTools.indexOf(name) < 0;
+  }).map(function(item) { return item.name || ''; }).filter(Boolean);
+}
+
+function _renderToolMcpAgentOverride() {
+  const data = window._toolMcpFilterData || {};
+  const filters = data.filters || {};
+  const agents = data.agents || [];
+  const agent = document.getElementById('tmf-agent')?.value || '';
+  const target = document.getElementById('tmf-agent-panel');
+  if (!target) return;
+  if (!agent) {
+    target.innerHTML = '<div style="color:#555;font-size:11px;">Select an agent to configure an override.</div>';
+    return;
+  }
+  const ov = ((filters.agent_overrides || {})[agent]) || {};
+  const toolsCfg = ov.tools || { mode: 'inherit', selected: [] };
+  const mcpsCfg = ov.mcps || { mode: 'inherit', enabled: [] };
+  const cfgCustom = toolsCfg.mode === 'custom' || mcpsCfg.mode === 'custom';
+  const customEl = document.getElementById('tmf-agent-custom');
+  const custom = customEl ? customEl.checked : cfgCustom;
+  const toolMode = custom ? 'tool_selected' : 'tool_default';
+  const toolNames = custom
+    ? (cfgCustom ? (toolsCfg.selected || []) : _defaultSelectedTools(data.tools || [], filters))
+    : (filters.disabled_tools || []);
+  const dynNames = custom ? [] : (filters.enabled_dynamic_tools || []);
+  const mcpNames = custom
+    ? (cfgCustom ? (mcpsCfg.enabled || []) : (filters.enabled_mcps || []))
+    : (filters.enabled_mcps || []);
+  target.innerHTML = '<label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;color:#e0e0e0;font-size:12px;">'
+    + '<input id="tmf-agent-custom" type="checkbox"' + (custom ? ' checked' : '') + ' onchange="_renderToolMcpAgentOverride()" style="accent-color:#6c5ce7;"/> Override conversation defaults for @' + escapeHtml(agent) + '</label>'
+    + '<div style="color:#aaa;font-size:11px;margin-top:6px;">Tools</div>'
+    + _toolMcpRows(data.tools || [], toolNames, 'tmf-agent-tool', !custom, toolMode, dynNames)
+    + '<div style="color:#aaa;font-size:11px;margin-top:8px;">MCP servers</div>'
+    + _toolMcpRows(data.mcps || [], mcpNames, 'tmf-agent-mcp', !custom, 'mcp_allow');
+}
+
+function _collectDisabled(cls) {
+  return Array.from(document.querySelectorAll('.' + cls)).filter(function(el) {
+    return !el.checked;
+  }).map(function(el) { return el.dataset.name || ''; }).filter(Boolean);
+}
+
+function _collectEnabled(cls) {
+  return Array.from(document.querySelectorAll('.' + cls)).filter(function(el) {
+    return el.checked;
+  }).map(function(el) { return el.dataset.name || ''; }).filter(Boolean);
+}
+
+function _collectDisabledDefaultTools(cls) {
+  return Array.from(document.querySelectorAll('.' + cls)).filter(function(el) {
+    return !el.checked && !(el.dataset.source === 'dynamic' && el.dataset.scope !== 'conversation');
+  }).map(function(el) { return el.dataset.name || ''; }).filter(Boolean);
+}
+
+function _collectEnabledExternalDynamicTools(cls) {
+  return Array.from(document.querySelectorAll('.' + cls)).filter(function(el) {
+    return el.checked && el.dataset.source === 'dynamic' && el.dataset.scope !== 'conversation';
+  }).map(function(el) { return el.dataset.name || ''; }).filter(Boolean);
+}
+
+async function _showToolMcpFilterDialog(agentName, mode) {
+  mode = mode || (agentName ? 'agent' : 'conversation');
+  let data = {};
+  try {
+    data = await rxjs.firstValueFrom(action$('get_tool_mcp_filters', { conversation_id: conversationId }));
+    if (data.error) { addMsg('error', data.error); return; }
+  } catch (e) { addMsg('error', e.message); return; }
+  window._toolMcpFilterData = data;
+  const filters = data.filters || {};
+  const agents = data.agents || [];
+  const selected = agentName || agents[0] || '';
+  const showConv = mode !== 'agent';
+  const showAgent = mode !== 'conversation';
+  const title = showConv && showAgent ? 'Tools / MCP availability'
+    : showConv ? 'Conversation tools / MCP availability'
+    : 'Tools / MCP override for @' + selected;
+  let overlay = document.getElementById('toolMcpFilterOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'toolMcpFilterOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:680px;max-height:85vh;overflow-y:auto;border:1px solid #333;';
+  panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+    + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">' + escapeHtml(title) + '</h3>'
+    + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button></div>'
+    + (showConv ? '<div style="color:#6c5ce7;font-size:12px;font-weight:600;margin:8px 0 4px;">Conversation defaults</div>'
+      + '<div style="color:#aaa;font-size:11px;margin-top:6px;">Tools</div>'
+      + _toolMcpRows(data.tools || [], filters.disabled_tools || [], 'tmf-conv-tool', false, 'tool_default', filters.enabled_dynamic_tools || [])
+      + '<div style="color:#aaa;font-size:11px;margin-top:8px;">MCP servers</div>'
+      + _toolMcpRows(data.mcps || [], filters.enabled_mcps || [], 'tmf-conv-mcp', false, 'mcp_allow') : '')
+    + (showConv && showAgent ? '<div style="border-top:1px solid #2a2a4a;margin:14px 0 10px;"></div>' : '')
+    + (showAgent ? '<div style="color:#6c5ce7;font-size:12px;font-weight:600;margin-bottom:6px;">Agent override</div>'
+      + '<select id="tmf-agent" onchange="_renderToolMcpAgentOverride()" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-bottom:8px;' + (agentName ? 'display:none;' : '') + '">'
+      + '<option value="">-- no agent --</option>'
+      + agents.map(function(a) { return '<option value="' + escapeHtml(a) + '"' + (a === selected ? ' selected' : '') + '>@' + escapeHtml(a) + '</option>'; }).join('')
+      + '</select><div id="tmf-agent-panel"></div>' : '')
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">'
+    + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+    + '<button onclick="_saveToolMcpFilterDialog()" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>';
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  window._toolMcpFilterMode = mode;
+  if (showAgent) _renderToolMcpAgentOverride();
+}
+
+function _saveToolMcpFilterDialog() {
+  const data = window._toolMcpFilterData || {};
+  const filters = JSON.parse(JSON.stringify(data.filters || {}));
+  const mode = window._toolMcpFilterMode || 'conversation';
+  if (mode !== 'agent') {
+    filters.disabled_tools = _collectDisabledDefaultTools('tmf-conv-tool');
+    filters.enabled_dynamic_tools = _collectEnabledExternalDynamicTools('tmf-conv-tool');
+    filters.enabled_mcps = _collectEnabled('tmf-conv-mcp');
+  }
+  filters.agent_overrides = filters.agent_overrides || {};
+  const agent = document.getElementById('tmf-agent')?.value || '';
+  if (mode !== 'conversation' && agent) {
+    const custom = !!document.getElementById('tmf-agent-custom')?.checked;
+    filters.agent_overrides[agent] = {
+      tools: { mode: custom ? 'custom' : 'inherit', selected: custom ? _collectEnabled('tmf-agent-tool') : [] },
+      mcps: { mode: custom ? 'custom' : 'inherit', enabled: custom ? _collectEnabled('tmf-agent-mcp') : [] },
+    };
+  }
+  action$('update_tool_mcp_filters', { conversation_id: conversationId, filters }).subscribe(function(res) {
+    if (res.error) { addMsg('error', res.error); return; }
+    addMsg('system', 'Tools / MCP availability updated.');
+    document.getElementById('toolMcpFilterOverlay')?.remove();
+    loadResources();
+  });
+}
+
 function showAgentMenu(e, name, scope, autoconv) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');
@@ -901,6 +1107,7 @@ function showAgentMenu(e, name, scope, autoconv) {
   item('\u{1F441} View definition...', () => showResourceEditor('agent', name, true));
   if (_canEditScope(scope)) item('\u270F Edit definition...', () => showResourceEditor('agent', name));
   item('\u2699 Configure in conversation...', () => _showAgentConvConfigDialog(name));
+  item('\u2699 Tools / MCP override...', () => _showToolMcpFilterDialog(name, 'agent'));
   item('\u25B6 Select', () => cmdAgentSelect(name).then(loadResources));
   item('\u{1F9E9} Manage skills...', () => _showAgentSkillsDialog(name));
   if (autoconv) {
@@ -1408,11 +1615,20 @@ function _renameVoiceClone(name) {
 const _RESOURCE_FIELDS = {
   agent:    [['prompt','textarea'],['description','text']],
   skill:    [['prompt','textarea'],['description','text']],
-  mcp:      [['url','text'],['auth','text'],['description','text']],
+  mcp:      [['transport','mcp_transport'],['via','mcp_via'],['relay_service','mcp_relay'],['local','checkbox'],['url','text'],['command','text'],['args','json'],['env','json'],['auth','json'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['skills','skills_picker'],['description','text']],
   prompt:   [['prompt','textarea'],['parameters','params_editor'],['title','text'],['category','text'],['description','text']],
   _tool:    [['tool_description','text'],['parameters','textarea'],['code','textarea']],
 };
+
+async function _loadResourceRelayOptions() {
+  try {
+    const data = await rxjs.firstValueFrom(action$('relay_list_available', {}));
+    window._resourceRelayOptions = data.relays || [];
+  } catch (e) {
+    window._resourceRelayOptions = [];
+  }
+}
 
 function _buildResourceForm(rtype, data, isNew, readonly) {
   const fields = _RESOURCE_FIELDS[rtype] || [];
@@ -1434,6 +1650,36 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
     html += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${key}</label>`;
     if (type === 'textarea') {
       html += `<textarea id="res-${key}"${dis} style="width:100%;min-height:120px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${escaped}</textarea>`;
+    } else if (type === 'json') {
+      const jsonVal = (data && data[key] != null && typeof data[key] === 'object') ? JSON.stringify(data[key], null, 2) : (val || (key === 'args' ? '[]' : '{}'));
+      html += `<textarea id="res-${key}"${dis} data-json="1" style="width:100%;min-height:70px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${String(jsonVal).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>`;
+    } else if (type === 'checkbox') {
+      const checkedAttr = (val === true || val === 'true') ? ' checked' : '';
+      html += `<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="res-${key}" type="checkbox"${checkedAttr}${dis} style="accent-color:#6c5ce7;"/> <span style="color:#e0e0e0;font-size:12px;">Run stdio on relay host helper</span></label>`;
+    } else if (type === 'mcp_transport') {
+      const httpSelected = (val === 'http' || !val) ? ' selected' : '';
+      const stdioSelected = val === 'stdio' ? ' selected' : '';
+      html += `<select id="res-${key}"${dis} style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}"><option value="http"${httpSelected}>HTTP JSON-RPC</option><option value="stdio"${stdioSelected}>Command-line stdio</option></select>`;
+    } else if (type === 'mcp_via') {
+      const directSelected = (val === 'direct' || !val) ? ' selected' : '';
+      const relaySelected = val === 'relay' ? ' selected' : '';
+      html += `<select id="res-${key}"${dis} style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}"><option value="direct"${directSelected}>Direct HTTP from PawFlow server</option><option value="relay"${relaySelected}>Via relay</option></select>`;
+    } else if (type === 'mcp_relay') {
+      const relays = window._resourceRelayOptions || [];
+      const current = String(val || '');
+      let options = '<option value="">Default linked relay</option>';
+      if (current && !relays.some(r => r.relay_id === current)) {
+        options += '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + '</option>';
+      }
+      relays.forEach(function(r) {
+        const rid = r.relay_id || '';
+        const selected = rid === current ? ' selected' : '';
+        let label = rid;
+        if (r.host_root) label += ' - ' + r.host_root;
+        else if (r.root) label += ' - ' + r.root;
+        options += '<option value="' + escapeHtml(rid) + '"' + selected + '>' + escapeHtml(label) + '</option>';
+      });
+      html += `<select id="res-${key}"${dis} style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}">${options}</select>`;
     } else if (type === 'params_editor') {
       const params = (data && typeof data[key] === 'object' && data[key]) ? data[key] : {};
       html += `<div id="res-${key}" data-type="params_editor" style="margin-top:2px;background:#0f0f23;border:1px solid #333;border-radius:4px;padding:6px;${roS}">`;
@@ -1539,6 +1785,7 @@ async function showResourceEditor(rtype, name, readonly) {
   } catch (e) { addMsg('error', e.message); return; }
 
   const scope = data._scope || 'user';
+  if (rtype === 'mcp') await _loadResourceRelayOptions();
   const ro = !!readonly;
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();
@@ -1580,7 +1827,14 @@ function _saveResourceEdit(rtype, name, scope) {
     if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
     if (type === 'params_editor') { const p = _collectParams(key); if (p) data[key] = p; continue; }
     const el = document.getElementById('res-' + key);
-    if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
+    if (el) {
+      if (type === 'number') data[key] = parseInt(el.value) || 0;
+      else if (type === 'checkbox') data[key] = !!el.checked;
+      else if (type === 'json') {
+        try { data[key] = el.value.trim() ? JSON.parse(el.value) : (key === 'args' ? [] : {}); }
+        catch(e) { alert(key + ' must be valid JSON'); return; }
+      } else data[key] = el.value;
+    }
   }
   action$('update_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
@@ -1588,9 +1842,10 @@ function _saveResourceEdit(rtype, name, scope) {
   });
 }
 
-function showResourceCreator(rtype) {
+async function showResourceCreator(rtype) {
   if (rtype === '_flow') { showDeployFlowDialog(); return; }
   if (rtype === '_svc') { showServiceInstallForm(); return; }
+  if (rtype === 'mcp') await _loadResourceRelayOptions();
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
@@ -1625,7 +1880,14 @@ function _saveResourceCreate(rtype) {
     if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
     if (type === 'params_editor') { const p = _collectParams(key); if (p) data[key] = p; continue; }
     const el = document.getElementById('res-' + key);
-    if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
+    if (el) {
+      if (type === 'number') data[key] = parseInt(el.value) || 0;
+      else if (type === 'checkbox') data[key] = !!el.checked;
+      else if (type === 'json') {
+        try { data[key] = el.value.trim() ? JSON.parse(el.value) : (key === 'args' ? [] : {}); }
+        catch(e) { alert(key + ' must be valid JSON'); return; }
+      } else data[key] = el.value;
+    }
   }
   // Dynamic tools use a dedicated action (CreateToolHandler pipeline)
   if (rtype === '_tool') {

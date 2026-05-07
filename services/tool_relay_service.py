@@ -589,7 +589,19 @@ class ToolRelayService(BaseService):
 
         # Load MCP server tools for the active agent
         if conversation_id and user_id:
-            self._load_mcp_tools(registry, user_id, conversation_id)
+            self._load_mcp_tools(registry, user_id, conversation_id, agent_name)
+
+        if conversation_id:
+            try:
+                from core.tool_mcp_filters import is_tool_enabled
+                for _handler in list(registry.list_tools()):
+                    if not is_tool_enabled(
+                            conversation_id, _handler.name, agent_name,
+                            getattr(_handler, "_origin", "builtin"),
+                            getattr(_handler, "_origin_scope", "")):
+                        registry.unregister(_handler.name)
+            except Exception as e:
+                logger.debug("[tool-relay] tool availability filter failed: %s", e)
 
         # Find the live filesystem service (the one with relay connected)
         fs_svc = self._find_filesystem_service(user_id)
@@ -805,7 +817,8 @@ class ToolRelayService(BaseService):
             return None, f"{media_type.title()} service '{sid}' failed to connect"
         return resolver
 
-    def _load_mcp_tools(self, registry, user_id: str, conversation_id: str):
+    def _load_mcp_tools(self, registry, user_id: str, conversation_id: str,
+                        agent_name: str = ""):
         """Load MCP server tools for the active agent into registry."""
         try:
             from core.resource_store import ResourceStore
@@ -820,7 +833,11 @@ class ToolRelayService(BaseService):
 
             for mcp_name in active_mcps:
                 try:
-                    raw_def = rs.get_any("mcp", mcp_name, user_id)
+                    from core.tool_mcp_filters import is_enabled
+                    if not is_enabled(conversation_id, mcp_name, agent_name, kind="mcps"):
+                        continue
+                    raw_def = rs.get_any("mcp", mcp_name, user_id,
+                                         conversation_id=conversation_id)
                     if not raw_def:
                         continue
                     from core.expression import resolve_value
@@ -857,6 +874,7 @@ class ToolRelayService(BaseService):
                                     "command": mcp_def.get("command", ""),
                                     "args": mcp_def.get("args", []),
                                     "env": mcp_def.get("env", {}),
+                                    "local": bool(mcp_def.get("local")),
                                 })
                             except Exception as e:
                                 if "already_running" not in str(e):
@@ -865,7 +883,8 @@ class ToolRelayService(BaseService):
                                     continue
                         try:
                             disc = relay_svc._request("mcp_discover", ".",
-                                                      server_id=mcp_name)
+                                                      server_id=mcp_name,
+                                                      local=bool(mcp_def.get("local")))
                             disc_tools = (disc.get("tools", [])
                                           if isinstance(disc, dict) else [])
                         except Exception as e:
@@ -875,6 +894,11 @@ class ToolRelayService(BaseService):
                         url = mcp_def.get("url", "")
                         if not url:
                             continue
+                        try:
+                            from core.relay_proxy_url import maybe_transform_relay_proxy_url
+                            url = maybe_transform_relay_proxy_url(url, user_id=user_id) or url
+                        except Exception:
+                            logger.debug("mcp relay-proxy URL transform failed", exc_info=True)
                         from core.tool_registry import discover_mcp_tools
                         disc_tools = discover_mcp_tools(
                             url, headers=auth, timeout=10)
@@ -886,12 +910,13 @@ class ToolRelayService(BaseService):
                             tool_description=mt.get("description", ""),
                             tool_parameters=mt.get("inputSchema", {
                                 "type": "object", "properties": {}}),
-                            server_url=mcp_def.get("url", ""),
+                            server_url=url if via != "relay" else mcp_def.get("url", ""),
                             mcp_tool_name=mt["name"],
                             headers=auth,
                             transport=transport if via == "relay" else "http",
                             server_id=mcp_name,
                             relay_service=relay_svc,
+                            local=bool(mcp_def.get("local")),
                         )
                         registry.register(h)
                     if disc_tools:

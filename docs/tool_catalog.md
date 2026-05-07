@@ -148,6 +148,18 @@ PawFlow falls back to the native tool behavior unchanged.
 | `use_tool` | Execute a tool by name. |
 | `pawflow_help` | Get platform help. |
 
+## Tool and MCP Availability
+
+Conversation tool filters keep built-in tools enabled by default. Dynamic tools
+from conversation scope are also enabled by default; dynamic global/user tools
+must be explicitly checked. MCP servers are opt-in: none are enabled until they
+are checked at conversation level or in an agent override. Each agent can
+optionally override conversation defaults; without an override it inherits the
+conversation filter. HTTP MCP resources can target a user-local service through
+the relay-proxy URL form `http://${conv.relay}:localhost:<port>/<path>`. Stdio
+MCP resources run via a relay, and `local=true` runs the command on the relay
+host helper instead of inside the relay container.
+
 ## Flow Task Availability
 
 `ToolTaskAdapter` registers most tools as `tool.<name>` tasks. Some tools are intentionally skipped because they are agent-internal, meta-tools, or resource/control actions that do not make sense as flow nodes.

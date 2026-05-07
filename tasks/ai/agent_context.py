@@ -719,7 +719,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if active_mcps:
                     for mcp_name in active_mcps:
                         try:
-                            raw_def = rs.get_any("mcp", mcp_name, _uid)
+                            from core.tool_mcp_filters import is_enabled
+                            if not is_enabled(conversation_id, mcp_name, selected, kind="mcps"):
+                                continue
+                            raw_def = rs.get_any("mcp", mcp_name, _uid,
+                                                 conversation_id=conversation_id)
                             if not raw_def:
                                 continue
                             # Resolve ALL expressions at point of use
@@ -761,6 +765,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                             "command": mcp_def.get("command", ""),
                                             "args": mcp_def.get("args", []),
                                             "env": mcp_def.get("env", {}),
+                                            "local": bool(mcp_def.get("local")),
                                         })
                                     except Exception as e:
                                         if "already_running" not in str(e):
@@ -769,7 +774,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 # Discover tools via relay
                                 try:
                                     disc = relay_svc._request("mcp_discover", ".",
-                                                              server_id=mcp_name)
+                                                              server_id=mcp_name,
+                                                              local=bool(mcp_def.get("local")))
                                     disc_tools = (disc.get("tools", [])
                                                   if isinstance(disc, dict) else [])
                                 except Exception as e:
@@ -779,6 +785,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 url = mcp_def.get("url", "")
                                 if not url:
                                     continue
+                                try:
+                                    from core.relay_proxy_url import maybe_transform_relay_proxy_url
+                                    url = maybe_transform_relay_proxy_url(url, user_id=_uid) or url
+                                except Exception:
+                                    logger.debug("mcp relay-proxy URL transform failed", exc_info=True)
                                 from core.tool_registry import discover_mcp_tools
                                 disc_tools = discover_mcp_tools(
                                     url, headers=auth, timeout=10)
@@ -791,12 +802,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                     tool_description=mt.get("description", ""),
                                     tool_parameters=mt.get("inputSchema", {
                                         "type": "object", "properties": {}}),
-                                    server_url=mcp_def.get("url", ""),
+                                    server_url=url if via != "relay" else mcp_def.get("url", ""),
                                     mcp_tool_name=mt["name"],
                                     headers=auth,
                                     transport=transport if via == "relay" else "http",
                                     server_id=mcp_name,
                                     relay_service=relay_svc,
+                                    local=bool(mcp_def.get("local")),
                                 )
                                 registry.register(h)
                             if disc_tools:
@@ -812,12 +824,17 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # then apply agent's allowlist/denylist filter.
         # Skip rebuild if custom tools were provided via JSON config.
         if not custom_tools_json:
+            from core.tool_mcp_filters import is_tool_enabled as _tool_enabled
             tool_defs = [
                 LLMToolDefinition(
                     name=h.name, description=h.description,
                     parameters=h.parameters_schema,
                 )
                 for h in registry.list_tools()
+                if not conversation_id or _tool_enabled(
+                    conversation_id, h.name, selected,
+                    getattr(h, "_origin", "builtin"),
+                    getattr(h, "_origin_scope", ""))
             ]
         if _selected_agent_def and conversation_id:
             from core.conv_agent_config import get_agent_config as _gac
@@ -831,6 +848,15 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     tool_defs = [td for td in tool_defs if td.name in _allow]
                 elif _deny:
                     tool_defs = [td for td in tool_defs if td.name not in _deny]
+        if conversation_id:
+            try:
+                from core.tool_mcp_filters import disabled_names
+                _disabled_tools = disabled_names(
+                    conversation_id, selected, kind="tools")
+                if _disabled_tools:
+                    tool_defs = [td for td in tool_defs if td.name not in _disabled_tools]
+            except Exception:
+                logger.debug("tool availability filter failed", exc_info=True)
 
         # NOTE: the fully-built system_prompt is stored separately below as
         # provider-only state. It must not be inserted into messages, because

@@ -31,6 +31,8 @@ def _scan_flow_templates(user_id: str) -> List[Dict[str, Any]]:
         for latest in root.rglob("latest.json"):
             flow_dir = latest.parent
             try:
+                rel_parts = flow_dir.relative_to(root).parts
+                package = ".".join(rel_parts[:-1]) if len(rel_parts) > 1 else "default"
                 ptr = json.loads(latest.read_text(encoding="utf-8"))
                 version = (ptr.get("version") or "").strip()
                 if not version:
@@ -42,6 +44,7 @@ def _scan_flow_templates(user_id: str) -> List[Dict[str, Any]]:
                 templates.append({
                     "id": raw.get("id") or flow_dir.name,
                     "name": raw.get("name") or flow_dir.name,
+                    "package": raw.get("package") or package,
                     "version": version,
                     "description": raw.get("description") or "",
                     "scope": raw.get("scope") or scope_label,
@@ -50,7 +53,7 @@ def _scan_flow_templates(user_id: str) -> List[Dict[str, Any]]:
                 })
             except Exception as exc:
                 logger.debug("list_resources flow_templates: skip %s: %s", latest, exc)
-    templates.sort(key=lambda t: (t["scope"], t["name"]))
+    templates.sort(key=lambda t: (t["package"], t["name"], t["version"], t["scope"]))
     return templates
 
 
@@ -575,13 +578,21 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "assigned_to": assigned_to,
             })
 
-        # MCPs: all in-scope (global + user + conv) are auto-active.
-        # No "linked" flag — presence in the repo == available in the conv.
+        try:
+            from core.tool_mcp_filters import enabled_mcp_names as _enabled_mcp_names
+            _enabled_mcps = _enabled_mcp_names(conv_id) if conv_id else set()
+        except Exception:
+            _enabled_mcps = set()
+
+        # MCPs: all in-scope are visible; availability is controlled by
+        # conversation/agent tool_mcp_filters.
         all_mcps = rs.list_all("mcp", uid, conversation_id=conv_id)
         mcps_out = [{
             "name": m["name"],
             "url": m.get("url", ""),
             "scope": m.get("_scope", ""),
+            "enabled": m.get("name", "") in _enabled_mcps,
+            "transport": m.get("transport", "http"),
         } for m in all_mcps]
 
         # Tasks: show all from repo
@@ -757,6 +768,61 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         result["user_role"] = _user_role
 
         flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "get_tool_mcp_filters":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.tool_mcp_filters import get_filters
+            from core.tool_registry import create_default_registry
+            from core.resource_store import ResourceStore
+            from core.conv_agent_config import get_all_agent_configs
+            rs = ResourceStore.instance()
+            registry = create_default_registry()
+            builtin_tools = [{
+                "name": h.name,
+                "description": h.description,
+                "source": "builtin",
+            } for h in registry.list_tools()]
+            dynamic_tools = [{
+                "name": t.get("name", ""),
+                "description": t.get("description", ""),
+                "source": "dynamic",
+                "scope": t.get("_scope", ""),
+            } for t in rs.list_all("tool", user_id, conversation_id=conv_id)]
+            mcps = [{
+                "name": m.get("name", ""),
+                "description": m.get("description", ""),
+                "scope": m.get("_scope", ""),
+                "transport": m.get("transport", "http"),
+                "url": m.get("url", ""),
+            } for m in rs.list_all("mcp", user_id, conversation_id=conv_id)]
+            agents = list(get_all_agent_configs(conv_id).keys())
+            flowfile.set_content(json.dumps({
+                "filters": get_filters(conv_id),
+                "tools": builtin_tools + dynamic_tools,
+                "mcps": mcps,
+                "agents": agents,
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "update_tool_mcp_filters":
+        conv_id = body.get("conversation_id", "")
+        filters = body.get("filters", {})
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.tool_mcp_filters import set_filters
+            saved = set_filters(conv_id, filters if isinstance(filters, dict) else {})
+            flowfile.set_content(json.dumps({"ok": True, "filters": saved}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
     if action == "get_resource_detail":

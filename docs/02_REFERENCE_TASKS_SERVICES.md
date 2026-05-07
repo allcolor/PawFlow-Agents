@@ -374,7 +374,7 @@ def process(input_var_name):
 
 **Agent shortcut**: agents can invoke any deployed flow once and get the result inline via `manage_flow(action="run", template_id="<package>.<flow>:<version>", parameters={...}, input="...")` — no deployment, no background instance.
 
-**Deployment configuration**: chat UI flow deployment and edit dialogs use the flow template schema instead of a free-form JSON box. `get_flow_deploy_schema` exposes typed flow parameters plus each declared controller service. Deployments persist flow parameter values, local service configs, and service bindings (`global:<service_id>` / `user:<user_id>:<service_id>`). Starting or restoring a deployed flow applies those bindings before services connect, so a flow-local service can be replaced by an existing user/global service at runtime.
+**Deployment configuration**: chat UI flow deployment and edit dialogs use the flow template schema instead of a free-form JSON box. `get_flow_deploy_schema` exposes typed flow parameters plus each declared controller service. The Flow Repository sidebar groups templates by package and sorts packages and flows alphabetically. Deployments persist flow parameter values, local service configs, and service bindings (`global:<service_id>` / `user:<user_id>:<service_id>`). Starting or restoring a deployed flow applies those bindings before services connect, so a flow-local service can be replaced by an existing user/global service at runtime.
 
 #### 11.4.2. Sleep Task (`sleep`)
 **Description**: Pause execution

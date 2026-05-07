@@ -1409,13 +1409,7 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('theme', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    let existing = document.getElementById('custom-theme');
-    if (!existing) {
-      existing = document.createElement('style');
-      existing.id = 'custom-theme';
-      document.head.appendChild(existing);
-    }
-    existing.textContent = data.css || '';
+    if (typeof applyThemeCss === 'function') applyThemeCss(data.css || '');
   });
 
   let sseHadError = false;  // track any error on this EventSource

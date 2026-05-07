@@ -508,6 +508,12 @@ function _showNewConvDialog(repoAgents, llmServices, availableRelays, resolve) {
 
 function updateDeleteBtn() {
   const show = conversationId ? '' : 'none';
+  const themeSel = document.getElementById('themeSelect');
+  if (themeSel) themeSel.style.display = '';
+  const convThemeSel = document.getElementById('conversationThemeSelect');
+  if (convThemeSel) convThemeSel.style.display = show;
+  const convThemeLabel = document.getElementById('convThemeLabel');
+  if (convThemeLabel) convThemeLabel.style.display = show;
   document.getElementById('permissionMode').style.display = show;
   document.getElementById('actionMenuWrap').style.display = show;
 }

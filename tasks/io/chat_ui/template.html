@@ -7,6 +7,23 @@
 <script src="https://cdn.jsdelivr.net/npm/rxjs@7/dist/bundles/rxjs.umd.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --pf-bg: #1a1a2e;
+  --pf-panel: #16213e;
+  --pf-sidebar: #0f1629;
+  --pf-border: #0f3460;
+  --pf-text: #e0e0e0;
+  --pf-muted: #6c6c8a;
+  --pf-accent: #e94560;
+  --pf-accent-2: #4ecdc4;
+  --pf-user: #0f3460;
+  --pf-assistant: #16213e;
+  --pf-danger: #e94560;
+  --pf-warning: #f0a500;
+  --pf-success: #4ecdc4;
+  --pf-code-bg: #0d1117;
+  --pf-shadow: rgba(0,0,0,0.5);
+}
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
@@ -462,6 +479,28 @@ body.desktop-fullscreen .tab-content.active iframe {
 .action-menu-item .ami-label { font-weight: 500; }
 .action-menu-item .ami-desc { font-size: 11px; color: #6c6c8a; }
 .action-menu-sep { border-top: 1px solid #0f3460; margin: 4px 0; }
+/* Theme variable bridge: themes only set --pf-* variables. */
+body, .main, .messages-wrap, .tab-content.active, .audio-tab-panel { background: var(--pf-bg) !important; color: var(--pf-text) !important; }
+.sidebar, .tab-bar, .files-panel, .fe-toolbar, .fe-table th, .fe-status, .fe-preview-pane .fe-ph, .load-more-banner { background: var(--pf-sidebar) !important; border-color: var(--pf-border) !important; }
+.header, .input-area, .action-menu, .ctx-menu, .dialog, .exec-dialog, .active-panel, .fe-panel, .fe-preview-pane, .audio-tab-controls { background: var(--pf-panel) !important; border-color: var(--pf-border) !important; }
+.conv-item:hover, .conv-item.active, .msg.assistant, .msg.subagent, .msg.agent-result, .msg.btw, .msg.sub_agent_trace, .delegate-block, .delegate-sub-block, .dialog-body .btn, .fe-row:hover, .fe-row.selected, .ask-user-box, .tab-btn.active { background: var(--pf-assistant) !important; border-color: var(--pf-border) !important; color: var(--pf-text) !important; }
+.msg.user, button, .header .btn, .action-menu-btn, .sidebar-toggle, .btn-attach, .btn-folder, .scroll-nav button, .audio-tab-controls button { background: var(--pf-user) !important; color: var(--pf-text) !important; border-color: var(--pf-accent) !important; }
+button:hover, .header .btn:hover, .action-menu-btn:hover, .sidebar-header .btn-new:hover, .input-row button:hover, .dialog-body .btn:hover, .dialog-body .btn-primary:hover, .ask-user-btn:hover { background: var(--pf-accent) !important; color: var(--pf-bg) !important; border-color: var(--pf-accent) !important; }
+textarea, input, select, .input-row textarea, .sidebar-settings select, .fe-toolbar select, .fe-search, .fe-inline, .exec-cmd textarea { background: var(--pf-sidebar) !important; color: var(--pf-text) !important; border-color: var(--pf-border) !important; }
+.msg.tool, .tc-output, .msg pre, .tc-md pre, .diff-output, .terminal-output, .exec-cmd, .tool-arg-val { background: var(--pf-code-bg) !important; border-color: var(--pf-border) !important; color: var(--pf-text) !important; }
+.tc-output pre, .tc-output code, .tc-code, .terminal-output .term-stdout, .terminal-output .term-exit, .exec-cmd textarea { color: var(--pf-text) !important; }
+.tc-output .ln, .terminal-output .term-header, .tc-diff .diff-ctx { color: var(--pf-muted) !important; }
+.sidebar-header, .sidebar-settings, .header, .input-area, .files-table th, .files-table td, .delegate-body, .delegate-sub-body, .delegate-message, .delegate-response, .trace-content, .msg-meta, .action-menu-sep, .fe-ctx hr { border-color: var(--pf-border) !important; }
+.header h1, .conv-branch, .ami-label, .delegate-dst, .tc-diff .diff-hunk, .tc-grep .grep-loc, .fe-status .fe-clip, .tab-btn.active, .action-menu-item:hover, a, .msg a { color: var(--pf-accent) !important; }
+.status, .conv-meta, .ami-desc, .msg.system, .msg.system-compact, .msg-time, .msg-meta, .msg-meta .meta-details, .delegate-status, .delegate-tool-result, .delegate-stats, .trace-entry, .tc-result, .sub-trace-body, .tree-body, .active-panel-title, .active-row .a-time, .sidebar-header h2, .sidebar-settings label, .header .user-info, .files-table th, .files-table .col-type, .files-table .col-date, .fe-table th, .fe-row td:nth-child(3), .fe-row td:nth-child(4), .fe-status, .fe-loading, .terminal-output .term-header, .exec-cwd, .action-menu-item .ami-desc { color: var(--pf-muted) !important; }
+.conv-item .conv-preview, .conv-item .conv-title, .files-header, .files-table, .file-chip, .sched-chip, .delegate-src, .delegate-header, .delegate-sub-header, .delegate-response, .trace-content, .tree-header, .active-row .a-name, .tc-md, .tc-code, .dialog-title, .exec-dialog h3, .fe-toolbar .fe-bc span.cur, .fe-ctx div, .audio-tab-controls .audio-title, .action-menu-item { color: var(--pf-text) !important; }
+.conv-status.active, .tc-bullet.pending, .file-chip .file-status.available { background: var(--pf-success) !important; color: var(--pf-success) !important; }
+.conv-status.blocked { background: var(--pf-warning) !important; }
+.msg.user { border-left-color: var(--pf-accent-2) !important; }
+.msg.assistant, .msg.btw, .msg.sub_agent_trace, .delegate-block, .delegate-sub-block { border-left-color: var(--pf-accent) !important; }
+.msg.error, .exec-risk.high { background: color-mix(in srgb, var(--pf-danger) 18%, var(--pf-panel)) !important; color: var(--pf-danger) !important; }
+.ctx-menu, .action-menu, .dialog, .exec-dialog, .fe-panel, .fe-ctx, .fe-preview-pane, .scroll-nav button { box-shadow: 0 4px 16px var(--pf-shadow) !important; }
+::-webkit-scrollbar-thumb { background: var(--pf-border) !important; }
 </style>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -497,6 +536,10 @@ if (typeof hljs !== 'undefined') {
       <option value="86400">24 hours</option>
       <option value="604800">7 days</option>
     </select>
+    <label id="convThemeLabel" style="margin-top:8px">Conversation theme</label>
+    <select id="conversationThemeSelect" onchange="onConversationThemeSelectChange(this.value)" title="Conversation theme">
+      <option value="">Use global theme</option>
+    </select>
   </div>
   <div class="sidebar-settings" id="resourcesPanel" style="display:none">
     <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; Resources</label>
@@ -517,6 +560,10 @@ if (typeof hljs !== 'undefined') {
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant"></span>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
+    <select id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)" title="Global chat theme"
+            style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:220px">
+      <option value="global:pawflow_dark">PawFlow Dark</option>
+    </select>
     <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode"
             style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
       <option value="default">&#x1F512; Default</option>

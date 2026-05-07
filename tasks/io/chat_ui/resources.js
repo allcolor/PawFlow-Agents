@@ -637,6 +637,33 @@ async function _renderResourcesData(data) {
     }
     repoHtml += _sectionFooter();
 
+    // ── Themes Repository (directory CSS resources) ──
+    repoHtml += _repoSectionHeader('Themes Repository', 'theme', {
+      createOnclick: "showThemeCreator()",
+      createTitle: 'Add theme',
+    });
+    if (!_collapsedSections['theme']) {
+      const themes = data.themes || [];
+      if (themes.length) {
+        themes.forEach(t => {
+          const ref = t.ref || ((t.scope || 'user') + ':' + t.name);
+          const builtin = !!t.builtin;
+          const builtinArg = builtin ? 'true' : 'false';
+          const cssLabel = (t.css_length || 0) + ' css';
+          const desc = t.description ? ' title="' + escapeHtml(t.description) + '"' : '';
+          repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
+            onclick="_applyThemeFromResource('${escapeHtml(ref)}')" oncontextmenu="_showThemeMenu(event,'${escapeHtml(ref)}',${builtinArg},'${escapeHtml(t.scope || '')}');return false;">
+            ${_scopeBadge(t.scope)}<span style="font-size:11px;color:#6c5ce7;">\u25A3</span>
+            <span style="font-size:12px;color:#c0c0d0;flex:1;">${escapeHtml(t.title || t.name)}</span>
+            <span style="color:#555;font-size:10px;">${cssLabel}</span>
+          </div>`;
+        });
+      } else {
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No themes</div>';
+      }
+    }
+    repoHtml += _sectionFooter();
+
     // ── Voices Repository (cloned voices, user scope) ──
     repoHtml += _repoSectionHeader('Voices Repository', 'voice', {
       createOnclick: "showResourceCreator('voice')",

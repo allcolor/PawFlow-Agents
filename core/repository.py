@@ -81,6 +81,18 @@ class ScopedRepository:
               user_id: str = "", conv_id: str = "") -> Dict[str, Any]:
         """Create a definition. Raises ValueError if it already exists."""
         self._validate(rtype, scope, user_id, conv_id)
+        if rtype == "theme":
+            path = repo_dir(rtype, scope, user_id, conv_id) / name
+            if path.exists():
+                raise ValueError(
+                    f"{rtype}/{name} already exists in scope {scope}")
+            entry = dict(data)
+            entry["name"] = name
+            entry.setdefault("created_at", time.time())
+            entry["updated_at"] = time.time()
+            self._write_theme(path, entry)
+            return self._read_theme(path) or entry
+
         path = repo_file(rtype, name, scope, user_id, conv_id)
         if path.exists():
             raise ValueError(
@@ -97,6 +109,8 @@ class ScopedRepository:
     def get(self, rtype: str, name: str, scope: str,
             user_id: str = "", conv_id: str = "") -> Optional[Dict[str, Any]]:
         """Read a definition from a specific scope."""
+        if rtype == "theme":
+            return self._read_theme(repo_dir(rtype, scope, user_id, conv_id) / name)
         path = repo_file(rtype, name, scope, user_id, conv_id)
         return self._read(rtype, path)
 
@@ -104,6 +118,16 @@ class ScopedRepository:
                data: Dict[str, Any],
                user_id: str = "", conv_id: str = "") -> Dict[str, Any]:
         """Update a definition. Raises KeyError if not found."""
+        if rtype == "theme":
+            path = repo_dir(rtype, scope, user_id, conv_id) / name
+            existing = self._read_theme(path)
+            if existing is None:
+                raise KeyError(f"{rtype}/{name} not found in scope {scope}")
+            existing.update(data)
+            existing["updated_at"] = time.time()
+            self._write_theme(path, existing)
+            return self._read_theme(path) or existing
+
         path = repo_file(rtype, name, scope, user_id, conv_id)
         existing = self._read(rtype, path)
         if existing is None:
@@ -116,6 +140,13 @@ class ScopedRepository:
     def delete(self, rtype: str, name: str, scope: str,
                user_id: str = "", conv_id: str = "") -> bool:
         """Delete a definition. Returns True if deleted."""
+        if rtype == "theme":
+            path = repo_dir(rtype, scope, user_id, conv_id) / name
+            if not path.exists():
+                return False
+            shutil.rmtree(path)
+            return True
+
         path = repo_file(rtype, name, scope, user_id, conv_id)
         if not path.exists():
             return False
@@ -128,6 +159,15 @@ class ScopedRepository:
         directory = repo_dir(rtype, scope, user_id, conv_id)
         if not directory.exists():
             return []
+        if rtype == "theme":
+            results = []
+            for p in sorted(x for x in directory.iterdir() if x.is_dir()):
+                entry = self._read_theme(p)
+                if entry is not None:
+                    entry["_scope"] = self._scope_label(scope, user_id, conv_id)
+                    results.append(entry)
+            return results
+
         ext = "*.md" if rtype in _MARKDOWN_TYPES else "*.json"
         results = []
         for p in sorted(directory.glob(ext)):
@@ -196,6 +236,20 @@ class ScopedRepository:
         if rtype == "flows":
             return self._move_or_copy_flow(
                 name, from_scope, to_scope, user_id, conv_id, move)
+        if rtype == "theme":
+            src = repo_dir(rtype, from_scope, user_id, conv_id) / name
+            dst = repo_dir(rtype, to_scope, user_id, conv_id) / name
+            if not src.exists():
+                raise KeyError(f"{rtype}/{name} not found in scope {from_scope}")
+            if dst.exists():
+                raise ValueError(
+                    f"{rtype}/{name} already exists in scope {to_scope}")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if move:
+                shutil.move(str(src), str(dst))
+            else:
+                _copytree_content(src, dst)
+            return dst
 
         src = repo_file(rtype, name, from_scope, user_id, conv_id)
         dst = repo_file(rtype, name, to_scope, user_id, conv_id)
@@ -408,6 +462,33 @@ class ScopedRepository:
             self._write_md(path, data)
         else:
             self._write_json(path, data)
+
+    def _read_theme(self, path: Path) -> Optional[Dict[str, Any]]:
+        """Read a directory-based theme resource."""
+        meta_file = path / "theme.json"
+        if not meta_file.exists():
+            return None
+        meta = self._read_json(meta_file) or {}
+        css_parts = []
+        for css_file in sorted(path.rglob("*.css")):
+            rel = css_file.relative_to(path).as_posix()
+            css_parts.append(f"/* {rel} */\n" + css_file.read_text(encoding="utf-8", errors="replace"))
+        entry = dict(meta)
+        entry.setdefault("name", path.name)
+        entry.setdefault("title", entry.get("name", path.name))
+        entry.setdefault("description", "")
+        entry["css"] = "\n\n".join(css_parts)
+        entry["css_length"] = len(entry["css"])
+        return entry
+
+    def _write_theme(self, path: Path, data: Dict[str, Any]):
+        """Write a directory-based theme resource."""
+        css = data.get("css", "")
+        meta = {k: v for k, v in data.items() if k not in ("css", "css_length")}
+        path.mkdir(parents=True, exist_ok=True)
+        self._write_json(path / "theme.json", meta)
+        if css:
+            (path / "theme.css").write_text(css, encoding="utf-8")
 
     def _read_json(self, path: Path) -> Optional[Dict[str, Any]]:
         if not path.exists():

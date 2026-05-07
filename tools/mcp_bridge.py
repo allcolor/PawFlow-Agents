@@ -389,38 +389,8 @@ def main():
         },
     ]
 
-    # Preload tool schemas — cache required params for phantom call detection
-    _required_cache = {}  # tool_name → set of required param names
-    if client:
-        try:
-            all_tools = client.request("list_tools")
-            if isinstance(all_tools, str):
-                all_tools = json.loads(all_tools)
-            if isinstance(all_tools, list):
-                for tool_info in all_tools:
-                    tname = tool_info.get("name", "")
-                    if not tname:
-                        continue
-                    try:
-                        schema = client.request("get_tool_schema", tool_name=tname)
-                        if isinstance(schema, str):
-                            schema = json.loads(schema)
-                        if isinstance(schema, dict):
-                            required = set(schema.get("parameters", {}).get("required", []))
-                            _required_cache[tname] = required
-                    except Exception:
-                        pass
-                _log(f"Preloaded schemas: {len(_required_cache)} tools, "
-                     f"{sum(1 for r in _required_cache.values() if r)} with required args")
-        except Exception as e:
-            _log(f"Schema preload failed: {e}")
-
     _log(f"MCP bridge ready: {len(mcp_tools)} tools, "
          f"relay={'connected' if client else 'unavailable'}")
-
-    def _has_required_args(tool_name):
-        """Check if a tool has required parameters (from preloaded cache)."""
-        return bool(_required_cache.get(tool_name))
 
     # MCP stdio loop
     for line in sys.stdin:

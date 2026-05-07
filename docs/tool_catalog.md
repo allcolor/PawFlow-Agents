@@ -160,6 +160,26 @@ the relay-proxy URL form `http://${conv.relay}:localhost:<port>/<path>`. Stdio
 MCP resources run via a relay, and `local=true` runs the command on the relay
 host helper instead of inside the relay container.
 
+## Chat Themes
+
+The web chat ships with built-in themes (`PawFlow Dark`, `Matrix`, `Mr.Robot`,
+`Light`, `Paper`, `Nord Light`, `Sage Light`, `Rose Light`, `Claude`,
+`ChatGPT`, `Qwen`, `DeepSeek`, `Grok`, `Gemini`, `Solarized Dark`, `Dracula`,
+`Midnight Blue`, `High Contrast`) and two selectors. The header
+selector controls the browser-global theme and stores its ref in a cookie. The
+conversation selector below the expiry control stores per-conversation theme
+refs in a cookie map, with `Use global theme` as the default. When switching
+conversation, the UI applies the conversation theme if one is linked; otherwise
+it falls back to the global theme. Themes are repository resources stored as
+directories under `data/repository/theme` using the normal scope hierarchy:
+`global/<name>/`, `users/<user>/<name>/`, or `users/<user>/<conversation>/<name>/`.
+Each theme directory contains `theme.json`, one or more CSS files, and optional
+image/font assets referenced by the CSS. Shipped themes are global theme
+resources; their CSS defines palette variables (`--pf-*`) and the chat
+stylesheet consumes those variables. Custom themes can be created from raw CSS
+or from a ZIP containing CSS plus image/font assets; ZIP asset URLs are inlined
+when the theme CSS is loaded for the browser.
+
 ## Flow Task Availability
 
 `ToolTaskAdapter` registers most tools as `tool.<name>` tasks. Some tools are intentionally skipped because they are agent-internal, meta-tools, or resource/control actions that do not make sense as flow nodes.

@@ -21,7 +21,8 @@ const _i18n = {
     attachTitle: 'Attach files', conversations: 'Conversations',
     folderOpen: 'Open local folder', folderActive: 'Local folder: {name}',
     folderUnsupported: 'Your browser does not support the File System Access API (use Chrome or Edge)',
-    ttlLabel: 'Expiry', fileTtlLabel: 'Files', ttlNone: 'Unlimited', ttl1h: '1 hour', ttl6h: '6 hours',
+    ttlLabel: 'Expiry', convThemeLabel: 'Conversation theme', useGlobalTheme: 'Use global theme',
+    fileTtlLabel: 'Files', ttlNone: 'Unlimited', ttl1h: '1 hour', ttl6h: '6 hours',
     ttl24h: '24 hours', ttl7d: '7 days', emptyResponse: '(Agent finished without producing a response)',
     secretAdded: 'Secret "{name}" stored securely. Use ${{ref}} in flows, or get_secret("{short}") in scripts.',
     secretAddUsage: 'Usage: /add-secret &lt;name&gt; &lt;value&gt;',
@@ -82,7 +83,8 @@ const _i18n = {
     attachTitle: 'Joindre des fichiers', conversations: 'Conversations',
     folderOpen: 'Ouvrir un dossier local', folderActive: 'Dossier local\u00a0: {name}',
     folderUnsupported: 'Votre navigateur ne supporte pas le File System Access API (utilisez Chrome ou Edge)',
-    ttlLabel: 'Expiration', fileTtlLabel: 'Fichiers', ttlNone: 'Illimit\u00e9', ttl1h: '1 heure', ttl6h: '6 heures',
+    ttlLabel: 'Expiration', convThemeLabel: 'Th\u00e8me conversation', useGlobalTheme: 'Utiliser le th\u00e8me global',
+    fileTtlLabel: 'Fichiers', ttlNone: 'Illimit\u00e9', ttl1h: '1 heure', ttl6h: '6 heures',
     ttl24h: '24 heures', ttl7d: '7 jours', emptyResponse: '(L\'agent a termin\u00e9 sans produire de r\u00e9ponse)',
     secretAdded: 'Secret "{name}" stock\u00e9 de mani\u00e8re s\u00e9curis\u00e9e. Utilisez ${{ref}} dans les flux, ou get_secret("{short}") dans les scripts.',
     secretAddUsage: 'Usage: /add-secret &lt;nom&gt; &lt;valeur&gt;',
@@ -143,7 +145,8 @@ const _i18n = {
     attachTitle: 'Adjuntar archivos', conversations: 'Conversaciones',
     folderOpen: 'Abrir carpeta local', folderActive: 'Carpeta local: {name}',
     folderUnsupported: 'Su navegador no soporta la File System Access API (use Chrome o Edge)',
-    ttlLabel: 'Expiraci\u00f3n', fileTtlLabel: 'Archivos', ttlNone: 'Ilimitado', ttl1h: '1 hora', ttl6h: '6 horas',
+    ttlLabel: 'Expiraci\u00f3n', convThemeLabel: 'Tema de conversaci\u00f3n', useGlobalTheme: 'Usar tema global',
+    fileTtlLabel: 'Archivos', ttlNone: 'Ilimitado', ttl1h: '1 hora', ttl6h: '6 horas',
     ttl24h: '24 horas', ttl7d: '7 d\u00edas', emptyResponse: '(El agente termin\u00f3 sin producir una respuesta)',
     secretAdded: 'Secreto "{name}" almacenado de forma segura. Use ${{ref}} en flujos, o get_secret("{short}") en scripts.',
     secretAddUsage: 'Uso: /add-secret &lt;nombre&gt; &lt;valor&gt;',
@@ -204,6 +207,7 @@ document.querySelector('.sidebar-header h2').textContent = t('conversations');
 document.querySelector('.btn-new').textContent = t('newChat');
 // TTL selector i18n
 document.getElementById('ttlLabel').textContent = t('ttlLabel');
+document.getElementById('convThemeLabel').textContent = t('convThemeLabel');
 const ttlOpts = document.getElementById('ttlSelect').options;
 ttlOpts[0].textContent = t('ttlNone');
 ttlOpts[1].textContent = t('ttl1h');

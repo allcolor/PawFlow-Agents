@@ -42,13 +42,12 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
         store.set_extra(conv_id, "custom_css", css, user_id=user_id)
-        if css:
-            try:
-                from core.conversation_event_bus import ConversationEventBus
-                ConversationEventBus.instance().publish_event(
-                    conv_id, "theme", {"css": css})
-            except Exception:
-                pass
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                conv_id, "theme", {"css": css})
+        except Exception:
+            pass
         flowfile.set_content(json.dumps({
             "ok": True, "message": "Theme applied",
             "css_length": len(css),

@@ -298,12 +298,7 @@ function _renderHistory(data) {
     console.error('BUG: server returned empty active_agent — conversation must always have an agent');
   }
   selectedAgent = data.active_agent || selectedAgent;
-  // Custom CSS theme
-  let themeEl = document.getElementById('custom-theme');
-  if (data.custom_css) {
-    if (!themeEl) { themeEl = document.createElement('style'); themeEl.id = 'custom-theme'; document.head.appendChild(themeEl); }
-    themeEl.textContent = data.custom_css;
-  } else if (themeEl) { themeEl.textContent = ''; }
+  if (typeof loadThemeSelector === 'function') loadThemeSelector();
   updateActiveAgentBadge();
   loadResources();
   loadPermissionMode();

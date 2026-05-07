@@ -615,6 +615,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "has_parameters": bool(p.get("parameters")),
         } for p in all_prompts]
 
+        try:
+            from core.chat_themes import list_themes as _list_themes
+            themes_out = _list_themes(uid, conv_id)
+        except Exception as e:
+            logger.debug("list_resources: themes failed: %s", e)
+            themes_out = []
+
         # Voice clones: user-scope registered voices (voice_clone_cache)
         voices_out = []
         try:
@@ -643,6 +650,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "mcp_servers": mcps_out,
             "task_defs": tasks_out,
             "prompts": prompts_out,
+            "themes": themes_out,
             "voices": voices_out,
         }
         # Task instances for this conversation
@@ -768,6 +776,120 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         result["user_role"] = _user_role
 
         flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "list_chat_themes":
+        conv_id = body.get("conversation_id", "")
+        try:
+            from core.chat_themes import list_themes
+            selected = store.get_extra(conv_id, "theme_ref", user_id=user_id) if conv_id else ""
+            flowfile.set_content(json.dumps({
+                "themes": list_themes(user_id, conv_id),
+                "conversation_theme_ref": selected or "",
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "apply_chat_theme":
+        conv_id = body.get("conversation_id", "")
+        ref = body.get("theme_ref", "") or "global:pawflow_dark"
+        conv_override = bool(body.get("conversation_override"))
+        if not conv_id and ref.startswith("conversation:"):
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id for conversation theme"}).encode())
+            return [flowfile]
+        try:
+            from core.chat_themes import resolve_theme
+            theme = resolve_theme(ref, user_id, conv_id)
+            if not theme:
+                flowfile.set_content(json.dumps({"error": f"Theme '{ref}' not found"}).encode())
+                return [flowfile]
+            css = theme.get("css", "") or ""
+            if conv_id:
+                if conv_override:
+                    store.set_extra(conv_id, "theme_ref", theme.get("ref", ref), user_id=user_id)
+                    store.set_extra(conv_id, "custom_css", css, user_id=user_id)
+                else:
+                    store.set_extra(conv_id, "theme_ref", None, user_id=user_id)
+                    store.set_extra(conv_id, "custom_css", "", user_id=user_id)
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(conv_id, "theme", {
+                        "css": css,
+                        "theme_ref": theme.get("ref", ref),
+                    })
+                except Exception:
+                    pass
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "theme_ref": theme.get("ref", ref),
+                "css": css,
+                "conversation_override": conv_override,
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "create_chat_theme":
+        conv_id = body.get("conversation_id", "")
+        scope = body.get("scope", "user")
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        if scope == "conversation" and not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.chat_themes import create_theme
+            name = body.get("name", "").strip()
+            if not name:
+                flowfile.set_content(json.dumps({"error": "Missing theme name"}).encode())
+                return [flowfile]
+            created = create_theme(
+                name=name,
+                scope=scope,
+                user_id=user_id,
+                conversation_id=conv_id,
+                title=body.get("title", ""),
+                description=body.get("description", ""),
+                css=body.get("css", ""),
+                upload=body.get("upload") or {},
+            )
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "theme": created,
+                "scope": scope,
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "delete_chat_theme":
+        conv_id = body.get("conversation_id", "")
+        ref = body.get("theme_ref", "")
+        guard_ref = "global:" + ref.split(":", 1)[1] if ref.startswith("builtin:") else ref
+        if guard_ref.startswith("global:") and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+        try:
+            from core.chat_themes import delete_theme
+            deleted = delete_theme(ref, user_id, conv_id)
+            if store.get_extra(conv_id, "theme_ref", user_id=user_id) == ref:
+                store.set_extra(conv_id, "theme_ref", None, user_id=user_id)
+                store.set_extra(conv_id, "custom_css", "", user_id=user_id)
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(conv_id, "theme", {
+                        "css": "",
+                        "theme_ref": "global:pawflow_dark",
+                    })
+                except Exception:
+                    pass
+            flowfile.set_content(json.dumps({"ok": True, "deleted": deleted}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
     if action == "get_tool_mcp_filters":

@@ -8,6 +8,7 @@ Resource types:
 - skill:    { name, prompt, description?, parameters?, extends? }
 - mcp:      { name, url, auth?, discovered_tools? }
 - task_def: { name, prompt, criteria?, default_interval?, description?, created_by? }
+- theme:    directory resource with theme.json, CSS files, and optional assets
 """
 
 import logging
@@ -27,6 +28,7 @@ _TYPE_MAP = {
     "task_def": "tasks",
     "prompt": "prompts",
     "tool": "tools",
+    "theme": "theme",
 }
 
 
@@ -40,6 +42,7 @@ _REQUIRED_FIELDS = {
     "task_def": ("prompt",),
     "prompt": ("prompt",),
     "tool": ("source",),
+    "theme": (),
 }
 
 # Default values per type
@@ -82,6 +85,12 @@ _DEFAULTS = {
         "description": "",
         "parameters": {},
         "checksum": "",
+    },
+    "theme": {
+        "title": "",
+        "description": "",
+        "css": "",
+        "source_filename": "",
     },
 }
 

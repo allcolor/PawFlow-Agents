@@ -424,28 +424,8 @@ function connectSSE(cid, onReady, opts) {
       t('iterStatus', {agent: displayAgentName(agentName), i: data.iteration, r: data.round, mr: data.max_rounds, t: data.total_tools});
   });
 
-  // FlowFile incoming indicator
-  eventSource.addEventListener('flowfile_in', (e) => {
+  eventSource.addEventListener('flowfile_in', () => {
     lastSSEActivity = Date.now();
-    const data = JSON.parse(e.data);
-    const parts = [];
-    if (data.agent) parts.push(data.agent);
-    if (data.reason) parts.push(data.reason);
-    else if (data.path) parts.push(data.source + ' ' + data.path);
-    if (data.size > 0) parts.push((data.size / 1024).toFixed(1) + ' KB');
-    if (parts.length) {
-      const label = '\u25b6 ' + parts.join(' \u00b7 ');
-      const compactRows = Array.from(document.querySelectorAll('#messages > .msg.system-compact'));
-      const sameAgentRows = compactRows.filter(el => String(el.textContent || '').replace(/\s+/g, ' ').trim().startsWith('\u25b6 ' + (data.agent || 'assistant')));
-      const existing = sameAgentRows.pop();
-      sameAgentRows.forEach(el => el.remove());
-      if (existing) {
-        existing.innerHTML = makeTimeHtml(data.ts || data.timestamp || 0) + escapeHtml(label);
-      } else {
-        addMsg('system-compact', label, {ts: data.ts || data.timestamp || 0});
-      }
-      scrollBottom();
-    }
   });
 
   // ── Delegate blocks (grouped) ─────────────────────────────────

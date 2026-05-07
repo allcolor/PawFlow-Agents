@@ -43,6 +43,7 @@ def test_technical_grouping_is_expression_driven_and_post_rendered():
     assert "el.dataset.technicalBoundary = '1'" in MESSAGES_JS
     assert "!String(text || '').trim()) el.dataset.transientUi = '1'" in MESSAGES_JS
     assert "delete s.el.dataset.transientUi" in SSE_JS
+    assert "addMsg('system-compact'" not in SSE_JS
     assert "drop empty technical element" in MESSAGES_JS
     assert "function _markTechnicalGroupSettled(group)" in MESSAGES_JS
     assert "function findToolCallElement(tcId, root)" in MESSAGES_JS

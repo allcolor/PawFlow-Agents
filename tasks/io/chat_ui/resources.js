@@ -3,15 +3,17 @@
 // 'tool_relay_service') to get a subset. This is the ONLY way the UI should
 // fetch services — never through agent/resource actions.
 function listServices$(serviceType) {
-  return action$('list_services', serviceType ? { service_type: serviceType } : {});
+  const payload = serviceType ? { service_type: serviceType } : {};
+  if (typeof conversationId !== 'undefined' && conversationId) payload.conversation_id = conversationId;
+  return action$('list_services', payload);
 }
 
 function cmdServiceList() {
   listServices$().subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     const svcs = data.services || [];
-    if (!svcs.length) { addMsg('system', 'No services installed. Use /service install <type> <name> [key=val,...] to add one.'); return; }
-    let lines = ['**Your services:**'];
+    if (!svcs.length) { addMsg('system', t('noServicesInstalledUsage')); return; }
+    let lines = [t('yourServicesHeader')];
     svcs.forEach(s => {
       const icon = !s.enabled ? '\u{1F534}' : s.started ? '\u{1F7E2}' : '\u{1F7E1}';
       let tag = '';
@@ -29,10 +31,10 @@ function cmdServiceAction(action, extra) {
   return rxjs.firstValueFrom(action$(action, { ...extra }).pipe(
     rxjs.tap(data => {
       if (data.error) { addMsg('error', data.error); return; }
-      if (data.installed) addMsg('system', `Service '${data.id}' installed (${data.type}).`);
-      else if (data.uninstalled) addMsg('system', `Service '${data.id}' uninstalled.`);
-      else if (data.enabled) addMsg('system', `Service '${data.id}' enabled.`);
-      else if (data.disabled) addMsg('system', `Service '${data.id}' disabled.`);
+      if (data.installed) addMsg('system', t('serviceInstalled', { id: data.id, type: data.type }));
+      else if (data.uninstalled) addMsg('system', t('serviceUninstalled', { id: data.id }));
+      else if (data.enabled) addMsg('system', t('serviceEnabled', { id: data.id }));
+      else if (data.disabled) addMsg('system', t('serviceDisabled', { id: data.id }));
       else addMsg('system', JSON.stringify(data, null, 2));
     })
   ));
@@ -41,8 +43,8 @@ function cmdServiceAction(action, extra) {
 function cmdSkillList() {
   action$('list_skills', {}).subscribe(data => {
     const skills = data.skills || [];
-    if (!skills.length) { addMsg('system', 'No skills defined. Use /add-skill <name> <prompt>'); return; }
-    let lines = ['**Your skills:**'];
+    if (!skills.length) { addMsg('system', t('noSkillsUsage')); return; }
+    let lines = [t('yourSkillsHeader')];
     skills.forEach(s => {
       const mark = s.active ? '\\u2705' : '\\u2B1C';
       lines.push(`${mark} **${s.name}** — ${s.description || s.prompt}`);
@@ -55,27 +57,27 @@ function cmdListResources() {
   action$('list_resources', {}).subscribe(data => {
     let lines = [];
     if (data.agents && data.agents.length) {
-      lines.push('**Agents:**');
+      lines.push(t('agentsHeader'));
       data.agents.forEach(a => {
         const mark = a.active ? '\\u2705' : '\\u2B1C';
         lines.push(`  ${mark} ${a.name} ${a.description ? '— ' + a.description : ''}`);
       });
     }
     if (data.skills && data.skills.length) {
-      lines.push('**Skills:**');
+      lines.push(t('skillsHeader'));
       data.skills.forEach(s => {
         const mark = s.active ? '\\u2705' : '\\u2B1C';
         lines.push(`  ${mark} ${s.name} ${s.description ? '— ' + s.description : ''}`);
       });
     }
     if (data.mcp_servers && data.mcp_servers.length) {
-      lines.push('**MCP Servers:**');
+      lines.push(t('mcpServersHeader'));
       data.mcp_servers.forEach(m => {
         const mark = m.active ? '\\u2705' : '\\u2B1C';
         lines.push(`  ${mark} ${m.name} (${m.url})`);
       });
     }
-    if (!lines.length) lines.push('No resources defined. Use /agent create, /add-skill, etc.');
+    if (!lines.length) lines.push(t('noResourcesDefinedUsage'));
     addMsg('system', lines.join('\\n'));
   });
 }
@@ -83,8 +85,8 @@ function cmdListResources() {
 // ── Sidebar Resources ───────────────────────────────────────────
 function _scopeBadge(s) {
   if (!s) return '';
-  const colors = { global: 'var(--pf-accent-2)', user: 'var(--pf-accent)', conversation: 'var(--pf-success)' };
-  const labels = { global: 'G', user: 'U', conversation: 'C' };
+  const colors = { global: 'var(--pf-accent-2)', user: 'var(--pf-accent)', conversation: 'var(--pf-success)', conv: 'var(--pf-success)' };
+  const labels = { global: 'G', user: 'U', conversation: 'C', conv: 'C' };
   return `<span style="font-size:9px;padding:0 3px;border-radius:3px;background:${colors[s]||'var(--pf-border)'};color:var(--pf-text);margin-right:3px;" title="${s}">${labels[s]||s[0]}</span>`;
 }
 
@@ -93,7 +95,7 @@ function _scopeBadge(s) {
 // browser reload restores exactly what was open or closed.
 const _RESOURCE_TREE_STATE_KEY = 'pawflow.resource_tree.collapsed.v1';
 const _ALL_SECTIONS = [
-  'agent','_running','_flow','_svc','_relay','_param','_secret',
+  'agent','_running','_flow','_svc','_relay','_summarizer','_param','_secret',
   '_agent_repo','skill','prompt','theme','voice','task_def','_mcp_repo','_tool','_flow_repo'
 ];
 const _collapsedSections = {};
@@ -136,7 +138,7 @@ function _toggleSection(id) {
   if (arrow) arrow.textContent = isOpening ? '\u25BC' : '\u25B6';
   if (isOpening && _lastResourcesData) _renderResourcesData(_lastResourcesData);
   // Opening a repository or runtime section refreshes from disk after the cached render.
-  if (isOpening && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_flow')) loadResources();
+  if (isOpening && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_summarizer' || id === '_flow')) loadResources();
 }
 
 
@@ -163,19 +165,19 @@ function _sectionHeader(title, rtype, opts) {
     : rtype === 'agent' ? 'showAddAgentToConvDialog()'
     : `showResourceCreator('${rtype}')`;
   const createTitle = opts.createTitle
-    || (rtype === 'agent' ? 'Add agent to conversation' : 'Create new');
+    || (rtype === 'agent' ? t('addAgentToConversation') : t('createNew'));
   // Refresh: shown by default on every section (every listing reads
   // from disk, and the user may edit those files manually out-of-band).
   const refreshOnclick = opts.refreshOnclick
     || "event.stopPropagation();loadResources()";
   const refreshBtn = opts.hideRefresh ? ''
-    : `<span style="cursor:pointer;font-size:11px;color:var(--pf-muted);padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>`;
+    : `<span style="cursor:pointer;font-size:11px;color:var(--pf-muted);padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || t('refreshFromDisk')}">\u21BB</span>`;
   const createBtn = opts.hideCreate ? ''
     : `<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="${createOnclick}" title="${createTitle}">+</span>`;
   const collapsed = _isSectionCollapsed(rtype);
   const arrow = collapsed ? '\u25B6' : '\u25BC';
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-    <span style="cursor:pointer;color:var(--pf-accent);font-weight:600;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
+    <span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
     <span style="display:flex;gap:4px;align-items:center;">${refreshBtn}${createBtn}</span>
   </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};max-height:260px;overflow-y:auto;">`;
 }
@@ -189,14 +191,14 @@ function _repoSectionHeader(title, rtype, opts) {
   const collapsed = _isSectionCollapsed(rtype);
   const arrow = collapsed ? '\u25B6' : '\u25BC';
   const createBtn = opts.createOnclick
-    ? `<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="${opts.createOnclick}" title="${opts.createTitle || 'Create new'}">+</span>`
+    ? `<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="${opts.createOnclick}" title="${opts.createTitle || t('createNew')}">+</span>`
     : '';
   const refreshOnclick = opts.refreshOnclick
     || "event.stopPropagation();loadResources()";
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-    <span style="cursor:pointer;color:var(--pf-muted);font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
+    <span style="cursor:pointer;color:var(--pf-resource-subheading, var(--pf-muted));font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
     <span style="display:flex;gap:4px;align-items:center;">
-      <span style="cursor:pointer;font-size:11px;color:var(--pf-muted);padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>
+      <span style="cursor:pointer;font-size:11px;color:var(--pf-muted);padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || t('refreshFromDisk')}">\u21BB</span>
       ${createBtn}
     </span>
   </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
@@ -353,6 +355,84 @@ function _doRelayLink(btn) {
   }
 }
 
+function _showSummarizerLinkDialog() {
+  action$('summarizer_list_available', { conversation_id: conversationId }).subscribe(data => {
+    if (data.error) { addMsg('error', data.error); return; }
+    var services = data.available || [];
+    if (!services.length) { addMsg('system', t('noSummarizerServices')); return; }
+    window._summarizerLinkOptions = services;
+    var options = services.map(function(s, idx) {
+      var llm = s.llm_service ? ' \u2192 ' + s.llm_service : '';
+      var label = '[' + (s.scope || 'global') + '] ' + s.service_id + llm;
+      return '<option value="' + idx + '">' + escapeHtml(label) + '</option>';
+    }).join('');
+    var overlay = document.createElement('div');
+    overlay.className = 'exec-overlay';
+    overlay.innerHTML =
+      '<div class="exec-dialog" style="min-width:350px;">'
+      + '<h3>' + escapeHtml(t('linkSummarizer')) + '</h3>'
+      + '<div style="margin:12px 0;">'
+      + '<select id="_summarizerLinkSelect" style="width:100%;padding:8px;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;font-size:13px;">'
+      + options
+      + '</select>'
+      + '</div>'
+      + '<div class="exec-btns">'
+      + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('contextCancel')) + '</button>'
+      + '<button class="exec-approve" onclick="_doSummarizerLink(this)">' + escapeHtml(t('link')) + '</button>'
+      + '</div>'
+      + '</div>';
+    document.body.appendChild(overlay);
+  });
+}
+
+function _doSummarizerLink(btn) {
+  var overlay = btn.closest('.exec-overlay');
+  var sel = overlay.querySelector('#_summarizerLinkSelect');
+  var idx = sel ? Number(sel.value) : -1;
+  var svc = (window._summarizerLinkOptions || [])[idx];
+  overlay.remove();
+  if (!svc) return;
+  action$('summarizer_link', {
+    conversation_id: conversationId,
+    scope: svc.scope,
+    service_id: svc.service_id,
+  }).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    loadResources();
+  });
+}
+
+function _unlinkSummarizer() {
+  action$('summarizer_unlink', { conversation_id: conversationId }).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    loadResources();
+  });
+}
+
+function _showSummarizerMenu(e, canUnlink) {
+  e.preventDefault();
+  const old = document.querySelector('.ctx-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px var(--pf-shadow);';
+  _positionMenu(menu, e);
+  const item = (label, fn, danger) => {
+    const d = document.createElement('div');
+    d.textContent = label;
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
+    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
+    d.onmouseleave = () => d.style.background = '';
+    d.onclick = () => { menu.remove(); fn(); };
+    menu.appendChild(d);
+  };
+  item(t('linkSummarizer') + '...', _showSummarizerLinkDialog);
+  if (canUnlink) item(t('unlink'), _unlinkSummarizer, true);
+  setTimeout(() => document.addEventListener('click', function _close() {
+    menu.remove(); document.removeEventListener('click', _close);
+  }), 0);
+}
+
 var _loadResourcesTimer = null;
 async function loadResources() {
   // Debounce: coalesce rapid calls into one (300ms window)
@@ -367,7 +447,19 @@ function _loadResourcesNow() {
   var _resData = null, _svcData = null;
   function _tryRender() {
     if (_resData === null || _svcData === null) return;
-    var merged = Object.assign({}, _resData, { services: _svcData.services || [] });
+    var services = (_svcData.services || []).slice();
+    var seenServices = new Set(services.map(s => (s.scope || '') + ':' + (s.service_id || '')));
+    var summarizer = (_resData && _resData.summarizer) || {};
+    var summarizers = (summarizer.available || []).slice();
+    if (summarizer.effective) summarizers.push(summarizer.effective);
+    summarizers.forEach(function(s) {
+      var key = (s.scope || '') + ':' + (s.service_id || '');
+      if (s.service_id && !seenServices.has(key)) {
+        seenServices.add(key);
+        services.push(s);
+      }
+    });
+    var merged = Object.assign({}, _resData, { services: services });
     _lastResourcesData = merged;
     _renderResourcesFromSSE(merged);
   }
@@ -395,7 +487,7 @@ async function _renderResourcesData(data) {
     let liveHtml = '';
 
     // Agents (conversation members)
-    liveHtml += _sectionHeader('Agents', 'agent');
+    liveHtml += _sectionHeader(t('agents'), 'agent');
     if (data.agents && data.agents.length) {
       data.agents.forEach(function(a) {
         var isPrimary = a.active;
@@ -403,7 +495,7 @@ async function _renderResourcesData(data) {
         var aKeyLc = (a.name || '').toLowerCase();
         var primaryColor = isPrimary ? 'var(--pf-success)' : 'var(--pf-muted)';
         var textColor = isPrimary ? 'var(--pf-text)' : 'var(--pf-muted)';
-        var primaryTitle = isPrimary ? 'Primary agent' : 'Set as primary';
+        var primaryTitle = isPrimary ? t('primaryAgent') : t('setPrimaryAgent');
         var primaryArrow = isPrimary ? '&#9654;' : '&#9655;';
         var autoconvTag = a.autoconv ? '<span style="font-size:9px;color:var(--pf-success);margin-left:2px;">' + String.fromCodePoint(0x1F504) + '</span>' : '';
         // Hydrate the global cache through the same monotonic path used by
@@ -417,7 +509,7 @@ async function _renderResourcesData(data) {
           + '<span style="color:' + textColor + ';font-size:12px;cursor:pointer;flex:1;"'
           + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + aName + '</span>'
           + autoconvTag
-          + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="Remove from conversation"'
+          + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('removeFromConversation')) + '"'
           + ' onclick="_removeAgentFromConv(this.dataset.n)" data-n="' + aName + '">&times;</span>'
           + '</div>';
         // Per-agent context-window gauge (persisted on the conversation,
@@ -443,7 +535,7 @@ async function _renderResourcesData(data) {
         }
       });
     } else {
-      liveHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No agents — <span style="color:var(--pf-accent);cursor:pointer;" onclick="showAddAgentToConvDialog()">+ Add</span></div>';
+      liveHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noAgents')) + ' <span style="color:var(--pf-accent);cursor:pointer;" onclick="showAddAgentToConvDialog()">+ ' + escapeHtml(t('add')) + '</span></div>';
     }
     liveHtml += _sectionFooter();
     // After the Agents section is rebuilt, refresh the header badge so its
@@ -458,7 +550,7 @@ async function _renderResourcesData(data) {
     // 'what tasks are active in this conv right now'. No '+' here:
     // launching a task happens through the context menu of a task_def
     // entry in Tasks Repository (further below).
-    liveHtml += _sectionHeader('Tasks', '_running', {
+    liveHtml += _sectionHeader(t('tasks'), '_running', {
       hideCreate: true,
     });
     { const running = data.running_tasks || [];
@@ -474,7 +566,7 @@ async function _renderResourcesData(data) {
           </div>`;
         });
       } else {
-        liveHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No tasks running</div>';
+        liveHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noTasksRunning')) + '</div>';
       }
     }
     liveHtml += _sectionFooter();
@@ -483,10 +575,10 @@ async function _renderResourcesData(data) {
     //    rebuild registry with ↻ since the deploy list is live state).
     //    Naming mirrors Tasks: this section = active state in the conv,
     //    "Flows Repository" below = catalog on disk.
-    liveHtml += _sectionHeader('Flows', '_flow', {
+    liveHtml += _sectionHeader(t('flows'), '_flow', {
       refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
-      refreshTitle: 'Reload from disk',
-      createTitle: 'Deploy flow',
+      refreshTitle: t('reloadFromDisk'),
+      createTitle: t('deployFlow'),
     });
     if (data.flows && data.flows.length) {
       data.flows.forEach(f => {
@@ -498,15 +590,15 @@ async function _renderResourcesData(data) {
         </div>`;
       });
     } else {
-      liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">No deployed flows</div>';
+      liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noDeployedFlows')) + '</div>';
     }
     liveHtml += _sectionFooter();
 
     // Services (install with '+', reload from disk with ↻ on the left)
-    liveHtml += _sectionHeader('Services', '_svc', {
+    liveHtml += _sectionHeader(t('services'), '_svc', {
       refreshOnclick: "event.stopPropagation();fireAction('reload_disk',{});setTimeout(loadResources,300)",
-      refreshTitle: 'Reload from disk',
-      createTitle: 'Install service',
+      refreshTitle: t('reloadFromDisk'),
+      createTitle: t('installService'),
     });
     if (data.services && data.services.length) {
       data.services.forEach(s => {
@@ -523,7 +615,7 @@ async function _renderResourcesData(data) {
         </div>`;
       });
     } else {
-      liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">No services installed</div>';
+      liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noServicesInstalled')) + '</div>';
     }
     liveHtml += _sectionFooter();
 
@@ -533,9 +625,9 @@ async function _renderResourcesData(data) {
       var rbArrow = rbCollapsed ? '\u25B6' : '\u25BC';
       var rbDisplay = rbCollapsed ? 'none' : 'block';
       liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
-        + '<span style="cursor:pointer;color:var(--pf-accent);font-weight:600;user-select:none;" onclick="_toggleSection(\'_relay\')">'
-        + '<span id="res-arrow-_relay">' + rbArrow + '</span> Relays</span>'
-        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showRelayLinkDialog()" title="Link relay">+</span>'
+        + '<span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection(\'_relay\')">'
+        + '<span id="res-arrow-_relay">' + rbArrow + '</span> ' + escapeHtml(t('relays')) + '</span>'
+        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showRelayLinkDialog()" title="' + escapeHtml(t('linkRelay')) + '">+</span>'
         + '</div><div id="res-section-_relay" style="display:' + rbDisplay + ';">';
       var _rb = (data.relay_bindings && data.relay_bindings.linked) ? data.relay_bindings : {linked:{}, default:{}};
       var _rbLinked = _rb.linked || {};
@@ -568,7 +660,7 @@ async function _renderResourcesData(data) {
           });
           var color = isConvDefault ? 'var(--pf-success)' : 'var(--pf-muted)';
           var icon = isConvDefault ? '\u25C9' : '\u25CB';
-          var titleText = isConvDefault ? 'Default relay' : 'Set as default';
+          var titleText = isConvDefault ? t('defaultRelay') : t('setDefaultRelay');
           var clickDefault = isConvDefault ? '' : ' onclick="fireAction(\'relay_default\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)"';
           var det = _rbDetails[rid] || {};
           var connDot = det.connected ? '\u{1F7E2}' : '\u{1F534}';
@@ -583,12 +675,41 @@ async function _renderResourcesData(data) {
             + '<span style="font-size:11px;">' + connDot + '</span>'
             + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>'
             + agentTags
-            + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="Unlink"'
+            + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('unlink')) + '"'
             + ' onclick="fireAction(\'relay_unlink\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)">&times;</span>'
             + '</div>' + pathInfo;
         });
       } else {
-        liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">No relays linked</div>';
+        liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noRelaysLinked')) + '</div>';
+      }
+      liveHtml += _sectionFooter();
+    }
+
+    // Summarizer binding/effective service for this conversation.
+    {
+      var smCollapsed = _isSectionCollapsed('_summarizer');
+      var smArrow = smCollapsed ? '\u25B6' : '\u25BC';
+      var smDisplay = smCollapsed ? 'none' : 'block';
+      liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
+        + '<span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection(\'_summarizer\')">'
+        + '<span id="res-arrow-_summarizer">' + smArrow + '</span> ' + escapeHtml(t('summarizer')) + '</span>'
+        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showSummarizerLinkDialog()" title="' + escapeHtml(t('linkSummarizer')) + '">+</span>'
+        + '</div><div id="res-section-_summarizer" style="display:' + smDisplay + ';">';
+      var _sm = data.summarizer || {};
+      var _smEffective = _sm.effective || null;
+      var _smExplicit = !!_sm.explicit;
+      if (_smEffective) {
+        var _smColor = _smExplicit ? 'var(--pf-success)' : 'var(--pf-muted)';
+        var _smMode = _smExplicit ? t('explicitSummarizer') : t('autoSummarizer');
+        var _smLlm = _smEffective.llm_service ? ' \u2192 ' + escapeHtml(_smEffective.llm_service) : '';
+        liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="_showSummarizerMenu(event,' + (_smExplicit ? 'true' : 'false') + ');return false;">'
+          + _scopeBadge(_smEffective.scope)
+          + '<span style="color:' + _smColor + ';font-size:12px;flex:1;">' + escapeHtml(_smEffective.service_id) + _smLlm + '</span>'
+          + '<span style="font-size:9px;color:' + _smColor + ';background:color-mix(in srgb, ' + _smColor + ' 14%, var(--pf-panel));padding:1px 4px;border-radius:3px;">' + escapeHtml(_smMode) + '</span>'
+          + (_smExplicit ? '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('unlink')) + '" onclick="_unlinkSummarizer()">&times;</span>' : '')
+          + '</div>';
+      } else {
+        liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noSummarizerEffective')) + '</div>';
       }
       liveHtml += _sectionFooter();
     }
@@ -602,9 +723,9 @@ async function _renderResourcesData(data) {
     let repoHtml = '';
 
     // Agent Repository (repo agents not yet in conv, collapsed by default)
-    repoHtml += _repoSectionHeader("Agent Repository", "_agent_repo", {
+    repoHtml += _repoSectionHeader(t('agentRepository'), "_agent_repo", {
       createOnclick: "showResourceCreator('agent')",
-      createTitle: "Create new agent",
+      createTitle: t('createNewAgent'),
     });
     if (!_isSectionCollapsed("_agent_repo")) {
       var repoAgents = (data.repo_agents || []).filter(function(a) { return !a.in_conversation; });
@@ -614,18 +735,18 @@ async function _renderResourcesData(data) {
           repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
             + _scopeBadge(a.scope)
             + '<span style="color:var(--pf-muted);font-size:12px;flex:1;">' + aName + '</span>'
-            + '<span style="color:var(--pf-accent);font-size:10px;cursor:pointer;padding:0 4px;" title="Add to conversation"'
+            + '<span style="color:var(--pf-accent);font-size:10px;cursor:pointer;padding:0 4px;" title="' + escapeHtml(t('addToConversation')) + '"'
             + ' onclick="showAddAgentToConvDialog(this.dataset.n)" data-n="' + aName + '">+</span>'
             + '</div>';
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">All agents are in this conversation</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('allAgentsInConversation')) + '</div>';
       }
     }
     repoHtml += _sectionFooter();
 
     // ── Skills Repository ──
-    repoHtml += _repoSectionHeader('Skills Repository', 'skill', {
+    repoHtml += _repoSectionHeader(t('skillsRepository'), 'skill', {
       createOnclick: "showResourceCreator('skill')",
     });
     { const allSkills = data.skills || [];
@@ -638,13 +759,13 @@ async function _renderResourcesData(data) {
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No skills defined</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noSkillsDefined')) + '</div>';
       }
     }
     repoHtml += _sectionFooter();
 
     // ── Prompts Repository (click to paste into chat input) ──
-    repoHtml += _repoSectionHeader('Prompts Repository', 'prompt', {
+    repoHtml += _repoSectionHeader(t('promptsRepository'), 'prompt', {
       createOnclick: "showResourceCreator('prompt')",
     });
     if (!_isSectionCollapsed('prompt')) {
@@ -661,15 +782,15 @@ async function _renderResourcesData(data) {
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No prompts</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noPrompts')) + '</div>';
       }
     }
     repoHtml += _sectionFooter();
 
     // ── Themes Repository (directory CSS resources) ──
-    repoHtml += _repoSectionHeader('Themes Repository', 'theme', {
+    repoHtml += _repoSectionHeader(t('themesRepository'), 'theme', {
       createOnclick: "showThemeCreator()",
-      createTitle: 'Add theme',
+      createTitle: t('addTheme'),
     });
     if (!_isSectionCollapsed('theme')) {
       const themes = data.themes || [];
@@ -688,13 +809,13 @@ async function _renderResourcesData(data) {
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No themes</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noThemes')) + '</div>';
       }
     }
     repoHtml += _sectionFooter();
 
     // ── Voices Repository (cloned voices, user scope) ──
-    repoHtml += _repoSectionHeader('Voices Repository', 'voice', {
+    repoHtml += _repoSectionHeader(t('voicesRepository'), 'voice', {
       createOnclick: "showResourceCreator('voice')",
     });
     if (!_isSectionCollapsed('voice')) {
@@ -708,24 +829,24 @@ async function _renderResourcesData(data) {
           const previewUrl = v.ref_audio_fid
             ? `/files/${encodeURIComponent(v.ref_audio_fid)}` : '';
           const previewBtn = previewUrl
-            ? `<span style="cursor:pointer;color:var(--pf-accent);font-size:11px;padding:0 4px;" title="Preview reference audio" onclick="_previewVoice('${escapeHtml(previewUrl)}')">\u25B6</span>`
+            ? `<span style="cursor:pointer;color:var(--pf-accent);font-size:11px;padding:0 4px;" title="${escapeHtml(t('previewReferenceAudio'))}" onclick="_previewVoice('${escapeHtml(previewUrl)}')">\u25B6</span>`
             : '';
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="${escapeHtml(v.provider)} \u2014 ${paradigm}">
             <span style="color:${pColor};font-size:9px;font-weight:600;border:1px solid ${pColor};border-radius:3px;padding:0 3px;">${pBadge}</span>
             <span style="color:var(--pf-text);font-size:12px;flex:1;">\u{1F399} ${escapeHtml(v.name)}<span style="color:var(--pf-muted);font-size:10px;">${prov}</span></span>
             ${previewBtn}
-            <span style="cursor:pointer;color:var(--pf-muted);font-size:11px;padding:0 4px;" title="Rename voice clone" onclick="_renameVoiceClone('${escapeHtml(v.name)}')">\u270E</span>
-            <span style="cursor:pointer;color:var(--pf-danger);font-size:11px;padding:0 4px;" title="Delete voice clone (cascade)" onclick="_deleteVoiceClone('${escapeHtml(v.name)}')">\u2716</span>
+            <span style="cursor:pointer;color:var(--pf-muted);font-size:11px;padding:0 4px;" title="${escapeHtml(t('renameVoiceClone'))}" onclick="_renameVoiceClone('${escapeHtml(v.name)}')">\u270E</span>
+            <span style="cursor:pointer;color:var(--pf-danger);font-size:11px;padding:0 4px;" title="${escapeHtml(t('deleteVoiceClone'))}" onclick="_deleteVoiceClone('${escapeHtml(v.name)}')">\u2716</span>
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No voice clones. Use <code>clone_voice</code> to register one.</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + t('noVoices') + '</div>';
       }
     }
     repoHtml += _sectionFooter();
 
     // ── Tasks Repository (definitions, muted style like Agent Repository) ──
-    repoHtml += _repoSectionHeader('Tasks Repository', 'task_def', {
+    repoHtml += _repoSectionHeader(t('tasksRepository'), 'task_def', {
       createOnclick: "showResourceCreator('task_def')",
     });
     { const allTasks = data.task_defs || [];
@@ -737,7 +858,7 @@ async function _renderResourcesData(data) {
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No task definitions</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noTaskDefinitions')) + '</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -745,13 +866,13 @@ async function _renderResourcesData(data) {
     // ── MCP Repository (all in-scope MCPs are auto-active — no linking) ──
     // Presence in the repo == available to the conversation. Any MCP visible
     // in global + user + conv scope is automatically registered.
-    repoHtml += _repoSectionHeader('MCP Repository', '_mcp_repo', {
+    repoHtml += _repoSectionHeader(t('mcpRepository'), '_mcp_repo', {
       createOnclick: "showResourceCreator('mcp')",
-      createTitle: 'Create new',
+      createTitle: t('createNew'),
     });
     if (!_isSectionCollapsed('_mcp_repo')) {
       const mcps = data.mcp_servers || [];
-      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 Configure availability</div>';
+      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 ' + escapeHtml(t('configureAvailability')) + '</div>';
       if (mcps.length) {
         mcps.forEach(m => {
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp','${escapeHtml(m.name)}','${m.scope||''}');return false;">
@@ -759,34 +880,34 @@ async function _renderResourcesData(data) {
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No MCP servers defined</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noMcpServers')) + '</div>';
       }
     }
     repoHtml += _sectionFooter();
 
     // ── Tools Repository (always available, no linking) ──
-    repoHtml += _repoSectionHeader('Tools Repository', '_tool', {
+    repoHtml += _repoSectionHeader(t('toolsRepository'), '_tool', {
       createOnclick: "showResourceCreator('_tool')",
-      createTitle: 'Create new tool',
+      createTitle: t('createNewTool'),
     });
     if (!_isSectionCollapsed('_tool')) {
       const tools = window._cachedTools || [];
-      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 Configure availability</div>';
+      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 ' + escapeHtml(t('configureAvailability')) + '</div>';
       tools.forEach(t => {
         repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog('${escapeHtml(t.name)}')">
           <span style="color:var(--pf-accent);font-size:11px">\u26A1</span>
           <span style="font-size:12px;color:var(--pf-text)">${escapeHtml(t.name)}</span>
         </div>`;
       });
-      if (!tools.length) repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted)">Loading...</div>';
+      if (!tools.length) repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted)">' + escapeHtml(t('loading')) + '</div>';
     }
     repoHtml += _sectionFooter();
 
     // ── Flows Repository (flow templates on disk under
     //    data/repository/flows/*.json) ──
-    repoHtml += _repoSectionHeader('Flows Repository', '_flow_repo', {
+    repoHtml += _repoSectionHeader(t('flowsRepository'), '_flow_repo', {
       createOnclick: "showDeployFlowDialog()",
-      createTitle: 'Deploy flow from template',
+      createTitle: t('deployFlowFromTemplate'),
     });
     { const tpls = data.flow_templates || [];
       if (tpls.length) {
@@ -805,7 +926,7 @@ async function _renderResourcesData(data) {
           repoHtml += _renderFlowPackageGroup(packageName, flows);
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No flow templates under flows/</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">' + escapeHtml(t('noFlowTemplates')) + '</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -815,7 +936,7 @@ async function _renderResourcesData(data) {
     // Linked Accounts (appended at the very end).
     // ─────────────────────────────────────────────────────────────
     if (!liveHtml && !repoHtml) {
-      liveHtml = '<div style="color:var(--pf-muted);font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
+      liveHtml = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('noResourcesHint')) + '</div>';
     }
     rxjs.forkJoin([
       action$('list_params_secrets', { conversation_id: conversationId }).pipe(rxjs.catchError(() => rxjs.of({}))),
@@ -823,7 +944,7 @@ async function _renderResourcesData(data) {
     ]).subscribe(([ps, linksData]) => {
       let varSecHtml = '';
       if (ps.parameters && ps.parameters.length) {
-        varSecHtml += _sectionHeader('Variables', '_param');
+        varSecHtml += _sectionHeader(t('variables'), '_param');
         ps.parameters.forEach(p => {
           const truncVal = p.value.length > 30 ? p.value.substring(0, 30) + '...' : p.value;
           varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
@@ -833,7 +954,7 @@ async function _renderResourcesData(data) {
         varSecHtml += _sectionFooter();
       }
       if (ps.secrets && ps.secrets.length) {
-        varSecHtml += _sectionHeader('Secrets', '_secret');
+        varSecHtml += _sectionHeader(t('secrets'), '_secret');
         ps.secrets.forEach(s => {
           varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
             ${_scopeBadge(s.scope)}<span style="color:var(--pf-muted);font-size:11px;"><b>${escapeHtml(s.key)}</b> = ********</span>
@@ -844,17 +965,17 @@ async function _renderResourcesData(data) {
       const links = (linksData && linksData.links) || {};
       const linkKeys = Object.keys(links);
       let linksHtml = '<div style="margin-top:6px;padding:4px 6px;font-size:11px;color:var(--pf-muted);border-top:1px solid var(--pf-border);">';
-      linksHtml += '<b>Linked Accounts</b>';
+      linksHtml += '<b>' + escapeHtml(t('linkedAccounts')) + '</b>';
       if (linkKeys.length) {
         linkKeys.forEach(provider => {
           linksHtml += `<div style="display:flex;align-items:center;gap:6px;margin:3px 0 3px 8px;">
             <span style="font-size:11px;color:var(--pf-text);">${escapeHtml(provider)}</span>
             <span style="font-size:10px;color:var(--pf-muted);">${escapeHtml(links[provider])}</span>
-            <span style="cursor:pointer;font-size:10px;color:var(--pf-danger);" title="Unlink" onclick="cmdResourceAction('unlink_account',{provider:'${provider}'}).then(loadResources)">\u2715</span>
+            <span style="cursor:pointer;font-size:10px;color:var(--pf-danger);" title="${escapeHtml(t('unlink'))}" onclick="cmdResourceAction('unlink_account',{provider:'${provider}'}).then(loadResources)">\u2715</span>
           </div>`;
         });
       } else {
-        linksHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">No linked accounts</div>';
+        linksHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noLinkedAccounts')) + '</div>';
       }
       linksHtml += '</div>';
       // Final assembly: live → variables/secrets → repos → linked accounts
@@ -2407,7 +2528,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     item('\u270F Edit...', () => showServiceEditForm(serviceId, scope));
   }
   item(enabled ? '\u23F8 Disable' : '\u25B6 Enable', () => {
-    action$('toggle_service', { service_id: serviceId, enabled: !enabled }).subscribe(d => {
+    action$('toggle_service', { service_id: serviceId, scope, enabled: !enabled, conversation_id: conversationId }).subscribe(d => {
       if (d.error) addMsg('error', d.error);
       else loadResources();
     });
@@ -2418,7 +2539,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     menu.appendChild(sep);
     item('\u{1F5D1} Delete', () => {
       if (!confirm(`Delete service '${serviceId}'?`)) return;
-      action$('delete_service', { service_id: serviceId, scope }).subscribe(d => {
+      action$('delete_service', { service_id: serviceId, scope, conversation_id: conversationId }).subscribe(d => {
         if (d.error) addMsg('error', d.error);
         else { addMsg('system', `Service '${serviceId}' deleted.`); loadResources(); }
       });
@@ -3075,7 +3196,7 @@ async function _submitServiceInstall() {
   const btn = document.getElementById('svc-install-btn');
   btn.disabled = true; btn.textContent = 'Installing...';
   try {
-    const data = await rxjs.firstValueFrom(action$('service_install', { service_name: name, service_type: svcType, description: desc, config, scope }));
+    const data = await rxjs.firstValueFrom(action$('service_install', { service_name: name, service_type: svcType, description: desc, config, scope, conversation_id: conversationId }));
     if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = 'Install'; return; }
     addMsg('system', 'Service \'' + name + '\' installed successfully.');
     document.getElementById('resourceEditorOverlay').remove();
@@ -3085,7 +3206,7 @@ async function _submitServiceInstall() {
 
 async function showServiceEditForm(serviceId, scope, readonly) {
   try {
-    const data = await rxjs.firstValueFrom(action$('get_service_detail', { service_id: serviceId, scope }));
+    const data = await rxjs.firstValueFrom(action$('get_service_detail', { service_id: serviceId, scope, conversation_id: conversationId }));
     if (data.error) { addMsg('error', data.error); return; }
 
     const svcType = data.service_type || '';
@@ -3169,7 +3290,7 @@ async function _submitServiceEdit(serviceId, scope) {
   const btn = document.getElementById('svc-save-btn');
   btn.disabled = true; btn.textContent = 'Saving...';
   try {
-    const data = await rxjs.firstValueFrom(action$('update_service', { service_id: serviceId, scope, config }));
+    const data = await rxjs.firstValueFrom(action$('update_service', { service_id: serviceId, scope, config, conversation_id: conversationId }));
     if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = 'Save'; return; }
     addMsg('system', 'Service \'' + serviceId + '\' updated.');
     document.getElementById('resourceEditorOverlay').remove();

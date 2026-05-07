@@ -1,218 +1,216 @@
+// ── i18n ───────────────────────────────────────────────────────────
+const I18N_STORAGE_KEY = 'pawflow.language';
+const I18N_BASE_PATH = '/chat/js/i18n/';
+let _i18nLanguages = [];
+let _i18nFallback = {};
+let _i18nCurrent = {};
+let _currentLanguage = 'en';
 
-// ── i18n ──
-const _i18n = {
-  en: {
-    ready: 'Ready', sending: 'Sending...', streaming: 'Streaming...',
-    thinking: 'Thinking', thinkingRound: 'Thinking (round {round})',
-    thinkingWait: 'Thinking ({sec}s)', error: 'Error',
-    loading: 'Loading...', reconnecting: 'Reconnecting...',
-    continuing: 'Continuing research...', usingTool: 'Using {tool}...',
-    callingTool: '\u{1F527} Calling tool: {tool}',
-    toolResult: '\u{2705} {tool}: {result}',
-    newConv: 'New conversation started.',
-    welcome: 'Welcome! Type a message to start chatting.',
-    connError: 'Connection error: {msg}',
-    loadError: 'Failed to load conversation',
-    sessionExpired: 'Session expired. Please log in again.',
-    unknownError: 'Unknown error',
-    fileTooLarge: 'File too large: {name} ({size}MB, max 10MB)',
-    send: 'Send', newChat: '+ New', logout: 'Logout', deleteConv: 'Delete conversation',
+function _embeddedJson(url) {
+  const name = String(url || '').split('/').pop() || '';
+  if (name === 'languages.json' && Array.isArray(window.PAWFLOW_I18N_LANGUAGES)) {
+    return window.PAWFLOW_I18N_LANGUAGES;
+  }
+  const match = name.match(/^([a-z]+)\.json$/);
+  if (match && window.PAWFLOW_I18N_CATALOGS && window.PAWFLOW_I18N_CATALOGS[match[1]]) {
+    return window.PAWFLOW_I18N_CATALOGS[match[1]];
+  }
+  return null;
+}
+
+function _readJsonSync(url) {
+  const embedded = _embeddedJson(url);
+  if (embedded !== null) return embedded;
+  const xhr = new XMLHttpRequest();
+  const version = window.PAWFLOW_ASSET_VERSION ? '?v=' + encodeURIComponent(window.PAWFLOW_ASSET_VERSION) : '';
+  xhr.open('GET', url + version, false);
+  xhr.send(null);
+  if (xhr.status < 200 || xhr.status >= 300) throw new Error('Failed to load ' + url);
+  return JSON.parse(xhr.responseText || '{}');
+}
+
+function _normalizeLanguage(lang) {
+  return String(lang || '').toLowerCase().replace('_', '-').split('-')[0];
+}
+
+function getSupportedLanguages() {
+  return _i18nLanguages.slice();
+}
+
+function _isSupportedLanguage(lang) {
+  const code = _normalizeLanguage(lang);
+  return _i18nLanguages.some(l => l.code === code) ? code : '';
+}
+
+function _browserLanguage() {
+  const langs = Array.isArray(navigator.languages) && navigator.languages.length
+    ? navigator.languages : [navigator.language || 'en'];
+  for (const lang of langs) {
+    const supported = _isSupportedLanguage(lang);
+    if (supported) return supported;
+  }
+  return 'en';
+}
+
+function _storedLanguage() {
+  try {
+    return window.localStorage ? _isSupportedLanguage(window.localStorage.getItem(I18N_STORAGE_KEY)) : '';
+  } catch (_err) {
+    return '';
+  }
+}
+
+function _loadLanguageCatalog(lang) {
+  const code = _isSupportedLanguage(lang) || 'en';
+  return _readJsonSync(I18N_BASE_PATH + code + '.json');
+}
+
+function _safeLoadLanguageCatalog(lang) {
+  try {
+    return _loadLanguageCatalog(lang);
+  } catch (err) {
+    console.warn('[i18n] Failed to load catalog', lang, err);
+    return {};
+  }
+}
+
+function _builtinEnglishCatalog() {
+  return {
+    languageTitle: 'Language', languageEn: 'English', languageFr: 'French', languageEs: 'Spanish',
+    pageTitle: 'PawFlow Agent Chat', ready: 'Ready', send: 'Send', logout: 'Logout',
     placeholder: 'Type a message... (Enter to send, Shift+Enter for newline)',
-    attachTitle: 'Attach files', conversations: 'Conversations',
-    folderOpen: 'Open local folder', folderActive: 'Local folder: {name}',
-    folderUnsupported: 'Your browser does not support the File System Access API (use Chrome or Edge)',
-    ttlLabel: 'Expiry', convThemeLabel: 'Conversation theme', useGlobalTheme: 'Use global theme',
-    fileTtlLabel: 'Files', ttlNone: 'Unlimited', ttl1h: '1 hour', ttl6h: '6 hours',
-    ttl24h: '24 hours', ttl7d: '7 days', emptyResponse: '(Agent finished without producing a response)',
-    secretAdded: 'Secret "{name}" stored securely. Use ${{ref}} in flows, or get_secret("{short}") in scripts.',
-    secretAddUsage: 'Usage: /add-secret &lt;name&gt; &lt;value&gt;',
-    secretListEmpty: 'No secrets stored.',
-    secretListTitle: 'Your secrets:',
-    variableAdded: 'Variable "{name}" stored. Use ${{ref}} in flows, or get_variable("{short}") in scripts.',
-    variableAddUsage: 'Usage: /add-variable &lt;name&gt; &lt;value&gt;',
-    variableListEmpty: 'No variables stored.',
-    variableListTitle: 'Your variables:',
-    cancelled: '[Cancelled]', stop: 'Stop', cancelling: 'Cancelling...',
-    noConv: 'No active conversation.', restartFrom: 'Context restarted — keeping last {n} messages.',
-    resuming: 'Summarizing conversation to ~{n} tokens...', resumed: 'Conversation summarized ({n} messages \u2192 {len} chars). Next message starts from the summary.',
-    rebuilding: 'Rebuilding context from full conversation...', rebuilt: 'Context rebuilt: {action} ({before} \u2192 {after} messages, ~{tokens} tokens)',
-    rebuildingClean: 'Setting context = full conversation (no compaction)...', rebuiltClean: 'Context set to full conversation: {messages} messages, ~{tokens} tokens.',
-    restartEmpty: 'Context cleared — fresh start (system prompt only).',
-    contextOpBusy: 'A context operation is in progress, please wait...',
-    contextTitle: 'LLM Context', contextDiverged: 'diverged', contextSynced: 'synced',
-    contextTokens: '~{n} tokens', contextMessages: '{n} messages', noContext: 'No context available.',
-    contextEdit: 'Edit', contextDelete: 'Delete', contextAdd: 'Add message',
-    contextReplaceAll: 'Replace all (JSON)', contextSave: 'Save', contextCancel: 'Cancel',
-    contextDeleteConfirm: 'Delete this message?', contextReplaceConfirm: 'Replace entire context?',
-    contextSaved: 'Context saved ({n} messages, ~{tokens} tokens)', contextInvalidJson: 'Invalid JSON',
-    contextRole: 'Role', contextContent: 'Content',
-    thoughtEnabled: 'Auto-conversation enabled for {agent}: {freq} (next in ~{delay}s)',
-    thoughtDisabled: 'Auto-conversation disabled for {agent}.',
-    thoughtStatus: 'Auto-conversation for {agent}: enabled — {freq}, next in ~{delay}s',
-    thoughtStatusOff: 'Auto-conversation for {agent}: disabled',
-    thoughtTriggered: 'Auto-conversation triggered for {agent}.',
-    thoughtNoConv: 'No active conversation.',
-    thoughtScheduled: '[{agent}] next auto-message in ~{delay}s',
-    thoughtFiring: '[{agent}] thinking...',
-    iterStatus: '[{agent}] iter {i} \u00b7 round {r}/{mr} \u00b7 {t} tools',
-    subAgentStarted: 'Sub-agent [{agent}] started',
-    subAgentDone: '[{agent}] finished ({dur}s, {tok} tokens)',
-    iterProgress: '\u21bb [{agent}] iter {i} \u00b7 round {r}/{mr} \u00b7 {t} tools',
-    agentRenamed: 'Agent "{real}" will now display as "{nick}".',
-    confirmDelete: 'Delete this conversation? This cannot be undone.',
-    exporting: 'Exporting...', exportingWithImages: 'Exporting with images...',
-    exported: 'Conversation exported.',
-  },
-  fr: {
-    ready: 'Pr\u00eat', sending: 'Envoi...', streaming: 'R\u00e9ception...',
-    thinking: 'R\u00e9flexion', thinkingRound: 'R\u00e9flexion (tour {round})',
-    thinkingWait: 'R\u00e9flexion ({sec}s)', error: 'Erreur',
-    loading: 'Chargement...', reconnecting: 'Reconnexion...',
-    continuing: 'Recherche en cours...', usingTool: 'Utilisation de {tool}...',
-    callingTool: '\u{1F527} Appel outil : {tool}',
-    toolResult: '\u{2705} {tool}\u00a0: {result}',
-    newConv: 'Nouvelle conversation.',
-    welcome: 'Bienvenue\u00a0! \u00c9crivez un message pour commencer.',
-    connError: 'Erreur de connexion\u00a0: {msg}',
-    loadError: '\u00c9chec du chargement de la conversation',
-    sessionExpired: 'Session expir\u00e9e. Veuillez vous reconnecter.',
-    unknownError: 'Erreur inconnue',
-    fileTooLarge: 'Fichier trop volumineux\u00a0: {name} ({size}\u00a0Mo, max 10\u00a0Mo)',
-    send: 'Envoyer', newChat: '+ Nouveau', logout: 'D\u00e9connexion', deleteConv: 'Supprimer la conversation',
-    placeholder: '\u00c9crivez un message... (Entr\u00e9e pour envoyer, Maj+Entr\u00e9e pour retour \u00e0 la ligne)',
-    attachTitle: 'Joindre des fichiers', conversations: 'Conversations',
-    folderOpen: 'Ouvrir un dossier local', folderActive: 'Dossier local\u00a0: {name}',
-    folderUnsupported: 'Votre navigateur ne supporte pas le File System Access API (utilisez Chrome ou Edge)',
-    ttlLabel: 'Expiration', convThemeLabel: 'Th\u00e8me conversation', useGlobalTheme: 'Utiliser le th\u00e8me global',
-    fileTtlLabel: 'Fichiers', ttlNone: 'Illimit\u00e9', ttl1h: '1 heure', ttl6h: '6 heures',
-    ttl24h: '24 heures', ttl7d: '7 jours', emptyResponse: '(L\'agent a termin\u00e9 sans produire de r\u00e9ponse)',
-    secretAdded: 'Secret "{name}" stock\u00e9 de mani\u00e8re s\u00e9curis\u00e9e. Utilisez ${{ref}} dans les flux, ou get_secret("{short}") dans les scripts.',
-    secretAddUsage: 'Usage: /add-secret &lt;nom&gt; &lt;valeur&gt;',
-    secretListEmpty: 'Aucun secret stock\u00e9.',
-    secretListTitle: 'Vos secrets :',
-    variableAdded: 'Variable "{name}" stock\u00e9e. Utilisez ${{ref}} dans les flux, ou get_variable("{short}") dans les scripts.',
-    variableAddUsage: 'Usage: /add-variable &lt;nom&gt; &lt;valeur&gt;',
-    variableListEmpty: 'Aucune variable stock\u00e9e.',
-    variableListTitle: 'Vos variables :',
-    cancelled: '[Annul\u00e9]', stop: 'Stop', cancelling: 'Annulation...',
-    noConv: 'Aucune conversation active.', restartFrom: 'Contexte red\u00e9marr\u00e9 \u2014 {n} derniers messages conserv\u00e9s.',
-    resuming: 'R\u00e9sum\u00e9 de la conversation en ~{n} tokens...', resumed: 'Conversation r\u00e9sum\u00e9e ({n} messages \u2192 {len} caract\u00e8res). Le prochain message repart du r\u00e9sum\u00e9.',
-    rebuilding: 'Reconstruction du contexte depuis la conversation compl\u00e8te...', rebuilt: 'Contexte reconstruit\u00a0: {action} ({before} \u2192 {after} messages, ~{tokens} tokens)',
-    rebuildingClean: 'Contexte = conversation compl\u00e8te (sans compaction)...', rebuiltClean: 'Contexte mis \u00e0 la conversation compl\u00e8te\u00a0: {messages} messages, ~{tokens} tokens.',
-    restartEmpty: 'Contexte vid\u00e9 \u2014 red\u00e9marrage \u00e0 z\u00e9ro (system prompt uniquement).',
-    contextOpBusy: 'Op\u00e9ration de contexte en cours, veuillez patienter...',
-    contextTitle: 'Contexte LLM', contextDiverged: 'diverg\u00e9', contextSynced: 'synchronis\u00e9',
-    contextTokens: '~{n} tokens', contextMessages: '{n} messages', noContext: 'Aucun contexte disponible.',
-    contextEdit: 'Modifier', contextDelete: 'Supprimer', contextAdd: 'Ajouter un message',
-    contextReplaceAll: 'Remplacer tout (JSON)', contextSave: 'Enregistrer', contextCancel: 'Annuler',
-    contextDeleteConfirm: 'Supprimer ce message ?', contextReplaceConfirm: 'Remplacer tout le contexte ?',
-    contextSaved: 'Contexte sauvegardé ({n} messages, ~{tokens} tokens)', contextInvalidJson: 'JSON invalide',
-    contextRole: 'Rôle', contextContent: 'Contenu',
-    thoughtEnabled: 'Auto-conversation activ\u00e9e pour {agent}\u00a0: {freq} (prochaine dans ~{delay}s)',
-    thoughtDisabled: 'Auto-conversation d\u00e9sactiv\u00e9e pour {agent}.',
-    thoughtStatus: 'Auto-conversation pour {agent}\u00a0: activ\u00e9e \u2014 {freq}, prochaine dans ~{delay}s',
-    thoughtStatusOff: 'Auto-conversation pour {agent}\u00a0: d\u00e9sactiv\u00e9e',
-    thoughtTriggered: 'Auto-conversation d\u00e9clench\u00e9e pour {agent}.',
-    thoughtNoConv: 'Aucune conversation active.',
-    thoughtScheduled: '[{agent}] prochain message auto dans ~{delay}s',
-    thoughtFiring: '[{agent}] r\u00e9fl\u00e9chit...',
-    iterStatus: '[{agent}] iter {i} \u00b7 tour {r}/{mr} \u00b7 {t} outils',
-    subAgentStarted: 'Sous-agent [{agent}] d\u00e9marr\u00e9',
-    subAgentDone: '[{agent}] termin\u00e9 ({dur}s, {tok} tokens)',
-    iterProgress: '\u21bb [{agent}] iter {i} \u00b7 tour {r}/{mr} \u00b7 {t} outils',
-    agentRenamed: 'L\'agent "{real}" s\'affichera d\u00e9sormais comme "{nick}".',
-    confirmDelete: 'Supprimer cette conversation\u00a0? Cette action est irr\u00e9versible.',
-    exporting: 'Export en cours...', exportingWithImages: 'Export avec images en cours...',
-    exported: 'Conversation export\u00e9e.',
-  },
-  es: {
-    ready: 'Listo', sending: 'Enviando...', streaming: 'Recibiendo...',
-    thinking: 'Pensando', thinkingRound: 'Pensando (ronda {round})',
-    thinkingWait: 'Pensando ({sec}s)', error: 'Error',
-    loading: 'Cargando...', reconnecting: 'Reconectando...',
-    continuing: 'Continuando investigaci\u00f3n...', usingTool: 'Usando {tool}...',
-    callingTool: '\u{1F527} Llamando herramienta: {tool}',
-    toolResult: '\u{2705} {tool}: {result}',
-    newConv: 'Nueva conversaci\u00f3n iniciada.',
-    welcome: '\u00a1Bienvenido! Escribe un mensaje para comenzar.',
-    connError: 'Error de conexi\u00f3n: {msg}',
-    loadError: 'Error al cargar la conversaci\u00f3n',
-    sessionExpired: 'Sesi\u00f3n expirada. Inicia sesi\u00f3n de nuevo.',
-    unknownError: 'Error desconocido',
-    fileTooLarge: 'Archivo muy grande: {name} ({size}MB, m\u00e1x 10MB)',
-    send: 'Enviar', newChat: '+ Nuevo', logout: 'Cerrar sesi\u00f3n', deleteConv: 'Eliminar conversaci\u00f3n',
-    placeholder: 'Escribe un mensaje... (Enter para enviar, Shift+Enter para nueva l\u00ednea)',
-    attachTitle: 'Adjuntar archivos', conversations: 'Conversaciones',
-    folderOpen: 'Abrir carpeta local', folderActive: 'Carpeta local: {name}',
-    folderUnsupported: 'Su navegador no soporta la File System Access API (use Chrome o Edge)',
-    ttlLabel: 'Expiraci\u00f3n', convThemeLabel: 'Tema de conversaci\u00f3n', useGlobalTheme: 'Usar tema global',
-    fileTtlLabel: 'Archivos', ttlNone: 'Ilimitado', ttl1h: '1 hora', ttl6h: '6 horas',
-    ttl24h: '24 horas', ttl7d: '7 d\u00edas', emptyResponse: '(El agente termin\u00f3 sin producir una respuesta)',
-    secretAdded: 'Secreto "{name}" almacenado de forma segura. Use ${{ref}} en flujos, o get_secret("{short}") en scripts.',
-    secretAddUsage: 'Uso: /add-secret &lt;nombre&gt; &lt;valor&gt;',
-    secretListEmpty: 'No hay secretos almacenados.',
-    secretListTitle: 'Sus secretos:',
-    variableAdded: 'Variable "{name}" almacenada. Use ${{ref}} en flujos, o get_variable("{short}") en scripts.',
-    variableAddUsage: 'Uso: /add-variable &lt;nombre&gt; &lt;valor&gt;',
-    variableListEmpty: 'No hay variables almacenadas.',
-    variableListTitle: 'Sus variables:',
-    cancelled: '[Cancelado]', stop: 'Detener', cancelling: 'Cancelando...',
-    noConv: 'No hay conversaci\u00f3n activa.', restartFrom: 'Contexto reiniciado \u2014 {n} \u00faltimos mensajes conservados.',
-    resuming: 'Resumiendo conversaci\u00f3n a ~{n} tokens...', resumed: 'Conversaci\u00f3n resumida ({n} mensajes \u2192 {len} caracteres). El pr\u00f3ximo mensaje parte del resumen.',
-    rebuilding: 'Reconstruyendo contexto desde la conversaci\u00f3n completa...', rebuilt: 'Contexto reconstruido: {action} ({before} \u2192 {after} mensajes, ~{tokens} tokens)',
-    rebuildingClean: 'Contexto = conversaci\u00f3n completa (sin compactaci\u00f3n)...', rebuiltClean: 'Contexto con conversaci\u00f3n completa: {messages} mensajes, ~{tokens} tokens.',
-    restartEmpty: 'Contexto vaciado \u2014 inicio limpio (solo system prompt).',
-    contextOpBusy: 'Operaci\u00f3n de contexto en curso, por favor espere...',
-    contextTitle: 'Contexto LLM', contextDiverged: 'divergido', contextSynced: 'sincronizado',
-    contextTokens: '~{n} tokens', contextMessages: '{n} mensajes', noContext: 'Sin contexto disponible.',
-    contextEdit: 'Editar', contextDelete: 'Eliminar', contextAdd: 'Añadir mensaje',
-    contextReplaceAll: 'Reemplazar todo (JSON)', contextSave: 'Guardar', contextCancel: 'Cancelar',
-    contextDeleteConfirm: '¿Eliminar este mensaje?', contextReplaceConfirm: '¿Reemplazar todo el contexto?',
-    contextSaved: 'Contexto guardado ({n} mensajes, ~{tokens} tokens)', contextInvalidJson: 'JSON inválido',
-    contextRole: 'Rol', contextContent: 'Contenido',
-    thoughtEnabled: 'Auto-conversaci\u00f3n activada para {agent}: {freq} (pr\u00f3ximo en ~{delay}s)',
-    thoughtDisabled: 'Auto-conversaci\u00f3n desactivada para {agent}.',
-    thoughtStatus: 'Auto-conversaci\u00f3n para {agent}: activada \u2014 {freq}, pr\u00f3ximo en ~{delay}s',
-    thoughtStatusOff: 'Auto-conversaci\u00f3n para {agent}: desactivada',
-    thoughtTriggered: 'Auto-conversaci\u00f3n activada para {agent}.',
-    thoughtNoConv: 'No hay conversaci\u00f3n activa.',
-    thoughtScheduled: '[{agent}] pr\u00f3ximo mensaje auto en ~{delay}s',
-    thoughtFiring: '[{agent}] pensando...',
-    iterStatus: '[{agent}] iter {i} \u00b7 ronda {r}/{mr} \u00b7 {t} herram.',
-    subAgentStarted: 'Sub-agente [{agent}] iniciado',
-    subAgentDone: '[{agent}] terminado ({dur}s, {tok} tokens)',
-    iterProgress: '\u21bb [{agent}] iter {i} \u00b7 ronda {r}/{mr} \u00b7 {t} herram.',
-    agentRenamed: 'El agente "{real}" se mostrar\u00e1 como "{nick}".',
-    confirmDelete: '\u00bfEliminar esta conversaci\u00f3n? No se puede deshacer.',
-    exporting: 'Exportando...', exportingWithImages: 'Exportando con im\u00e1genes...',
-    exported: 'Conversaci\u00f3n exportada.',
-  },
-};
-const _lang = (navigator.language || 'en').slice(0, 2);
-const _t = _i18n[_lang] || _i18n.en;
+    conversations: 'Conversations', newChat: '+ New', resources: 'Resources',
+  };
+}
+
+function _initI18n() {
+  try {
+    _i18nLanguages = _readJsonSync(I18N_BASE_PATH + 'languages.json');
+  } catch (_err) {
+    _i18nLanguages = [{ code: 'en', label: 'English', native_label: 'English' }];
+  }
+  if (!_isSupportedLanguage('en')) _i18nLanguages.unshift({ code: 'en', label: 'English', native_label: 'English' });
+  _i18nFallback = _safeLoadLanguageCatalog('en');
+  if (!Object.keys(_i18nFallback).length) _i18nFallback = _builtinEnglishCatalog();
+  _currentLanguage = _storedLanguage() || _browserLanguage();
+  _i18nCurrent = _currentLanguage === 'en' ? _i18nFallback : _safeLoadLanguageCatalog(_currentLanguage);
+  if (!Object.keys(_i18nCurrent).length) _i18nCurrent = _i18nFallback;
+  document.documentElement.lang = _currentLanguage;
+}
+
+function getLanguage() {
+  return _currentLanguage;
+}
+
 function t(key, vars) {
-  let s = _t[key] || _i18n.en[key] || key;
-  if (vars) Object.keys(vars).forEach(k => { s = s.replace('{' + k + '}', vars[k]); });
+  let s = _i18nCurrent[key] || _i18nFallback[key] || key;
+  if (vars) Object.keys(vars).forEach(k => { s = s.split('{' + k + '}').join(vars[k]); });
   return s;
 }
 
-// Apply i18n to static HTML elements
-document.getElementById('status').textContent = t('ready');
-document.getElementById('sendBtn').textContent = t('send');
-document.getElementById('logoutBtn').textContent = t('logout');
-document.getElementById('input').placeholder = t('placeholder');
-document.querySelector('.btn-attach').title = t('attachTitle');
-// folderBtn removed (browser filesystem feature deleted)
-document.querySelector('.sidebar-header h2').textContent = t('conversations');
-document.querySelector('.btn-new').textContent = t('newChat');
-// TTL selector i18n
-document.getElementById('ttlLabel').textContent = t('ttlLabel');
-document.getElementById('convThemeLabel').textContent = t('convThemeLabel');
-const ttlOpts = document.getElementById('ttlSelect').options;
-ttlOpts[0].textContent = t('ttlNone');
-ttlOpts[1].textContent = t('ttl1h');
-ttlOpts[2].textContent = t('ttl6h');
-ttlOpts[3].textContent = t('ttl24h');
-ttlOpts[4].textContent = t('ttl7d');
+function _setText(selector, value) {
+  const el = document.querySelector(selector);
+  if (el) el.textContent = value;
+}
+
+function _setTitle(selector, value) {
+  const el = document.querySelector(selector);
+  if (el) el.title = value;
+}
+
+function _setPlaceholder(selector, value) {
+  const el = document.querySelector(selector);
+  if (el) el.placeholder = value;
+}
+
+function _applyGenericI18n(root) {
+  const scope = root || document;
+  scope.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  scope.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); });
+  scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  scope.querySelectorAll('[data-i18n-aria-label]').forEach(el => { el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel)); });
+  scope.querySelectorAll('[data-i18n-permission]').forEach(el => {
+    const icon = (el.textContent || '').trim().split(/\s+/, 1)[0] || '';
+    el.textContent = (icon ? icon + ' ' : '') + t(el.dataset.i18nPermission);
+  });
+}
+
+function _renderLanguageSelect() {
+  const select = document.getElementById('languageSelect');
+  if (!select) return;
+  const signature = _i18nLanguages.map(lang => lang.code + ':' + (lang.native_label || lang.label || '')).join('|');
+  if (select.dataset.i18nSignature !== signature) {
+    select.replaceChildren();
+    _i18nLanguages.forEach(lang => {
+      const key = 'language' + lang.code.charAt(0).toUpperCase() + lang.code.slice(1);
+      const opt = document.createElement('option');
+      opt.value = lang.code;
+      opt.textContent = t(key) || lang.native_label || lang.label || lang.code;
+      select.appendChild(opt);
+    });
+    select.dataset.i18nSignature = signature;
+  } else {
+    Array.from(select.options).forEach(opt => {
+      const key = 'language' + opt.value.charAt(0).toUpperCase() + opt.value.slice(1);
+      opt.textContent = t(key) || opt.textContent;
+    });
+  }
+  select.value = _currentLanguage;
+  select.title = t('languageTitle');
+  select.setAttribute('aria-label', t('languageTitle'));
+  select.style.display = 'inline-flex';
+}
+
+function applyI18n(root) {
+  document.documentElement.lang = _currentLanguage;
+  document.title = t('pageTitle');
+  _setText('#status', t('ready'));
+  _setText('#sendBtn', t('send'));
+  _setText('#logoutBtn', t('logout'));
+  _setPlaceholder('#input', t('placeholder'));
+  _setTitle('.btn-attach', t('promptLibraryTitle'));
+  _setTitle('#fileAttachBtn', t('attachTitle'));
+  _setTitle('#stopBtn', t('stopTitle'));
+  _setTitle('#themeSelect', t('globalThemeTitle'));
+  _setTitle('#conversationThemeSelect', t('convThemeLabel'));
+  _setTitle('#technicalGroupingToggle', t('groupTechnicalDisabledTitle'));
+  _setTitle('#permissionMode', t('permissionModeTitle'));
+  _setText('.sidebar-header h2', t('conversations'));
+  _setText('.btn-new', t('newChat'));
+  _setText('#ttlLabel', t('ttlLabel'));
+  _setText('#convThemeLabel', t('convThemeLabel'));
+  const convTheme = document.getElementById('conversationThemeSelect');
+  if (convTheme && convTheme.options.length) convTheme.options[0].textContent = t('useGlobalTheme');
+  const ttl = document.getElementById('ttlSelect');
+  if (ttl && ttl.options.length >= 5) {
+    ttl.options[0].textContent = t('ttlNone');
+    ttl.options[1].textContent = t('ttl1h');
+    ttl.options[2].textContent = t('ttl6h');
+    ttl.options[3].textContent = t('ttl24h');
+    ttl.options[4].textContent = t('ttl7d');
+  }
+  _renderLanguageSelect();
+  _applyGenericI18n(root || document);
+}
+
+function setLanguage(lang) {
+  const code = _isSupportedLanguage(lang);
+  if (!code || code === _currentLanguage) return;
+  _currentLanguage = code;
+  _i18nCurrent = code === 'en' ? _i18nFallback : _safeLoadLanguageCatalog(code);
+  if (!Object.keys(_i18nCurrent).length) _i18nCurrent = _i18nFallback;
+  try { if (window.localStorage) window.localStorage.setItem(I18N_STORAGE_KEY, code); } catch (_err) {}
+  applyI18n(document);
+  if (typeof updateTechnicalGroupingToggle === 'function') updateTechnicalGroupingToggle(window.PAWFLOW_GROUP_TECHNICAL_MESSAGES);
+  if (typeof loadResources === 'function') loadResources();
+  window.dispatchEvent(new CustomEvent('pawflow:languagechange', { detail: { language: code } }));
+}
+
+_initI18n();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => applyI18n(document));
+} else {
+  applyI18n(document);
+}
 
 // App state variables are in state.js

@@ -449,6 +449,51 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             }).encode())
         return [flowfile]
 
+    if action == "summarizer_list_available":
+        conv_id = body.get("conversation_id", "")
+        from core.summarizer_bindings import summary
+        flowfile.set_content(json.dumps(
+            summary(user_id, conv_id), ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "summarizer_link":
+        conv_id = body.get("conversation_id", "")
+        scope = body.get("scope", "")
+        service_id = body.get("service_id", "").strip()
+        if not conv_id or not scope or not service_id:
+            flowfile.set_content(json.dumps({
+                "error": "Missing conversation_id, scope, or service_id",
+            }).encode())
+            return [flowfile]
+        from core.summarizer_bindings import list_available, set_binding, summary
+        available = list_available(user_id, conv_id)
+        if not any(s.get("scope") == scope and s.get("service_id") == service_id
+                   for s in available):
+            flowfile.set_content(json.dumps({
+                "error": f"Summarizer service '{service_id}' is not available in scope '{scope}'.",
+            }).encode())
+            return [flowfile]
+        set_binding(conv_id, scope, service_id)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "summarizer": summary(user_id, conv_id),
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "summarizer_unlink":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        from core.summarizer_bindings import clear_binding, summary
+        removed = clear_binding(conv_id)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "removed": removed,
+            "summarizer": summary(user_id, conv_id),
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
     if action == "relay_link":
         conv_id = body.get("conversation_id", "")
         relay_id = body.get("relay_id", "").strip()

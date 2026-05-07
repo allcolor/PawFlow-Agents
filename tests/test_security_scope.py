@@ -223,7 +223,7 @@ class TestPromoteGlobalBlocked:
         # Should either say "admin GUI" (blocked) or "not found"
         assert "admin" in result.lower() or "not found" in result.lower()
 
-    def test_manage_resource_create_with_conversation_forces_conversation_scope(self):
+    def test_manage_resource_user_create_with_conversation_keeps_requested_scope(self):
         from core.tool_registry import create_default_registry
 
         registry = create_default_registry()
@@ -235,10 +235,31 @@ class TestPromoteGlobalBlocked:
         rs = MagicMock()
         with patch("core.resource_store.ResourceStore.instance", return_value=rs):
             result = handler.execute({
-                "action": "create", "resource_type": "skill", "name": "conv_skill",
+                "action": "create", "resource_type": "skill", "name": "user_skill",
                 "data": {"prompt": "test", "scope": "user"},
+            })
+        assert "(scope: user)" in result
+        rs.create.assert_called_once_with(
+            "skill", "user_skill", "test_user", {"prompt": "test"})
+
+    def test_manage_resource_agent_create_forces_conversation_scope(self):
+        from core.tool_registry import create_default_registry
+
+        registry = create_default_registry()
+        handler = registry.get("manage_resource")
+        if handler is None:
+            pytest.skip("manage_resource handler not found")
+        handler._user_id = "test_user"
+        handler._conversation_id = "test_conv"
+        handler._agent_name = "assistant"
+        rs = MagicMock()
+        with patch("core.resource_store.ResourceStore.instance", return_value=rs):
+            result = handler.execute({
+                "action": "create", "resource_type": "skill", "name": "conv_skill",
+                "data": {"prompt": "test", "scope": "global"},
             })
         assert "(scope: conversation)" in result
         rs.create.assert_called_once_with(
-            "skill", "conv_skill", "test_user", {"prompt": "test"},
+            "skill", "conv_skill", "test_user",
+            {"prompt": "test", "_created_by": "assistant"},
             conversation_id="test_conv")

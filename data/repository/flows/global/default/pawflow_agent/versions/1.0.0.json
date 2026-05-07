@@ -260,6 +260,7 @@
       "type": "serveAssets",
       "parameters": {
         "assets_prefix": "chat_ui",
+        "base_path": "/chat/js",
         "cache_control": "public, max-age=31536000, immutable"
       }
     }

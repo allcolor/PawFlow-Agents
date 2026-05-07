@@ -534,17 +534,48 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             return [flowfile]
         import io, zipfile
+        from pathlib import Path as _Path
         from core.file_store import FileStore
+        from core.segmented_jsonl import SegmentedJsonl
         conv_dir = store._conv_dir(conv_id)
         if not conv_dir.is_dir():
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             return [flowfile]
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            written = set()
+
+            def _write_logical_jsonl(rel_path: _Path):
+                log = SegmentedJsonl(conv_dir / rel_path)
+                if not log.exists():
+                    return
+                data = "".join(
+                    json.dumps(row, ensure_ascii=False) + "\n"
+                    for row in log.iter_rows()
+                )
+                arcname = str(rel_path)
+                zf.writestr(arcname, data)
+                written.add(arcname)
+
+            _write_logical_jsonl(_Path("transcript.jsonl"))
+            _write_logical_jsonl(_Path("shared.jsonl"))
+            for entry in sorted(conv_dir.iterdir()):
+                if entry.is_dir() and entry.name not in (".git", "transcript", "shared", "summaries"):
+                    _write_logical_jsonl(_Path(entry.name) / "context.jsonl")
+
             for f in sorted(conv_dir.rglob('*')):
-                if f.is_file() and '.git' not in f.parts:
-                    arcname = str(f.relative_to(conv_dir))
-                    zf.write(f, arcname)
+                if not f.is_file() or '.git' in f.parts:
+                    continue
+                rel = f.relative_to(conv_dir)
+                arcname = str(rel)
+                if arcname in written:
+                    continue
+                parts = rel.parts
+                if parts and parts[0] in ("transcript", "shared"):
+                    continue
+                if len(parts) >= 2 and parts[1] == "context":
+                    continue
+                zf.write(f, arcname)
         filename = f"conversation_{conv_id[:8]}.pfconv.zip"
         fid = FileStore.instance().store(filename, buf.getvalue(),
             "application/zip", user_id=user_id, conversation_id=conv_id)
@@ -706,34 +737,29 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             import zipfile, io
             with zipfile.ZipFile(io.BytesIO(raw)) as zf:
                 zf.extractall(conv_dir)
+            store._cid_user[cid] = user_id  # required for segmented log helpers
             # Bump the transcript's meta line ts to now so the conv
             # appears at the top of the sidebar with the import date
             # (and not the original export date).
-            tr_path = conv_dir / "transcript.jsonl"
-            if tr_path.exists():
-                try:
-                    tr_lines = tr_path.read_text(encoding="utf-8").splitlines()
-                    now_ts = time.time()
-                    if tr_lines:
-                        try:
-                            first = json.loads(tr_lines[0])
-                        except Exception:
-                            first = None
-                        _cs_inst = store  # ConversationStore instance already in scope
-                        if isinstance(first, dict) and first.get("t") == "meta":
-                            first["created_at"] = now_ts
-                            first["ts"] = now_ts
-                            first = _cs_inst._stamp_line(cid, first)
-                            tr_lines[0] = json.dumps(first, ensure_ascii=False)
-                        else:
-                            meta = _cs_inst._stamp_line(cid, {
-                                "t": "meta", "user_id": user_id, "status": "idle",
-                                "created_at": now_ts, "expires_at": 0, "ts": now_ts,
-                            })
-                            tr_lines.insert(0, json.dumps(meta, ensure_ascii=False))
-                        tr_path.write_text("\n".join(tr_lines) + "\n", encoding="utf-8")
-                except Exception:
-                    pass
+            try:
+                tr_log = store._transcript_log(cid)
+                tr_rows = list(tr_log.iter_rows())
+                now_ts = time.time()
+                if tr_rows:
+                    first = tr_rows[0]
+                    if isinstance(first, dict) and first.get("t") == "meta":
+                        first["created_at"] = now_ts
+                        first["ts"] = now_ts
+                        tr_rows[0] = store._stamp_line(cid, first)
+                    else:
+                        meta = store._stamp_line(cid, {
+                            "t": "meta", "user_id": user_id, "status": "idle",
+                            "created_at": now_ts, "expires_at": 0, "ts": now_ts,
+                        })
+                        tr_rows.insert(0, meta)
+                    tr_log.replace_dicts(tr_rows)
+            except Exception:
+                pass
             # Update extras with new cid, user, and agent mapping
             extras_path = conv_dir / "extras.json"
             if extras_path.exists():
@@ -911,11 +937,17 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             # conversation appears at the top of the sidebar with the
             # correct date. An import is semantically a new conversation.
             now_ts = time.time()
-            meta_line = json.dumps(store._stamp_line(cid, {
+            store._cid_user[cid] = user_id  # required for _conv_dir lookups
+            transcript_rows = [store._stamp_line(cid, {
                 "t": "meta", "user_id": user_id, "status": "idle",
                 "created_at": now_ts, "expires_at": 0, "ts": now_ts,
-            }), ensure_ascii=False)
-            (conv_dir / "transcript.jsonl").write_text(meta_line + "\n" + "\n".join(transcript_lines) + "\n", encoding="utf-8")
+            })]
+            for _line in transcript_lines:
+                try:
+                    transcript_rows.append(json.loads(_line))
+                except json.JSONDecodeError:
+                    pass
+            store._transcript_log(cid).replace_dicts(transcript_rows)
             # Shared context file: agents resuming the imported conv read
             # their LLM context from here (or from their own agent dir, which
             # falls back to shared). Without this file the "Shared" view

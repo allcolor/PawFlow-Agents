@@ -42,6 +42,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from core.segmented_jsonl import SegmentedJsonl
+
 logger = logging.getLogger(__name__)
 
 _CTX_CACHE_MAX_MESSAGES = int(os.getenv("PAWFLOW_CTX_CACHE_MAX_MESSAGES", "500") or "500")
@@ -260,12 +262,25 @@ class ConversationStore:
     def _transcript_path(self, cid: str) -> Path:
         return self._conv_dir(cid) / "transcript.jsonl"
 
+    def _transcript_log(self, cid: str) -> SegmentedJsonl:
+        return SegmentedJsonl(self._transcript_path(cid))
+
     def _shared_ctx_path(self, cid: str) -> Path:
         return self._conv_dir(cid) / "shared.jsonl"
+
+    def _shared_ctx_log(self, cid: str) -> SegmentedJsonl:
+        return SegmentedJsonl(self._shared_ctx_path(cid))
 
     def _agent_ctx_path(self, cid: str, agent: str) -> Path:
         safe_agent = self._safe_name(self._canon_agent(agent)) if agent else "_shared"
         return self._conv_dir(cid) / safe_agent / "context.jsonl"
+
+    def _agent_ctx_log(self, cid: str, agent: str) -> SegmentedJsonl:
+        return SegmentedJsonl(self._agent_ctx_path(cid, agent))
+
+    @staticmethod
+    def _jsonl_exists(path: Path) -> bool:
+        return SegmentedJsonl(path).exists()
 
     def _extras_path(self, cid: str) -> Path:
         return self._conv_dir(cid) / "extras.json"
@@ -332,13 +347,16 @@ class ConversationStore:
         if not (conv_dir / ".git").exists():
             return
         try:
-            # Selective add: transcript + shared + extras + all agent contexts
-            files = ["transcript.jsonl", "shared.jsonl", "extras.json", "bindings.json"]
+            # Selective add: transcript/shared segments + extras + all agent contexts
+            files = ["transcript.jsonl", "transcript", "shared.jsonl", "shared", "extras.json", "bindings.json"]
             for entry in conv_dir.iterdir():
-                if entry.is_dir() and entry.name != ".git":
+                if entry.is_dir() and entry.name not in (".git", "transcript", "shared", "summaries"):
                     ctx = entry / "context.jsonl"
+                    ctx_dir = entry / "context"
                     if ctx.exists():
                         files.append(f"{entry.name}/context.jsonl")
+                    if ctx_dir.exists():
+                        files.append(f"{entry.name}/context")
             # Shared pyramid (bg bucket builder output). Must be tracked so
             # rollback/fork/branch operations carry matching bucket state.
             _shared_pyramid = conv_dir / "summaries" / "_shared"
@@ -732,13 +750,11 @@ class ConversationStore:
         duplicate msg_id on disk is a caller bug -- fix it at the root
         rather than silently dropping the second write here.
         """
-        path = self._agent_ctx_path(cid, agent)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            for m in messages:
-                self._validate_message(m)
-                line = self._stamp_line(cid, dict(m))
-                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+        rows = []
+        for m in messages:
+            self._validate_message(m)
+            rows.append(self._stamp_line(cid, dict(m)))
+        self._agent_ctx_log(cid, agent).append_dicts(rows)
 
     def _seed_agent_context_from_shared_if_missing(self, cid: str, agent: str) -> int:
         """Initialize a new agent context from shared before its first row.
@@ -751,8 +767,8 @@ class ConversationStore:
         agent = self._canon_agent(agent) if agent else ""
         if not agent:
             return 0
-        path = self._agent_ctx_path(cid, agent)
-        if path.exists():
+        log = self._agent_ctx_log(cid, agent)
+        if log.exists():
             return 0
         seed = self.load_shared_for_agent(cid, agent) or []
         if not seed:
@@ -957,19 +973,19 @@ class ConversationStore:
                 timings[name] = timings.get(name, 0.0) + (
                     (time.monotonic() - started) * 1000.0)
 
-        path = self._shared_ctx_path(cid)
         _max_seq = 0
         _shared_chars = 0
+        rows = []
         _t0 = time.monotonic()
-        with open(path, "a", encoding="utf-8") as f:
-            for m in messages:
-                self._validate_message(m)
-                xf = self._stamp_line(cid, m)
-                f.write(json.dumps(xf, ensure_ascii=False) + "\n")
-                _shared_chars += self._row_payload_chars(xf)
-                _s = int(xf.get("seq") or 0)
-                if _s > _max_seq:
-                    _max_seq = _s
+        for m in messages:
+            self._validate_message(m)
+            xf = self._stamp_line(cid, m)
+            rows.append(xf)
+            _shared_chars += self._row_payload_chars(xf)
+            _s = int(xf.get("seq") or 0)
+            if _s > _max_seq:
+                _max_seq = _s
+        self._shared_ctx_log(cid).append_dicts(rows)
         _add_timing("shared_write", _t0)
 
         # Keep cache hints synchronous so the queued trigger decision sees
@@ -1005,17 +1021,10 @@ class ConversationStore:
         message was MINTED, not when the writer happened to flush it —
         matching what the user saw in the live SSE stream.
         """
-        if not path.exists():
+        log = SegmentedJsonl(path)
+        if not log.exists():
             return []
-        result = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        result.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
+        result = list(log.iter_rows())
         result.sort(key=lambda m: (
             m.get("ts") or m.get("timestamp") or 0.0,
             m.get("seq") or 0,
@@ -1024,13 +1033,9 @@ class ConversationStore:
 
     def _write_ctx_file(self, path: Path, messages: List[Dict]):
         """Overwrite a context file with messages (atomic: tmp + rename)."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            for m in messages:
-                self._validate_message(m)
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
-        tmp.replace(path)
+        for m in messages:
+            self._validate_message(m)
+        SegmentedJsonl(path).replace_dicts(messages)
 
     def _read_extras(self, cid: str) -> dict:
         """Read extras from the atomic JSON file."""
@@ -1081,20 +1086,11 @@ class ConversationStore:
         transcript. The file is append-only; a concurrent partial final row is
         ignored by the JSON decoder and will be visible on the next read.
         """
-        path = self._conv_path(cid)
-        if not path.exists():
+        log = self._transcript_log(cid)
+        if not log.exists():
             return read_fn(iter([]))
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                def _iter():
-                    for raw in f:
-                        raw = raw.strip()
-                        if raw:
-                            try:
-                                yield json.loads(raw)
-                            except json.JSONDecodeError:
-                                continue
-                return read_fn(_iter())
+            return read_fn(log.iter_rows())
         except OSError as e:
             logger.error(f"[convstore] read failed {cid}: {e}")
             return read_fn(iter([]))
@@ -1149,7 +1145,7 @@ class ConversationStore:
         if first_seq <= 0 or last_seq < first_seq:
             return []
         rows: List[Dict] = []
-        for row in self._iter_jsonl_reverse(self._transcript_path(cid)):
+        for row in self._transcript_log(cid).iter_rows_reverse():
             seq = int(row.get("seq") or 0)
             if seq > last_seq:
                 continue
@@ -1234,7 +1230,7 @@ class ConversationStore:
         conv_dir = self._conv_dir(cid)
         if conv_dir.is_dir():
             for entry in conv_dir.iterdir():
-                if entry.is_dir() and (entry / "context.jsonl").exists():
+                if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
                     agent = entry.name.replace("__", ":")
                     if agent != "_shared":
                         c["agents"].add(agent)
@@ -1295,7 +1291,8 @@ class ConversationStore:
                 for conv_dir in user_dir.iterdir():
                     if not conv_dir.is_dir():
                         continue
-                    if not (conv_dir / "transcript.jsonl").exists() and not (conv_dir / "extras.json").exists():
+                    if (not SegmentedJsonl(conv_dir / "transcript.jsonl").exists()
+                            and not (conv_dir / "extras.json").exists()):
                         continue
                     cid = conv_dir.name.replace("__", ":")
                     self._cid_user[cid] = uid
@@ -1355,12 +1352,11 @@ class ConversationStore:
             "created_at": _now, "ts": _now,
             "expires_at": _now + ttl if ttl > 0 else 0,
         })
-        with open(self._transcript_path(cid), "w", encoding="utf-8") as f:
-            f.write(json.dumps(meta_line, ensure_ascii=False) + "\n")
-            for m in messages:
-                self._validate_message(m)
-                line = self._stamp_line(cid, {"t": "msg", **m})
-                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+        rows = [meta_line]
+        for m in messages:
+            self._validate_message(m)
+            rows.append(self._stamp_line(cid, {"t": "msg", **m}))
+        self._transcript_log(cid).replace_dicts(rows)
 
         # Write extras with metadata
         extras = {
@@ -1464,9 +1460,7 @@ class ConversationStore:
                 transcript_line = line
                 _mark_timing("transcript_prepare", _transcript_t0)
                 _t0 = time.monotonic()
-                with open(self._transcript_path(cid), "a",
-                          encoding="utf-8") as f:
-                    f.write(json.dumps(line, ensure_ascii=False) + "\n")
+                self._transcript_log(cid).append_dicts([line])
                 _mark_timing("transcript_write", _t0)
                 # Feed bg_bucket_builder's token-budget trigger so it
                 # can fire a partial bucket BEFORE the agent's hot-path
@@ -1987,8 +1981,7 @@ class ConversationStore:
             path = self._shared_ctx_path(cid)
         lock = self._get_conv_lock(cid)
         with lock:
-            if path.exists():
-                path.unlink()
+            SegmentedJsonl(path).delete()
         # Remove empty agent directory
         if agent_name and path.parent.is_dir():
             try:
@@ -2131,159 +2124,95 @@ class ConversationStore:
             cache = self._load_cache(cid)
             if cache["user_id"] and cache["user_id"] != user_id:
                 return None
-        path = self._conv_path(cid)
+        log = self._transcript_log(cid)
         total = self.message_count(cid)
         # _read_tail reads the file without holding the conv lock.
         # This avoids blocking _commit (set_status, append) while reading
         # large files. The file is append-only so reading stale data is safe
         # (we might miss the very last line, but that's acceptable for pagination).
-        if not path.exists():
+        if not log.exists():
             return {"messages": [], "total_count": 0, "offset": 0,
                     "limit": limit, "has_more": False}
         try:
-            result = self._read_tail(path, total, limit, offset)
+            result = self._read_tail(log, total, limit, offset)
             return result
         except Exception as e:
             logger.error("[convstore] load_page failed %s: %s", cid, e)
             return {"messages": [], "total_count": total, "offset": offset,
                     "limit": limit, "has_more": False}
 
-    def _read_tail(self, path: Path, total_msgs: int, limit: int, offset: int) -> Dict:
-        """Read the last (offset + limit) msg lines from the JSONL, return the page.
-
-        Algorithm:
-        1. Seek to end of file
-        2. Read backwards in chunks to collect enough lines
-        3. Parse only msg and msg_patch records
-        4. Slice to the requested page
-        """
+    def _read_tail(self, log: SegmentedJsonl, total_msgs: int, limit: int, offset: int) -> Dict:
+        """Read the last (offset + limit) display rows from a logical JSONL."""
         need = offset + limit + 20  # extra margin for msg_patch records + tool alignment
-        _CHUNK = 8192
-
-        with open(path, "rb") as f:
-            f.seek(0, 2)  # end
-            file_size = f.tell()
-            if file_size == 0:
-                return {"messages": [], "total_count": 0, "offset": offset,
-                        "limit": limit, "has_more": False}
-
-            # Read backwards in chunks, collect raw lines
-            raw_lines = []
-            pos = file_size
-            remainder = b""
-            msg_count = 0
-
-            _lines_collected = 0
-            while pos > 0 and _lines_collected < need:
-                chunk_size = min(_CHUNK, pos)
-                pos -= chunk_size
-                f.seek(pos)
-                chunk = f.read(chunk_size) + remainder
-                remainder = b""
-
-                parts = chunk.split(b"\n")
-                if pos > 0:
-                    remainder = parts[0]
-                    parts = parts[1:]
-
-                for raw in reversed(parts):
-                    raw = raw.strip()
-                    if not raw:
-                        continue
-                    try:
-                        line = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    t = line.get("t", "")
-                    if t == "msg":
-                        msg_count += 1
-                    if t in ("msg", "msg_patch", "trace_update"):
-                        raw_lines.append(line)
-                        _lines_collected += 1
-
-                if _lines_collected >= need:
+        raw_lines = []
+        for line in log.iter_rows_reverse():
+            t = line.get("t", "")
+            if t in ("msg", "msg_patch", "trace_update"):
+                raw_lines.append(line)
+                if len(raw_lines) >= need:
                     break
+        raw_lines.reverse()
 
-            # Only parse remainder if we actually reached the start of
-            # file — otherwise it's a partial line cut by chunk boundary
-            # (mid-UTF-8-char, mid-JSON), which would raise
-            # UnicodeDecodeError (not JSONDecodeError) on parse.
-            if remainder and pos == 0:
-                raw = remainder.strip()
-                if raw:
-                    try:
-                        line = json.loads(raw)
-                        t = line.get("t", "")
-                        if t in ("msg", "msg_patch", "trace_update"):
-                            raw_lines.append(line)
-                            if t == "msg":
-                                msg_count += 1
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        pass
+        # Apply scan_transcript logic (separate msgs from patches)
+        msgs = []
+        patches = {}
+        trace_updates = {}
+        for line in raw_lines:
+            t = line.get("t", "")
+            if t == "msg_patch":
+                mid = line.get("target_msg_id") or line.get("msg_id", "")
+                if mid:
+                    patches[mid] = {k: v for k, v in line.items()
+                                    if k not in ("t", "msg_id", "target_msg_id", "ts", "seq")}
+                continue
+            if t == "trace_update":
+                tid = line.get("trace_id", "")
+                if tid:
+                    trace_updates.setdefault(tid, []).append(
+                        (line.get("entry") or {}, line.get("content_update") or ""))
+                continue
+            if t != "msg":
+                continue
+            msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
+            if "ts" in line:
+                msg["timestamp"] = line["ts"]
+            msgs.append(msg)
 
-            # raw_lines is in reverse order (newest first) — reverse to chronological
-            raw_lines.reverse()
-
-            # Apply scan_transcript logic (separate msgs from patches)
-            msgs = []
-            patches = {}
-            trace_updates = {}
-            for line in raw_lines:
-                t = line.get("t", "")
-                if t == "msg_patch":
-                    mid = line.get("msg_id", "")
-                    if mid:
-                        patches[mid] = {k: v for k, v in line.items()
-                                        if k not in ("t", "msg_id")}
+        if patches:
+            for msg in msgs:
+                mid = msg.get("msg_id", "")
+                if mid and mid in patches:
+                    msg.update(patches[mid])
+        if trace_updates:
+            for msg in msgs:
+                if msg.get("role") != "sub_agent_trace":
                     continue
-                if t == "trace_update":
-                    tid = line.get("trace_id", "")
-                    if tid:
-                        trace_updates.setdefault(tid, []).append(
-                            (line.get("entry") or {}, line.get("content_update") or ""))
+                tid = msg.get("trace_id", "")
+                ups = trace_updates.get(tid)
+                if not ups:
                     continue
-                if t != "msg":
-                    continue
-                msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
-                if "ts" in line:
-                    msg["timestamp"] = line["ts"]
-                msgs.append(msg)
+                trace = list(msg.get("trace") or [])
+                content = msg.get("content", "") or ""
+                for entry, cu in ups:
+                    if entry:
+                        trace.append(entry)
+                    if cu:
+                        content += cu
+                msg["trace"] = trace
+                msg["content"] = content
 
-            if patches:
-                for msg in msgs:
-                    mid = msg.get("msg_id", "")
-                    if mid and mid in patches:
-                        msg.update(patches[mid])
-            if trace_updates:
-                for msg in msgs:
-                    if msg.get("role") != "sub_agent_trace":
-                        continue
-                    tid = msg.get("trace_id", "")
-                    ups = trace_updates.get(tid)
-                    if not ups:
-                        continue
-                    trace = list(msg.get("trace") or [])
-                    content = msg.get("content", "") or ""
-                    for entry, cu in ups:
-                        if entry:
-                            trace.append(entry)
-                        if cu:
-                            content += cu
-                    msg["trace"] = trace
-                    msg["content"] = content
+        # Slice: msgs is chronological, we want the last `limit` before `offset`
+        total_tail = len(msgs)
+        end = total_tail - offset
+        start = max(0, end - limit)
+        # Don't split a tool_call from its tool results
+        while start > 0 and msgs[start].get("role") == "tool":
+            start -= 1
+        page = msgs[start:end] if end > 0 else []
+        has_more = (total_msgs - offset - len(page)) > 0
 
-            # Slice: msgs is chronological, we want the last `limit` before `offset`
-            total_tail = len(msgs)
-            end = total_tail - offset
-            start = max(0, end - limit)
-            # Don't split a tool_call from its tool results
-            while start > 0 and msgs[start].get("role") == "tool":
-                start -= 1
-            page = msgs[start:end] if end > 0 else []
-            has_more = (total_msgs - offset - len(page)) > 0
-
-            return {"messages": page, "total_count": total_msgs,
-                    "offset": offset, "limit": limit, "has_more": has_more}
+        return {"messages": page, "total_count": total_msgs,
+                "offset": offset, "limit": limit, "has_more": has_more}
 
     def patch_message(self, cid: str, msg_id: str, **fields) -> None:
         """Append a msg_patch record referencing an existing message.
@@ -2303,8 +2232,7 @@ class ConversationStore:
                 "target_msg_id": msg_id,
                 **fields,
             })
-            with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
-                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            self._transcript_log(cid).append_dicts([line])
         self._notify_bg_transcript_chars(cid, self._row_payload_chars(line))
         self._maybe_persist_context_usage_from_patch(cid, line)
 
@@ -2367,31 +2295,22 @@ class ConversationStore:
                                             usage: Dict[str, Any]) -> Tuple[Dict[str, Any], float]:
         """Scan transcript context usage without holding the conv lock."""
         usage = dict(usage or {})
-        path = self._transcript_path(cid)
-        try:
-            transcript_mtime = os.path.getmtime(path)
-        except FileNotFoundError:
+        log = self._transcript_log(cid)
+        transcript_mtime = log.latest_mtime()
+        if not transcript_mtime:
             return usage, 0.0
         if self._context_usage_repair_mtime.get(cid, 0) >= transcript_mtime:
             return usage, transcript_mtime
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                for raw in f:
-                    try:
-                        line = json.loads(raw)
-                    except Exception:
-                        continue
-                    entry = self._context_usage_entry_from_source(
-                        line.get("source"), line.get("ts"))
-                    if not entry:
-                        continue
-                    name, usage_entry = entry
-                    prev = usage.get(name)
-                    if (not isinstance(prev, dict)
-                            or float(prev.get("updated_at") or 0) <= float(usage_entry.get("updated_at") or 0)):
-                        usage[name] = usage_entry
-        except FileNotFoundError:
-            return usage, 0.0
+        for line in log.iter_rows():
+            entry = self._context_usage_entry_from_source(
+                line.get("source"), line.get("ts"))
+            if not entry:
+                continue
+            name, usage_entry = entry
+            prev = usage.get(name)
+            if (not isinstance(prev, dict)
+                    or float(prev.get("updated_at") or 0) <= float(usage_entry.get("updated_at") or 0)):
+                usage[name] = usage_entry
         return usage, transcript_mtime
 
     def _repair_context_usage_from_transcript(self, cid: str,
@@ -2895,34 +2814,23 @@ class ConversationStore:
         updated = 0
 
         def _rewrite_jsonl(path: Path) -> int:
-            if not path.exists():
+            log = SegmentedJsonl(path)
+            if not log.exists():
                 return 0
             changed = 0
-            rows = []
-            with open(path, "r", encoding="utf-8") as src:
-                for raw in src:
-                    raw = raw.strip()
-                    if not raw:
-                        continue
-                    try:
-                        line = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if (line.get("msg_id") == msg_id
-                            or (line.get("role") == "sub_agent_trace"
-                                and line.get("trace_id") == msg_id)):
-                        line["content"] = content
-                        if role:
-                            line["role"] = role
-                        changed += 1
-                    rows.append(line)
-            if not changed:
-                return 0
-            tmp = path.with_suffix(".tmp")
-            with open(tmp, "w", encoding="utf-8") as dst:
-                for line in rows:
-                    dst.write(json.dumps(line, ensure_ascii=False) + "\n")
-            tmp.replace(path)
+
+            def _transform(line: Dict[str, Any]) -> Dict[str, Any]:
+                nonlocal changed
+                if (line.get("msg_id") == msg_id
+                        or (line.get("role") == "sub_agent_trace"
+                            and line.get("trace_id") == msg_id)):
+                    line["content"] = content
+                    if role:
+                        line["role"] = role
+                    changed += 1
+                return line
+
+            log.rewrite(_transform)
             return changed
 
         with lock:
@@ -2931,7 +2839,7 @@ class ConversationStore:
             conv_dir = self._conv_dir(cid)
             if conv_dir.is_dir():
                 for entry in conv_dir.iterdir():
-                    if entry.is_dir() and (entry / "context.jsonl").exists():
+                    if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
                         _rewrite_jsonl(entry / "context.jsonl")
 
         if updated:
@@ -2980,7 +2888,7 @@ class ConversationStore:
         removed = 0
 
         def _rewrite_jsonl(path: Path) -> int:
-            """Rewrite a JSONL file, removing lines with matching msg_id. Returns count removed.
+            """Rewrite a logical JSONL stream, removing rows with matching msg_id.
 
             Also removes:
               - sub_agent_trace messages whose trace_id matches an id in
@@ -2988,60 +2896,35 @@ class ConversationStore:
                 trace_id as the deletion key);
               - their associated trace_update lines (orphan otherwise).
             """
-            if not path.exists():
+            log = SegmentedJsonl(path)
+            if not log.exists():
                 return 0
             count = 0
-            # First pass: collect trace_ids that will be deleted (so we
-            # can drop their trace_update follow-ups in the same pass).
             trace_ids_to_drop = set()
-            try:
-                with open(path, "r", encoding="utf-8") as src:
-                    for raw in src:
-                        raw = raw.strip()
-                        if not raw:
-                            continue
-                        try:
-                            line = json.loads(raw)
-                        except json.JSONDecodeError:
-                            continue
-                        if line.get("role") != "sub_agent_trace":
-                            continue
-                        _tid = line.get("trace_id", "")
-                        if not _tid:
-                            continue
-                        if line.get("msg_id") in ids or _tid in ids:
-                            trace_ids_to_drop.add(_tid)
-            except Exception:
-                logger.debug("exception suppressed", exc_info=True)
+            for line in log.iter_rows():
+                if line.get("role") != "sub_agent_trace":
+                    continue
+                _tid = line.get("trace_id", "")
+                if _tid and (line.get("msg_id") in ids or _tid in ids):
+                    trace_ids_to_drop.add(_tid)
 
-            tmp = path.with_suffix(".tmp")
-            with open(path, "r", encoding="utf-8") as src, \
-                 open(tmp, "w", encoding="utf-8") as dst:
-                for raw in src:
-                    raw = raw.strip()
-                    if not raw:
-                        continue
-                    try:
-                        line = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if line.get("msg_id") in ids:
-                        count += 1
-                        continue
-                    # Legacy sub_agent_trace without msg_id — match on trace_id
-                    if (line.get("role") == "sub_agent_trace"
-                            and line.get("trace_id") in ids):
-                        count += 1
-                        continue
-                    # Drop orphan trace_update lines for deleted traces
-                    if (line.get("t") == "trace_update"
-                            and line.get("trace_id") in trace_ids_to_drop):
-                        continue
-                    dst.write(json.dumps(line, ensure_ascii=False) + "\n")
-            if count:
-                tmp.replace(path)
-            else:
-                tmp.unlink(missing_ok=True)
+            def _transform(line: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                nonlocal count
+                if line.get("msg_id") in ids:
+                    count += 1
+                    return None
+                # Legacy sub_agent_trace without msg_id — match on trace_id
+                if (line.get("role") == "sub_agent_trace"
+                        and line.get("trace_id") in ids):
+                    count += 1
+                    return None
+                # Drop orphan trace_update lines for deleted traces
+                if (line.get("t") == "trace_update"
+                        and line.get("trace_id") in trace_ids_to_drop):
+                    return None
+                return line
+
+            log.rewrite(_transform)
             return count
 
         with lock:
@@ -3053,7 +2936,7 @@ class ConversationStore:
             conv_dir = self._conv_dir(cid)
             if conv_dir.is_dir():
                 for entry in conv_dir.iterdir():
-                    if entry.is_dir() and (entry / "context.jsonl").exists():
+                    if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
                         _rewrite_jsonl(entry / "context.jsonl")
 
         with self._cache_lock:
@@ -3112,8 +2995,7 @@ class ConversationStore:
                 "trace_id": trace_id, "source": source, "content": "",
                 "trace": [],
             })
-            with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
-                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            self._transcript_log(cid).append_dicts([line])
             self._notify_bg_transcript_chars(
                 cid, self._row_payload_chars(line))
         return True
@@ -3129,8 +3011,7 @@ class ConversationStore:
                 "entry": entry_data,
                 "content_update": content_update,
             })
-            with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
-                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            self._transcript_log(cid).append_dicts([line])
             self._notify_bg_transcript_chars(
                 cid, self._row_payload_chars(line))
         return True

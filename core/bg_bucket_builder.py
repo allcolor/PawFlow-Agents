@@ -35,6 +35,7 @@ from core.bucket_store import (
     BUCKET_OUTPUT_TARGET, HEADER_BUDGET, L1_TRIGGER_MSGS,
     ROLLUP_TRIGGER_COUNT, TAIL_RESERVE, TAIL_TOKEN_BUDGET, BucketStore,
 )
+from core.segmented_jsonl import SegmentedJsonl
 from core.tool_activity_digest import (
     extract_tool_activity, format_activity_digest, is_empty, merge_traces,
 )
@@ -765,7 +766,7 @@ class BgBucketBuilder:
         shared_chars = self._sum_chars_since(shared_path, pyramid_seq)
 
         # Transcript chars post-pyramid: sum payload chars (one scan).
-        transcript_path = conv_dir / "transcript.jsonl"
+        transcript_path = cs._transcript_path(cid)
         transcript_chars = self._sum_chars_since(transcript_path, pyramid_seq)
 
         with self._seq_cache_lock:
@@ -789,35 +790,27 @@ class BgBucketBuilder:
 
     @staticmethod
     def _sum_chars_in_range(path, first_seq: int, last_seq: int) -> int:
-        """Sum of payload char counts in JSONL rows with
-        first_seq ≤ seq ≤ last_seq. 0 if file missing.
+        """Sum of payload char counts in logical JSONL rows with
+        first_seq <= seq <= last_seq. 0 if the stream is missing.
         """
-        if not path.exists():
+        log = SegmentedJsonl(path)
+        if not log.exists():
             return 0
-        import json as _json
         total = 0
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        d = _json.loads(line)
-                    except _json.JSONDecodeError:
-                        continue
-                    s = int(d.get("seq") or 0)
-                    if s < first_seq or s > last_seq:
-                        continue
-                    c = d.get("content")
-                    if isinstance(c, str):
-                        total += len(c)
-                    elif isinstance(c, list):
-                        for p in c:
-                            if isinstance(p, dict):
-                                t = p.get("text") or ""
-                                if isinstance(t, str):
-                                    total += len(t)
+            for d in log.iter_rows():
+                s = int(d.get("seq") or 0)
+                if s < first_seq or s > last_seq:
+                    continue
+                c = d.get("content")
+                if isinstance(c, str):
+                    total += len(c)
+                elif isinstance(c, list):
+                    for p in c:
+                        if isinstance(p, dict):
+                            t = p.get("text") or ""
+                            if isinstance(t, str):
+                                total += len(t)
         except Exception:
             logger.debug("[bg-bucket] _sum_chars_in_range failed",
                           exc_info=True)
@@ -825,95 +818,39 @@ class BgBucketBuilder:
 
     @staticmethod
     def _count_rows_since(path, after_seq: int) -> int:
-        """Count JSONL rows with seq > after_seq. 0 if file missing."""
-        if not path.exists():
+        """Count logical JSONL rows with seq > after_seq. 0 if missing."""
+        log = SegmentedJsonl(path)
+        if not log.exists():
             return 0
-        import json as _json
         n = 0
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        d = _json.loads(line)
-                    except _json.JSONDecodeError:
-                        continue
-                    if int(d.get("seq") or 0) > after_seq:
-                        n += 1
+            for d in log.iter_rows():
+                if int(d.get("seq") or 0) > after_seq:
+                    n += 1
         except Exception:
             logger.debug("[bg-bucket] _count_rows_since failed", exc_info=True)
         return n
 
     @staticmethod
     def _read_last_seq(path) -> int:
-        """Read the seq of the last JSONL record in `path`, O(1) in
-        file size. Returns 0 if the file is missing or empty."""
-        import json as _json
-        import os as _os
-        if not path.exists():
+        """Read the seq of the last logical JSONL record."""
+        log = SegmentedJsonl(path)
+        if not log.exists():
             return 0
         try:
-            with open(path, "rb") as f:
-                f.seek(0, _os.SEEK_END)
-                file_size = f.tell()
-                if file_size == 0:
-                    return 0
-                # Walk backwards in 4 KB chunks until we have a line.
-                chunk = 4096
-                data = b""
-                pos = file_size
-                while pos > 0:
-                    read_size = min(chunk, pos)
-                    pos -= read_size
-                    f.seek(pos)
-                    data = f.read(read_size) + data
-                    # Strip trailing newlines to find the real last line
-                    stripped = data.rstrip(b"\n\r")
-                    nl = stripped.rfind(b"\n")
-                    if nl >= 0:
-                        last_line = stripped[nl + 1:]
-                        try:
-                            row = _json.loads(last_line.decode(
-                                "utf-8", errors="replace"))
-                            return int(row.get("seq") or 0)
-                        except (ValueError, _json.JSONDecodeError):
-                            return 0
-                # File had only one line (no internal newline before it)
-                last_line = data.strip()
-                if not last_line:
-                    return 0
-                row = _json.loads(last_line.decode(
-                    "utf-8", errors="replace"))
+            for row in log.iter_rows_reverse():
                 return int(row.get("seq") or 0)
-        except (OSError, ValueError, _json.JSONDecodeError):
+        except (OSError, ValueError):
             return 0
+        return 0
 
     def _shared_gap(self, cid: str) -> int:
-        """Count shared msgs with seq > pyramid.last_seq."""
+        """Count shared rows with seq > pyramid.last_seq."""
         from core.conversation_store import ConversationStore
         cs = ConversationStore.instance()
         conv_dir = cs._conv_dir(cid)
         store = BucketStore.get(conv_dir)
-        shared_path = cs._shared_ctx_path(cid)
-        if not shared_path.exists():
-            return 0
-        last_seq = store.last_seq
-        count = 0
-        import json as _json
-        with open(shared_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = _json.loads(line)
-                except _json.JSONDecodeError:
-                    continue
-                if int(row.get("seq") or 0) > last_seq:
-                    count += 1
-        return count
+        return self._count_rows_since(cs._shared_ctx_path(cid), store.last_seq)
 
     def _run_job(self, cid: str, user_id: str) -> None:
         try:
@@ -989,23 +926,14 @@ class BgBucketBuilder:
     def _load_shared_since(self, cid: str, after_seq: int) -> List[Dict]:
         from core.conversation_store import ConversationStore
         cs = ConversationStore.instance()
-        path = cs._shared_ctx_path(cid)
-        if not path.exists():
+        log = SegmentedJsonl(cs._shared_ctx_path(cid))
+        if not log.exists():
             return []
-        import json as _json
         out: List[Dict] = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = _json.loads(line)
-                except _json.JSONDecodeError:
-                    continue
-                if int(row.get("seq") or 0) > after_seq:
-                    out.append(row)
-        # shared.jsonl order is (ts, seq)-sortable; sort defensively
+        for row in log.iter_rows():
+            if int(row.get("seq") or 0) > after_seq:
+                out.append(row)
+        # shared context order is (ts, seq)-sortable; sort defensively
         out.sort(key=lambda m: (
             float(m.get("ts") or m.get("timestamp") or 0.0),
             int(m.get("seq") or 0)))
@@ -1177,7 +1105,7 @@ class BgBucketBuilder:
         try:
             from core.conversation_store import ConversationStore
             _conv_dir = ConversationStore.instance()._conv_dir(cid)
-            _tp = _conv_dir / "transcript.jsonl"
+            _tp = ConversationStore.instance()._transcript_path(cid)
             _covered_chars = self._sum_chars_in_range(
                 _tp, first_seq, last_seq)
             if _covered_chars:

@@ -108,10 +108,9 @@ class ManageResourceHandler(ToolHandler):
                     return "Error: 'name' is required for create"
                 scope = data.pop("scope", "user") if isinstance(data, dict) else "user"
 
-                # Agent-side resource creation is conversation-local. A tool
-                # call from an active conversation must not silently persist
-                # reusable resources into user/global scope.
-                if self._conversation_id:
+                # Agent-side resource creation is conversation-local. UI/user
+                # calls may still create any scope allowed by the user's role.
+                if self._conversation_id and self._agent_name:
                     scope = "conversation"
 
                 if rtype in ("agent", "skill") and self._agent_name:

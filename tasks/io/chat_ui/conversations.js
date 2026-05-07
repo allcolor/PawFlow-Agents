@@ -180,9 +180,7 @@ function updateTechnicalGroupingToggle(enabled) {
   btn.style.display = conversationId ? 'inline-flex' : 'none';
   btn.classList.toggle('active', active);
   btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-  const label = active
-    ? 'Technical details are grouped. Click to disable grouping and reload the conversation.'
-    : 'Group technical details. Click to group tool calls and thinking in collapsible boxes, then reload the conversation.';
+  const label = active ? t('groupTechnicalEnabledTitle') : t('groupTechnicalDisabledTitle');
   btn.setAttribute('aria-label', label);
   btn.title = label;
   btn.innerHTML = active ? '&#x25A3;' : '&#x25A1;';

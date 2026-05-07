@@ -52,6 +52,12 @@ class ServeAssetsTask(BaseTask):
                 "default": "public, max-age=3600",
                 "description": "Cache-Control header for responses",
             },
+            "base_path": {
+                "type": "string",
+                "required": False,
+                "default": "",
+                "description": "URL path prefix to strip when route parameters do not capture a nested asset path",
+            },
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
@@ -62,6 +68,11 @@ class ServeAssetsTask(BaseTask):
             or flowfile.get_attribute("http.path.filename")
             or ""
         )
+        if not requested_path:
+            base_path = str(self.config.get("base_path", "") or "").rstrip("/")
+            http_path = (flowfile.get_attribute("http.path") or "").split("?", 1)[0]
+            if base_path and http_path.startswith(base_path + "/"):
+                requested_path = http_path[len(base_path) + 1:]
 
         if not requested_path:
             flowfile.set_content(b'{"error": "No path specified"}')

@@ -508,6 +508,47 @@ class TestAgentServiceActions:
         assert sdef is not None
         assert sdef.config == {"host": "localhost", "port": "5432"}
 
+    def test_service_install_respects_explicit_global_scope_with_conversation_id(self):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        ff = self._make_flowfile({
+            "action": "service_install",
+            "service_type": SVC_TYPE,
+            "service_name": "globaldb",
+            "scope": "global",
+            "conversation_id": "conv1",
+            "config": {"host": "global"},
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+
+        result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert data["installed"] is True
+        assert self.reg.get_definition("global", "", "globaldb") is not None
+        assert self.reg.get_definition("conv", "conv1", "globaldb") is None
+
+    def test_agent_service_install_forces_conversation_scope(self):
+        from tasks.ai.actions.service_flow import _handle_service_flow
+
+        ff = self._make_flowfile({
+            "action": "service_install",
+            "service_type": SVC_TYPE,
+            "service_name": "agentdb",
+            "scope": "global",
+            "conversation_id": "conv1",
+            "_agent_name": "assistant",
+            "config": {"host": "conv"},
+        })
+        ff.set_attribute("http.auth.roles", "admin")
+
+        result = _handle_service_flow(None, "service_install", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        assert data["installed"] is True
+        assert self.reg.get_definition("conv", "conv1", "agentdb") is not None
+        assert self.reg.get_definition("global", "", "agentdb") is None
+
     def test_service_install_missing_params(self):
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask({"conversation_store": True, "api_key": "test-key"})
@@ -560,6 +601,18 @@ class TestAgentServiceActions:
         assert by_id["db1"]["enabled"] is True
         assert by_id["db1"]["description"] == "Main DB"
         assert by_id["db2"]["enabled"] is False
+
+    def test_service_list_includes_conversation_scope_when_requested(self):
+        self.reg.install("conv", "conv1", "convdb", SVC_TYPE, config={"host": "conv"})
+
+        from tasks.ai.actions.service_flow import _handle_service_flow
+        ff = self._make_flowfile({"action": "list_services", "conversation_id": "conv1"})
+        result = _handle_service_flow(None, "list_services", json.loads(ff.get_content()), None, "testuser", ff)
+        data = json.loads(result[0].get_content())
+
+        by_id = {s["service_id"]: s for s in data["services"]}
+        assert by_id["convdb"]["scope"] == "conv"
+        assert by_id["convdb"]["service_type"] == SVC_TYPE
 
     def test_service_enable(self):
         self.reg.install(self.SCOPE, "testuser", "mydb", SVC_TYPE, enabled=False)

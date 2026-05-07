@@ -27,6 +27,26 @@ def _publish_command_result(conversation_id: str, result: dict):
 _oauth_pending: Dict[str, Dict[str, str]] = {}
 
 
+def _is_admin(flowfile: FlowFile) -> bool:
+    return "admin" in (flowfile.get_attribute("http.auth.roles") or "")
+
+
+def _service_scope_id(scope: str, user_id: str, conversation_id: str = "") -> str:
+    if scope == "global":
+        return ""
+    if scope == "conv":
+        return conversation_id
+    return user_id
+
+
+def _normalize_service_scope(scope: str) -> str:
+    if scope in ("conversation", "conv"):
+        return "conv"
+    if scope == "global":
+        return "global"
+    return "user"
+
+
 def _credential_provider_for_service(service_id: str, user_id: str = "") -> str:
     from services.llm_credential_oauth import normalize_provider
     from core.service_registry import ServiceRegistry
@@ -314,6 +334,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             from core.service_registry import ServiceRegistry
             reg = ServiceRegistry.get_instance()
             filter_type = body.get("service_type", "") or ""
+            conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
             services = []
             for sid, sdef in sorted(reg.get_all("global", "").items()):
                 if filter_type and sdef.service_type != filter_type:
@@ -359,6 +380,24 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         "docker_image": sdef.config["docker_image"],
                     }
                 services.append(entry)
+            if conv_id:
+                for sid, sdef in sorted(reg.get_all("conv", conv_id).items()):
+                    if filter_type and sdef.service_type != filter_type:
+                        continue
+                    try:
+                        _started = reg.is_connected("conv", conv_id, sid) if sdef.enabled else False
+                    except Exception:
+                        _started = False
+                    services.append({
+                        "service_id": sid,
+                        "ref": f"conv:{conv_id}:{sid}",
+                        "service_type": sdef.service_type,
+                        "enabled": sdef.enabled,
+                        "started": _started,
+                        "description": sdef.description,
+                        "scope": "conv",
+                        "provider": (sdef.config or {}).get("provider", ""),
+                    })
             flowfile.set_content(json.dumps({
                 "services": services,
             }, ensure_ascii=False).encode())
@@ -415,7 +454,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             svc_name = body.get("service_name", "")
             config_str = body.get("config_str", "")
             conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
-            scope = "conversation" if conv_id else body.get("scope", "user")
+            requested_scope = body.get("scope", "") or ""
+            agent_name = (
+                body.get("_agent_name", "")
+                or body.get("call_agent_name", "")
+                or flowfile.get_attribute("call_agent_name")
+                or flowfile.get_attribute("agent_name")
+                or ""
+            )
+            scope = requested_scope or ("conversation" if conv_id and agent_name else "user")
+            if conv_id and agent_name:
+                scope = "conversation"
             profile_name = body.get("profile", "")
             # Profile shortcut: resolve provider/base_url/model from profile
             if profile_name:
@@ -633,26 +682,22 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "service_uninstall":
         try:
             svc_id = body.get("service_id", "")
-            scope = body.get("scope", "")
+            scope = _normalize_service_scope(body.get("scope", "user"))
+            conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
             if not svc_id:
                 flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
                 return [flowfile]
-            # Try global first if scope says so, or auto-detect
+            if scope == "global" and not _is_admin(flowfile):
+                flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             from core.service_registry import ServiceRegistry
-            gsvc = ServiceRegistry.get_instance()
-            if scope == "global" or (not scope and gsvc.get_definition("global", "", svc_id)):
-                if "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
-                    flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
-                    flowfile.set_attribute("http.response.status", "403")
-                    return [flowfile]
-                gsvc.uninstall("global", "", svc_id)
-            else:
-                from core.service_registry import ServiceRegistry
-                registry = ServiceRegistry.get_instance()
-                if not registry.get_definition("user", user_id, svc_id):
-                    flowfile.set_content(json.dumps({"error": f"Service '{svc_id}' not found."}).encode())
-                    return [flowfile]
-                registry.uninstall("user", user_id, svc_id)
+            registry = ServiceRegistry.get_instance()
+            scope_id = _service_scope_id(scope, user_id, conv_id)
+            if not registry.get_definition(scope, scope_id, svc_id):
+                flowfile.set_content(json.dumps({"error": f"Service '{svc_id}' not found."}).encode())
+                return [flowfile]
+            registry.uninstall(scope, scope_id, svc_id)
             flowfile.set_content(json.dumps({
                 "uninstalled": True, "id": svc_id,
             }, ensure_ascii=False).encode())
@@ -665,12 +710,19 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             from core.service_registry import ServiceRegistry
             registry = ServiceRegistry.get_instance()
             svc_id = body.get("service_id", "")
-            if not registry.get_definition("user", user_id, svc_id):
+            scope = _normalize_service_scope(body.get("scope", "user"))
+            conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+            if scope == "global" and not _is_admin(flowfile):
+                flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            scope_id = _service_scope_id(scope, user_id, conv_id)
+            if not registry.get_definition(scope, scope_id, svc_id):
                 flowfile.set_content(json.dumps({
                     "error": f"Service '{svc_id}' not found.",
                 }).encode())
                 return [flowfile]
-            registry.enable("user", user_id, svc_id)
+            registry.enable(scope, scope_id, svc_id)
             flowfile.set_content(json.dumps({
                 "enabled": True, "id": svc_id,
             }, ensure_ascii=False).encode())
@@ -683,12 +735,19 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             from core.service_registry import ServiceRegistry
             registry = ServiceRegistry.get_instance()
             svc_id = body.get("service_id", "")
-            if not registry.get_definition("user", user_id, svc_id):
+            scope = _normalize_service_scope(body.get("scope", "user"))
+            conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+            if scope == "global" and not _is_admin(flowfile):
+                flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            scope_id = _service_scope_id(scope, user_id, conv_id)
+            if not registry.get_definition(scope, scope_id, svc_id):
                 flowfile.set_content(json.dumps({
                     "error": f"Service '{svc_id}' not found.",
                 }).encode())
                 return [flowfile]
-            registry.disable("user", user_id, svc_id)
+            registry.disable(scope, scope_id, svc_id)
             flowfile.set_content(json.dumps({
                 "disabled": True, "id": svc_id,
             }, ensure_ascii=False).encode())
@@ -698,18 +757,15 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "get_service_detail":
         sid = body.get("service_id", "")
-        scope = body.get("scope", "global")
+        scope = _normalize_service_scope(body.get("scope", "global"))
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         if not sid:
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
         try:
-            if scope == "user" and user_id:
-                from core.service_registry import ServiceRegistry
-                ureg = ServiceRegistry.get_instance()
-                sdef = ureg.get_all("user", user_id).get(sid)
-            else:
-                from core.service_registry import ServiceRegistry
-                sdef = ServiceRegistry.get_instance().get_all("global", "").get(sid)
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            sdef = reg.get_definition(scope, _service_scope_id(scope, user_id, conv_id), sid)
             if not sdef:
                 flowfile.set_content(json.dumps({"error": f"Service '{sid}' not found"}).encode())
                 return [flowfile]
@@ -726,26 +782,20 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "update_service":
         sid = body.get("service_id", "")
-        scope = body.get("scope", "global")
+        scope = _normalize_service_scope(body.get("scope", "global"))
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         config = body.get("config", {})
         if not sid:
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
-        # Admin check for global services
-        if scope == "global":
-            _role = flowfile.get_attribute("http.auth.roles") or ""
-            if _role != "admin":
-                flowfile.set_content(json.dumps({"error": "Only admin can modify global services"}).encode())
-                flowfile.set_attribute("http.response.status", "403")
-                return [flowfile]
+        if scope == "global" and not _is_admin(flowfile):
+            flowfile.set_content(json.dumps({"error": "Only admin can modify global services"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
         try:
-            if scope == "user" and user_id:
-                from core.service_registry import ServiceRegistry
-                ureg = ServiceRegistry.get_instance()
-                ureg.update_config("user", user_id, sid, config)
-            else:
-                from core.service_registry import ServiceRegistry
-                ServiceRegistry.get_instance().update_config("global", "", sid, config)
+            from core.service_registry import ServiceRegistry
+            ServiceRegistry.get_instance().update_config(
+                scope, _service_scope_id(scope, user_id, conv_id), sid, config)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -753,29 +803,21 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "toggle_service":
         sid = body.get("service_id", "")
+        scope = _normalize_service_scope(body.get("scope", "user"))
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
         enabled = body.get("enabled", True)
         try:
             from core.service_registry import ServiceRegistry
-            gsvc = ServiceRegistry.get_instance()
-            if gsvc.get_definition("global", "", sid):
-                # Global service
-                if "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
-                    flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
-                    flowfile.set_attribute("http.response.status", "403")
-                    return [flowfile]
-                if enabled:
-                    gsvc.enable("global", "", sid)
-                else:
-                    gsvc.disable("global", "", sid)
+            reg = ServiceRegistry.get_instance()
+            if scope == "global" and not _is_admin(flowfile):
+                flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
+            scope_id = _service_scope_id(scope, user_id, conv_id)
+            if enabled:
+                reg.enable(scope, scope_id, sid)
             else:
-                # User service
-                from core.service_registry import ServiceRegistry
-                ureg = ServiceRegistry.get_instance()
-                uid = user_id
-                if enabled:
-                    ureg.enable("user", uid, sid)
-                else:
-                    ureg.disable("user", uid, sid)
+                reg.disable(scope, scope_id, sid)
             flowfile.set_content(json.dumps({"ok": True, "enabled": enabled}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -783,14 +825,15 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "delete_service":
         sid = body.get("service_id", "")
-        scope = body.get("scope", "user")
-        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+        scope = _normalize_service_scope(body.get("scope", "user"))
+        conv_id = body.get("conversation_id", "") or flowfile.get_attribute("http.conversation_id") or ""
+        if scope == "global" and not _is_admin(flowfile):
             flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             return [flowfile]
         try:
             from core.service_registry import ServiceRegistry
-            uid = user_id
-            ServiceRegistry.get_instance().uninstall(scope, uid if scope == "user" else "", sid)
+            ServiceRegistry.get_instance().uninstall(
+                scope, _service_scope_id(scope, user_id, conv_id), sid)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

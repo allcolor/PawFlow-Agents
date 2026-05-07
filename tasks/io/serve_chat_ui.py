@@ -78,12 +78,39 @@ def _initial_theme_block(flowfile: FlowFile) -> str:
     )
 
 
+def _initial_i18n_block() -> str:
+    """Embed boot i18n catalogs so the UI does not depend on nested JSON assets."""
+    i18n_dir = _CHAT_UI_DIR / "i18n"
+    languages = []
+    catalogs = {}
+    try:
+        languages = json.loads((i18n_dir / "languages.json").read_text(encoding="utf-8"))
+    except Exception:
+        languages = [{"code": "en", "label": "English", "native_label": "English"}]
+    for code in ("en", "fr", "es"):
+        try:
+            catalogs[code] = json.loads((i18n_dir / f"{code}.json").read_text(encoding="utf-8"))
+        except Exception:
+            catalogs[code] = {}
+    return (
+        "<script>window.PAWFLOW_I18N_LANGUAGES="
+        + json.dumps(languages, ensure_ascii=False)
+        + ";window.PAWFLOW_I18N_CATALOGS="
+        + json.dumps(catalogs, ensure_ascii=False)
+        + ";</script>\n"
+    )
+
+
 def _compute_js_version() -> str:
-    """Short hash of all JS files for cache busting."""
+    """Short hash of all chat assets that affect boot-time rendering."""
     h = hashlib.md5()
     for mod in _JS_MODULES:
         p = _CHAT_UI_DIR / mod
         if p.exists():
+            h.update(p.read_bytes())
+    i18n_dir = _CHAT_UI_DIR / "i18n"
+    if i18n_dir.exists():
+        for p in sorted(i18n_dir.glob("*.json")):
             h.update(p.read_bytes())
     return h.hexdigest()[:8]
 
@@ -102,7 +129,11 @@ def _load_html() -> str:
     for mod in _JS_MODULES:
         if (_CHAT_UI_DIR / mod).exists():
             script_tags.append(f'<script defer src="/chat/js/{mod}?v={v}"></script>')
-    scripts_html = "\n".join(script_tags)
+    scripts_html = (
+        f'<script>window.PAWFLOW_ASSET_VERSION={json.dumps(v)};</script>\n'
+        + _initial_i18n_block()
+        + "\n".join(script_tags)
+    )
 
     # Replace placeholder with script tags
     html = template.replace("/* JS_PLACEHOLDER */", "")

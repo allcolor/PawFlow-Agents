@@ -531,10 +531,10 @@ if (typeof hljs !== 'undefined') {
   <div class="sidebar-header">
     <h2>Conversations</h2>
     <div style="position:relative;display:inline-block;">
-      <button class="btn-new" style="border-radius:6px 0 0 6px" onclick="newChat()">+ New</button><button class="btn-new" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'" style="border-left:1px solid rgba(255,255,255,0.3);border-radius:0 6px 6px 0;padding:4px 6px;">▼</button>
+      <button class="btn-new" style="border-radius:6px 0 0 6px" onclick="newChat()" data-i18n="newChat">+ New</button><button class="btn-new" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block'" style="border-left:1px solid rgba(255,255,255,0.3);border-radius:0 6px 6px 0;padding:4px 6px;">▼</button>
       <div style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#1a1a2e;border:1px solid #333;border-radius:6px;min-width:200px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.5);">
-        <div onclick="this.parentElement.style.display='none';newChat()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''">New conversation</div>
-        <div onclick="this.parentElement.style.display='none';importConversation()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''">Import conversation</div>
+        <div onclick="this.parentElement.style.display='none';newChat()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''" data-i18n="newConversation">New conversation</div>
+        <div onclick="this.parentElement.style.display='none';importConversation()" style="padding:8px 14px;cursor:pointer;font-size:12px;color:#e0e0e0;" onmouseenter="this.style.background='#2a2a4a'" onmouseleave="this.style.background=''" data-i18n="importConversation">Import conversation</div>
       </div>
     </div>
   </div>
@@ -554,27 +554,30 @@ if (typeof hljs !== 'undefined') {
     </select>
   </div>
   <div class="sidebar-settings" id="resourcesPanel" style="display:none">
-    <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; Resources</label>
-    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:#8888aa;"></div>
+    <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; <span data-i18n="resources">Resources</span></label>
+    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:var(--pf-muted);"></div>
   </div>
 </div>
 <!-- Tab bar -->
 <div class="tab-bar" id="tabBar">
-  <button class="tab-btn active" id="tabChat" data-tab="chat" title="Chat" onclick="switchTab('chat')">💬</button>
+  <button class="tab-btn active" id="tabChat" data-tab="chat" title="Chat" data-i18n-title="chatTitle" onclick="switchTab('chat')">💬</button>
   <div class="tab-spacer"></div>
-  <button id="audioToggleBtn" style="display:none;background:none;border:none;color:#e0e0e0;font-size:18px;cursor:pointer;padding:4px;" onclick="audioToggleMute()" title="Mute audio">&#x1F50A;</button>
-  <button id="audioRestartBtn" style="display:none;background:none;border:none;color:#e0e0e0;font-size:16px;cursor:pointer;padding:4px;" onclick="audioRestart()" title="Restart audio stream">&#x1F504;</button>
+  <button id="audioToggleBtn" style="display:none;background:none;border:none;color:#e0e0e0;font-size:18px;cursor:pointer;padding:4px;" onclick="audioToggleMute()" title="Mute audio" data-i18n-title="muteAudioTitle">&#x1F50A;</button>
+  <button id="audioRestartBtn" style="display:none;background:none;border:none;color:#e0e0e0;font-size:16px;cursor:pointer;padding:4px;" onclick="audioRestart()" title="Restart audio stream" data-i18n-title="restartAudioTitle">&#x1F504;</button>
 </div>
 <div class="main">
 <div class="header">
   <h1>PawFlow Agent</h1>
   <span class="status" id="status">Ready</span>
-  <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant"></span>
+  <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant" data-i18n-title="activeAgentSwitchTitle"></span>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
     <select id="themeSelect" onchange="onGlobalThemeSelectChange(this.value)" title="Global chat theme"
             style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:220px">
       <option value="global:pawflow_dark">PawFlow Dark</option>
+    </select>
+    <select id="languageSelect" onchange="setLanguage(this.value)" title="Language" aria-label="Language"
+            style="background:var(--pf-user);color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none;max-width:120px">
     </select>
     <button id="technicalGroupingToggle" class="tech-group-toggle" type="button" aria-pressed="false"
             aria-label="Group technical details. Click to group tool calls and thinking in collapsible boxes, then reload the conversation."
@@ -582,80 +585,80 @@ if (typeof hljs !== 'undefined') {
             onclick="onTechnicalGroupingToggle()">&#x25A1;</button>
     <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode"
             style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
-      <option value="default">&#x1F512; Default</option>
-      <option value="approve_edits">&#x270F; Approve edits</option>
-      <option value="read_only">&#x1F4D6; Read-only</option>
-      <option value="auto">&#x26A1; Auto</option>
+      <option value="default" data-i18n-permission="permissionDefault">&#x1F512; Default</option>
+      <option value="approve_edits" data-i18n-permission="permissionApproveEdits">&#x270F; Approve edits</option>
+      <option value="read_only" data-i18n-permission="permissionReadOnly">&#x1F4D6; Read-only</option>
+      <option value="auto" data-i18n-permission="permissionAuto">&#x26A1; Auto</option>
     </select>
     <div class="action-menu-wrap" id="actionMenuWrap" style="display:none">
-      <button class="action-menu-btn" onclick="toggleActionMenu()" title="Actions">+</button>
+      <button class="action-menu-btn" onclick="toggleActionMenu()" title="Actions" data-i18n-title="actionsTitle">+</button>
       <div class="action-menu" id="actionMenu">
         <div class="action-menu-item" onclick="closeActionMenu();cmdTerminal('',[''])">
           <span class="ami-icon" style="font-family:monospace;font-weight:bold">&gt;_</span>
-          <div><div class="ami-label">Terminal</div><div class="ami-desc">Open interactive terminal on relay</div></div>
+          <div><div class="ami-label" data-i18n="terminal">Terminal</div><div class="ami-desc" data-i18n="terminalDesc">Open interactive terminal on relay</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdCode('',[''])">
           <span class="ami-icon">&#x2699;</span>
-          <div><div class="ami-label">VS Code</div><div class="ami-desc">Open code-server editor on relay</div></div>
+          <div><div class="ami-label" data-i18n="vsCode">VS Code</div><div class="ami-desc" data-i18n="vsCodeDesc">Open code-server editor on relay</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdDesktop('',[''])">
           <span class="ami-icon">&#x1F5A5;</span>
-          <div><div class="ami-label">Desktop</div><div class="ami-desc">Open virtual desktop (VNC) on relay</div></div>
+          <div><div class="ami-label" data-i18n="desktop">Desktop</div><div class="ami-desc" data-i18n="desktopDesc">Open virtual desktop (VNC) on relay</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdAudio('',[''])">
           <span class="ami-icon">&#x1F50A;</span>
-          <div><div class="ami-label">Audio</div><div class="ami-desc">Forward audio from relay (no desktop)</div></div>
+          <div><div class="ami-label" data-i18n="audio">Audio</div><div class="ami-desc" data-i18n="audioDesc">Forward audio from relay (no desktop)</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdVm('',['vm','list'])">
           <span class="ami-icon">&#x1F433;</span>
-          <div><div class="ami-label">Containers</div><div class="ami-desc">List &amp; manage Docker containers</div></div>
+          <div><div class="ami-label" data-i18n="containers">Containers</div><div class="ami-desc" data-i18n="containersDesc">List &amp; manage Docker containers</div></div>
         </div>
         <div class="action-menu-sep"></div>
         <div class="action-menu-item" onclick="closeActionMenu();openExplorer()">
           <span class="ami-icon">&#128193;</span>
-          <div><div class="ami-label">File Explorer</div><div class="ami-desc">Browse relay filesystem</div></div>
+          <div><div class="ami-label" data-i18n="fileExplorer">File Explorer</div><div class="ami-desc" data-i18n="fileExplorerDesc">Browse relay filesystem</div></div>
         </div>
         <div class="action-menu-item" id="plansMenuItem" onclick="closeActionMenu();togglePlansPanel()">
           <span class="ami-icon">&#x1F4CB;</span>
-          <div><div class="ami-label">Plans</div><div class="ami-desc">View active plans</div></div>
+          <div><div class="ami-label" data-i18n="plans">Plans</div><div class="ami-desc" data-i18n="plansDesc">View active plans</div></div>
         </div>
         <div class="action-menu-item" id="schedsMenuItem" onclick="closeActionMenu();toggleSchedsPanel()">
           <span class="ami-icon">&#x23F0;</span>
-          <div><div class="ami-label">Scheduled Tasks</div><div class="ami-desc">View scheduled checks</div></div>
+          <div><div class="ami-label" data-i18n="scheduledTasks">Scheduled Tasks</div><div class="ami-desc" data-i18n="scheduledTasksDesc">View scheduled checks</div></div>
         </div>
         <div class="action-menu-item" id="filesMenuItem" onclick="closeActionMenu();toggleFilesPanel()">
           <span class="ami-icon">&#x1F4C4;</span>
-          <div><div class="ami-label">Files</div><div class="ami-desc">Conversation files</div></div>
+          <div><div class="ami-label" data-i18n="files">Files</div><div class="ami-desc" data-i18n="filesDesc">Conversation files</div></div>
         </div>
         <div class="action-menu-sep"></div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdShowContext()">
           <span class="ami-icon">&#x1F441;</span>
-          <div><div class="ami-label">Context</div><div class="ami-desc">View LLM context window</div></div>
+          <div><div class="ami-label" data-i18n="context">Context</div><div class="ami-desc" data-i18n="contextDesc">View LLM context window</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdShowMemories()">
           <span class="ami-icon">&#x1F9E0;</span>
-          <div><div class="ami-label">Memories</div><div class="ami-desc">View agent memories</div></div>
+          <div><div class="ami-label" data-i18n="memories">Memories</div><div class="ami-desc" data-i18n="memoriesDesc">View agent memories</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();cmdShowProjectGraph()">
           <span class="ami-icon">&#x1F578;</span>
-          <div><div class="ami-label">Project Graph</div><div class="ami-desc">Build / browse the codebase graph</div></div>
+          <div><div class="ami-label" data-i18n="projectGraph">Project Graph</div><div class="ami-desc" data-i18n="projectGraphDesc">Build / browse the codebase graph</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();_showToolMcpFilterDialog('', 'conversation')">
           <span class="ami-icon">&#x1F6E0;</span>
-          <div><div class="ami-label">Tools / MCP</div><div class="ami-desc">Conversation tool availability</div></div>
+          <div><div class="ami-label" data-i18n="toolsMcp">Tools / MCP</div><div class="ami-desc" data-i18n="toolsMcpDesc">Conversation tool availability</div></div>
         </div>
         <div class="action-menu-sep"></div>
         <div class="action-menu-item" onclick="closeActionMenu();showExportDialog()">
           <span class="ami-icon">&#x1F4E5;</span>
-          <div><div class="ami-label">Export</div><div class="ami-desc">Export conversation</div></div>
+          <div><div class="ami-label" data-i18n="export">Export</div><div class="ami-desc" data-i18n="exportDesc">Export conversation</div></div>
         </div>
         <div class="action-menu-item" onclick="closeActionMenu();resumeConv(conversationId, true)">
           <span class="ami-icon">&#x21BB;</span>
-          <div><div class="ami-label">Refresh</div><div class="ami-desc">Reload conversation</div></div>
+          <div><div class="ami-label" data-i18n="refresh">Refresh</div><div class="ami-desc" data-i18n="refreshDesc">Reload conversation</div></div>
         </div>
         <div class="action-menu-item" style="color:#e94560" onclick="closeActionMenu();deleteCurrentConv()">
           <span class="ami-icon">&#x1F5D1;</span>
-          <div><div class="ami-label">Delete</div><div class="ami-desc">Delete this conversation</div></div>
+          <div><div class="ami-label" data-i18n="delete">Delete</div><div class="ami-desc" data-i18n="deleteDesc">Delete this conversation</div></div>
         </div>
       </div>
     </div>
@@ -665,33 +668,33 @@ if (typeof hljs !== 'undefined') {
 <!-- Chat tab content -->
 <div class="tab-content active" id="tabContentChat" data-tab="chat">
 <div class="files-panel" id="plansPanel" style="display:none">
-  <div class="files-header"><strong>Plans</strong><button class="btn-close-panel" onclick="togglePlansPanel()">&times;</button></div>
+  <div class="files-header"><strong data-i18n="plans">Plans</strong><button class="btn-close-panel" onclick="togglePlansPanel()">&times;</button></div>
   <div class="files-list" id="plansList"></div>
 </div>
 <div class="files-panel" id="schedsPanel" style="display:none">
-  <div class="files-header"><strong>Scheduled Tasks</strong><button class="btn-close-panel" onclick="toggleSchedsPanel()">&times;</button></div>
+  <div class="files-header"><strong data-i18n="scheduledTasks">Scheduled Tasks</strong><button class="btn-close-panel" onclick="toggleSchedsPanel()">&times;</button></div>
   <div class="files-list" id="schedsList"></div>
 </div>
 <div class="files-panel" id="filesPanel" style="display:none">
-  <div class="files-header"><strong>Files</strong><button class="btn-close-panel" onclick="toggleFilesPanel()">&times;</button></div>
+  <div class="files-header"><strong data-i18n="files">Files</strong><button class="btn-close-panel" onclick="toggleFilesPanel()">&times;</button></div>
   <div class="files-list" id="filesList"></div>
 </div>
 <div class="messages-wrap">
   <div class="messages" id="messages"></div>
   <div class="scroll-nav" id="scrollNav">
-    <button onclick="document.getElementById('messages').scrollTop=0;document.getElementById('input').focus()" title="Scroll to top">&#x2191;</button>
-    <button onclick="scrollBottom(true);document.getElementById('input').focus()" title="Scroll to bottom">&#x2193;</button>
+    <button onclick="document.getElementById('messages').scrollTop=0;document.getElementById('input').focus()" title="Scroll to top" data-i18n-title="scrollTopTitle">&#x2191;</button>
+    <button onclick="scrollBottom(true);document.getElementById('input').focus()" title="Scroll to bottom" data-i18n-title="scrollBottomTitle">&#x2193;</button>
   </div>
 </div>
 <div class="active-panel" id="activePanel">
-  <div class="active-panel-title">Active agents</div>
+  <div class="active-panel-title" data-i18n="activeAgents">Active agents</div>
   <div id="activeRows"></div>
 </div>
 <div class="input-area">
   <div class="attachments-preview" id="attachPreview"></div>
   <div class="input-row">
-    <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" style="font-size:16px !important">&#x1F4DD;</button>
-    <button class="btn-attach" onclick="document.getElementById('fileInput').click()" title="Attach files">&#x1F4CE;</button>
+    <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" data-i18n-title="promptLibraryTitle" style="font-size:16px !important">&#x1F4DD;</button>
+    <button class="btn-attach" id="fileAttachBtn" onclick="document.getElementById('fileInput').click()" title="Attach files" data-i18n-title="attachTitle">&#x1F4CE;</button>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
               rows="1" onkeydown="handleKey(event)"></textarea>

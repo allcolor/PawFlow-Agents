@@ -74,6 +74,7 @@ def test_shipped_themes_are_directory_resources():
         "paper", "nord_light", "sage_light", "rose_light",
         "claude", "chatgpt", "qwen", "deepseek", "grok", "gemini",
         "solarized_dark", "dracula", "midnight_blue", "high_contrast",
+        "commodore_64", "amstrad_cpc", "nintendo", "sega",
     }
     found = {p.name for p in root.iterdir() if p.is_dir()}
     assert found >= expected

@@ -15,6 +15,21 @@ A conversation is identified by `conversation_id` and contains:
 
 Clients are interchangeable frontends over that state.
 
+## Storage Layout
+
+Conversation transcripts and contexts are logical JSONL streams. PawFlow can read legacy flat files such as `transcript.jsonl`, `shared.jsonl`, and `{agent}/context.jsonl`, while new or rewritten streams are stored as bounded segment directories such as `transcript/`, `shared/`, and `{agent}/context/` with an `index.json`.
+
+Code that needs conversation rows must go through `ConversationStore` or `SegmentedJsonl` instead of opening those files directly. PawFlow exports still write flat `transcript.jsonl` and context JSONL files inside `.pfconv.zip` archives so archives remain portable and easy to inspect.
+
+Existing installations can migrate flat conversation logs offline:
+
+```bash
+python scripts/migrate_segmented_jsonl.py --dry-run
+python scripts/migrate_segmented_jsonl.py --apply
+```
+
+The migration script backs up each flat file under `_jsonl_migration_backup/` inside the conversation directory before replacing it with segments.
+
 ## Supported Clients
 
 | Client | Role |

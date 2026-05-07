@@ -16,6 +16,7 @@ import zipfile
 import pytest
 
 from core.conversation_store import ConversationStore
+from core.segmented_jsonl import SegmentedJsonl
 
 
 def _msg(role="user", content="hello", **kw):
@@ -48,30 +49,46 @@ def conv(store):
 
 # ── Export PawFlow zip ──
 
+def _logical_rows(path):
+    return list(SegmentedJsonl(path).iter_rows())
+
+
+def _export_pawflow_zip(store, cid):
+    from core import FlowFile
+    from core.file_store import FileStore
+    from tasks.ai.actions.conversation import _handle_conversation
+
+    class _Self:
+        pass
+
+    ff = FlowFile(content=b"")
+    out = _handle_conversation(
+        _Self(), "conv_export_pawflow", {"conversation_id": cid},
+        store, "testuser", ff,
+    )
+    res = json.loads(out[0].get_content().decode())
+    assert res.get("ok"), res
+    fid = res["url"].split("/files/", 1)[1].split("/", 1)[0]
+    stored = FileStore.instance().get(fid, user_id="testuser")
+    assert stored is not None
+    _filename, raw, _content_type = stored
+    return raw
+
+
 def test_export_pawflow_creates_valid_zip(conv):
     store, cid = conv
-    conv_dir = store._conv_dir(cid)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for f in sorted(conv_dir.rglob('*')):
-            if f.is_file() and '.git' not in f.parts:
-                zf.write(f, str(f.relative_to(conv_dir)))
-    buf.seek(0)
-    with zipfile.ZipFile(buf) as zf:
+    raw = _export_pawflow_zip(store, cid)
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         names = zf.namelist()
         assert "transcript.jsonl" in names
+        transcript = [json.loads(l) for l in zf.read("transcript.jsonl").decode().splitlines() if l.strip()]
+        assert [m.get("content") for m in transcript if m.get("t") == "msg"] == ["Hello", "Hi there"]
 
 
 def test_export_pawflow_excludes_git(conv):
     store, cid = conv
-    conv_dir = store._conv_dir(cid)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for f in sorted(conv_dir.rglob('*')):
-            if f.is_file() and '.git' not in f.parts:
-                zf.write(f, str(f.relative_to(conv_dir)))
-    buf.seek(0)
-    with zipfile.ZipFile(buf) as zf:
+    raw = _export_pawflow_zip(store, cid)
+    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         for name in zf.namelist():
             assert '.git' not in name
 
@@ -332,7 +349,7 @@ def test_cc_import_real_format_user_assistant(store):
     ]
     cid = _cc_execute(store, "\n".join(lines) + "\n")
     conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
-    transcript = [json.loads(l) for l in (conv_dir / "transcript.jsonl").read_text().splitlines() if l.strip()]
+    transcript = _logical_rows(conv_dir / "transcript.jsonl")
     msgs = [m for m in transcript if m.get("t") == "msg"]
     roles = [m["role"] for m in msgs]
     # user, assistant(with tool_calls), tool, assistant(text)
@@ -355,7 +372,7 @@ def test_cc_import_drops_empty_assistant_stub(store):
     ]
     cid = _cc_execute(store, "\n".join(lines) + "\n")
     conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
-    transcript = [json.loads(l) for l in (conv_dir / "transcript.jsonl").read_text().splitlines() if l.strip()]
+    transcript = _logical_rows(conv_dir / "transcript.jsonl")
     msgs = [m for m in transcript if m.get("t") == "msg"]
     assert len(msgs) == 2
     assert msgs[0]["content"] == "hi"
@@ -382,8 +399,8 @@ def test_cc_import_creates_shared_context(store):
     cid = _cc_execute(store, "\n".join(lines) + "\n")
     conv_dir = store._store_dir / store._safe_name("testuser") / store._safe_name(cid)
     shared_path = conv_dir / "shared.jsonl"
-    assert shared_path.exists(), "shared.jsonl not created on CC import"
-    shared = [json.loads(l) for l in shared_path.read_text().splitlines() if l.strip()]
+    assert SegmentedJsonl(shared_path).exists(), "shared context not created on CC import"
+    shared = _logical_rows(shared_path)
     # Shared is agent-neutral: both entries become role=user after
     # _transform_for_shared. The second entry is the ex-assistant
     # (prefixed with [Agent claude]) — tool_result is dropped, and

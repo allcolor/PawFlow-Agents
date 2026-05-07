@@ -387,6 +387,45 @@ class TestClassifyMessagesSource(unittest.TestCase):
         self.assertEqual(classified[0]["type"], "thinking")
         self.assertEqual(classified[0]["content"], "real reasoning")
 
+    def test_user_attachments_are_rehydrated_as_display_refs(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        raw = [{
+            "role": "user",
+            "content": "see this",
+            "attachments": [{
+                "filename": "screen.png",
+                "mime_type": "image/png",
+                "file_id": "fid123",
+                "size": 42,
+            }],
+            "ts": 1234.0,
+        }]
+
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+
+        self.assertEqual(classified[0]["type"], "user")
+        self.assertIsInstance(classified[0]["content"], list)
+        self.assertEqual(classified[0]["content"][0], {"type": "text", "text": "see this"})
+        self.assertEqual(classified[0]["content"][1]["type"], "image_ref")
+        self.assertEqual(classified[0]["content"][1]["file_id"], "fid123")
+
+    def test_user_attachments_are_rehydrated_for_context_deserialize(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        messages = task._deserialize_messages([{
+            "role": "user",
+            "content": "see this",
+            "attachments": [{
+                "filename": "screen.png",
+                "mime_type": "image/png",
+                "file_id": "fid123",
+            }],
+            "ts": 1234.0,
+        }], conversation_id="conv1")
+
+        self.assertEqual(messages[0].content[1]["type"], "image_ref")
+        self.assertEqual(messages[0].content[1]["file_id"], "fid123")
+
     def test_tool_display_entries_keep_ts_without_synthetic_msg_ids(self):
         """Tool calls use tc_id; tool results keep their JSONL msg_id."""
         from tasks.ai.agent_loop import AgentLoopTask

@@ -116,11 +116,69 @@ function _refreshGaugeSurfaces(key) {
 }
 
 // ── SSE hints (fast UI update between polls) ──
-// Active agents come ONLY from syncActiveFromServer (list_active).
-// SSE events do NOT add agents to activeInteractions.
-function trackAgentStart(agentName, msgPreview) { /* no-op */ }
-function trackAgentTool(agentName, toolName) { /* no-op */ }
-function trackAgentToolDone(agentName, toolName) { /* no-op */ }
+// list_active remains the authoritative source, but a fresh turn can spend
+// several seconds preparing context before the next poll. SSE hints keep the
+// Active Agents panel visible immediately; syncActiveFromServer removes rows
+// that the server no longer reports.
+function trackAgentStart(agentName, msgPreview) {
+  const key = agentKey(agentName);
+  if (!key) return;
+  const existing = activeInteractions[key] || {};
+  activeInteractions[key] = {
+    name: agentName,
+    taskId: existing.taskId || '',
+    startedAt: existing.startedAt || Date.now(),
+    iteration: existing.iteration || 0,
+    round: existing.round || 0,
+    maxRounds: existing.maxRounds || 0,
+    lastTool: existing.lastTool || '',
+    activeTools: existing.activeTools || [],
+    totalTools: existing.totalTools || 0,
+    status: existing.status || 'thinking...',
+    msgPreview: msgPreview || existing.msgPreview || '',
+    contextUsed: existing.contextUsed || 0,
+    contextMax: existing.contextMax || 0,
+    contextPct: existing.contextPct || 0,
+    ccLive: !!existing.ccLive,
+    ccReuseCount: existing.ccReuseCount || 0,
+    ccLivedSeconds: existing.ccLivedSeconds || 0,
+    ccIdleSeconds: existing.ccIdleSeconds || 0,
+    codexLive: !!existing.codexLive,
+    codexReuseCount: existing.codexReuseCount || 0,
+    codexLivedSeconds: existing.codexLivedSeconds || 0,
+    codexIdleSeconds: existing.codexIdleSeconds || 0,
+    geminiLive: !!existing.geminiLive,
+    geminiReuseCount: existing.geminiReuseCount || 0,
+    geminiLivedSeconds: existing.geminiLivedSeconds || 0,
+    geminiIdleSeconds: existing.geminiIdleSeconds || 0,
+    updatedAt: Date.now(),
+  };
+  if (typeof setConversationWorking === 'function') {
+    setConversationWorking(conversationId, true);
+  }
+  updateActivePanel();
+}
+function trackAgentTool(agentName, toolName) {
+  const key = agentKey(agentName);
+  if (!key) return;
+  if (!activeInteractions[key]) trackAgentStart(agentName);
+  const info = activeInteractions[key];
+  info.lastTool = toolName || info.lastTool || '';
+  info.status = toolName ? 'using ' + toolName : 'using tool';
+  info.activeTools = toolName ? [toolName] : (info.activeTools || []);
+  info.totalTools = (info.totalTools || 0) + 1;
+  info.updatedAt = Date.now();
+  updateActivePanel();
+}
+function trackAgentToolDone(agentName, toolName) {
+  const key = agentKey(agentName);
+  if (!key || !activeInteractions[key]) return;
+  const info = activeInteractions[key];
+  info.activeTools = [];
+  info.status = 'thinking...';
+  info.updatedAt = Date.now();
+  updateActivePanel();
+}
 
 function trackAgentDone(agentName) {
   const key = agentKey(agentName);

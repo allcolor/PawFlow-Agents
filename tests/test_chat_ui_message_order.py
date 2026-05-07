@@ -71,3 +71,11 @@ def test_technical_grouping_toggle_sets_conversation_parameter_and_reloads():
     assert "value: next ? 'true' : 'false'" in CONVERSATIONS_JS
     assert "resumeConv(conversationId, true)" in CONVERSATIONS_JS
     assert "btn.style.display = conversationId ? 'inline-flex' : 'none'" in CONVERSATIONS_JS
+
+
+def test_active_agents_sse_hint_restores_panel_before_poll():
+    active_agents_js = Path("tasks/io/chat_ui/active_agents.js").read_text(encoding="utf-8")
+    assert "function trackAgentStart(agentName, msgPreview) { /* no-op */ }" not in active_agents_js
+    assert "activeInteractions[key] = {" in active_agents_js
+    assert "setConversationWorking(conversationId, true)" in active_agents_js
+    assert "updateActivePanel();" in active_agents_js

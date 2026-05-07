@@ -111,7 +111,7 @@ class AgentSerializationMixin:
                     f"message creation.")
             messages.append(LLMMessage(
                 role=entry["role"],
-                content=entry.get("content", ""),
+                content=self._content_with_attachment_refs(entry),
                 tool_calls=tool_calls,
                 tool_call_id=entry.get("tool_call_id"),
                 source=entry.get("source"),
@@ -126,6 +126,52 @@ class AgentSerializationMixin:
             ))
         return messages
 
+
+    @staticmethod
+    def _content_with_attachment_refs(entry: Dict[str, Any]) -> Any:
+        """Merge stored user attachments back into message content refs.
+
+        Streaming pre-persists the user text immediately and stores uploaded
+        files in a sibling ``attachments`` field. Reload/context paths render
+        and resolve images from multipart ``content`` refs, so reconstruct that
+        shape without touching the stored transcript format.
+        """
+        raw_content = entry.get("content", "")
+        attachments = entry.get("attachments") or []
+        if entry.get("role") != "user" or not isinstance(attachments, list):
+            return raw_content
+
+        parts = list(raw_content) if isinstance(raw_content, list) else []
+        if not parts and isinstance(raw_content, str) and raw_content:
+            parts.append({"type": "text", "text": raw_content})
+
+        existing_fids = {
+            p.get("file_id")
+            for p in parts
+            if isinstance(p, dict) and p.get("file_id")
+        }
+        added_ref = False
+        for att in attachments:
+            if not isinstance(att, dict):
+                continue
+            fid = att.get("file_id", "")
+            if not fid or fid in existing_fids:
+                continue
+            mime = att.get("mime_type", "application/octet-stream")
+            ref_type = "image_ref" if str(mime).startswith("image/") else "file_ref"
+            parts.append({
+                "type": ref_type,
+                "file_id": fid,
+                "filename": att.get("filename", "image" if ref_type == "image_ref" else "file"),
+                "mime_type": mime,
+                "size": att.get("size", 0),
+            })
+            existing_fids.add(fid)
+            added_ref = True
+
+        if added_ref:
+            return parts
+        return raw_content
 
 
     @staticmethod
@@ -151,7 +197,7 @@ class AgentSerializationMixin:
             _display_ts = m.get("timestamp") or m.get("ts")
             if role == "system":
                 continue  # skip system prompts
-            raw_content = m.get("content", "")
+            raw_content = AgentSerializationMixin._content_with_attachment_refs(m)
             # Normalize content to string (may be a list for multipart messages)
             if isinstance(raw_content, list):
                 # Preserve image_ref/file_ref parts for user messages so

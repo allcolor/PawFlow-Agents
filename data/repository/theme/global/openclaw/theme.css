@@ -1,0 +1,17 @@
+:root {
+  --pf-bg: #08090b;
+  --pf-panel: #111217;
+  --pf-sidebar: #050607;
+  --pf-border: #4a1114;
+  --pf-text: #ffffff;
+  --pf-muted: #b9adb0;
+  --pf-accent: #e81b25;
+  --pf-accent-2: #ff5961;
+  --pf-user: #2b0c10;
+  --pf-assistant: #141014;
+  --pf-code-bg: #050607;
+  --pf-danger: #ff3340;
+  --pf-warning: #ffb347;
+  --pf-success: #50d890;
+  --pf-shadow: rgba(0,0,0,0.62);
+}

@@ -162,7 +162,8 @@ class AgentLoopTask(
             from core.bg_bucket_builder import BgBucketBuilder
             _bb = BgBucketBuilder.instance()
             _bb.set_summarizer_resolver(
-                lambda uid: self._get_summarizer_client(uid))
+                lambda uid, cid="": self._get_summarizer_client(
+                    uid, conversation_id=cid))
             _bb.set_summarize_fn(self._summarize_messages)
             logger.info("[bg-bucket] wired resolver + summarize_fn "
                          "from AgentLoopTask.initialize()")

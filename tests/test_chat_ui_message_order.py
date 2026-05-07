@@ -71,6 +71,10 @@ def test_technical_grouping_toggle_sets_conversation_parameter_and_reloads():
     assert "value: next ? 'true' : 'false'" in CONVERSATIONS_JS
     assert "resumeConv(conversationId, true)" in CONVERSATIONS_JS
     assert "btn.style.display = conversationId ? 'inline-flex' : 'none'" in CONVERSATIONS_JS
+    assert "btn.innerHTML = active ? '&#x25A3;' : '&#x25A1;'" in CONVERSATIONS_JS
+    assert "btn.setAttribute('aria-label', label)" in CONVERSATIONS_JS
+    assert 'title="Group technical details.' in TEMPLATE_HTML
+    assert 'Group tech</button>' not in TEMPLATE_HTML
 
 
 def test_active_agents_sse_hint_restores_panel_before_poll():

@@ -1499,7 +1499,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "title_llm_service": self._resolve_service_param("title_llm_service", user_id),
             "resolved_svc": resolved_svc,
             "max_budget_usd": _max_budget,
-            "summarizer": self._get_summarizer_client(user_id),  # (client, max_ctx, svc_id)
+            "summarizer": self._get_summarizer_client(user_id, conversation_id=conversation_id),  # (client, max_ctx, svc_id)
             "sub_executor": sub_executor,
             "_target_agent": _target_agent,
             "_context_diverged": _context_diverged,
@@ -1530,7 +1530,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         0.9: only fires once real-token usage crosses 90%) and enforces
         the target_fraction hard cap (default 0.25) on its output.
         """
-        _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id)
+        _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id, conversation_id=conversation_id)
         if not _sc:
             raise RuntimeError(
                 "No summarizer_service configured. Cannot compact context. "

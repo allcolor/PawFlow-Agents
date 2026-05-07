@@ -83,7 +83,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .header .btn:hover { background: #e94560; color: white; }
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .header .tech-group-toggle { background: var(--pf-panel); color: var(--pf-muted); border: 1px solid var(--pf-border);
-                            border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; display: none; }
+                            border-radius: 6px; width: 28px; height: 28px; padding: 0; font-size: 15px;
+                            cursor: pointer; display: none; align-items: center; justify-content: center; line-height: 1; }
 .header .tech-group-toggle.active { background: var(--pf-accent); border-color: var(--pf-accent); color: var(--pf-bg); }
 .header .tech-group-toggle:disabled { opacity: 0.6; cursor: wait; }
 .header .user-info { font-size: 12px; color: #8888aa; }
@@ -576,7 +577,9 @@ if (typeof hljs !== 'undefined') {
       <option value="global:pawflow_dark">PawFlow Dark</option>
     </select>
     <button id="technicalGroupingToggle" class="tech-group-toggle" type="button" aria-pressed="false"
-            title="Group technical details for this conversation" onclick="onTechnicalGroupingToggle()">Group tech</button>
+            aria-label="Group technical details. Click to group tool calls and thinking in collapsible boxes, then reload the conversation."
+            title="Group technical details. Click to group tool calls and thinking in collapsible boxes, then reload the conversation."
+            onclick="onTechnicalGroupingToggle()">&#x25A1;</button>
     <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode"
             style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
       <option value="default">&#x1F512; Default</option>

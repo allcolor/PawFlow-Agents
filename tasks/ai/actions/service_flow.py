@@ -248,6 +248,62 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     """Handle service flow actions. Returns [flowfile] or None."""
 
 
+    if action == "list_summarizers":
+        conv_id = body.get("conversation_id", "") or ""
+        try:
+            from core.summarizer_bindings import summary as _summarizer_summary
+            flowfile.set_content(json.dumps(
+                _summarizer_summary(user_id, conv_id),
+                ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "link_summarizer":
+        conv_id = body.get("conversation_id", "") or ""
+        scope = body.get("scope", "") or ""
+        service_id = body.get("service_id", "") or ""
+        if not conv_id or not scope or not service_id:
+            flowfile.set_content(json.dumps({
+                "error": "conversation_id, scope and service_id are required",
+            }).encode())
+            return [flowfile]
+        try:
+            from core.service_registry import ServiceRegistry
+            reg = ServiceRegistry.get_instance()
+            scope_id = conv_id if scope == "conv" else user_id if scope == "user" else ""
+            sdef = reg.get_definition(scope, scope_id, service_id)
+            if not sdef or sdef.service_type != "summarizer" or not sdef.enabled:
+                flowfile.set_content(json.dumps({
+                    "error": "Summarizer service not found or disabled",
+                }).encode())
+                return [flowfile]
+            from core.summarizer_bindings import set_binding, summary as _summarizer_summary
+            set_binding(conv_id, scope, service_id)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "summarizer": _summarizer_summary(user_id, conv_id),
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "unlink_summarizer":
+        conv_id = body.get("conversation_id", "") or ""
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.summarizer_bindings import clear_binding, summary as _summarizer_summary
+            clear_binding(conv_id)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "summarizer": _summarizer_summary(user_id, conv_id),
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "list_services":
         # Canonical service listing. Optional `service_type` filter returns
         # only services of that type (e.g. 'llmConnection', 'tool_relay_service').

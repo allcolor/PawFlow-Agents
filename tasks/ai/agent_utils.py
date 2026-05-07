@@ -241,24 +241,30 @@ class AgentUtilsMixin:
         from core.expression import resolve_value
         return resolve_value(svc_id, owner=user_id) or ""
 
-    def _get_summarizer_client(self, user_id: str = ""):
-        """Resolve a dedicated summarizer LLM service for compaction/summary.
+    def _get_summarizer_client(self, user_id: str = "", conversation_id: str = ""):
+        """Resolve the effective summarizer service and its LLM service.
 
-        Returns (service_or_client, max_context_tokens, service_id) or (None, 0, "").
-        The returned object has .complete() — prefer service (has _apply_defaults).
+        Returns (service_or_client, max_context_tokens, llm_service_id) or
+        (None, 0, ""). A conversation can explicitly bind one summarizer;
+        otherwise the first enabled summarizer service wins in scope order:
+        conversation -> user -> global.
         """
-        svc_id = self._resolve_service_param("summarizer_service", user_id)
-        if not svc_id:
+        from core.summarizer_bindings import resolve_service
+        summarizer, sdef, explicit = resolve_service(user_id, conversation_id)
+        if not summarizer:
             return None, 0, ""
-        logger.debug(f"[summarizer] resolved to '{svc_id}'")
-        client, svc = self._resolve_llm_service(svc_id, user_id)
-        if svc and hasattr(svc, 'complete'):
-            # Return the SERVICE (has _apply_defaults for temperature etc.)
-            ctx_max = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
-            return svc, ctx_max, svc_id
+        client, ctx_max, llm_service = summarizer.resolve_llm_service(
+            user_id=user_id, conversation_id=conversation_id)
         if client:
-            ctx_max = 0
-            return client, ctx_max, svc_id
+            logger.debug(
+                "[summarizer] resolved service='%s' scope=%s explicit=%s llm='%s'",
+                getattr(sdef, "service_id", ""), getattr(sdef, "scope", ""),
+                explicit, llm_service)
+            return client, ctx_max, llm_service
+        logger.warning(
+            "[summarizer] service '%s' resolved but LLM service '%s' is unavailable",
+            getattr(sdef, "service_id", ""),
+            (getattr(summarizer, "config", {}) or {}).get("llm_service", ""))
         return None, 0, ""
 
     def _get_title_client(self, user_id: str = ""):

@@ -83,34 +83,62 @@ function cmdListResources() {
 // ── Sidebar Resources ───────────────────────────────────────────
 function _scopeBadge(s) {
   if (!s) return '';
-  const colors = { global: '#2d5a8e', user: '#5a2d8e', conversation: '#8e5a2d' };
+  const colors = { global: 'var(--pf-accent-2)', user: 'var(--pf-accent)', conversation: 'var(--pf-success)' };
   const labels = { global: 'G', user: 'U', conversation: 'C' };
-  return `<span style="font-size:9px;padding:0 3px;border-radius:3px;background:${colors[s]||'#444'};color:#ccc;margin-right:3px;" title="${s}">${labels[s]||s[0]}</span>`;
+  return `<span style="font-size:9px;padding:0 3px;border-radius:3px;background:${colors[s]||'var(--pf-border)'};color:var(--pf-text);margin-right:3px;" title="${s}">${labels[s]||s[0]}</span>`;
 }
 
-// Collapsed state per section. NOT persisted: the panel resets to a
-// predictable initial state (only Agents open) on every page load and
-// every conversation switch. Toggling within a conv is kept until the
-// next switch but never leaks across conversations or sessions.
+// Collapsed state per resource tree section. The first load keeps the
+// predictable default (only Agents open); user toggles are persisted so a
+// browser reload restores exactly what was open or closed.
+const _RESOURCE_TREE_STATE_KEY = 'pawflow.resource_tree.collapsed.v1';
 const _ALL_SECTIONS = [
   'agent','_running','_flow','_svc','_relay','_param','_secret',
-  '_agent_repo','skill','prompt','voice','task_def','_mcp_repo','_tool','_flow_repo'
+  '_agent_repo','skill','prompt','theme','voice','task_def','_mcp_repo','_tool','_flow_repo'
 ];
 const _collapsedSections = {};
-function _resetCollapsedSectionsToInitial() {
-  for (const k of Object.keys(_collapsedSections)) delete _collapsedSections[k];
-  for (const k of _ALL_SECTIONS) _collapsedSections[k] = (k !== 'agent');
+let _lastResourcesData = null;
+function _defaultCollapsedSections() {
+  const state = {};
+  for (const k of _ALL_SECTIONS) state[k] = (k !== 'agent');
+  return state;
 }
-_resetCollapsedSectionsToInitial();
+function _loadCollapsedSections() {
+  Object.assign(_collapsedSections, _defaultCollapsedSections());
+  try {
+    const raw = window.localStorage ? window.localStorage.getItem(_RESOURCE_TREE_STATE_KEY) : '';
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
+    Object.keys(saved).forEach(function(k) {
+      _collapsedSections[k] = saved[k] !== false;
+    });
+  } catch (_err) {}
+}
+function _saveCollapsedSections() {
+  try {
+    if (window.localStorage) window.localStorage.setItem(_RESOURCE_TREE_STATE_KEY, JSON.stringify(_collapsedSections));
+  } catch (_err) {}
+}
+function _isSectionCollapsed(id) {
+  if (Object.prototype.hasOwnProperty.call(_collapsedSections, id)) return _collapsedSections[id];
+  _collapsedSections[id] = (id !== 'agent');
+  return _collapsedSections[id];
+}
+_loadCollapsedSections();
 function _toggleSection(id) {
-  _collapsedSections[id] = !_collapsedSections[id];
+  _collapsedSections[id] = !_isSectionCollapsed(id);
+  _saveCollapsedSections();
+  const isOpening = !_collapsedSections[id];
   const el = document.getElementById('res-section-' + id);
-  if (el) el.style.display = _collapsedSections[id] ? 'none' : 'block';
+  if (el) el.style.display = isOpening ? 'block' : 'none';
   const arrow = document.getElementById('res-arrow-' + id);
-  if (arrow) arrow.textContent = _collapsedSections[id] ? '\u25B6' : '\u25BC';
-  // Opening a repository or runtime section → refresh from disk
-  if (!_collapsedSections[id] && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_flow')) loadResources();
+  if (arrow) arrow.textContent = isOpening ? '\u25BC' : '\u25B6';
+  if (isOpening && _lastResourcesData) _renderResourcesData(_lastResourcesData);
+  // Opening a repository or runtime section refreshes from disk after the cached render.
+  if (isOpening && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_flow')) loadResources();
 }
+
 
 // _sectionHeader(title, rtype, opts?)
 //   opts.createTitle     tooltip for '+' (default 'Create new'; for
@@ -141,13 +169,13 @@ function _sectionHeader(title, rtype, opts) {
   const refreshOnclick = opts.refreshOnclick
     || "event.stopPropagation();loadResources()";
   const refreshBtn = opts.hideRefresh ? ''
-    : `<span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>`;
+    : `<span style="cursor:pointer;font-size:11px;color:var(--pf-muted);padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>`;
   const createBtn = opts.hideCreate ? ''
-    : `<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${createOnclick}" title="${createTitle}">+</span>`;
-  const collapsed = _collapsedSections[rtype] || false;
+    : `<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="${createOnclick}" title="${createTitle}">+</span>`;
+  const collapsed = _isSectionCollapsed(rtype);
   const arrow = collapsed ? '\u25B6' : '\u25BC';
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-    <span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
+    <span style="cursor:pointer;color:var(--pf-accent);font-weight:600;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
     <span style="display:flex;gap:4px;align-items:center;">${refreshBtn}${createBtn}</span>
   </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};max-height:260px;overflow-y:auto;">`;
 }
@@ -158,17 +186,17 @@ function _sectionHeader(title, rtype, opts) {
 //   opts.refreshTitle    tooltip for the refresh button
 function _repoSectionHeader(title, rtype, opts) {
   opts = opts || {};
-  const collapsed = _collapsedSections[rtype] || false;
+  const collapsed = _isSectionCollapsed(rtype);
   const arrow = collapsed ? '\u25B6' : '\u25BC';
   const createBtn = opts.createOnclick
-    ? `<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${opts.createOnclick}" title="${opts.createTitle || 'Create new'}">+</span>`
+    ? `<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="${opts.createOnclick}" title="${opts.createTitle || 'Create new'}">+</span>`
     : '';
   const refreshOnclick = opts.refreshOnclick
     || "event.stopPropagation();loadResources()";
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-    <span style="cursor:pointer;color:#888;font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
+    <span style="cursor:pointer;color:var(--pf-muted);font-weight:500;font-size:11px;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
     <span style="display:flex;gap:4px;align-items:center;">
-      <span style="cursor:pointer;font-size:11px;color:#888;padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>
+      <span style="cursor:pointer;font-size:11px;color:var(--pf-muted);padding:0 2px;" onclick="${refreshOnclick}" title="${opts.refreshTitle || 'Refresh from disk'}">\u21BB</span>
       ${createBtn}
     </span>
   </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
@@ -182,21 +210,21 @@ function _flowPackageSectionId(packageName) {
 
 function _renderFlowPackageGroup(packageName, flows) {
   const sectionId = _flowPackageSectionId(packageName);
-  const collapsed = _collapsedSections[sectionId] || false;
+  const collapsed = _isSectionCollapsed(sectionId);
   const arrow = collapsed ? '\u25B6' : '\u25BC';
   const display = collapsed ? 'none' : 'block';
   let html = `<div style="margin:2px 0 4px 8px;">
     <div style="display:flex;align-items:center;gap:4px;cursor:pointer;user-select:none;" onclick="_toggleSection('${sectionId}')">
-      <span id="res-arrow-${sectionId}" style="font-size:10px;color:#888;">${arrow}</span>
-      <span style="font-size:12px;color:#d0d0e8;font-weight:600;flex:1;">${escapeHtml(packageName || 'default')}</span>
+      <span id="res-arrow-${sectionId}" style="font-size:10px;color:var(--pf-muted);">${arrow}</span>
+      <span style="font-size:12px;color:var(--pf-text);font-weight:600;flex:1;">${escapeHtml(packageName || 'default')}</span>
     </div>
     <div id="res-section-${sectionId}" style="display:${display};margin-top:2px;">`;
   flows.forEach(t => {
     const ver = t.version ? ` v${escapeHtml(t.version)}` : '';
     const desc = t.description ? ` title="${escapeHtml(t.description)}"` : '';
     html += `<div style="display:flex;align-items:center;gap:4px;margin-left:14px;margin-bottom:2px;cursor:pointer;"${desc} onclick="showDeployFlowDialog('${escapeHtml(t.id)}')">
-      ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(t.name)}${ver}</span>
-      <span style="color:#555;font-size:10px;">[${t.tasks_count} tasks]</span>
+      ${_scopeBadge(t.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(t.name)}${ver}</span>
+      <span style="color:var(--pf-muted);font-size:10px;">[${t.tasks_count} tasks]</span>
     </div>`;
   });
   html += '</div></div>';
@@ -221,7 +249,7 @@ function _showRelayLinkDialog() {
       '<div class="exec-dialog" style="min-width:350px;">'
       + '<h3>Link Relay</h3>'
       + '<div style="margin:12px 0;">'
-      + '<select id="_relayLinkSelect" style="width:100%;padding:8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;font-size:13px;">'
+      + '<select id="_relayLinkSelect" style="width:100%;padding:8px;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;font-size:13px;">'
       + options
       + '</select>'
       + '</div>'
@@ -247,7 +275,7 @@ function _showRelayInfoDialog(relayId, details) {
     ['Allow local', d.allow_local ? '\u2705 Yes' : '\u274c No'],
   ];
   var infoHtml = '<table style="margin:8px 0;">' + rows.map(function(r) {
-    return '<tr><td style="color:#888;padding:3px 12px 3px 0;font-size:12px;white-space:nowrap;">' + escapeHtml(r[0]) + '</td>'
+    return '<tr><td style="color:var(--pf-muted);padding:3px 12px 3px 0;font-size:12px;white-space:nowrap;">' + escapeHtml(r[0]) + '</td>'
       + '<td style="font-size:12px;">' + r[1] + '</td></tr>';
   }).join('') + '</table>';
 
@@ -256,14 +284,14 @@ function _showRelayInfoDialog(relayId, details) {
   if (d.allow_local) {
     var convLocal = dl['*'];
     var convLabel = convLocal === true ? 'Local' : convLocal === false ? 'Docker' : 'Not set';
-    var convColor = convLocal === true ? '#4ecdc4' : convLocal === false ? '#e94560' : '#555';
-    localHtml += '<div style="margin-top:8px;font-size:12px;font-weight:600;color:#6c5ce7;">Default execution mode</div>';
+    var convColor = convLocal === true ? 'var(--pf-success)' : convLocal === false ? 'var(--pf-danger)' : 'var(--pf-muted)';
+    localHtml += '<div style="margin-top:8px;font-size:12px;font-weight:600;color:var(--pf-accent);">Default execution mode</div>';
     localHtml += '<div style="display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12px;">'
-      + '<span style="color:#888;min-width:80px;">Conversation:</span>'
+      + '<span style="color:var(--pf-muted);min-width:80px;">Conversation:</span>'
       + '<span style="color:' + convColor + ';">' + convLabel + '</span>'
-      + '<button style="font-size:10px;padding:2px 6px;border:1px solid #444;border-radius:3px;background:#1a1a2e;color:#4ecdc4;cursor:pointer;" '
+      + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-success);cursor:pointer;" '
       + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'\')">Local</button>'
-      + '<button style="font-size:10px;padding:2px 6px;border:1px solid #444;border-radius:3px;background:#1a1a2e;color:#e94560;cursor:pointer;" '
+      + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-danger);cursor:pointer;" '
       + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'\')">Docker</button>'
       + '</div>';
     // Per-agent toggles (from conversation agents)
@@ -280,13 +308,13 @@ function _showRelayInfoDialog(relayId, details) {
       rpAgents.forEach(function(agentName) {
         var aLocal = dl[agentName];
         var aLabel = aLocal === true ? 'Local' : aLocal === false ? 'Docker' : 'Not set';
-        var aColor = aLocal === true ? '#4ecdc4' : aLocal === false ? '#e94560' : '#555';
+        var aColor = aLocal === true ? 'var(--pf-success)' : aLocal === false ? 'var(--pf-danger)' : 'var(--pf-muted)';
         localHtml += '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px;">'
-          + '<span style="color:#888;min-width:80px;">@' + escapeHtml(agentName) + ':</span>'
+          + '<span style="color:var(--pf-muted);min-width:80px;">@' + escapeHtml(agentName) + ':</span>'
           + '<span style="color:' + aColor + ';">' + aLabel + '</span>'
-          + '<button style="font-size:10px;padding:2px 6px;border:1px solid #444;border-radius:3px;background:#1a1a2e;color:#4ecdc4;cursor:pointer;" '
+          + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-success);cursor:pointer;" '
           + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'' + escapeHtml(agentName) + '\')">Local</button>'
-          + '<button style="font-size:10px;padding:2px 6px;border:1px solid #444;border-radius:3px;background:#1a1a2e;color:#e94560;cursor:pointer;" '
+          + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-danger);cursor:pointer;" '
           + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'' + escapeHtml(agentName) + '\')">Docker</button>'
           + '</div>';
       });
@@ -340,6 +368,7 @@ function _loadResourcesNow() {
   function _tryRender() {
     if (_resData === null || _svcData === null) return;
     var merged = Object.assign({}, _resData, { services: _svcData.services || [] });
+    _lastResourcesData = merged;
     _renderResourcesFromSSE(merged);
   }
   action$('list_resources', {}).subscribe(d => { _resData = d || {}; _tryRender(); });
@@ -352,6 +381,7 @@ function _renderResourcesFromSSE(data) {
   if (!data) return;
   if (data.user_role) window._userRole = data.user_role;
   if (data.tools) { window._cachedTools = data.tools; return; }  // tool schemas response
+  _lastResourcesData = data;
   _renderResourcesData(data);
 }
 async function _renderResourcesData(data) {
@@ -371,11 +401,11 @@ async function _renderResourcesData(data) {
         var isPrimary = a.active;
         var aName = escapeHtml(a.name);
         var aKeyLc = (a.name || '').toLowerCase();
-        var primaryColor = isPrimary ? '#4ecdc4' : '#555';
-        var textColor = isPrimary ? '#e0e0e0' : '#aaa';
+        var primaryColor = isPrimary ? 'var(--pf-success)' : 'var(--pf-muted)';
+        var textColor = isPrimary ? 'var(--pf-text)' : 'var(--pf-muted)';
         var primaryTitle = isPrimary ? 'Primary agent' : 'Set as primary';
         var primaryArrow = isPrimary ? '&#9654;' : '&#9655;';
-        var autoconvTag = a.autoconv ? '<span style="font-size:9px;color:#4ecdc4;margin-left:2px;">' + String.fromCodePoint(0x1F504) + '</span>' : '';
+        var autoconvTag = a.autoconv ? '<span style="font-size:9px;color:var(--pf-success);margin-left:2px;">' + String.fromCodePoint(0x1F504) + '</span>' : '';
         // Hydrate the global cache through the same monotonic path used by
         // Resource polling must not touch the context gauge. The gauge is
         // updated only by live context events and the explicit /context view.
@@ -387,7 +417,7 @@ async function _renderResourcesData(data) {
           + '<span style="color:' + textColor + ';font-size:12px;cursor:pointer;flex:1;"'
           + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + aName + '</span>'
           + autoconvTag
-          + '<span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Remove from conversation"'
+          + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="Remove from conversation"'
           + ' onclick="_removeAgentFromConv(this.dataset.n)" data-n="' + aName + '">&times;</span>'
           + '</div>';
         // Per-agent context-window gauge (persisted on the conversation,
@@ -404,16 +434,16 @@ async function _renderResourcesData(data) {
         if (aLlm || aSkills.length) {
           liveHtml += '<div style="margin-left:24px;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:3px;">';
           if (aLlm) {
-            liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#1a2a3e;color:#64b5f6;">' + escapeHtml(aLlm) + '</span>';
+            liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb, var(--pf-accent-2) 16%, var(--pf-panel));color:var(--pf-accent-2);">' + escapeHtml(aLlm) + '</span>';
           }
           aSkills.forEach(function(sk) {
-            liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#2a1a4e;color:#b39ddb;">' + escapeHtml(sk) + '</span>';
+            liveHtml += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:color-mix(in srgb, var(--pf-accent) 16%, var(--pf-panel));color:var(--pf-accent);">' + escapeHtml(sk) + '</span>';
           });
           liveHtml += '</div>';
         }
       });
     } else {
-      liveHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No agents — <span style="color:#6c5ce7;cursor:pointer;" onclick="showAddAgentToConvDialog()">+ Add</span></div>';
+      liveHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No agents — <span style="color:var(--pf-accent);cursor:pointer;" onclick="showAddAgentToConvDialog()">+ Add</span></div>';
     }
     liveHtml += _sectionFooter();
     // After the Agents section is rebuilt, refresh the header badge so its
@@ -434,17 +464,17 @@ async function _renderResourcesData(data) {
     { const running = data.running_tasks || [];
       if (running.length) {
         running.forEach(t => {
-          const statusColor = t.status === 'active' ? '#4ecdc4' : t.status === 'paused' ? '#f0ad4e' : '#666';
+          const statusColor = t.status === 'active' ? 'var(--pf-success)' : t.status === 'paused' ? 'var(--pf-warning)' : 'var(--pf-muted)';
           const statusIcon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : '\u23F9';
           const label = (t.task_def_name || (t.task || '').substring(0, 30) || t.task_id) + ' \u2192 ' + t.agent;
           liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
             <span style="color:${statusColor};font-size:11px;">${statusIcon}</span>
-            <span style="color:#8888aa;font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
-            <span style="color:#555;font-size:10px;">[${t.iterations}/${t.max_iterations}]</span>
+            <span style="color:var(--pf-muted);font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
+            <span style="color:var(--pf-muted);font-size:10px;">[${t.iterations}/${t.max_iterations}]</span>
           </div>`;
         });
       } else {
-        liveHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No tasks running</div>';
+        liveHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No tasks running</div>';
       }
     }
     liveHtml += _sectionFooter();
@@ -461,14 +491,14 @@ async function _renderResourcesData(data) {
     if (data.flows && data.flows.length) {
       data.flows.forEach(f => {
         const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
-        const statusColor = f.status === 'running' ? '#4ecdc4' : f.status === 'stopped' ? '#666' : '#e94560';
+        const statusColor = f.status === 'running' ? 'var(--pf-success)' : f.status === 'stopped' ? 'var(--pf-muted)' : 'var(--pf-danger)';
         const flowCtx = ` oncontextmenu="showFlowInstanceMenu(event,'${f.instance_id}','${f.status}','${f.scope}');return false;"`;
         liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
           ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${f.flow_name || f.instance_id}</span>
         </div>`;
       });
     } else {
-      liveHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No deployed flows</div>';
+      liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">No deployed flows</div>';
     }
     liveHtml += _sectionFooter();
 
@@ -489,24 +519,23 @@ async function _renderResourcesData(data) {
         }
         const svcCtx = ` oncontextmenu="showServiceMenu(event,'${s.service_id}','${s.scope}',${s.enabled});return false;"`;
         liveHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${svcCtx}>
-          ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;">${statusDot} <b>${s.service_id}</b> <span style="color:#555">(${s.service_type})</span>${dockerTag}</span>
+          ${_scopeBadge(s.scope)}<span style="color:var(--pf-muted);font-size:11px;">${statusDot} <b>${s.service_id}</b> <span style="color:var(--pf-muted)">(${s.service_type})</span>${dockerTag}</span>
         </div>`;
       });
     } else {
-      liveHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No services installed</div>';
+      liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">No services installed</div>';
     }
     liveHtml += _sectionFooter();
 
     // Relay bindings for this conversation (always show section)
     {
-      if (!('_relay' in _collapsedSections)) _collapsedSections['_relay'] = false;
-      var rbCollapsed = _collapsedSections['_relay'] || false;
+      var rbCollapsed = _isSectionCollapsed('_relay');
       var rbArrow = rbCollapsed ? '\u25B6' : '\u25BC';
       var rbDisplay = rbCollapsed ? 'none' : 'block';
       liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
-        + '<span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection(\'_relay\')">'
+        + '<span style="cursor:pointer;color:var(--pf-accent);font-weight:600;user-select:none;" onclick="_toggleSection(\'_relay\')">'
         + '<span id="res-arrow-_relay">' + rbArrow + '</span> Relays</span>'
-        + '<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="_showRelayLinkDialog()" title="Link relay">+</span>'
+        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showRelayLinkDialog()" title="Link relay">+</span>'
         + '</div><div id="res-section-_relay" style="display:' + rbDisplay + ';">';
       var _rb = (data.relay_bindings && data.relay_bindings.linked) ? data.relay_bindings : {linked:{}, default:{}};
       var _rbLinked = _rb.linked || {};
@@ -532,20 +561,20 @@ async function _renderResourcesData(data) {
           var star = isConvDefault ? ' \u2605' : '';
           var agentTags = '';
           scopes.forEach(function(s) {
-            if (s !== '*') agentTags += ' <span style="font-size:9px;color:#6c5ce7;background:#1a1a3e;padding:1px 4px;border-radius:3px;">' + escapeHtml(s) + '</span>';
+            if (s !== '*') agentTags += ' <span style="font-size:9px;color:var(--pf-accent);background:color-mix(in srgb, var(--pf-accent) 14%, var(--pf-panel));padding:1px 4px;border-radius:3px;">' + escapeHtml(s) + '</span>';
           });
           agentDefaults.forEach(function(a) {
-            agentTags += ' <span style="font-size:9px;color:#4ecdc4;" title="Default for ' + escapeHtml(a) + '">\u2605' + escapeHtml(a) + '</span>';
+            agentTags += ' <span style="font-size:9px;color:var(--pf-success);" title="Default for ' + escapeHtml(a) + '">\u2605' + escapeHtml(a) + '</span>';
           });
-          var color = isConvDefault ? '#4ecdc4' : '#8888aa';
+          var color = isConvDefault ? 'var(--pf-success)' : 'var(--pf-muted)';
           var icon = isConvDefault ? '\u25C9' : '\u25CB';
           var titleText = isConvDefault ? 'Default relay' : 'Set as default';
           var clickDefault = isConvDefault ? '' : ' onclick="fireAction(\'relay_default\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)"';
           var det = _rbDetails[rid] || {};
           var connDot = det.connected ? '\u{1F7E2}' : '\u{1F534}';
           var pathInfo = '';
-          if (det.root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">docker: <code>' + escapeHtml(det.root) + '</code></div>';
-          if (det.host_root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">local: <code>' + escapeHtml(det.host_root) + '</code></div>';
+          if (det.root) pathInfo += '<div style="font-size:10px;color:var(--pf-muted);margin-left:20px;">docker: <code>' + escapeHtml(det.root) + '</code></div>';
+          if (det.host_root) pathInfo += '<div style="font-size:10px;color:var(--pf-muted);margin-left:20px;">local: <code>' + escapeHtml(det.host_root) + '</code></div>';
           var _rbDefaultLocal = (_rb.default_local || {})[rid] || {};
           var _detWithLocal = Object.assign({}, det, {_default_local: _rbDefaultLocal});
           var _detJson = escapeHtml(JSON.stringify(_detWithLocal).replace(/'/g, "\\'"));
@@ -554,12 +583,12 @@ async function _renderResourcesData(data) {
             + '<span style="font-size:11px;">' + connDot + '</span>'
             + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>'
             + agentTags
-            + '<span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"'
+            + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="Unlink"'
             + ' onclick="fireAction(\'relay_unlink\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)">&times;</span>'
             + '</div>' + pathInfo;
         });
       } else {
-        liveHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No relays linked</div>';
+        liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">No relays linked</div>';
       }
       liveHtml += _sectionFooter();
     }
@@ -577,20 +606,20 @@ async function _renderResourcesData(data) {
       createOnclick: "showResourceCreator('agent')",
       createTitle: "Create new agent",
     });
-    if (!_collapsedSections["_agent_repo"]) {
+    if (!_isSectionCollapsed("_agent_repo")) {
       var repoAgents = (data.repo_agents || []).filter(function(a) { return !a.in_conversation; });
       if (repoAgents.length) {
         repoAgents.forEach(function(a) {
           var aName = escapeHtml(a.name);
           repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
             + _scopeBadge(a.scope)
-            + '<span style="color:#888;font-size:12px;flex:1;">' + aName + '</span>'
-            + '<span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Add to conversation"'
+            + '<span style="color:var(--pf-muted);font-size:12px;flex:1;">' + aName + '</span>'
+            + '<span style="color:var(--pf-accent);font-size:10px;cursor:pointer;padding:0 4px;" title="Add to conversation"'
             + ' onclick="showAddAgentToConvDialog(this.dataset.n)" data-n="' + aName + '">+</span>'
             + '</div>';
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">All agents are in this conversation</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">All agents are in this conversation</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -603,13 +632,13 @@ async function _renderResourcesData(data) {
       if (allSkills.length) {
         allSkills.forEach(s => {
           const assignedTo = s.assigned_to || [];
-          const assignedTag = assignedTo.length ? ' <span style="color:#555;font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
+          const assignedTag = assignedTo.length ? ' <span style="color:var(--pf-muted);font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'skill','${escapeHtml(s.name)}','${s.scope||''}');return false;">
-            ${_scopeBadge(s.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(s.name)}${assignedTag}</span>
+            ${_scopeBadge(s.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(s.name)}${assignedTag}</span>
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No skills defined</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No skills defined</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -618,7 +647,7 @@ async function _renderResourcesData(data) {
     repoHtml += _repoSectionHeader('Prompts Repository', 'prompt', {
       createOnclick: "showResourceCreator('prompt')",
     });
-    if (!_collapsedSections['prompt']) {
+    if (!_isSectionCollapsed('prompt')) {
       const prompts = data.prompts || [];
       if (prompts.length) {
         prompts.forEach(p => {
@@ -628,11 +657,11 @@ async function _renderResourcesData(data) {
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
             onclick="_usePrompt('${escapeHtml(p.name)}',${p.has_parameters})" oncontextmenu="showResourceMenu(event,'prompt','${p.name}','${p.scope||''}');return false;">
             ${_scopeBadge(p.scope)}<span style="font-size:11px">${icon}</span>
-            <span style="font-size:12px;color:#c0c0d0">${escapeHtml(title)}</span>
+            <span style="font-size:12px;color:var(--pf-text)">${escapeHtml(title)}</span>
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No prompts</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No prompts</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -642,7 +671,7 @@ async function _renderResourcesData(data) {
       createOnclick: "showThemeCreator()",
       createTitle: 'Add theme',
     });
-    if (!_collapsedSections['theme']) {
+    if (!_isSectionCollapsed('theme')) {
       const themes = data.themes || [];
       if (themes.length) {
         themes.forEach(t => {
@@ -653,13 +682,13 @@ async function _renderResourcesData(data) {
           const desc = t.description ? ' title="' + escapeHtml(t.description) + '"' : '';
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer"${desc}
             onclick="_applyThemeFromResource('${escapeHtml(ref)}')" oncontextmenu="_showThemeMenu(event,'${escapeHtml(ref)}',${builtinArg},'${escapeHtml(t.scope || '')}');return false;">
-            ${_scopeBadge(t.scope)}<span style="font-size:11px;color:#6c5ce7;">\u25A3</span>
-            <span style="font-size:12px;color:#c0c0d0;flex:1;">${escapeHtml(t.title || t.name)}</span>
-            <span style="color:#555;font-size:10px;">${cssLabel}</span>
+            ${_scopeBadge(t.scope)}<span style="font-size:11px;color:var(--pf-accent);">\u25A3</span>
+            <span style="font-size:12px;color:var(--pf-text);flex:1;">${escapeHtml(t.title || t.name)}</span>
+            <span style="color:var(--pf-muted);font-size:10px;">${cssLabel}</span>
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No themes</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No themes</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -668,29 +697,29 @@ async function _renderResourcesData(data) {
     repoHtml += _repoSectionHeader('Voices Repository', 'voice', {
       createOnclick: "showResourceCreator('voice')",
     });
-    if (!_collapsedSections['voice']) {
+    if (!_isSectionCollapsed('voice')) {
       const voices = data.voices || [];
       if (voices.length) {
         voices.forEach(v => {
           const paradigm = v.paradigm || 'zero-shot';
           const pBadge = paradigm === 'voice_id' ? 'id' : 'zs';
-          const pColor = paradigm === 'voice_id' ? '#4ecdc4' : '#888';
+          const pColor = paradigm === 'voice_id' ? 'var(--pf-success)' : 'var(--pf-muted)';
           const prov = v.provider ? ` (${escapeHtml(v.provider)})` : '';
           const previewUrl = v.ref_audio_fid
             ? `/files/${encodeURIComponent(v.ref_audio_fid)}` : '';
           const previewBtn = previewUrl
-            ? `<span style="cursor:pointer;color:#6c5ce7;font-size:11px;padding:0 4px;" title="Preview reference audio" onclick="_previewVoice('${escapeHtml(previewUrl)}')">\u25B6</span>`
+            ? `<span style="cursor:pointer;color:var(--pf-accent);font-size:11px;padding:0 4px;" title="Preview reference audio" onclick="_previewVoice('${escapeHtml(previewUrl)}')">\u25B6</span>`
             : '';
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" title="${escapeHtml(v.provider)} \u2014 ${paradigm}">
             <span style="color:${pColor};font-size:9px;font-weight:600;border:1px solid ${pColor};border-radius:3px;padding:0 3px;">${pBadge}</span>
-            <span style="color:#e0e0e0;font-size:12px;flex:1;">\u{1F399} ${escapeHtml(v.name)}<span style="color:#666;font-size:10px;">${prov}</span></span>
+            <span style="color:var(--pf-text);font-size:12px;flex:1;">\u{1F399} ${escapeHtml(v.name)}<span style="color:var(--pf-muted);font-size:10px;">${prov}</span></span>
             ${previewBtn}
-            <span style="cursor:pointer;color:#8888aa;font-size:11px;padding:0 4px;" title="Rename voice clone" onclick="_renameVoiceClone('${escapeHtml(v.name)}')">\u270E</span>
-            <span style="cursor:pointer;color:#d9534f;font-size:11px;padding:0 4px;" title="Delete voice clone (cascade)" onclick="_deleteVoiceClone('${escapeHtml(v.name)}')">\u2716</span>
+            <span style="cursor:pointer;color:var(--pf-muted);font-size:11px;padding:0 4px;" title="Rename voice clone" onclick="_renameVoiceClone('${escapeHtml(v.name)}')">\u270E</span>
+            <span style="cursor:pointer;color:var(--pf-danger);font-size:11px;padding:0 4px;" title="Delete voice clone (cascade)" onclick="_deleteVoiceClone('${escapeHtml(v.name)}')">\u2716</span>
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No voice clones. Use <code>clone_voice</code> to register one.</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No voice clones. Use <code>clone_voice</code> to register one.</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -703,12 +732,12 @@ async function _renderResourcesData(data) {
       if (allTasks.length) {
         allTasks.forEach(t => {
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'task_def','${escapeHtml(t.name)}','${t.scope||''}');return false;">
-            ${_scopeBadge(t.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
-            <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
+            ${_scopeBadge(t.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;" title="${escapeHtml(t.description)}">${escapeHtml(t.name)}</span>
+            <span style="color:var(--pf-muted);font-size:10px;">[${t.default_interval}]</span>
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No task definitions</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No task definitions</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -720,17 +749,17 @@ async function _renderResourcesData(data) {
       createOnclick: "showResourceCreator('mcp')",
       createTitle: 'Create new',
     });
-    if (!_collapsedSections['_mcp_repo']) {
+    if (!_isSectionCollapsed('_mcp_repo')) {
       const mcps = data.mcp_servers || [];
-      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:#8fa8ff;font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 Configure availability</div>';
+      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 Configure availability</div>';
       if (mcps.length) {
         mcps.forEach(m => {
           repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer;" oncontextmenu="showResourceMenu(event,'mcp','${escapeHtml(m.name)}','${m.scope||''}');return false;">
-            ${_scopeBadge(m.scope)}<span style="color:#e0e0e0;font-size:12px;flex:1;">${escapeHtml(m.name)}</span>
+            ${_scopeBadge(m.scope)}<span style="color:var(--pf-text);font-size:12px;flex:1;">${escapeHtml(m.name)}</span>
           </div>`;
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No MCP servers defined</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No MCP servers defined</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -740,16 +769,16 @@ async function _renderResourcesData(data) {
       createOnclick: "showResourceCreator('_tool')",
       createTitle: 'Create new tool',
     });
-    if (!_collapsedSections['_tool']) {
+    if (!_isSectionCollapsed('_tool')) {
       const tools = window._cachedTools || [];
-      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:#8fa8ff;font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 Configure availability</div>';
+      repoHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:4px;cursor:pointer;color:var(--pf-accent-2);font-size:11px;" onclick="_showToolMcpFilterDialog(\'\', \'conversation\')">\u2699 Configure availability</div>';
       tools.forEach(t => {
         repoHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog('${escapeHtml(t.name)}')">
-          <span style="color:#6c5ce7;font-size:11px">\u26A1</span>
-          <span style="font-size:12px;color:#c0c0d0">${escapeHtml(t.name)}</span>
+          <span style="color:var(--pf-accent);font-size:11px">\u26A1</span>
+          <span style="font-size:12px;color:var(--pf-text)">${escapeHtml(t.name)}</span>
         </div>`;
       });
-      if (!tools.length) repoHtml += '<div style="margin-left:8px;font-size:11px;color:#666">Loading...</div>';
+      if (!tools.length) repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted)">Loading...</div>';
     }
     repoHtml += _sectionFooter();
 
@@ -776,7 +805,7 @@ async function _renderResourcesData(data) {
           repoHtml += _renderFlowPackageGroup(packageName, flows);
         });
       } else {
-        repoHtml += '<div style="margin-left:8px;font-size:11px;color:#555;">No flow templates under flows/</div>';
+        repoHtml += '<div style="margin-left:8px;font-size:11px;color:var(--pf-muted);">No flow templates under flows/</div>';
       }
     }
     repoHtml += _sectionFooter();
@@ -786,7 +815,7 @@ async function _renderResourcesData(data) {
     // Linked Accounts (appended at the very end).
     // ─────────────────────────────────────────────────────────────
     if (!liveHtml && !repoHtml) {
-      liveHtml = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
+      liveHtml = '<div style="color:var(--pf-muted);font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
     }
     rxjs.forkJoin([
       action$('list_params_secrets', { conversation_id: conversationId }).pipe(rxjs.catchError(() => rxjs.of({}))),
@@ -798,7 +827,7 @@ async function _renderResourcesData(data) {
         ps.parameters.forEach(p => {
           const truncVal = p.value.length > 30 ? p.value.substring(0, 30) + '...' : p.value;
           varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
-            ${_scopeBadge(p.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(p.key)}</b> = ${escapeHtml(truncVal)}</span>
+            ${_scopeBadge(p.scope)}<span style="color:var(--pf-muted);font-size:11px;"><b>${escapeHtml(p.key)}</b> = ${escapeHtml(truncVal)}</span>
           </div>`;
         });
         varSecHtml += _sectionFooter();
@@ -807,25 +836,25 @@ async function _renderResourcesData(data) {
         varSecHtml += _sectionHeader('Secrets', '_secret');
         ps.secrets.forEach(s => {
           varSecHtml += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
-            ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(s.key)}</b> = ********</span>
+            ${_scopeBadge(s.scope)}<span style="color:var(--pf-muted);font-size:11px;"><b>${escapeHtml(s.key)}</b> = ********</span>
           </div>`;
         });
         varSecHtml += _sectionFooter();
       }
       const links = (linksData && linksData.links) || {};
       const linkKeys = Object.keys(links);
-      let linksHtml = '<div style="margin-top:6px;padding:4px 6px;font-size:11px;color:#888;border-top:1px solid #222;">';
+      let linksHtml = '<div style="margin-top:6px;padding:4px 6px;font-size:11px;color:var(--pf-muted);border-top:1px solid var(--pf-border);">';
       linksHtml += '<b>Linked Accounts</b>';
       if (linkKeys.length) {
         linkKeys.forEach(provider => {
           linksHtml += `<div style="display:flex;align-items:center;gap:6px;margin:3px 0 3px 8px;">
-            <span style="font-size:11px;color:#e0e0e0;">${escapeHtml(provider)}</span>
-            <span style="font-size:10px;color:#666;">${escapeHtml(links[provider])}</span>
-            <span style="cursor:pointer;font-size:10px;color:#e94560;" title="Unlink" onclick="cmdResourceAction('unlink_account',{provider:'${provider}'}).then(loadResources)">\u2715</span>
+            <span style="font-size:11px;color:var(--pf-text);">${escapeHtml(provider)}</span>
+            <span style="font-size:10px;color:var(--pf-muted);">${escapeHtml(links[provider])}</span>
+            <span style="cursor:pointer;font-size:10px;color:var(--pf-danger);" title="Unlink" onclick="cmdResourceAction('unlink_account',{provider:'${provider}'}).then(loadResources)">\u2715</span>
           </div>`;
         });
       } else {
-        linksHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No linked accounts</div>';
+        linksHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">No linked accounts</div>';
       }
       linksHtml += '</div>';
       // Final assembly: live → variables/secrets → repos → linked accounts
@@ -861,21 +890,21 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
   if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px var(--pf-shadow);';
   _positionMenu(menu, e);
 
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
-    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
+    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
     d.onmouseleave = () => d.style.background = '';
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
   const sep = () => {
     const s = document.createElement('div');
-    s.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+    s.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
     menu.appendChild(s);
   };
 
@@ -951,7 +980,7 @@ function _toolMcpRows(items, selectedNames, cls, disabled, mode, dynamicNames) {
   const dis = disabled ? ' disabled' : '';
   const roStyle = disabled ? 'opacity:0.55;cursor:not-allowed;' : '';
   dynamicNames = dynamicNames || [];
-  if (!items.length) return '<div style="color:#555;font-size:11px;margin:3px 0 6px 18px;">None</div>';
+  if (!items.length) return '<div style="color:var(--pf-muted);font-size:11px;margin:3px 0 6px 18px;">None</div>';
   return items.map(function(item) {
     const name = item.name || '';
     const isExternalDynamic = item.source === 'dynamic' && item.scope !== 'conversation';
@@ -965,10 +994,10 @@ function _toolMcpRows(items, selectedNames, cls, disabled, mode, dynamicNames) {
     }
     const checked = isChecked ? ' checked' : '';
     const meta = item.source || item.transport || item.scope || '';
-    return '<label style="display:flex;align-items:center;gap:6px;margin:2px 0 2px 18px;font-size:12px;color:#cfd0df;' + roStyle + '">'
-      + '<input type="checkbox" class="' + cls + '" data-name="' + escapeHtml(name) + '" data-source="' + escapeHtml(item.source || '') + '" data-scope="' + escapeHtml(item.scope || '') + '"' + checked + dis + ' style="accent-color:#6c5ce7;"/> '
-      + '<span style="color:#e0e0e0;">' + escapeHtml(name) + '</span>'
-      + (meta ? '<span style="color:#666;font-size:10px;">' + escapeHtml(meta) + '</span>' : '')
+    return '<label style="display:flex;align-items:center;gap:6px;margin:2px 0 2px 18px;font-size:12px;color:var(--pf-text);' + roStyle + '">'
+      + '<input type="checkbox" class="' + cls + '" data-name="' + escapeHtml(name) + '" data-source="' + escapeHtml(item.source || '') + '" data-scope="' + escapeHtml(item.scope || '') + '"' + checked + dis + ' style="accent-color:var(--pf-accent);"/> '
+      + '<span style="color:var(--pf-text);">' + escapeHtml(name) + '</span>'
+      + (meta ? '<span style="color:var(--pf-muted);font-size:10px;">' + escapeHtml(meta) + '</span>' : '')
       + '</label>';
   }).join('');
 }
@@ -991,7 +1020,7 @@ function _renderToolMcpAgentOverride() {
   const target = document.getElementById('tmf-agent-panel');
   if (!target) return;
   if (!agent) {
-    target.innerHTML = '<div style="color:#555;font-size:11px;">Select an agent to configure an override.</div>';
+    target.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">Select an agent to configure an override.</div>';
     return;
   }
   const ov = ((filters.agent_overrides || {})[agent]) || {};
@@ -1008,11 +1037,11 @@ function _renderToolMcpAgentOverride() {
   const mcpNames = custom
     ? (cfgCustom ? (mcpsCfg.enabled || []) : (filters.enabled_mcps || []))
     : (filters.enabled_mcps || []);
-  target.innerHTML = '<label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;color:#e0e0e0;font-size:12px;">'
-    + '<input id="tmf-agent-custom" type="checkbox"' + (custom ? ' checked' : '') + ' onchange="_renderToolMcpAgentOverride()" style="accent-color:#6c5ce7;"/> Override conversation defaults for @' + escapeHtml(agent) + '</label>'
-    + '<div style="color:#aaa;font-size:11px;margin-top:6px;">Tools</div>'
+  target.innerHTML = '<label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--pf-text);font-size:12px;">'
+    + '<input id="tmf-agent-custom" type="checkbox"' + (custom ? ' checked' : '') + ' onchange="_renderToolMcpAgentOverride()" style="accent-color:var(--pf-accent);"/> Override conversation defaults for @' + escapeHtml(agent) + '</label>'
+    + '<div style="color:var(--pf-muted);font-size:11px;margin-top:6px;">Tools</div>'
     + _toolMcpRows(data.tools || [], toolNames, 'tmf-agent-tool', !custom, toolMode, dynNames)
-    + '<div style="color:#aaa;font-size:11px;margin-top:8px;">MCP servers</div>'
+    + '<div style="color:var(--pf-muted);font-size:11px;margin-top:8px;">MCP servers</div>'
     + _toolMcpRows(data.mcps || [], mcpNames, 'tmf-agent-mcp', !custom, 'mcp_allow');
 }
 
@@ -1060,26 +1089,26 @@ async function _showToolMcpFilterDialog(agentName, mode) {
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
   overlay.id = 'toolMcpFilterOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:680px;max-height:85vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:680px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
   panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">' + escapeHtml(title) + '</h3>'
-    + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button></div>'
-    + (showConv ? '<div style="color:#6c5ce7;font-size:12px;font-weight:600;margin:8px 0 4px;">Conversation defaults</div>'
-      + '<div style="color:#aaa;font-size:11px;margin-top:6px;">Tools</div>'
+    + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(title) + '</h3>'
+    + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button></div>'
+    + (showConv ? '<div style="color:var(--pf-accent);font-size:12px;font-weight:600;margin:8px 0 4px;">Conversation defaults</div>'
+      + '<div style="color:var(--pf-muted);font-size:11px;margin-top:6px;">Tools</div>'
       + _toolMcpRows(data.tools || [], filters.disabled_tools || [], 'tmf-conv-tool', false, 'tool_default', filters.enabled_dynamic_tools || [])
-      + '<div style="color:#aaa;font-size:11px;margin-top:8px;">MCP servers</div>'
+      + '<div style="color:var(--pf-muted);font-size:11px;margin-top:8px;">MCP servers</div>'
       + _toolMcpRows(data.mcps || [], filters.enabled_mcps || [], 'tmf-conv-mcp', false, 'mcp_allow') : '')
-    + (showConv && showAgent ? '<div style="border-top:1px solid #2a2a4a;margin:14px 0 10px;"></div>' : '')
-    + (showAgent ? '<div style="color:#6c5ce7;font-size:12px;font-weight:600;margin-bottom:6px;">Agent override</div>'
-      + '<select id="tmf-agent" onchange="_renderToolMcpAgentOverride()" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-bottom:8px;' + (agentName ? 'display:none;' : '') + '">'
+    + (showConv && showAgent ? '<div style="border-top:1px solid color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel));margin:14px 0 10px;"></div>' : '')
+    + (showAgent ? '<div style="color:var(--pf-accent);font-size:12px;font-weight:600;margin-bottom:6px;">Agent override</div>'
+      + '<select id="tmf-agent" onchange="_renderToolMcpAgentOverride()" style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-bottom:8px;' + (agentName ? 'display:none;' : '') + '">'
       + '<option value="">-- no agent --</option>'
       + agents.map(function(a) { return '<option value="' + escapeHtml(a) + '"' + (a === selected ? ' selected' : '') + '>@' + escapeHtml(a) + '</option>'; }).join('')
       + '</select><div id="tmf-agent-panel"></div>' : '')
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">'
-    + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-    + '<button onclick="_saveToolMcpFilterDialog()" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>';
+    + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+    + '<button onclick="_saveToolMcpFilterDialog()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   window._toolMcpFilterMode = mode;
@@ -1118,18 +1147,18 @@ function showAgentMenu(e, name, scope, autoconv) {
   if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px var(--pf-shadow);';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
-    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
+    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
     d.onmouseleave = () => d.style.background = '';
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:#333;margin:4px 0;'; menu.appendChild(s); };
+  const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;'; menu.appendChild(s); };
 
   item('\u{1F441} View definition...', () => showResourceEditor('agent', name, true));
   if (_canEditScope(scope)) item('\u270F Edit definition...', () => showResourceEditor('agent', name));
@@ -1162,10 +1191,10 @@ function _showSkillAssignDialog(skillName) {
     var options = agents.map(a => '<option value="' + escapeHtml(a.name) + '">' + escapeHtml(a.name) + '</option>').join('');
     overlay.innerHTML = '<div class="exec-dialog" style="min-width:320px;">'
       + '<h3 style="margin:0 0 12px;">Assign skill \u201C' + escapeHtml(skillName) + '\u201D to agent</h3>'
-      + '<select id="_skAssignAgent" style="width:100%;padding:8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;font-size:13px;">' + options + '</select>'
+      + '<select id="_skAssignAgent" style="width:100%;padding:8px;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;font-size:13px;">' + options + '</select>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">'
-      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-      + '<button id="_skAssignBtn" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>'
+      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+      + '<button id="_skAssignBtn" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>'
       + '</div></div>';
     document.body.appendChild(overlay);
     document.getElementById('_skAssignBtn').onclick = function() {
@@ -1196,48 +1225,48 @@ function _showAgentConvConfigDialog(agentName) {
     var toolsStr = Array.isArray(cfg.tools) ? cfg.tools.join(', ') : (cfg.tools || '');
     var overlay = document.createElement('div');
     overlay.id = 'agentConvConfigOverlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
     var panel = document.createElement('div');
-    panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:520px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:520px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
     var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-      + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">Configure: ' + escapeHtml(agentName) + '</h3>'
-      + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>'
+      + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">Configure: ' + escapeHtml(agentName) + '</h3>'
+      + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>'
       + '</div>';
     // Definition info
     if (cfg.definition) {
-      html += '<div style="margin-bottom:10px;padding:6px 8px;background:#0f0f23;border-radius:4px;font-size:11px;">'
-        + '<span style="color:#888;">Definition:</span> <span style="color:#6c5ce7;">' + escapeHtml(cfg.definition) + '</span></div>';
+      html += '<div style="margin-bottom:10px;padding:6px 8px;background:var(--pf-sidebar);border-radius:4px;font-size:11px;">'
+        + '<span style="color:var(--pf-muted);">Definition:</span> <span style="color:var(--pf-accent);">' + escapeHtml(cfg.definition) + '</span></div>';
     }
     // Instance parameters — skip 'name' (synced from instance_name, immutable here)
     var paramKeys = Object.keys(paramsSchema);
     var visibleParamKeys = paramKeys.filter(function(k) { return k !== 'name'; });
     if (visibleParamKeys.length) {
-      html += '<div style="margin-bottom:10px;padding:8px;border:1px solid #333;border-radius:4px;">'
-        + '<div style="font-size:11px;color:#6c5ce7;margin-bottom:6px;font-weight:600;">Instance Parameters</div>';
+      html += '<div style="margin-bottom:10px;padding:8px;border:1px solid var(--pf-border);border-radius:4px;">'
+        + '<div style="font-size:11px;color:var(--pf-accent);margin-bottom:6px;font-weight:600;">Instance Parameters</div>';
       visibleParamKeys.forEach(function(k) {
         var spec = paramsSchema[k] || {};
         var val = instParams[k] || spec.default || '';
         var label = k + (spec.required ? ' *' : '');
-        html += '<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">' + escapeHtml(label) + '</label>'
-          + '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(val)) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
+        html += '<div style="margin-bottom:6px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(label) + '</label>'
+          + '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(val)) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
       });
       html += '</div>';
     }
     // Runtime config
-    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">LLM Service *</label>'
-      + '<select id="acc-llm" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
+    html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">LLM Service *</label>'
+      + '<select id="acc-llm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
       + serviceOpts + '</select></div>'
-      + '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Model (override)</label>'
-      + '<input id="acc-model" value="' + escapeHtml(cfg.model || '') + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
-      + '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Tools (comma-separated)</label>'
-      + '<input id="acc-tools" value="' + escapeHtml(toolsStr) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
+      + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Model (override)</label>'
+      + '<input id="acc-model" value="' + escapeHtml(cfg.model || '') + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>'
+      + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Tools (comma-separated)</label>'
+      + '<input id="acc-tools" value="' + escapeHtml(toolsStr) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>'
       + '<div style="margin-bottom:8px;">'
-      + '<label style="color:#aaa;font-size:11px;">Max iterations (agent loop)</label>'
-      + '<input id="acc-depth" type="number" value="' + (cfg.max_depth || 1000) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/>'
+      + '<label style="color:var(--pf-muted);font-size:11px;">Max iterations (agent loop)</label>'
+      + '<input id="acc-depth" type="number" value="' + (cfg.max_depth || 1000) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/>'
       + '</div>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-      + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-      + '<button id="acc-save" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
+      + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+      + '<button id="acc-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
       + '</div>';
     panel.innerHTML = html;
     overlay.appendChild(panel);
@@ -1280,18 +1309,18 @@ function _showAgentSkillsDialog(agentName) {
     overlay.className = 'exec-overlay';
     var checkboxes = allSkills.map(s => {
       var checked = assigned.indexOf(s.name) >= 0 ? ' checked' : '';
-      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:13px;color:#c0c0d0;">'
-        + '<input type="checkbox" class="agent-sk-cb" value="' + escapeHtml(s.name) + '"' + checked + ' style="accent-color:#6c5ce7;"/>'
+      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:13px;color:var(--pf-text);">'
+        + '<input type="checkbox" class="agent-sk-cb" value="' + escapeHtml(s.name) + '"' + checked + ' style="accent-color:var(--pf-accent);"/>'
         + escapeHtml(s.name)
-        + (s.description ? ' <span style="color:#666;font-size:11px;">\u2014 ' + escapeHtml(s.description) + '</span>' : '')
+        + (s.description ? ' <span style="color:var(--pf-muted);font-size:11px;">\u2014 ' + escapeHtml(s.description) + '</span>' : '')
         + '</label>';
     }).join('');
     overlay.innerHTML = '<div class="exec-dialog" style="min-width:360px;">'
       + '<h3 style="margin:0 0 12px;">Skills for \u201C' + escapeHtml(agentName) + '\u201D</h3>'
-      + '<div style="max-height:200px;overflow-y:auto;background:#0f0f23;border:1px solid #333;border-radius:4px;padding:8px;">' + checkboxes + '</div>'
+      + '<div style="max-height:200px;overflow-y:auto;background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:8px;">' + checkboxes + '</div>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">'
-      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-      + '<button id="_agentSkSave" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
+      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+      + '<button id="_agentSkSave" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
       + '</div></div>';
     document.body.appendChild(overlay);
     document.getElementById('_agentSkSave').onclick = function() {
@@ -1337,13 +1366,13 @@ function _renderFlowSchemaFields(schema, values, cssClass, serviceId) {
       + '" data-type="' + escapeHtml(type) + '"'
       + (serviceId ? ' data-service-id="' + escapeHtml(serviceId) + '"' : '');
     html += '<div style="margin-bottom:8px;">'
-      + '<label style="color:#aaa;font-size:11px;">' + escapeHtml(key)
-      + (spec.required ? ' <span style="color:#e94560;">*</span>' : '') + '</label>';
-    if (spec.description) html += '<div style="color:#666;font-size:10px;margin-top:1px;">' + escapeHtml(spec.description) + '</div>';
+      + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(key)
+      + (spec.required ? ' <span style="color:var(--pf-danger);">*</span>' : '') + '</label>';
+    if (spec.description) html += '<div style="color:var(--pf-muted);font-size:10px;margin-top:1px;">' + escapeHtml(spec.description) + '</div>';
     if (type === 'boolean') {
       html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input type="checkbox"'
-        + dataAttrs + (value ? ' checked' : '') + ' style="accent-color:#6c5ce7;">'
-        + '<span style="color:#e0e0e0;font-size:12px;">Enabled</span></label>';
+        + dataAttrs + (value ? ' checked' : '') + ' style="accent-color:var(--pf-accent);">'
+        + '<span style="color:var(--pf-text);font-size:12px;">Enabled</span></label>';
     } else if (type === 'select' && spec.options) {
       html += '<select' + dataAttrs + ' style="' + _svcInputStyle + '">';
       for (const opt0 of spec.options) {
@@ -1411,19 +1440,19 @@ function _onFlowServiceModeChange(sel) {
 async function _renderFlowDeploymentConfig(schemaData) {
   const paramsSchema = schemaData.parameters_schema || {};
   const paramValues = schemaData.parameter_values || {};
-  let html = '<div style="border-top:1px solid #333;padding-top:8px;margin-top:8px;">'
-    + '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>';
+  let html = '<div style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;">'
+    + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>';
   if (Object.keys(paramsSchema).length) {
     html += _renderFlowSchemaFields(paramsSchema, paramValues, 'flow-param-field');
   } else {
-    html += '<div style="color:#666;font-size:12px;margin-bottom:8px;">No flow parameters.</div>';
+    html += '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:8px;">No flow parameters.</div>';
   }
   html += '</div>';
 
   const services = schemaData.services || {};
   if (Object.keys(services).length) {
-    html += '<div style="border-top:1px solid #333;padding-top:8px;margin-top:8px;">'
-      + '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Services</div>';
+    html += '<div style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;">'
+      + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">Services</div>';
     for (const [sid, svc] of Object.entries(services)) {
       const current = svc.override || 'local';
       let options = '<option value="local"' + (current === 'local' ? ' selected' : '') + '>Configure local service</option>';
@@ -1439,10 +1468,10 @@ async function _renderFlowDeploymentConfig(schemaData) {
         options += '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + ' (missing)</option>';
       }
       const localDisplay = current && current !== 'local' ? 'display:none;' : '';
-      html += '<div class="flow-service-card" data-service-id="' + escapeHtml(sid) + '" style="background:#0f0f23;border:1px solid #333;border-radius:6px;padding:8px;margin-bottom:8px;">'
+      html += '<div class="flow-service-card" data-service-id="' + escapeHtml(sid) + '" style="background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:6px;padding:8px;margin-bottom:8px;">'
         + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
-        + '<div style="color:#e0e0e0;font-size:12px;font-weight:600;">' + escapeHtml(sid) + '</div>'
-        + '<div style="color:#666;font-size:11px;">' + escapeHtml(svc.service_type || '') + '</div></div>'
+        + '<div style="color:var(--pf-text);font-size:12px;font-weight:600;">' + escapeHtml(sid) + '</div>'
+        + '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(svc.service_type || '') + '</div></div>'
         + '<select class="flow-service-mode" onchange="_onFlowServiceModeChange(this)" style="' + _svcInputStyle + '">' + options + '</select>'
         + '<div class="flow-service-local" style="margin-top:8px;' + localDisplay + '">'
         + _renderFlowSchemaFields(svc.parameters_schema || {}, svc.parameter_values || {}, 'flow-service-param-field', sid)
@@ -1458,20 +1487,20 @@ async function showDeployFlowDialog() {
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
   overlay.id = 'resourceEditorOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:560px;max-height:85vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:560px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">Deploy Flow</h3>
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
-  </div><div style="color:#888;font-size:12px;">Loading templates...</div>`;
+    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">Deploy Flow</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
+  </div><div style="color:var(--pf-muted);font-size:12px;">Loading templates...</div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   try {
     const data = await rxjs.firstValueFrom(action$('list_available_flows', {}));
     const templates = data.templates || [];
     if (!templates.length) {
-      panel.querySelector('div:last-child').innerHTML = '<div style="color:#888;font-size:12px;">No flow templates found in flows/ directory.</div>';
+      panel.querySelector('div:last-child').innerHTML = '<div style="color:var(--pf-muted);font-size:12px;">No flow templates found in flows/ directory.</div>';
       return;
     }
     let optionsHtml = templates.map(t => {
@@ -1482,22 +1511,22 @@ async function showDeployFlowDialog() {
         + ' [' + escapeHtml(scopeLabel) + ']</option>';
     }).join('');
     panel.querySelector('div:last-child').innerHTML = `
-      <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Template</label>
-        <select id="deploy-template" onchange="_onDeployTemplateChange()" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">${optionsHtml}</select></div>
-      <div id="deploy-scope-info" style="margin-bottom:8px;font-size:11px;color:#aaa;"></div>
-      <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Deploy scope</label>
-        <select id="deploy-scope" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">
+      <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Template</label>
+        <select id="deploy-template" onchange="_onDeployTemplateChange()" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">${optionsHtml}</select></div>
+      <div id="deploy-scope-info" style="margin-bottom:8px;font-size:11px;color:var(--pf-muted);"></div>
+      <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Deploy scope</label>
+        <select id="deploy-scope" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">
           <option value="user">User</option>
           <option value="conversation">Conversation</option>
         </select></div>
-      <div id="deploy-config" style="margin-bottom:8px;color:#888;font-size:12px;">Loading deployment schema...</div>
+      <div id="deploy-config" style="margin-bottom:8px;color:var(--pf-muted);font-size:12px;">Loading deployment schema...</div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-        <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-        <button onclick="_submitDeployFlow()" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Deploy</button>
+        <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+        <button onclick="_submitDeployFlow()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Deploy</button>
       </div>`;
     _onDeployTemplateChange();
   } catch (e) {
-    panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">Error loading templates: ' + e.message + '</div>';
+    panel.querySelector('div:last-child').innerHTML = '<div style="color:var(--pf-danger);">Error loading templates: ' + e.message + '</div>';
   }
 }
 function _submitDeployFlow() {
@@ -1528,25 +1557,25 @@ async function _onDeployTemplateChange() {
   var info = document.getElementById('deploy-scope-info');
   var scopeSel = document.getElementById('deploy-scope');
   if (flowScope === 'conversation') {
-    info.innerHTML = '<span style="color:#f4a261;">This flow requires a conversation context.</span>';
+    info.innerHTML = '<span style="color:var(--pf-warning);">This flow requires a conversation context.</span>';
     scopeSel.value = 'conversation';
     scopeSel.disabled = true;
   } else if (flowScope === 'user') {
-    info.innerHTML = '<span style="color:#58a6ff;">This flow requires a user context.</span>';
+    info.innerHTML = '<span style="color:var(--pf-accent-2);">This flow requires a user context.</span>';
     scopeSel.disabled = false;
   } else {
-    info.innerHTML = '<span style="color:#3fb950;">Independent flow - no runtime dependencies.</span>';
+    info.innerHTML = '<span style="color:var(--pf-success);">Independent flow - no runtime dependencies.</span>';
     scopeSel.disabled = false;
   }
   var config = document.getElementById('deploy-config');
   if (!config || !sel.value) return;
-  config.innerHTML = '<div style="color:#888;font-size:12px;">Loading deployment schema...</div>';
+  config.innerHTML = '<div style="color:var(--pf-muted);font-size:12px;">Loading deployment schema...</div>';
   try {
     const schema = await rxjs.firstValueFrom(action$('get_flow_deploy_schema', { template_id: sel.value }));
-    if (schema.error) { config.innerHTML = '<div style="color:#e94560;">' + escapeHtml(schema.error) + '</div>'; return; }
+    if (schema.error) { config.innerHTML = '<div style="color:var(--pf-danger);">' + escapeHtml(schema.error) + '</div>'; return; }
     config.innerHTML = await _renderFlowDeploymentConfig(schema);
   } catch (e) {
-    config.innerHTML = '<div style="color:#e94560;">Error loading deployment schema: ' + escapeHtml(e.message || e) + '</div>';
+    config.innerHTML = '<div style="color:var(--pf-danger);">Error loading deployment schema: ' + escapeHtml(e.message || e) + '</div>';
   }
 }
 
@@ -1568,22 +1597,22 @@ function _usePrompt(name, hasParams) {
     if (ov) ov.remove();
     ov = document.createElement('div');
     ov.id = 'promptParamOverlay';
-    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    ov.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
     const panel = document.createElement('div');
-    panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:420px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:420px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
     let formHtml = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-      <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${escapeHtml(data.title || name)}</h3>
-      <button onclick="document.getElementById('promptParamOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+      <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(data.title || name)}</h3>
+      <button onclick="document.getElementById('promptParamOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
     </div>`;
     for (const [key, schema] of Object.entries(params)) {
       const def = schema.default || '';
       const desc = schema.description || key;
-      formHtml += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${escapeHtml(desc)}</label>`
-        + `<input id="prompt-param-${key}" value="${escapeHtml(String(def))}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
+      formHtml += `<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(desc)}</label>`
+        + `<input id="prompt-param-${key}" value="${escapeHtml(String(def))}" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
     }
     formHtml += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-      <button onclick="document.getElementById('promptParamOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-      <button id="promptParamPaste" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Paste</button>
+      <button onclick="document.getElementById('promptParamOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+      <button id="promptParamPaste" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Paste</button>
     </div>`;
     panel.innerHTML = formHtml;
     ov.appendChild(panel);
@@ -1663,9 +1692,9 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
   const roS = readonly ? 'opacity:0.7;cursor:not-allowed;' : '';
   let html = '';
   if (isNew) {
-    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Name</label><input id="res-name" value="" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
+    html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Name</label><input id="res-name" value="" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>';
     if (rtype !== '_tool') {
-      html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="res-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
+      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Scope</label><select id="res-scope" style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
         + (_isAdmin() ? '<option value="global">Global</option>' : '')
         + '<option value="user">User</option><option value="conversation">Conversation</option></select></div>';
     }
@@ -1674,23 +1703,23 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
     let val = (data && data[key] != null) ? data[key] : '';
     if (typeof val === 'object') val = JSON.stringify(val, null, 2);
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
-    html += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${key}</label>`;
+    html += `<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${key}</label>`;
     if (type === 'textarea') {
-      html += `<textarea id="res-${key}"${dis} style="width:100%;min-height:120px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${escaped}</textarea>`;
+      html += `<textarea id="res-${key}"${dis} style="width:100%;min-height:120px;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${escaped}</textarea>`;
     } else if (type === 'json') {
       const jsonVal = (data && data[key] != null && typeof data[key] === 'object') ? JSON.stringify(data[key], null, 2) : (val || (key === 'args' ? '[]' : '{}'));
-      html += `<textarea id="res-${key}"${dis} data-json="1" style="width:100%;min-height:70px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${String(jsonVal).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>`;
+      html += `<textarea id="res-${key}"${dis} data-json="1" style="width:100%;min-height:70px;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${String(jsonVal).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>`;
     } else if (type === 'checkbox') {
       const checkedAttr = (val === true || val === 'true') ? ' checked' : '';
-      html += `<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="res-${key}" type="checkbox"${checkedAttr}${dis} style="accent-color:#6c5ce7;"/> <span style="color:#e0e0e0;font-size:12px;">Run stdio on relay host helper</span></label>`;
+      html += `<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="res-${key}" type="checkbox"${checkedAttr}${dis} style="accent-color:var(--pf-accent);"/> <span style="color:var(--pf-text);font-size:12px;">Run stdio on relay host helper</span></label>`;
     } else if (type === 'mcp_transport') {
       const httpSelected = (val === 'http' || !val) ? ' selected' : '';
       const stdioSelected = val === 'stdio' ? ' selected' : '';
-      html += `<select id="res-${key}"${dis} style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}"><option value="http"${httpSelected}>HTTP JSON-RPC</option><option value="stdio"${stdioSelected}>Command-line stdio</option></select>`;
+      html += `<select id="res-${key}"${dis} style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;${roS}"><option value="http"${httpSelected}>HTTP JSON-RPC</option><option value="stdio"${stdioSelected}>Command-line stdio</option></select>`;
     } else if (type === 'mcp_via') {
       const directSelected = (val === 'direct' || !val) ? ' selected' : '';
       const relaySelected = val === 'relay' ? ' selected' : '';
-      html += `<select id="res-${key}"${dis} style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}"><option value="direct"${directSelected}>Direct HTTP from PawFlow server</option><option value="relay"${relaySelected}>Via relay</option></select>`;
+      html += `<select id="res-${key}"${dis} style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;${roS}"><option value="direct"${directSelected}>Direct HTTP from PawFlow server</option><option value="relay"${relaySelected}>Via relay</option></select>`;
     } else if (type === 'mcp_relay') {
       const relays = window._resourceRelayOptions || [];
       const current = String(val || '');
@@ -1706,12 +1735,12 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
         else if (r.root) label += ' - ' + r.root;
         options += '<option value="' + escapeHtml(rid) + '"' + selected + '>' + escapeHtml(label) + '</option>';
       });
-      html += `<select id="res-${key}"${dis} style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}">${options}</select>`;
+      html += `<select id="res-${key}"${dis} style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;${roS}">${options}</select>`;
     } else if (type === 'params_editor') {
       const params = (data && typeof data[key] === 'object' && data[key]) ? data[key] : {};
-      html += `<div id="res-${key}" data-type="params_editor" style="margin-top:2px;background:#0f0f23;border:1px solid #333;border-radius:4px;padding:6px;${roS}">`;
+      html += `<div id="res-${key}" data-type="params_editor" style="margin-top:2px;background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:6px;${roS}">`;
       html += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
-      html += '<tr style="color:#888;"><th style="text-align:left;padding:2px 4px;">Name</th><th style="text-align:left;padding:2px 4px;">Type</th><th style="text-align:left;padding:2px 4px;">Default</th><th style="text-align:left;padding:2px 4px;">Description</th>';
+      html += '<tr style="color:var(--pf-muted);"><th style="text-align:left;padding:2px 4px;">Name</th><th style="text-align:left;padding:2px 4px;">Type</th><th style="text-align:left;padding:2px 4px;">Default</th><th style="text-align:left;padding:2px 4px;">Description</th>';
       if (!ro) html += '<th style="width:24px;"></th>';
       html += '</tr>';
       for (const [pname, pdef] of Object.entries(params)) {
@@ -1719,27 +1748,27 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
         const pd = (pdef.default || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
         const pdesc = (pdef.description || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
         const pn = pname.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-        html += `<tr class="param-row" style="border-top:1px solid #222;">`;
-        html += `<td style="padding:3px 4px;"><input class="pe-name" value="${pn}"${dis} style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
-        html += `<td style="padding:3px 4px;"><select class="pe-type"${dis} style="background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}">`;
+        html += `<tr class="param-row" style="border-top:1px solid var(--pf-border);">`;
+        html += `<td style="padding:3px 4px;"><input class="pe-name" value="${pn}"${dis} style="width:100%;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
+        html += `<td style="padding:3px 4px;"><select class="pe-type"${dis} style="background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:3px;border-radius:3px;font-size:11px;${roS}">`;
         for (const t of ['string','number','boolean']) html += `<option value="${t}"${pt===t?' selected':''}>${t}</option>`;
         html += '</select></td>';
-        html += `<td style="padding:3px 4px;"><input class="pe-default" value="${pd}"${dis} style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
-        html += `<td style="padding:3px 4px;"><input class="pe-desc" value="${pdesc}"${dis} style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
-        if (!ro) html += `<td style="padding:3px 2px;"><button onclick="this.closest('tr').remove()" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:14px;">&times;</button></td>`;
+        html += `<td style="padding:3px 4px;"><input class="pe-default" value="${pd}"${dis} style="width:100%;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
+        html += `<td style="padding:3px 4px;"><input class="pe-desc" value="${pdesc}"${dis} style="width:100%;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:3px;border-radius:3px;font-size:11px;${roS}"/></td>`;
+        if (!ro) html += `<td style="padding:3px 2px;"><button onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--pf-danger);cursor:pointer;font-size:14px;">&times;</button></td>`;
         html += '</tr>';
       }
       html += '</table>';
-      if (!ro) html += `<button onclick="_addParamRow(this.parentElement)" style="margin-top:4px;background:#333;color:#aaa;border:1px solid #444;padding:3px 10px;border-radius:3px;cursor:pointer;font-size:11px;">+ Add Parameter</button>`;
+      if (!ro) html += `<button onclick="_addParamRow(this.parentElement)" style="margin-top:4px;background:var(--pf-border);color:var(--pf-muted);border:1px solid var(--pf-border);padding:3px 10px;border-radius:3px;cursor:pointer;font-size:11px;">+ Add Parameter</button>`;
       html += '</div>';
     } else if (type === 'skills_picker') {
-      html += `<div id="res-${key}" data-type="skills_picker" style="margin-top:2px;background:#0f0f23;border:1px solid #333;border-radius:4px;padding:6px;max-height:120px;overflow-y:auto;${roS}">`;
-      html += '<div style="color:#555;font-size:11px;">Loading skills...</div>';
+      html += `<div id="res-${key}" data-type="skills_picker" style="margin-top:2px;background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:6px;max-height:120px;overflow-y:auto;${roS}">`;
+      html += '<div style="color:var(--pf-muted);font-size:11px;">Loading skills...</div>';
       html += '</div>';
     } else if (type === 'number') {
-      html += `<input id="res-${key}" type="number" value="${escaped}"${dis} style="width:80px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}"/>`;
+      html += `<input id="res-${key}" type="number" value="${escaped}"${dis} style="width:80px;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;${roS}"/>`;
     } else {
-      html += `<input id="res-${key}" value="${escaped}"${dis} style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}"/>`;
+      html += `<input id="res-${key}" value="${escaped}"${dis} style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;${roS}"/>`;
     }
     html += '</div>';
   }
@@ -1750,12 +1779,12 @@ function _addParamRow(container) {
   const table = container.querySelector('table');
   const tr = document.createElement('tr');
   tr.className = 'param-row';
-  tr.style.borderTop = '1px solid #222';
-  tr.innerHTML = '<td style="padding:3px 4px;"><input class="pe-name" value="" style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;"/></td>'
-    + '<td style="padding:3px 4px;"><select class="pe-type" style="background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;"><option value="string">string</option><option value="number">number</option><option value="boolean">boolean</option></select></td>'
-    + '<td style="padding:3px 4px;"><input class="pe-default" value="" style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;"/></td>'
-    + '<td style="padding:3px 4px;"><input class="pe-desc" value="" style="width:100%;background:#0a0a1a;color:#e0e0e0;border:1px solid #333;padding:3px;border-radius:3px;font-size:11px;"/></td>'
-    + '<td style="padding:3px 2px;"><button onclick="this.closest(\'tr\').remove()" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:14px;">&times;</button></td>';
+  tr.style.borderTop = '1px solid var(--pf-border)';
+  tr.innerHTML = '<td style="padding:3px 4px;"><input class="pe-name" value="" style="width:100%;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:3px;border-radius:3px;font-size:11px;"/></td>'
+    + '<td style="padding:3px 4px;"><select class="pe-type" style="background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:3px;border-radius:3px;font-size:11px;"><option value="string">string</option><option value="number">number</option><option value="boolean">boolean</option></select></td>'
+    + '<td style="padding:3px 4px;"><input class="pe-default" value="" style="width:100%;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:3px;border-radius:3px;font-size:11px;"/></td>'
+    + '<td style="padding:3px 4px;"><input class="pe-desc" value="" style="width:100%;background:var(--pf-code-bg);color:var(--pf-text);border:1px solid var(--pf-border);padding:3px;border-radius:3px;font-size:11px;"/></td>'
+    + '<td style="padding:3px 2px;"><button onclick="this.closest(\'tr\').remove()" style="background:none;border:none;color:var(--pf-danger);cursor:pointer;font-size:14px;">&times;</button></td>';
   table.appendChild(tr);
 }
 
@@ -1781,16 +1810,16 @@ function _loadSkillsPicker(container, selected, readonly) {
   action$('list_skills', {}).subscribe(data => {
     const skills = data.skills || [];
     if (!skills.length) {
-      container.innerHTML = '<div style="color:#555;font-size:11px;">No skills defined</div>';
+      container.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">No skills defined</div>';
       return;
     }
     const dis = readonly ? ' disabled' : '';
     container.innerHTML = skills.map(s => {
       const checked = selected.indexOf(s.name) >= 0 ? ' checked' : '';
-      return '<label style="display:flex;align-items:center;gap:6px;padding:2px 0;cursor:' + (readonly ? 'default' : 'pointer') + ';font-size:12px;color:#c0c0d0;">'
-        + '<input type="checkbox" class="skill-cb" value="' + escapeHtml(s.name) + '"' + checked + dis + ' style="accent-color:#6c5ce7;"/>'
+      return '<label style="display:flex;align-items:center;gap:6px;padding:2px 0;cursor:' + (readonly ? 'default' : 'pointer') + ';font-size:12px;color:var(--pf-text);">'
+        + '<input type="checkbox" class="skill-cb" value="' + escapeHtml(s.name) + '"' + checked + dis + ' style="accent-color:var(--pf-accent);"/>'
         + escapeHtml(s.name)
-        + (s.description ? ' <span style="color:#666;font-size:10px;">\u2014 ' + escapeHtml(s.description) + '</span>' : '')
+        + (s.description ? ' <span style="color:var(--pf-muted);font-size:10px;">\u2014 ' + escapeHtml(s.description) + '</span>' : '')
         + '</label>';
     }).join('');
   });
@@ -1818,22 +1847,22 @@ async function showResourceEditor(rtype, name, readonly) {
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
   overlay.id = 'resourceEditorOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
   const title = ro ? 'View' : 'Edit';
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${title} ${rtype}: ${name} ${_scopeBadge(scope)}</h3>
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${title} ${rtype}: ${name} ${_scopeBadge(scope)}</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
   </div>` + _buildResourceForm(rtype, data, false, ro);
   if (ro) {
     html += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Close</button>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Close</button>
     </div>`;
   } else {
     html += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-    <button onclick="_saveResourceEdit('${rtype}','${name}','${scope}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    <button onclick="_saveResourceEdit('${rtype}','${name}','${scope}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
     </div>`;
   }
   panel.innerHTML = html;
@@ -1877,16 +1906,16 @@ async function showResourceCreator(rtype) {
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
   overlay.id = 'resourceEditorOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">New ${rtype === '_tool' ? 'Tool' : rtype}</h3>
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">New ${rtype === '_tool' ? 'Tool' : rtype}</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
   </div>` + _buildResourceForm(rtype, {}, true)
     + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-    <button onclick="_saveResourceCreate('${rtype}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Create</button>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    <button onclick="_saveResourceCreate('${rtype}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Create</button>
   </div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -1949,10 +1978,10 @@ async function showAddAgentToConvDialog(presetDefinition) {
   if (existing) existing.remove();
   var overlay = document.createElement('div');
   overlay.id = 'resourceEditorOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   var panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid #333;';
-  panel.innerHTML = '<p style="color:#e0e0e0;font-weight:600;">Add Agent to Conversation</p><p style="color:#888;">Loading...</p>';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
+  panel.innerHTML = '<p style="color:var(--pf-text);font-weight:600;">Add Agent to Conversation</p><p style="color:var(--pf-muted);">Loading...</p>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
@@ -1966,21 +1995,21 @@ async function showAddAgentToConvDialog(presetDefinition) {
 
     var header = document.createElement('div');
     header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
-    header.innerHTML = '<strong style="color:#e0e0e0;">Add Agent to Conversation</strong>';
+    header.innerHTML = '<strong style="color:var(--pf-text);">Add Agent to Conversation</strong>';
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '\u00d7';
-    closeBtn.style.cssText = 'background:none;border:none;color:#888;cursor:pointer;font-size:18px;';
+    closeBtn.style.cssText = 'background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;';
     closeBtn.onclick = function() { overlay.remove(); };
     header.appendChild(closeBtn);
     panel.appendChild(header);
 
     // Definition selector
     var defLabel = document.createElement('label');
-    defLabel.style.cssText = 'color:#aaa;font-size:11px;';
+    defLabel.style.cssText = 'color:var(--pf-muted);font-size:11px;';
     defLabel.textContent = 'Definition (template)';
     panel.appendChild(defLabel);
     var defSelect = document.createElement('select');
-    defSelect.style.cssText = 'width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin:4px 0 12px;';
+    defSelect.style.cssText = 'width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:4px 0 12px;';
     defSelect.innerHTML = '<option value="">-- Select a definition --</option>'
       + definitions.map(function(d) {
         var sel = (presetDefinition && d.name === presetDefinition) ? ' selected' : '';
@@ -2019,25 +2048,25 @@ async function showAddAgentToConvDialog(presetDefinition) {
         return '<option value="' + escapeHtml(s.service_id) + '"' + sel + '>'
           + escapeHtml(s.service_id) + '</option>';
       }).join('');
-      var html = '<div style="padding:10px;border:1px solid #333;border-radius:4px;background:#0d1117;">';
+      var html = '<div style="padding:10px;border:1px solid var(--pf-border);border-radius:4px;background:var(--pf-code-bg);">';
       // Instance name
-      html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Instance Name *</label>'
-        + '<input id="_addInstName" value="' + escapeHtml(selectedDef) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
+      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Instance Name *</label>'
+        + '<input id="_addInstName" value="' + escapeHtml(selectedDef) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
       // LLM Service
-      html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">LLM Service *</label>'
-        + '<select id="_addLlm" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
+      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">LLM Service *</label>'
+        + '<select id="_addLlm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
         + svcOpts + '</select></div>';
       // Params from schema — skip 'name' (always synced from instance_name)
       var visibleParamKeys = paramKeys.filter(function(k) { return k !== 'name'; });
       if (visibleParamKeys.length) {
-        html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #333;">'
-          + '<div style="font-size:11px;color:#6c5ce7;margin-bottom:6px;font-weight:600;">Parameters</div>';
+        html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--pf-border);">'
+          + '<div style="font-size:11px;color:var(--pf-accent);margin-bottom:6px;font-weight:600;">Parameters</div>';
         visibleParamKeys.forEach(function(k) {
           var spec = paramSchema[k] || {};
           var defVal = spec.default || '';
-          html += '<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">'
+          html += '<div style="margin-bottom:6px;"><label style="color:var(--pf-muted);font-size:11px;">'
             + escapeHtml(k + (spec.required ? ' *' : '')) + '</label>'
-            + '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(defVal)) + '" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
+            + '<input data-param="' + escapeHtml(k) + '" value="' + escapeHtml(String(defVal)) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
         });
         html += '</div>';
       }
@@ -2052,9 +2081,9 @@ async function showAddAgentToConvDialog(presetDefinition) {
 
     // Create link + buttons
     var createLink = document.createElement('div');
-    createLink.style.cssText = 'margin-top:12px;border-top:1px solid #333;padding-top:10px;font-size:11px;';
+    createLink.style.cssText = 'margin-top:12px;border-top:1px solid var(--pf-border);padding-top:10px;font-size:11px;';
     var cl = document.createElement('span');
-    cl.style.cssText = 'color:#6c5ce7;cursor:pointer;';
+    cl.style.cssText = 'color:var(--pf-accent);cursor:pointer;';
     cl.textContent = '+ Create new definition in repository';
     cl.onclick = function() { overlay.remove(); showResourceCreator('agent'); };
     createLink.appendChild(cl);
@@ -2064,11 +2093,11 @@ async function showAddAgentToConvDialog(presetDefinition) {
     btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:12px;';
     var cancelBtn = document.createElement('button');
     cancelBtn.textContent = 'Cancel';
-    cancelBtn.style.cssText = 'background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
+    cancelBtn.style.cssText = 'background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
     cancelBtn.onclick = function() { overlay.remove(); };
     var addBtn = document.createElement('button');
     addBtn.textContent = 'Add Agent';
-    addBtn.style.cssText = 'background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
+    addBtn.style.cssText = 'background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
     addBtn.onclick = async function() {
       if (!selectedDef) { alert('Select a definition first.'); return; }
       var instName = (document.getElementById('_addInstName') || {}).value || '';
@@ -2093,7 +2122,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
     panel.appendChild(btns);
   } catch(e) {
     var err = document.createElement('div');
-    err.style.cssText = 'color:#e94560;font-size:12px;';
+    err.style.cssText = 'color:var(--pf-danger);font-size:12px;';
     err.textContent = 'Error: ' + e.message;
     panel.appendChild(err);
   }
@@ -2107,17 +2136,17 @@ function _showAssignDialog(taskDefName) {
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
   overlay.id = 'resourceEditorOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:420px;border:1px solid #333;';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:420px;border:1px solid var(--pf-border);';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">Assign: ${escapeHtml(taskDefName)}</h3>
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">Assign: ${escapeHtml(taskDefName)}</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
   </div>
-  <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Agent</label>
-    <input id="assign-agent" value="" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>
-  <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Context mode</label>
-    <select id="assign-context" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">
+  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Agent</label>
+    <input id="assign-agent" value="" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>
+  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Context mode</label>
+    <select id="assign-context" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">
       <option value="isolated">isolated (default — only task prompt)</option>
       <option value="last:10">last:10 (last 10 messages)</option>
       <option value="last:20">last:20 (last 20 messages)</option>
@@ -2126,20 +2155,20 @@ function _showAssignDialog(taskDefName) {
       <option value="summary:4000">summary:4000 (summarized ~4000 tokens)</option>
       <option value="full">full (entire conversation context)</option>
     </select></div>
-  <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Interval (optional override)</label>
-    <input id="assign-interval" placeholder="e.g. 6/1m, 2/1h, 60" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>
-  <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Variables (key=value, one per line)</label>
-    <textarea id="assign-vars" placeholder="nbr_images=20&#10;style=cyberpunk" style="width:100%;min-height:60px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;"></textarea></div>
-  <details style="margin-bottom:8px;"><summary style="color:#888;font-size:11px;cursor:pointer;">Limits (optional)</summary>
+  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Interval (optional override)</label>
+    <input id="assign-interval" placeholder="e.g. 6/1m, 2/1h, 60" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>
+  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Variables (key=value, one per line)</label>
+    <textarea id="assign-vars" placeholder="nbr_images=20&#10;style=cyberpunk" style="width:100%;min-height:60px;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;"></textarea></div>
+  <details style="margin-bottom:8px;"><summary style="color:var(--pf-muted);font-size:11px;cursor:pointer;">Limits (optional)</summary>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
-      <div><label style="color:#888;font-size:10px;">Max Budget</label><input id="assign-budget" placeholder="$5" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:4px;font-size:11px;"/></div>
-      <div><label style="color:#888;font-size:10px;">Turn Time</label><input id="assign-turn-time" placeholder="5m" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:4px;font-size:11px;"/></div>
-      <div><label style="color:#888;font-size:10px;">Total Time</label><input id="assign-total-time" placeholder="1h" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:4px;font-size:11px;"/></div>
-      <div><label style="color:#888;font-size:10px;">Max Reschedules</label><input id="assign-max-resched" placeholder="50" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:var(--pf-muted);font-size:10px;">Max Budget</label><input id="assign-budget" placeholder="$5" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:var(--pf-muted);font-size:10px;">Turn Time</label><input id="assign-turn-time" placeholder="5m" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:var(--pf-muted);font-size:10px;">Total Time</label><input id="assign-total-time" placeholder="1h" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:var(--pf-muted);font-size:10px;">Max Reschedules</label><input id="assign-max-resched" placeholder="50" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
     </div></details>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-    <button onclick="_submitAssign('${taskDefName}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    <button onclick="_submitAssign('${taskDefName}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>
   </div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -2185,13 +2214,13 @@ function showTaskInstanceMenu(e, taskId, agent, status) {
   if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px var(--pf-shadow);';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
-    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
+    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
     d.onmouseleave = () => d.style.background = '';
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
@@ -2225,7 +2254,7 @@ function showTaskInstanceMenu(e, taskId, agent, status) {
   });
   // Delete
   const sep = document.createElement('div');
-  sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+  sep.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
   menu.appendChild(sep);
   item('\u{1F5D1} Delete', () => _taskAction('delete'), true);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
@@ -2238,13 +2267,13 @@ function showRunningTaskMenu(e, taskId, agent, status) {
   if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px var(--pf-shadow);';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
-    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
+    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
     d.onmouseleave = () => d.style.background = '';
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
@@ -2277,13 +2306,13 @@ function showRunningTaskMenu(e, taskId, agent, status) {
   }
   if (status === 'active' || status === 'paused') {
     const sep = document.createElement('div');
-    sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+    sep.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
     menu.appendChild(sep);
     item('\u{1F5D1} Cancel', () => _taskAction('cancel'), true);
   }
   // Delete: remove task instance entirely
   const sep2 = document.createElement('div');
-  sep2.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+  sep2.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
   menu.appendChild(sep2);
   item('\u{1F5D1} Delete', () => _taskAction('delete'), true);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
@@ -2296,19 +2325,19 @@ function _showEditLimitsDialog(taskId) {
     if (!task) { addMsg('error', 'Task not found: ' + taskId); return; }
     const overlay = document.createElement('div');
     overlay.id = 'resourceEditorOverlay';
-    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:var(--pf-shadow);z-index:9999;display:flex;align-items:center;justify-content:center;';
     overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
     const panel = document.createElement('div');
-    panel.style.cssText = 'background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:20px;min-width:340px;max-width:420px;color:#e0e0e0;';
-    const _f = (id, label, val, ph) => `<div style="margin-bottom:8px;"><label style="font-size:11px;color:#888;">${label}</label><input id="${id}" value="${val||''}" placeholder="${ph}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
+    panel.style.cssText = 'background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:8px;padding:20px;min-width:340px;max-width:420px;color:var(--pf-text);';
+    const _f = (id, label, val, ph) => `<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--pf-muted);">${label}</label><input id="${id}" value="${val||''}" placeholder="${ph}" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
     panel.innerHTML = `<div style="font-weight:bold;margin-bottom:12px;">Edit Limits — ${taskId}</div>`
       + _f('el-budget', 'Max Budget ($)', task.max_budget || '', '$5.00')
       + _f('el-turn', 'Max Turn Time', task.timeout ? task.timeout+'s' : '', '5m')
       + _f('el-total', 'Max Total Time', task.max_total_time ? task.max_total_time+'s' : '', '1h')
       + _f('el-resched', 'Max Reschedules', task.max_reschedules || '', '50')
       + _f('el-maxiter', 'Max Iterations', task.max_iterations || '', '50')
-      + `<div style="font-size:10px;color:#666;margin-bottom:8px;">Current: cost=$${(task.total_cost||0).toFixed(4)}, reschedules=${task.reschedule_count||0}</div>`
-      + `<div style="display:flex;gap:8px;justify-content:flex-end;"><button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button><button id="el-save" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>`;
+      + `<div style="font-size:10px;color:var(--pf-muted);margin-bottom:8px;">Current: cost=$${(task.total_cost||0).toFixed(4)}, reschedules=${task.reschedule_count||0}</div>`
+      + `<div style="display:flex;gap:8px;justify-content:flex-end;"><button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button><button id="el-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>`;
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
     document.getElementById('el-save').onclick = () => {
@@ -2362,13 +2391,13 @@ function showServiceMenu(e, serviceId, scope, enabled) {
   if (old) old.remove();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
-  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px var(--pf-shadow);';
   _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
-    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
-    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? 'var(--pf-danger)' : 'var(--pf-text)');
+    d.onmouseenter = () => d.style.background = 'color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel))';
     d.onmouseleave = () => d.style.background = '';
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
@@ -2385,7 +2414,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
   });
   if (_canEditScope(scope)) {
     const sep = document.createElement('div');
-    sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+    sep.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
     menu.appendChild(sep);
     item('\u{1F5D1} Delete', () => {
       if (!confirm(`Delete service '${serviceId}'?`)) return;
@@ -2399,9 +2428,9 @@ function showServiceMenu(e, serviceId, scope, enabled) {
 }
 
 // ── Service schema-based form helpers ─────────────────────────────
-const _svcInputStyle = 'width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-size:12px;';
-const _svcLabelStyle = 'color:#aaa;font-size:11px;';
-const _svcDescStyle = 'color:#666;font-size:10px;margin-top:1px;';
+const _svcInputStyle = 'width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-size:12px;';
+const _svcLabelStyle = 'color:var(--pf-muted);font-size:11px;';
+const _svcDescStyle = 'color:var(--pf-muted);font-size:10px;margin-top:1px;';
 
 function _renderSchemaFields(schema, values, readonly) {
   let html = '';
@@ -2415,7 +2444,7 @@ function _renderSchemaFields(schema, values, readonly) {
     if (pdef.description) html += '<div style="' + _svcDescStyle + '">' + pdef.description + '</div>';
     const ptype = pdef.type || 'string';
     if (ptype === 'boolean') {
-      html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="svc-p-' + pname + '" type="checkbox"' + (val ? ' checked' : '') + dis + ' style="accent-color:#6c5ce7;"/> <span style="color:#e0e0e0;font-size:12px;">Enabled</span></label>';
+      html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="svc-p-' + pname + '" type="checkbox"' + (val ? ' checked' : '') + dis + ' style="accent-color:var(--pf-accent);"/> <span style="color:var(--pf-text);font-size:12px;">Enabled</span></label>';
     } else if (ptype === 'select' && pdef.options) {
       html += '<select id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
       for (const opt of pdef.options) {
@@ -2437,7 +2466,7 @@ function _renderSchemaFields(schema, values, readonly) {
     } else if (pdef.sensitive) {
       html += '<div style="display:flex;gap:4px;align-items:center;">'
         + '<input id="svc-p-' + pname + '" type="password" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + 'flex:1;"/>'
-        + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + pname + '\',this)" style="background:none;border:1px solid #333;color:#888;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="Show/hide">\u{1F441}</button>'
+        + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + pname + '\',this)" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="Show/hide">\u{1F441}</button>'
         + '</div>';
     } else {
       html += '<input id="svc-p-' + pname + '" type="text" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '"/>';
@@ -2531,7 +2560,7 @@ function _applyRules(container, rules, actions, serviceId) {
         if (effects.required) {
           const lbl = wrapper.querySelector('label');
           if (lbl && !lbl.querySelector('.svc-req'))
-            lbl.insertAdjacentHTML('beforeend', ' <span class="svc-req" style="color:#e94560">*</span>');
+            lbl.insertAdjacentHTML('beforeend', ' <span class="svc-req" style="color:var(--pf-danger)">*</span>');
         }
         if (effects.default !== undefined) {
           const input = wrapper.querySelector('input,select,textarea');
@@ -2568,11 +2597,11 @@ function _applyRules(container, rules, actions, serviceId) {
 
 function _renderServiceActions(actions, serviceId) {
   if (!actions || !actions.length) return '';
-  let html = '<div class="svc-actions" style="margin-top:12px;padding-top:8px;border-top:1px solid #333;">';
+  let html = '<div class="svc-actions" style="margin-top:12px;padding-top:8px;border-top:1px solid var(--pf-border);">';
   for (const a of actions) {
     const whenAttr = a.when ? ' data-action-when=\'' + JSON.stringify(a.when).replace(/'/g, '&#39;') + '\'' : '';
     html += '<button type="button" onclick="_executeServiceAction(\'' + a.id + '\',\'' + serviceId + '\',\'' + (a.flow || 'simple') + '\',\'' + (a.server_action || '') + '\')"'
-      + whenAttr + ' style="background:#1a1a3e;color:#6c5ce7;border:1px solid #6c5ce7;border-radius:4px;padding:6px 12px;cursor:pointer;font-size:12px;margin-right:8px;">'
+      + whenAttr + ' style="background:color-mix(in srgb, var(--pf-accent) 14%, var(--pf-panel));color:var(--pf-accent);border:1px solid var(--pf-accent);border-radius:4px;padding:6px 12px;cursor:pointer;font-size:12px;margin-right:8px;">'
       + (a.icon || '') + ' ' + (a.label || a.id) + '</button>';
   }
   html += '</div>';
@@ -2696,21 +2725,21 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli) {
   window._clsLoginPending = false;
   // Create overlay dialog 80%x80%
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:var(--pf-shadow);z-index:10000;display:flex;align-items:center;justify-content:center;';
   const dialog = document.createElement('div');
-  dialog.style.cssText = 'width:80%;height:80%;background:#1a1a2e;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;';
+  dialog.style.cssText = 'width:80%;height:80%;background:var(--pf-panel);border-radius:8px;display:flex;flex-direction:column;overflow:hidden;';
   const header = document.createElement('div');
-  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:#16213e;';
-  header.innerHTML = '<span style="color:#aaa;font-size:13px;">' + _title + '</span>'
-    + '<button id="vnc-dialog-close" style="background:none;border:none;color:#e94560;font-size:18px;cursor:pointer;">&times;</button>';
+  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:var(--pf-panel);';
+  header.innerHTML = '<span style="color:var(--pf-muted);font-size:13px;">' + _title + '</span>'
+    + '<button id="vnc-dialog-close" style="background:none;border:none;color:var(--pf-danger);font-size:18px;cursor:pointer;">&times;</button>';
   const vncUrl = '/vnc/' + sessionId + '/' + token + '/vnc.html?autoconnect=true&resize=scale'
     + '&path=vnc/' + sessionId + '/' + token + '/websockify';
   const iframe = document.createElement('iframe');
   iframe.src = vncUrl;
-  iframe.style.cssText = 'flex:1;border:none;background:#000;';
+  iframe.style.cssText = 'flex:1;border:none;background:var(--pf-code-bg);';
   iframe.allow = 'clipboard-read; clipboard-write';
   const status = document.createElement('div');
-  status.style.cssText = 'padding:6px 16px;color:#aaa;font-size:11px;background:#16213e;';
+  status.style.cssText = 'padding:6px 16px;color:var(--pf-muted);font-size:11px;background:var(--pf-panel);';
   status.textContent = 'Waiting for authorization...';
 
   dialog.appendChild(header);
@@ -2781,38 +2810,38 @@ async function _renderCredentialPoolTable(serviceId, anchorBtn) {
   if (!panel) {
     panel = document.createElement('div');
     panel.dataset.credentialPoolPanel = '1';
-    panel.style.cssText = 'margin-top:8px;border:1px solid #333;border-radius:6px;padding:8px;background:#10182f;';
+    panel.style.cssText = 'margin-top:8px;border:1px solid var(--pf-border);border-radius:6px;padding:8px;background:var(--pf-panel);';
     container.appendChild(panel);
   }
-  panel.innerHTML = '<div style="color:#aaa;font-size:11px;">Loading credentials...</div>';
+  panel.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">Loading credentials...</div>';
 
   const load = async () => {
     const resp = await rxjs.firstValueFrom(action$('llm_credential_pool_list', { service_id: serviceId }));
     if (resp.error) {
-      panel.innerHTML = '<div style="color:#e94560;font-size:11px;">' + escapeHtml(resp.error) + '</div>';
+      panel.innerHTML = '<div style="color:var(--pf-danger);font-size:11px;">' + escapeHtml(resp.error) + '</div>';
       return;
     }
     const rows = resp.pool || [];
     let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-      + '<strong style="color:#e0e0e0;font-size:12px;">' + escapeHtml(resp.provider || 'OAuth') + ' credentials</strong>'
-      + '<span style="color:#888;font-size:11px;">' + rows.length + ' login(s)</span></div>';
+      + '<strong style="color:var(--pf-text);font-size:12px;">' + escapeHtml(resp.provider || 'OAuth') + ' credentials</strong>'
+      + '<span style="color:var(--pf-muted);font-size:11px;">' + rows.length + ' login(s)</span></div>';
     if (!rows.length) {
-      html += '<div style="color:#888;font-size:11px;">No credentials saved.</div>';
+      html += '<div style="color:var(--pf-muted);font-size:11px;">No credentials saved.</div>';
     } else {
-      html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ddd;">'
-        + '<thead><tr style="color:#888;text-align:left;"><th>#</th><th>Account</th><th>Status</th><th>Expires</th><th></th></tr></thead><tbody>';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:var(--pf-text);">'
+        + '<thead><tr style="color:var(--pf-muted);text-align:left;"><th>#</th><th>Account</th><th>Status</th><th>Expires</th><th></th></tr></thead><tbody>';
       for (const r of rows) {
         const idx = Number(r.index || 0);
         const status = r.valid ? 'valid' : 'expired';
-        const statusColor = r.valid ? '#2ecc71' : '#e94560';
-        html += '<tr data-cred-index="' + idx + '" style="border-top:1px solid #27314f;">'
+        const statusColor = r.valid ? 'var(--pf-success)' : 'var(--pf-danger)';
+        html += '<tr data-cred-index="' + idx + '" style="border-top:1px solid var(--pf-border);">'
           + '<td style="padding:5px 4px;">' + idx + '</td>'
           + '<td style="padding:5px 4px;">' + escapeHtml(r.account || '(unknown)') + '</td>'
           + '<td style="padding:5px 4px;color:' + statusColor + ';">' + status + '</td>'
           + '<td style="padding:5px 4px;">' + escapeHtml(r.expires_in || '') + '</td>'
           + '<td style="padding:5px 4px;text-align:right;white-space:nowrap;">'
-          + '<button type="button" data-cred-refresh="' + idx + '" style="background:#26365f;color:#dce6ff;border:1px solid #3b4c78;border-radius:4px;padding:3px 7px;margin-right:4px;cursor:pointer;font-size:11px;">Refresh</button>'
-          + '<button type="button" data-cred-delete="' + idx + '" style="background:#3a1622;color:#ffdce5;border:1px solid #7a2e43;border-radius:4px;padding:3px 7px;cursor:pointer;font-size:11px;">Delete</button>'
+          + '<button type="button" data-cred-refresh="' + idx + '" style="background:color-mix(in srgb, var(--pf-accent-2) 18%, var(--pf-panel));color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:4px;padding:3px 7px;margin-right:4px;cursor:pointer;font-size:11px;">Refresh</button>'
+          + '<button type="button" data-cred-delete="' + idx + '" style="background:color-mix(in srgb, var(--pf-danger) 16%, var(--pf-panel));color:var(--pf-danger);border:1px solid var(--pf-danger);border-radius:4px;padding:3px 7px;cursor:pointer;font-size:11px;">Delete</button>'
           + '</td></tr>';
       }
       html += '</tbody></table>';
@@ -2878,9 +2907,9 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
       });
       selectHtml += '</select>';
       div.innerHTML = selectHtml
-        + '<button type="button" id="svc-relay-login-btn" style="background:#6c5ce7;color:white;border:none;'
+        + '<button type="button" id="svc-relay-login-btn" style="background:var(--pf-accent);color:var(--pf-bg);border:none;'
         + 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Start login</button>'
-        + '<div id="svc-relay-status" style="color:#aaa;font-size:11px;margin-top:4px;"></div>';
+        + '<div id="svc-relay-status" style="color:var(--pf-muted);font-size:11px;margin-top:4px;"></div>';
       container.appendChild(div);
 
       document.getElementById('svc-relay-login-btn').addEventListener('click', () => {
@@ -2910,10 +2939,10 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
       if (container) {
         const loginDiv = document.createElement('div');
         loginDiv.style.cssText = 'margin-top:8px;';
-        loginDiv.innerHTML = '<div style="color:#aaa;font-size:11px;white-space:pre-line;margin-bottom:6px;">' + escapeHtml(resp.message) + '</div>'
+        loginDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;white-space:pre-line;margin-bottom:6px;">' + escapeHtml(resp.message) + '</div>'
           + '<textarea id="svc-creds-input" placeholder="Paste .credentials.json content here..." '
           + 'style="' + _svcInputStyle + 'min-height:80px;font-family:monospace;font-size:11px;"></textarea>'
-          + '<button type="button" id="svc-creds-submit" style="background:#6c5ce7;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Save Credentials</button>';
+          + '<button type="button" id="svc-creds-submit" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Save Credentials</button>';
         container.appendChild(loginDiv);
 
         const submitBtn = document.getElementById('svc-creds-submit');
@@ -2925,15 +2954,15 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
           try {
             const result = await rxjs.firstValueFrom(action$(serverAction.replace('_url', '_code'), { service_id: serviceId, credentials: creds }));
             if (result.ok) {
-              loginDiv.innerHTML = '<span style="color:#2ecc71;font-size:12px;">\u2714 ' + (result.message || 'Saved!') + '</span>';
+              loginDiv.innerHTML = '<span style="color:var(--pf-success);font-size:12px;">\u2714 ' + (result.message || 'Saved!') + '</span>';
             } else {
               submitBtn.textContent = 'Save Credentials';
               submitBtn.disabled = false;
               loginDiv.insertAdjacentHTML('beforeend',
-                '<div style="color:#e94560;font-size:11px;margin-top:4px;">' + escapeHtml(result.error) + '</div>');
+                '<div style="color:var(--pf-danger);font-size:11px;margin-top:4px;">' + escapeHtml(result.error) + '</div>');
             }
           } catch (e) {
-            loginDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + e.message + '</span>';
+            loginDiv.innerHTML = '<span style="color:var(--pf-danger);font-size:12px;">\u2718 ' + e.message + '</span>';
           }
         });
       }
@@ -2979,9 +3008,9 @@ async function showServiceInstallForm() {
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
   overlay.id = 'resourceEditorOverlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid #333;';
+  panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
 
   let typeOpts = '';
   for (const st of serviceTypes) {
@@ -2989,12 +3018,12 @@ async function showServiceInstallForm() {
   }
 
   panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-    + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">Install Service</h3>'
-    + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>'
+    + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">Install Service</h3>'
+    + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>'
     + '</div>'
-    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Name <span style="color:#e94560;">*</span></label>'
+    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Name <span style="color:var(--pf-danger);">*</span></label>'
     + '<input id="svc-install-name" style="' + _svcInputStyle + '" placeholder="my_service"/></div>'
-    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Type <span style="color:#e94560;">*</span></label>'
+    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Type <span style="color:var(--pf-danger);">*</span></label>'
     + '<select id="svc-install-type" style="' + _svcInputStyle + '">' + typeOpts + '</select></div>'
     + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Description</label>'
     + '<input id="svc-install-desc" style="' + _svcInputStyle + '" placeholder="Optional description"/></div>'
@@ -3002,10 +3031,10 @@ async function showServiceInstallForm() {
     + '<select id="svc-install-scope" style="' + _svcInputStyle + '">'
     + (_isAdmin() ? '<option value="global">Global</option>' : '')
     + '<option value="user">User</option></select></div>'
-    + '<div id="svc-install-params" style="border-top:1px solid #333;padding-top:8px;margin-top:8px;"></div>'
+    + '<div id="svc-install-params" style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;"></div>'
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-    + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-    + '<button id="svc-install-btn" onclick="_submitServiceInstall()" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Install</button>'
+    + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+    + '<button id="svc-install-btn" onclick="_submitServiceInstall()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Install</button>'
     + '</div>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -3013,16 +3042,16 @@ async function showServiceInstallForm() {
   const typeSelect = document.getElementById('svc-install-type');
   const loadParams = async () => {
     const paramsDiv = document.getElementById('svc-install-params');
-    paramsDiv.innerHTML = '<div style="color:#666;font-size:11px;">Loading parameters...</div>';
+    paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">Loading parameters...</div>';
     const schemaData = await _fetchServiceSchema(typeSelect.value);
     panel.dataset.schema = JSON.stringify(schemaData.parameters || {});
     panel.dataset.rules = JSON.stringify(schemaData.rules || []);
     panel.dataset.actions = JSON.stringify(schemaData.actions || []);
     const params = schemaData.parameters || {};
     if (Object.keys(params).length === 0) {
-      paramsDiv.innerHTML = '<div style="color:#666;font-size:11px;">No configurable parameters for this service type.</div>';
+      paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">No configurable parameters for this service type.</div>';
     } else {
-      paramsDiv.innerHTML = '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>'
+      paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>'
         + _renderSchemaFields(params, {})
         + _renderServiceActions(schemaData.actions || [], '');
       _applyRules(paramsDiv, schemaData.rules || [], schemaData.actions || [], '');
@@ -3073,21 +3102,21 @@ async function showServiceEditForm(serviceId, scope, readonly) {
     if (overlay) overlay.remove();
     overlay = document.createElement('div');
     overlay.id = 'resourceEditorOverlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
     const panel = document.createElement('div');
-    panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid #333;';
+    panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
 
     const title = ro ? 'View Service: ' : 'Edit Service: ';
     let formHtml = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-      + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">' + title + serviceId + ' ' + _scopeBadge(scope) + '</h3>'
-      + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>'
+      + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + title + serviceId + ' ' + _scopeBadge(scope) + '</h3>'
+      + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>'
       + '</div>';
     formHtml += '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Type</label>'
       + '<input value="' + svcType + '" disabled style="' + _svcInputStyle + 'opacity:0.6;cursor:not-allowed;"/></div>';
 
     if (Object.keys(schema).length > 0) {
-      formHtml += '<div style="border-top:1px solid #333;padding-top:8px;margin-top:8px;">'
-        + '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>'
+      formHtml += '<div style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;">'
+        + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>'
         + _renderSchemaFields(schema, config, ro)
         + (ro ? '' : _renderServiceActions(actions, serviceId))
         + '</div>';
@@ -3100,7 +3129,7 @@ async function showServiceEditForm(serviceId, scope, readonly) {
           formHtml += '<div style="margin-bottom:6px;"><label style="' + _svcLabelStyle + '">' + k + '</label>'
             + '<div style="display:flex;gap:4px;align-items:center;">'
             + '<input id="svc-p-' + k + '" type="password" value="' + val + '"' + disabledAttr + ' style="' + _svcInputStyle + roStyle + 'flex:1;"/>'
-            + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + k + '\',this)" style="background:none;border:1px solid #333;color:#888;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="Show/hide">\u{1F441}</button>'
+            + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + k + '\',this)" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="Show/hide">\u{1F441}</button>'
             + '</div></div>';
         } else {
           formHtml += '<div style="margin-bottom:6px;"><label style="' + _svcLabelStyle + '">' + k + '</label>'
@@ -3111,13 +3140,13 @@ async function showServiceEditForm(serviceId, scope, readonly) {
 
     if (!ro) {
       formHtml += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-        + '<button id="svc-save-btn" onclick="_submitServiceEdit(\'_SVC_ID_\',\'_SVC_SCOPE_\')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
+        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+        + '<button id="svc-save-btn" onclick="_submitServiceEdit(\'_SVC_ID_\',\'_SVC_SCOPE_\')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
         + '</div>';
       formHtml = formHtml.replace('_SVC_ID_', serviceId).replace('_SVC_SCOPE_', scope);
     } else {
       formHtml += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Close</button>'
+        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Close</button>'
         + '</div>';
     }
 

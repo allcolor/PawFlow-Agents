@@ -368,7 +368,7 @@ class AgentSummarizeMixin:
         _svc_id = llm_service
         _svc_ctx_max = 0
         try:
-            _resolved_client, _svc_ctx_max, _resolved_svc = self._get_summarizer_client(user_id)
+            _resolved_client, _svc_ctx_max, _resolved_svc = self._get_summarizer_client(user_id, conversation_id=conversation_id)
             if _resolved_client is not None:
                 _old_provider = getattr(client, "provider", "") or getattr(getattr(client, "_client", None), "provider", "")
                 _new_provider = getattr(_resolved_client, "provider", "") or getattr(getattr(_resolved_client, "_client", None), "provider", "")

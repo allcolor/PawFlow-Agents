@@ -641,6 +641,46 @@ class TestMetaToolAliases(unittest.TestCase):
         assert list_call[2]["recursive"] is True
         assert list_call[2]["max_entries"] == 5
 
+    def test_batch_edit_relay_action_supports_replace_all_defaults(self):
+        from tools.fs_actions import action_batch_edit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.txt").write_text("foo foo\n", encoding="utf-8")
+            (root / "b.txt").write_text("foo foo\n", encoding="utf-8")
+
+            result = action_batch_edit(str(root), str(root), {
+                "replace_all": True,
+                "edits": [
+                    {"path": "a.txt", "old_string": "foo", "new_string": "bar"},
+                    {"path": "b.txt", "old_string": "foo", "new_string": "baz"},
+                ],
+            })
+
+            assert result["edits_applied"] == 2
+            assert (root / "a.txt").read_text(encoding="utf-8") == "bar bar\n"
+            assert (root / "b.txt").read_text(encoding="utf-8") == "baz baz\n"
+
+    def test_batch_edit_relay_action_supports_per_edit_replace_all(self):
+        from tools.fs_actions import action_batch_edit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.txt").write_text("foo foo\n", encoding="utf-8")
+            (root / "b.txt").write_text("foo foo\n", encoding="utf-8")
+
+            result = action_batch_edit(str(root), str(root), {
+                "edits": [
+                    {"path": "a.txt", "old_string": "foo", "new_string": "bar", "replace_all": True},
+                    {"path": "b.txt", "old_string": "foo", "new_string": "baz", "replace_all": True},
+                ],
+            })
+
+            assert result["edits_applied"] == 2
+            assert (root / "a.txt").read_text(encoding="utf-8") == "bar bar\n"
+            assert (root / "b.txt").read_text(encoding="utf-8") == "baz baz\n"
+
+
     def test_relay_list_dir_action_supports_recursive_limit(self):
         from tools.fs_actions import action_list_dir
 
@@ -929,6 +969,15 @@ class TestGetToolDefinitions(unittest.TestCase):
         for d in defs:
             assert "description" in d
             assert "parameters" in d
+
+    def test_batch_edit_schema_exposes_replace_all(self):
+        from core.handlers.batch_edit import BatchEditHandler
+
+        schema = BatchEditHandler().parameters_schema
+        assert "replace_all" in schema["properties"]
+        edit_props = schema["properties"]["edits"]["items"]["properties"]
+        assert "replace_all" in edit_props
+
 
 
 class TestImageMarkerCapBypass(unittest.TestCase):

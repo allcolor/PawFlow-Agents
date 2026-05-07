@@ -804,16 +804,18 @@ def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
             file_contents[abs_path] = p.read_text(encoding="utf-8")
         text = file_contents[abs_path]
         count = text.count(old_string)
+        replace_all = bool(edit.get("replace_all", req.get("replace_all", False)))
         if count == 0:
             raise ValueError(f"Edit {i}: old_string not found in {fpath}")
-        if count > 1:
-            raise ValueError(f"Edit {i}: old_string found {count} times in {fpath} (must be unique)")
+        if count > 1 and not replace_all:
+            raise ValueError(f"Edit {i}: old_string found {count} times in {fpath} (use replace_all=true)")
 
     # Phase 2: Apply all edits in memory
     for edit in edits:
         abs_path = str(Path(root_dir).resolve() / edit["path"])
+        replace_all = bool(edit.get("replace_all", req.get("replace_all", False)))
         file_contents[abs_path] = file_contents[abs_path].replace(
-            edit["old_string"], edit.get("new_string", ""), 1)
+            edit["old_string"], edit.get("new_string", ""), -1 if replace_all else 1)
 
     # Phase 3: Write all files
     for abs_path, content in file_contents.items():

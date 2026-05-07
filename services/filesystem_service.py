@@ -1182,8 +1182,9 @@ class RelayService(BaseService):
                               new_string=new_string, replace_all=replace_all,
                               local=local)
 
-    def batch_edit(self, edits: list, local: bool = False):
-        return self._request("batch_edit", ".", edits=edits, local=local)
+    def batch_edit(self, edits: list, replace_all: bool = False, local: bool = False):
+        return self._request("batch_edit", ".", edits=edits,
+                             replace_all=replace_all, local=local)
 
     def apply_patch(self, patch: str, local: bool = False):
         return self._request("apply_patch", ".", patch=patch, local=local)

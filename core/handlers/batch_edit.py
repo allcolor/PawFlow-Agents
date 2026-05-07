@@ -15,12 +15,14 @@ class BatchEditHandler(BaseFsHandler):
         return (
             "Apply multiple string replacements across one or more files in a\n"
             "single atomic call.\n\n"
-            "Each edit specifies a path, an old_string to find, and a new_string to\n"
-            "replace it with -- identical semantics to the single-file edit tool.\n"
+            "Each edit specifies a path, an old_string to find, a new_string to\n"
+            "replace it with, and optional replace_all. The top-level replace_all\n"
+            "acts as the default for edits that do not specify it.\n"
             "All edits are applied sequentially within one tool invocation, which\n"
             "reduces round-trips when you need to change several files at once.\n\n"
             "Parameters:\n"
-            "  edits      -- array of {path, old_string, new_string} objects.\n"
+            "  edits      -- array of {path, old_string, new_string, replace_all?} objects.\n"
+            "  replace_all -- default replace_all value for edits that omit it.\n"
             "  filesystem -- filesystem service name; omit for the default service.\n\n"
             "When to use:\n"
             "  - Renaming a symbol across multiple files.\n"
@@ -45,10 +47,12 @@ class BatchEditHandler(BaseFsHandler):
                             "path": {"type": "string"},
                             "old_string": {"type": "string"},
                             "new_string": {"type": "string"},
+                            "replace_all": {"type": "boolean", "description": "Replace every occurrence for this edit"},
                         },
                         "required": ["path", "old_string", "new_string"],
                     },
                 },
+                "replace_all": {"type": "boolean", "description": "Default replace_all value for edits that omit it"},
                 "filesystem": {"type": "string", "description": "Filesystem service name. Omit for default."},
             },
             "required": ["edits"],
@@ -83,6 +87,7 @@ class BatchEditHandler(BaseFsHandler):
                     edit.get("path", ""),
                     edit.get("old_string", ""),
                     edit.get("new_string", ""),
+                    bool(edit.get("replace_all", arguments.get("replace_all", False))),
                 )
                 results.append(r)
             return "\n".join(results)
@@ -97,7 +102,8 @@ class BatchEditHandler(BaseFsHandler):
                 path = edit.get("path", "")
                 self._checkpoint_before(svc, path, service_name=service_name)
                 result = svc.edit(path, edit.get("old_string", ""),
-                                  edit.get("new_string", ""), False,
+                                  edit.get("new_string", ""),
+                                  bool(edit.get("replace_all", arguments.get("replace_all", False))),
                                   local=bool(arguments.get("local", False)))
                 results.append(f"{path}: {result.get('replacements', 0)} replacement(s)")
             return "\n".join(results)

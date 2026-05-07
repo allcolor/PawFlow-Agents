@@ -679,6 +679,13 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             result["running_tasks"] = running
             result["all_tasks"] = all_task_instances
         # Services are NOT embedded here — UI calls `list_services` directly.
+        # Summarizer binding/effective service for this conversation.
+        if conv_id:
+            try:
+                from core.summarizer_bindings import summary as _summarizer_summary
+                result["summarizer"] = _summarizer_summary(user_id, conv_id)
+            except Exception:
+                result["summarizer"] = {"binding": {}, "available": [], "effective": None}
         # Relay bindings for this conversation (new per-agent format)
         if conv_id:
             try:

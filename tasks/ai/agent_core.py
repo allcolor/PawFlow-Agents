@@ -1638,7 +1638,7 @@ class AgentCoreMixin:
                             # unconditionally. PawFlow's token estimate may underestimate
                             # (different tokenizer, tool schemas not counted), leading to
                             # no-op compactions that leave stale summaries in the context.
-                            _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id)
+                            _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id, conversation_id=conversation_id)
                             if not _sc:
                                 raise RuntimeError(
                                     "No summarizer_service configured. Cannot compact.")

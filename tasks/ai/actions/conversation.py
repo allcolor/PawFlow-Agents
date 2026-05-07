@@ -133,7 +133,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         # Resolve LLM client
-        _summ_client, _, _ = self._get_summarizer_client(user_id)
+        _summ_client, _, _ = self._get_summarizer_client(user_id, conversation_id=conv_id)
         _rs_client = _summ_client
         if not _rs_client:
             _rs_svc = self._resolve_service_param("llm_service", user_id) or "default"

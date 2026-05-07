@@ -651,10 +651,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         # full stop. No fallback to the agent's llm_service (that would
         # compact with a model the user didn't choose for summarization)
         # and no "default" that doesn't actually exist as a service.
-        _compact_client, _, _compact_svc_id = self._get_summarizer_client(user_id)
+        _compact_client, _, _compact_svc_id = self._get_summarizer_client(user_id, conversation_id=conv_id)
         if not _compact_client:
             flowfile.set_content(json.dumps({
-                "error": "No summarizer_service configured — compaction needs one.",
+                "error": "No summarizer service configured — compaction needs one.",
             }).encode())
             return [flowfile]
         _compact_budget_config = _ctx_llm_service_config(conv_id, _ctx_agent)
@@ -714,10 +714,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        _compact_client, _, _compact_svc_id = self._get_summarizer_client(user_id)
+        _compact_client, _, _compact_svc_id = self._get_summarizer_client(user_id, conversation_id=conv_id)
         if not _compact_client:
             flowfile.set_content(json.dumps({
-                "error": "No summarizer_service configured — rebuild needs compaction.",
+                "error": "No summarizer service configured — rebuild needs compaction.",
             }).encode())
             return [flowfile]
         from core.conv_agent_config import get_all_agent_configs

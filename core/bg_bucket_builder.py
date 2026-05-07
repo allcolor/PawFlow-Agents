@@ -165,28 +165,16 @@ class BgBucketBuilder:
             return default
         return value
 
-    def _resolve_bg_compact_param(self, short_name: str, default: Any,
-                                  cid: str, user_id: str) -> Any:
-        full_name = _BG_COMPACT_PARAM_PREFIX + short_name
-        template = "${" + full_name + "}"
-        try:
-            from core.expression import resolve_expression
-            value = resolve_expression(
-                template, owner=user_id or None,
-                conversation_id=cid or None)
-        except Exception:
-            logger.debug("[bg-bucket] failed to resolve %s", full_name,
-                         exc_info=True)
-            return default
-        if value == template:
-            return default
-        return value
-
     def _bg_compact_config(self, cid: str = "", user_id: str = "") -> Dict[str, Any]:
-        raw = {
-            name: self._resolve_bg_compact_param(name, default, cid, user_id)
-            for name, default in _BG_COMPACT_DEFAULTS.items()
-        }
+        try:
+            from core.summarizer_bindings import resolve_service
+            summarizer, _sdef, _explicit = resolve_service(user_id, cid)
+            if summarizer and hasattr(summarizer, "bg_compact_config"):
+                return summarizer.bg_compact_config()
+        except Exception:
+            logger.debug("[bg-bucket] failed to resolve summarizer bg config",
+                         exc_info=True)
+        raw = dict(_BG_COMPACT_DEFAULTS)
         return {
             "l1_trigger_msgs": self._coerce_positive_int(
                 "l1_trigger_msgs", raw["l1_trigger_msgs"], L1_TRIGGER_MSGS),
@@ -322,6 +310,15 @@ class BgBucketBuilder:
              user_id="") -> str
         """
         self._summarize_fn = fn
+
+    def _resolve_summarizer(self, user_id: str, cid: str):
+        """Call injected resolver with conversation scope when supported."""
+        if self._summarizer_resolver is None:
+            return None, 0, ""
+        try:
+            return self._summarizer_resolver(user_id, cid)
+        except TypeError:
+            return self._summarizer_resolver(user_id)
 
     def note_shared_seq(self, cid: str, seq: int) -> None:
         """O(1) hint that shared.jsonl now has a record at this seq.
@@ -674,7 +671,7 @@ class BgBucketBuilder:
                      "final_object_count": store.object_count,
                      "final_last_seq": store.last_seq}
 
-        client, ctx_max, _svc_id = self._summarizer_resolver(user_id)
+        client, ctx_max, _svc_id = self._resolve_summarizer(user_id, cid)
         if not client:
             logger.warning(
                 "[bg-bucket] build_now_sync: summarizer unavailable for "
@@ -952,7 +949,7 @@ class BgBucketBuilder:
                 cid[:8], self._summarizer_resolver is not None,
                 self._summarize_fn is not None)
             return
-        client, ctx_max, _svc_id = self._summarizer_resolver(user_id)
+        client, ctx_max, _svc_id = self._resolve_summarizer(user_id, cid)
         if not client:
             logger.info(
                 "[bg-bucket] no summarizer for user=%s cid=%s — skipping",

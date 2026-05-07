@@ -20,7 +20,10 @@ def get_binding(conversation_id: str) -> Dict[str, str]:
     """Return the explicit summarizer binding for a conversation, if any."""
     if not conversation_id:
         return {}
-    raw = _store().get_extra_cached(conversation_id, _EXTRA_KEY, default=None)
+    try:
+        raw = _store().get_extra_cached(conversation_id, _EXTRA_KEY, default=None)
+    except ValueError:
+        return {}
     if not isinstance(raw, dict):
         return {}
     scope = str(raw.get("scope", "") or "")

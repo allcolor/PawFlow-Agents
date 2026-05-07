@@ -773,7 +773,7 @@ class ConversationStore:
         seed = self.load_shared_for_agent(cid, agent) or []
         if not seed:
             return 0
-        self._write_ctx_file(path, seed)
+        self._write_ctx_file(self._agent_ctx_path(cid, agent), seed)
         logger.info(
             "[context:%s] seeded %s context from shared before first append: %d messages",
             cid[:8], agent, len(seed))

@@ -1062,18 +1062,26 @@ class ConversationStore:
         import time as _t
         path = self._extras_path(cid)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
+        tmp = path.with_name(
+            f"{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         _last_err: Optional[Exception] = None
-        for _attempt in range(8):
-            try:
-                tmp.replace(path)
-                return
-            except PermissionError as _pe:
-                _last_err = _pe
-                _t.sleep(0.025 * (1 + _attempt))  # 25, 50, 75, ... up to 200ms
-        raise _last_err if _last_err else RuntimeError(
-            "_write_extras: replace failed without an exception")
+        try:
+            for _attempt in range(8):
+                try:
+                    tmp.replace(path)
+                    return
+                except PermissionError as _pe:
+                    _last_err = _pe
+                    _t.sleep(0.025 * (1 + _attempt))  # 25, 50, 75, ... up to 200ms
+            raise _last_err if _last_err else RuntimeError(
+                "_write_extras: replace failed without an exception")
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
 
     # ══════════════════════════════════════════════════════════════════
     #  SINGLE READ POINT

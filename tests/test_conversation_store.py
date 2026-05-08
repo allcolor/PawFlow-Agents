@@ -304,6 +304,28 @@ class TestExtras:
         assert store.get_extra_cached(cid, "title") == "My Chat"
         assert store.get_extras(cid)["title"] == "My Chat"
 
+    def test_write_extras_uses_unique_tmp_and_retries_permission_error(self, conv, monkeypatch):
+        from pathlib import Path
+
+        store, cid, uid = conv
+        original_replace = Path.replace
+        attempted = []
+
+        def flaky_replace(self, target):
+            if self.name.startswith("extras.json.") and self.name.endswith(".tmp"):
+                attempted.append(self.name)
+                assert self.name != "extras.tmp"
+                if len(attempted) == 1:
+                    raise PermissionError("transient Windows lock")
+            return original_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", flaky_replace)
+
+        store.set_extra(cid, "title", "Recovered")
+
+        assert store.get_extra(cid, "title") == "Recovered"
+        assert len(attempted) == 2
+
 
 # ── list_conversations ───────────────────────────────────────────────
 

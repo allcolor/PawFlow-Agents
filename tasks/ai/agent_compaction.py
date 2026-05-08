@@ -550,7 +550,21 @@ class AgentCompactionMixin(AgentSummarizeMixin):
                 _bucket_store = None
 
         # ── Phase 0: Cleanup ──
-        messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
+        # A post-compact context is always rebuilt from the shared pyramid
+        # header plus a raw recent tail. Messages injected by a previous
+        # compact are neither; drop them before the tail walk-back so a
+        # repeated compact never compacts an old bridge as if it were user
+        # transcript.
+        def _is_synthetic_compact_msg(m: LLMMessage) -> bool:
+            source = getattr(m, 'source', None) or {}
+            source_type = source.get("type") if isinstance(source, dict) else ""
+            return source_type in {"context", "private_compaction"}
+
+        messages = [
+            m for m in messages
+            if getattr(m, 'role', '') != 'sub_agent_trace'
+            and not _is_synthetic_compact_msg(m)
+        ]
 
         # Remove orphan tool results
         _valid_tc_ids = set()

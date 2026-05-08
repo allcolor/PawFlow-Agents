@@ -495,3 +495,72 @@ def test_compact_never_calls_build_now_sync(monkeypatch):
         f"compact called build_now_sync ({len(sync_calls)} times) "
         f"— this defeats the 'compact is instant' guarantee. "
         f"calls={sync_calls!r}")
+
+
+def test_compact_drops_previous_synthetic_context_from_tail(monkeypatch):
+    """Repeated compacts rebuild header + raw tail, never compact the bridge."""
+    from core.llm_client import LLMMessage
+    from core import bucket_store as _bs_mod
+    from core.conversation_store import ConversationStore
+    from tasks.ai.agent_loop import AgentLoopTask
+
+    class _StubCS:
+        def _conv_dir(self, conversation_id):
+            return Path("/tmp/pawflow-test-compact")
+
+    class _StubBS:
+        @classmethod
+        def get(cls, conv_dir):
+            return cls()
+
+        def assemble_summary_header(self):
+            return "[Conversation summary - earlier messages compacted]\nold work"
+
+    monkeypatch.setattr(ConversationStore, "instance", classmethod(lambda cls: _StubCS()))
+    monkeypatch.setattr(_bs_mod, "BucketStore", _StubBS)
+    monkeypatch.setattr(
+        AgentLoopTask, "_persist_context", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        AgentLoopTask, "_cleanup_orphan_files", staticmethod(lambda *a, **kw: None))
+
+    class _C:
+        api_key = ""
+        base_url = ""
+
+    instance = AgentLoopTask.__new__(AgentLoopTask)
+    msgs = [
+        LLMMessage(role="system", content="sys", conversation_id="cid", seq=1),
+        LLMMessage(
+            role="user",
+            content="OLD COMPACT BRIDGE should not survive",
+            source={"type": "context"},
+            conversation_id="cid",
+            seq=10,
+        ),
+        LLMMessage(
+            role="assistant",
+            content="OLD COMPACT ACK should not survive",
+            source={"type": "context"},
+            conversation_id="cid",
+            seq=11,
+        ),
+        LLMMessage(role="user", content="fresh raw user", conversation_id="cid", seq=20),
+        LLMMessage(role="assistant", content="fresh raw assistant", conversation_id="cid", seq=21),
+    ]
+
+    out = instance._compact(
+        list(msgs), _C(),
+        max_tokens=200_000,
+        force=True,
+        conversation_id="cid_test",
+        agent_name="assistant",
+        user_id="uid",
+        budget_config={"compact_target_tokens": 25_000},
+    )
+
+    joined = "\n".join(m.content or "" for m in out)
+    assert "old work" in joined
+    assert "fresh raw user" in joined
+    assert "fresh raw assistant" in joined
+    assert "OLD COMPACT BRIDGE" not in joined
+    assert "OLD COMPACT ACK" not in joined

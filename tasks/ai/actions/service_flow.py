@@ -253,6 +253,32 @@ def _flow_deploy_schema_payload(raw: Dict[str, Any], *, parameters=None,
     }
 
 
+def _load_flow_instance_template_raw(inst, user_id: str) -> Dict[str, Any]:
+    """Load the template JSON for a deployed instance.
+
+    Older bootstrap deployments can keep a stale legacy flow_path while the
+    versioned repository has the real template. Prefer the pinned file when it
+    exists, then fall back to repository lookup by flow id/name.
+    """
+    from pathlib import Path as _Path
+    candidates = []
+    flow_path = getattr(inst, "flow_path", "") or ""
+    if flow_path:
+        candidates.append(_Path(flow_path))
+    for template_id in (getattr(inst, "flow_id", "") or "",
+                        getattr(inst, "flow_name", "") or ""):
+        tpath = _resolve_flow_template_path(template_id, user_id)
+        if tpath:
+            candidates.append(tpath)
+    for path in candidates:
+        try:
+            if path.is_file():
+                return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return {}
+
+
 def _set_instance_config(inst, parameters=None, service_overrides=None,
                          service_configs=None) -> None:
     if parameters is not None:
@@ -1971,13 +1997,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             template_params = {}
             deploy_schema = {}
             try:
-                from pathlib import Path as _Path
-                raw = json.loads(_Path(inst.flow_path).read_text(encoding="utf-8"))
-                template_params = raw.get("parameters", {})
-                deploy_schema = _flow_deploy_schema_payload(
-                    raw, parameters=inst.parameters,
-                    service_overrides=inst.service_overrides,
-                    service_configs=inst.service_configs)
+                raw = _load_flow_instance_template_raw(inst, user_id)
+                if raw:
+                    template_params = raw.get("parameters", {})
+                    deploy_schema = _flow_deploy_schema_payload(
+                        raw, parameters=inst.parameters,
+                        service_overrides=inst.service_overrides,
+                        service_configs=inst.service_configs)
             except Exception:
                 pass
             payload = {

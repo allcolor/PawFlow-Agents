@@ -68,6 +68,35 @@ def test_flow_deploy_schema_exposes_instance_only_parameters():
     assert payload["parameter_values"]["conversation_ttl"] == 0
 
 
+def test_flow_instance_template_falls_back_from_legacy_path(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from tasks.ai.actions import service_flow
+
+    template = tmp_path / "pawflow-agent.json"
+    template.write_text(
+        '{"id":"pawflow-agent","name":"pawflow_agent",'
+        '"parameters":{"conversation_ttl":0,"oauth_provider":"google"}}',
+        encoding="utf-8",
+    )
+    inst = SimpleNamespace(
+        flow_path=str(tmp_path / "missing.json"),
+        flow_id="pawflow-agent",
+        flow_name="pawflow_agent",
+    )
+
+    monkeypatch.setattr(
+        service_flow,
+        "_resolve_flow_template_path",
+        lambda template_id, user_id: template if template_id == "pawflow-agent" else None,
+    )
+
+    raw = service_flow._load_flow_instance_template_raw(inst, "user1")
+
+    assert raw["parameters"]["conversation_ttl"] == 0
+    assert raw["parameters"]["oauth_provider"] == "google"
+
+
 def test_set_instance_config_replaces_public_params_and_service_bindings():
     from tasks.ai.actions.service_flow import _set_instance_config
 

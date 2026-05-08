@@ -1124,47 +1124,47 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
   };
 
   // View config — always available (read-only for non-admin on globals)
-  item('\u{1F441} View...', () => showResourceEditor(rtype, name, true));
+  item('\u{1F441} ' + t('viewWithEllipsis'), () => showResourceEditor(rtype, name, true));
   // Edit — admin can edit globals, owners can edit their own
   if (_canEditScope(scope)) {
-    item('\u270F Edit...', () => showResourceEditor(rtype, name));
+    item('\u270F ' + t('editWithEllipsis'), () => showResourceEditor(rtype, name));
   }
   if (rtype === 'agent') {
-    item('\u25B6 Select', () => cmdAgentSelect(name));
-    item('\u2699 Tools / MCP override...', () => _showToolMcpFilterDialog(name, 'agent'));
+    item('\u25B6 ' + t('select'), () => cmdAgentSelect(name));
+    item('\u2699 ' + t('toolsMcpOverrideMenu'), () => _showToolMcpFilterDialog(name, 'agent'));
     if (autoconv) {
-      item('\u23F9 Autoconv off', () => {
+      item('\u23F9 ' + t('autoconvOff'), () => {
         action$('random_thought', { sub: 'off', agent: name }).subscribe(d => {
-          addMsg('system', d.error || 'Autoconv disabled for ' + name);
+          addMsg('system', d.error || t('autoconvDisabledFor', { agent: name }));
           loadResources();
         });
       });
     } else {
-      item('\u{1F504} Autoconv on...', () => {
-        const freq = prompt('Frequency (e.g. 6/1m, 2-3/h, 1/2h):', '6/1m');
+      item('\u{1F504} ' + t('autoconvOnMenu'), () => {
+        const freq = prompt(t('autoconvFrequencyPrompt'), '6/1m');
         if (!freq) return;
         action$('random_thought', { sub: 'on', agent: name, frequency: freq }).subscribe(d => {
-          addMsg('system', d.error || 'Autoconv enabled for ' + name + ' (' + freq + ')');
+          addMsg('system', d.error || t('autoconvEnabledFor', { agent: name, freq: freq }));
           loadResources();
         });
       });
     }
   }
   if (rtype === 'skill') {
-    item('\u{1F517} Assign to agent...', () => _showSkillAssignDialog(name));
+    item('\u{1F517} ' + t('assignToAgentMenu'), () => _showSkillAssignDialog(name));
   }
   if (rtype === 'task_def') {
-    item('\u25B6 Assign to agent...', () => _showAssignDialog(name));
-    item('\u{1F4DC} View Log...', () => _showTaskDefLog(name));
+    item('\u25B6 ' + t('assignToAgentMenu'), () => _showAssignDialog(name));
+    item('\u{1F4DC} ' + t('viewLogMenu'), () => _showTaskDefLog(name));
   }
   sep();
   // Copy between scopes
-  if (_isAdmin()) item('\u2191 Copy to Global', () => _copyResource(rtype, name, 'global'));
-  if (scope !== 'user') item('\u2191 Copy to User', () => _copyResource(rtype, name, 'user'));
-  if (scope !== 'conversation') item('\u2191 Copy to Conversation', () => _copyResource(rtype, name, 'conversation'));
+  if (_isAdmin()) item('\u2191 ' + t('copyToGlobal'), () => _copyResource(rtype, name, 'global'));
+  if (scope !== 'user') item('\u2191 ' + t('copyToUser'), () => _copyResource(rtype, name, 'user'));
+  if (scope !== 'conversation') item('\u2191 ' + t('copyToConversation'), () => _copyResource(rtype, name, 'conversation'));
   if (_canEditScope(scope)) {
     sep();
-    item('\u{1F5D1} Delete', () => _deleteResource(rtype, name, scope), true);
+    item('\u{1F5D1} ' + t('delete'), () => _deleteResource(rtype, name, scope), true);
   }
 
   setTimeout(() => document.addEventListener('click', function _close() {
@@ -1176,17 +1176,17 @@ function _copyResource(rtype, name, targetScope) {
   action$('copy_resource_scope', { resource_type: rtype,
     name, target_scope: targetScope }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
-    else addMsg('system', `${rtype} '${name}' copied to ${targetScope}.`);
+    else addMsg('system', t('resourceCopiedToScope', { type: rtype, name: name, scope: targetScope }));
     loadResources();
   });
 }
 
 function _deleteResource(rtype, name, scope) {
-  if (!confirm(`Delete ${rtype} '${name}' (${scope})?`)) return;
+  if (!confirm(t('resourceDeleteConfirm', { type: rtype, name: name, scope: scope }))) return;
   action$('delete_resource', { resource_type: rtype,
     name, scope: scope || 'user' }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
-    else addMsg('system', `${rtype} '${name}' deleted.`);
+    else addMsg('system', t('resourceDeleted', { type: rtype, name: name }));
     loadResources();
   });
 }
@@ -1195,7 +1195,7 @@ function _toolMcpRows(items, selectedNames, cls, disabled, mode, dynamicNames) {
   const dis = disabled ? ' disabled' : '';
   const roStyle = disabled ? 'opacity:0.55;cursor:not-allowed;' : '';
   dynamicNames = dynamicNames || [];
-  if (!items.length) return '<div style="color:var(--pf-muted);font-size:11px;margin:3px 0 6px 18px;">None</div>';
+  if (!items.length) return '<div style="color:var(--pf-muted);font-size:11px;margin:3px 0 6px 18px;">' + escapeHtml(t('none')) + '</div>';
   return items.map(function(item) {
     const name = item.name || '';
     const isExternalDynamic = item.source === 'dynamic' && item.scope !== 'conversation';
@@ -1235,7 +1235,7 @@ function _renderToolMcpAgentOverride() {
   const target = document.getElementById('tmf-agent-panel');
   if (!target) return;
   if (!agent) {
-    target.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">Select an agent to configure an override.</div>';
+    target.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('selectAgentOverride')) + '</div>';
     return;
   }
   const ov = ((filters.agent_overrides || {})[agent]) || {};
@@ -1253,10 +1253,10 @@ function _renderToolMcpAgentOverride() {
     ? (cfgCustom ? (mcpsCfg.enabled || []) : (filters.enabled_mcps || []))
     : (filters.enabled_mcps || []);
   target.innerHTML = '<label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--pf-text);font-size:12px;">'
-    + '<input id="tmf-agent-custom" type="checkbox"' + (custom ? ' checked' : '') + ' onchange="_renderToolMcpAgentOverride()" style="accent-color:var(--pf-accent);"/> Override conversation defaults for @' + escapeHtml(agent) + '</label>'
-    + '<div style="color:var(--pf-muted);font-size:11px;margin-top:6px;">Tools</div>'
+    + '<input id="tmf-agent-custom" type="checkbox"' + (custom ? ' checked' : '') + ' onchange="_renderToolMcpAgentOverride()" style="accent-color:var(--pf-accent);"/> ' + escapeHtml(t('overrideConversationDefaultsFor', { agent: agent })) + '</label>'
+    + '<div style="color:var(--pf-muted);font-size:11px;margin-top:6px;">' + escapeHtml(t('tools')) + '</div>'
     + _toolMcpRows(data.tools || [], toolNames, 'tmf-agent-tool', !custom, toolMode, dynNames)
-    + '<div style="color:var(--pf-muted);font-size:11px;margin-top:8px;">MCP servers</div>'
+    + '<div style="color:var(--pf-muted);font-size:11px;margin-top:8px;">' + escapeHtml(t('mcpServers')) + '</div>'
     + _toolMcpRows(data.mcps || [], mcpNames, 'tmf-agent-mcp', !custom, 'mcp_allow');
 }
 
@@ -1297,9 +1297,9 @@ async function _showToolMcpFilterDialog(agentName, mode) {
   const selected = agentName || agents[0] || '';
   const showConv = mode !== 'agent';
   const showAgent = mode !== 'conversation';
-  const title = showConv && showAgent ? 'Tools / MCP availability'
-    : showConv ? 'Conversation tools / MCP availability'
-    : 'Tools / MCP override for @' + selected;
+  const title = showConv && showAgent ? t('toolsMcpAvailability')
+    : showConv ? t('conversationToolsMcpAvailability')
+    : t('toolsMcpOverrideFor', { agent: selected });
   let overlay = document.getElementById('toolMcpFilterOverlay');
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
@@ -1310,15 +1310,15 @@ async function _showToolMcpFilterDialog(agentName, mode) {
   panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
     + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(title) + '</h3>'
     + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button></div>'
-    + (showConv ? '<div style="color:var(--pf-accent);font-size:12px;font-weight:600;margin:8px 0 4px;">Conversation defaults</div>'
-      + '<div style="color:var(--pf-muted);font-size:11px;margin-top:6px;">Tools</div>'
+    + (showConv ? '<div style="color:var(--pf-accent);font-size:12px;font-weight:600;margin:8px 0 4px;">' + escapeHtml(t('conversationDefaults')) + '</div>'
+      + '<div style="color:var(--pf-muted);font-size:11px;margin-top:6px;">' + escapeHtml(t('tools')) + '</div>'
       + _toolMcpRows(data.tools || [], filters.disabled_tools || [], 'tmf-conv-tool', false, 'tool_default', filters.enabled_dynamic_tools || [])
-      + '<div style="color:var(--pf-muted);font-size:11px;margin-top:8px;">MCP servers</div>'
+      + '<div style="color:var(--pf-muted);font-size:11px;margin-top:8px;">' + escapeHtml(t('mcpServers')) + '</div>'
       + _toolMcpRows(data.mcps || [], filters.enabled_mcps || [], 'tmf-conv-mcp', false, 'mcp_allow') : '')
     + (showConv && showAgent ? '<div style="border-top:1px solid color-mix(in srgb, var(--pf-accent) 12%, var(--pf-panel));margin:14px 0 10px;"></div>' : '')
-    + (showAgent ? '<div style="color:var(--pf-accent);font-size:12px;font-weight:600;margin-bottom:6px;">Agent override</div>'
+    + (showAgent ? '<div style="color:var(--pf-accent);font-size:12px;font-weight:600;margin-bottom:6px;">' + escapeHtml(t('agentOverride')) + '</div>'
       + '<select id="tmf-agent" onchange="_renderToolMcpAgentOverride()" style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-bottom:8px;' + (agentName ? 'display:none;' : '') + '">'
-      + '<option value="">-- no agent --</option>'
+      + '<option value="">' + escapeHtml(t('noAgentOption')) + '</option>'
       + agents.map(function(a) { return '<option value="' + escapeHtml(a) + '"' + (a === selected ? ' selected' : '') + '>@' + escapeHtml(a) + '</option>'; }).join('')
       + '</select><div id="tmf-agent-panel"></div>' : '')
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">'
@@ -1350,7 +1350,7 @@ function _saveToolMcpFilterDialog() {
   }
   action$('update_tool_mcp_filters', { conversation_id: conversationId, filters }).subscribe(function(res) {
     if (res.error) { addMsg('error', res.error); return; }
-    addMsg('system', 'Tools / MCP availability updated.');
+    addMsg('system', t('toolsMcpAvailabilityUpdated'));
     document.getElementById('toolMcpFilterOverlay')?.remove();
     loadResources();
   });
@@ -1421,7 +1421,7 @@ function _showSkillAssignDialog(skillName) {
 }
 
 function _showAgentConvConfigDialog(agentName) {
-  if (!conversationId) { addMsg('error', 'No active conversation'); return; }
+  if (!conversationId) { addMsg('error', t('noConv')); return; }
   Promise.all([
     rxjs.firstValueFrom(action$('get_agent_conv_config', { name: agentName, conversation_id: conversationId })),
     rxjs.firstValueFrom(listServices$('llmConnection')),
@@ -1444,20 +1444,20 @@ function _showAgentConvConfigDialog(agentName) {
     var panel = document.createElement('div');
     panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:520px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
     var html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-      + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">Configure: ' + escapeHtml(agentName) + '</h3>'
+      + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(t('configureAgentTitle', { agent: agentName })) + '</h3>'
       + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>'
       + '</div>';
     // Definition info
     if (cfg.definition) {
       html += '<div style="margin-bottom:10px;padding:6px 8px;background:var(--pf-sidebar);border-radius:4px;font-size:11px;">'
-        + '<span style="color:var(--pf-muted);">Definition:</span> <span style="color:var(--pf-accent);">' + escapeHtml(cfg.definition) + '</span></div>';
+        + '<span style="color:var(--pf-muted);">' + escapeHtml(t('definition')) + ':</span> <span style="color:var(--pf-accent);">' + escapeHtml(cfg.definition) + '</span></div>';
     }
     // Instance parameters — skip 'name' (synced from instance_name, immutable here)
     var paramKeys = Object.keys(paramsSchema);
     var visibleParamKeys = paramKeys.filter(function(k) { return k !== 'name'; });
     if (visibleParamKeys.length) {
       html += '<div style="margin-bottom:10px;padding:8px;border:1px solid var(--pf-border);border-radius:4px;">'
-        + '<div style="font-size:11px;color:var(--pf-accent);margin-bottom:6px;font-weight:600;">Instance Parameters</div>';
+        + '<div style="font-size:11px;color:var(--pf-accent);margin-bottom:6px;font-weight:600;">' + escapeHtml(t('instanceParameters')) + '</div>';
       visibleParamKeys.forEach(function(k) {
         var spec = paramsSchema[k] || {};
         var val = instParams[k] || spec.default || '';
@@ -1468,15 +1468,15 @@ function _showAgentConvConfigDialog(agentName) {
       html += '</div>';
     }
     // Runtime config
-    html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">LLM Service *</label>'
+    html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
       + '<select id="acc-llm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
       + serviceOpts + '</select></div>'
-      + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Model (override)</label>'
+      + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('modelOverride')) + '</label>'
       + '<input id="acc-model" value="' + escapeHtml(cfg.model || '') + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>'
-      + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Tools (comma-separated)</label>'
+      + '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('toolsCommaSeparated')) + '</label>'
       + '<input id="acc-tools" value="' + escapeHtml(toolsStr) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>'
       + '<div style="margin-bottom:8px;">'
-      + '<label style="color:var(--pf-muted);font-size:11px;">Max iterations (agent loop)</label>'
+      + '<label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('maxIterationsAgentLoop')) + '</label>'
       + '<input id="acc-depth" type="number" value="' + (cfg.max_depth || 1000) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/>'
       + '</div>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
@@ -1503,7 +1503,7 @@ function _showAgentConvConfigDialog(agentName) {
                    max_depth: depth, params: params },
       }).subscribe(function(r) {
         if (r.error) { addMsg('error', r.error); return; }
-        addMsg('system', agentName + ' config updated for this conversation.');
+        addMsg('system', t('agentConfigUpdated', { agent: agentName }));
         overlay.remove();
         loadResources();
       });
@@ -1549,9 +1549,9 @@ function _showAgentSkillsDialog(agentName) {
       toUnassign.forEach(sk => calls.push(rxjs.firstValueFrom(action$('unassign_skill', { agent_name: agentName, skill_name: sk }))));
       Promise.all(calls).then(() => {
         var msg = [];
-        if (toAssign.length) msg.push('Assigned: ' + toAssign.join(', '));
-        if (toUnassign.length) msg.push('Removed: ' + toUnassign.join(', '));
-        if (msg.length) addMsg('system', agentName + ' skills updated. ' + msg.join('. '));
+        if (toAssign.length) msg.push(t('assignedList', { items: toAssign.join(', ') }));
+        if (toUnassign.length) msg.push(t('removedList', { items: toUnassign.join(', ') }));
+        if (msg.length) addMsg('system', t('agentSkillsUpdated', { agent: agentName, details: msg.join('. ') }));
         loadResources();
       });
     };
@@ -2209,7 +2209,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   var panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
-  panel.innerHTML = '<p style="color:var(--pf-text);font-weight:600;">Add Agent to Conversation</p><p style="color:var(--pf-muted);">Loading...</p>';
+  panel.innerHTML = '<p style="color:var(--pf-text);font-weight:600;">' + escapeHtml(t('addAgentToConversation')) + '</p><p style="color:var(--pf-muted);">' + escapeHtml(t('loading')) + '</p>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
@@ -2223,7 +2223,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
 
     var header = document.createElement('div');
     header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
-    header.innerHTML = '<strong style="color:var(--pf-text);">Add Agent to Conversation</strong>';
+    header.innerHTML = '<strong style="color:var(--pf-text);">' + escapeHtml(t('addAgentToConversation')) + '</strong>';
     var closeBtn = document.createElement('button');
     closeBtn.textContent = '\u00d7';
     closeBtn.style.cssText = 'background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;';
@@ -2234,11 +2234,11 @@ async function showAddAgentToConvDialog(presetDefinition) {
     // Definition selector
     var defLabel = document.createElement('label');
     defLabel.style.cssText = 'color:var(--pf-muted);font-size:11px;';
-    defLabel.textContent = 'Definition (template)';
+    defLabel.textContent = t('definitionTemplate');
     panel.appendChild(defLabel);
     var defSelect = document.createElement('select');
     defSelect.style.cssText = 'width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin:4px 0 12px;';
-    defSelect.innerHTML = '<option value="">-- Select a definition --</option>'
+    defSelect.innerHTML = '<option value="">' + escapeHtml(t('selectDefinitionOption')) + '</option>'
       + definitions.map(function(d) {
         var sel = (presetDefinition && d.name === presetDefinition) ? ' selected' : '';
         return '<option value="' + escapeHtml(d.name) + '"' + sel + '>' + escapeHtml(d.name)
@@ -2278,17 +2278,17 @@ async function showAddAgentToConvDialog(presetDefinition) {
       }).join('');
       var html = '<div style="padding:10px;border:1px solid var(--pf-border);border-radius:4px;background:var(--pf-code-bg);">';
       // Instance name
-      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Instance Name *</label>'
+      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('instanceNameRequired')) + '</label>'
         + '<input id="_addInstName" value="' + escapeHtml(selectedDef) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:5px;border-radius:4px;margin-top:2px;box-sizing:border-box;font-size:12px;"/></div>';
       // LLM Service
-      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">LLM Service *</label>'
+      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('llmServiceRequired')) + '</label>'
         + '<select id="_addLlm" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
         + svcOpts + '</select></div>';
       // Params from schema — skip 'name' (always synced from instance_name)
       var visibleParamKeys = paramKeys.filter(function(k) { return k !== 'name'; });
       if (visibleParamKeys.length) {
         html += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--pf-border);">'
-          + '<div style="font-size:11px;color:var(--pf-accent);margin-bottom:6px;font-weight:600;">Parameters</div>';
+          + '<div style="font-size:11px;color:var(--pf-accent);margin-bottom:6px;font-weight:600;">' + escapeHtml(t('parameters')) + '</div>';
         visibleParamKeys.forEach(function(k) {
           var spec = paramSchema[k] || {};
           var defVal = spec.default || '';
@@ -2312,7 +2312,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
     createLink.style.cssText = 'margin-top:12px;border-top:1px solid var(--pf-border);padding-top:10px;font-size:11px;';
     var cl = document.createElement('span');
     cl.style.cssText = 'color:var(--pf-accent);cursor:pointer;';
-    cl.textContent = '+ Create new definition in repository';
+    cl.textContent = '+ ' + t('createNewDefinitionRepository');
     cl.onclick = function() { overlay.remove(); showResourceCreator('agent'); };
     createLink.appendChild(cl);
     panel.appendChild(createLink);
@@ -2320,18 +2320,18 @@ async function showAddAgentToConvDialog(presetDefinition) {
     var btns = document.createElement('div');
     btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:12px;';
     var cancelBtn = document.createElement('button');
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = t('contextCancel');
     cancelBtn.style.cssText = 'background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
     cancelBtn.onclick = function() { overlay.remove(); };
     var addBtn = document.createElement('button');
-    addBtn.textContent = 'Add Agent';
+    addBtn.textContent = t('addAgent');
     addBtn.style.cssText = 'background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
     addBtn.onclick = async function() {
-      if (!selectedDef) { alert('Select a definition first.'); return; }
+      if (!selectedDef) { alert(t('selectDefinitionFirst')); return; }
       var instName = (document.getElementById('_addInstName') || {}).value || '';
       var llm = (document.getElementById('_addLlm') || {}).value || '';
-      if (!instName.trim()) { alert('Instance name is required.'); return; }
-      if (!llm) { alert('LLM Service is required.'); return; }
+      if (!instName.trim()) { alert(t('instanceNameRequiredMessage')); return; }
+      if (!llm) { alert(t('llmServiceRequiredMessage')); return; }
       var params = { name: instName.trim() };
       formArea.querySelectorAll('[data-param]').forEach(function(inp) {
         params[inp.dataset.param] = inp.value;
@@ -2351,7 +2351,7 @@ async function showAddAgentToConvDialog(presetDefinition) {
   } catch(e) {
     var err = document.createElement('div');
     err.style.cssText = 'color:var(--pf-danger);font-size:12px;';
-    err.textContent = 'Error: ' + e.message;
+    err.textContent = t('error') + ': ' + e.message;
     panel.appendChild(err);
   }
 }
@@ -2368,35 +2368,35 @@ function _showAssignDialog(taskDefName) {
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:420px;border:1px solid var(--pf-border);';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">Assign: ${escapeHtml(taskDefName)}</h3>
+    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(t('assignTitle', { name: taskDefName }))}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
   </div>
-  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Agent</label>
+  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('agent'))}</label>
     <input id="assign-agent" value="" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>
-  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Context mode</label>
+  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('contextMode'))}</label>
     <select id="assign-context" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">
-      <option value="isolated">isolated (default — only task prompt)</option>
-      <option value="last:10">last:10 (last 10 messages)</option>
-      <option value="last:20">last:20 (last 20 messages)</option>
-      <option value="last:50">last:50 (last 50 messages)</option>
-      <option value="summary:2000">summary:2000 (summarized ~2000 tokens)</option>
-      <option value="summary:4000">summary:4000 (summarized ~4000 tokens)</option>
-      <option value="full">full (entire conversation context)</option>
+      <option value="isolated">${escapeHtml(t('contextModeIsolated'))}</option>
+      <option value="last:10">${escapeHtml(t('contextModeLast10'))}</option>
+      <option value="last:20">${escapeHtml(t('contextModeLast20'))}</option>
+      <option value="last:50">${escapeHtml(t('contextModeLast50'))}</option>
+      <option value="summary:2000">${escapeHtml(t('contextModeSummary2000'))}</option>
+      <option value="summary:4000">${escapeHtml(t('contextModeSummary4000'))}</option>
+      <option value="full">${escapeHtml(t('contextModeFull'))}</option>
     </select></div>
-  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Interval (optional override)</label>
+  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('intervalOptionalOverride'))}</label>
     <input id="assign-interval" placeholder="e.g. 6/1m, 2/1h, 60" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>
-  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Variables (key=value, one per line)</label>
+  <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('variablesKeyValue'))}</label>
     <textarea id="assign-vars" placeholder="nbr_images=20&#10;style=cyberpunk" style="width:100%;min-height:60px;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;"></textarea></div>
-  <details style="margin-bottom:8px;"><summary style="color:var(--pf-muted);font-size:11px;cursor:pointer;">Limits (optional)</summary>
+  <details style="margin-bottom:8px;"><summary style="color:var(--pf-muted);font-size:11px;cursor:pointer;">${escapeHtml(t('limitsOptional'))}</summary>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
-      <div><label style="color:var(--pf-muted);font-size:10px;">Max Budget</label><input id="assign-budget" placeholder="$5" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
-      <div><label style="color:var(--pf-muted);font-size:10px;">Turn Time</label><input id="assign-turn-time" placeholder="5m" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
-      <div><label style="color:var(--pf-muted);font-size:10px;">Total Time</label><input id="assign-total-time" placeholder="1h" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
-      <div><label style="color:var(--pf-muted);font-size:10px;">Max Reschedules</label><input id="assign-max-resched" placeholder="50" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:var(--pf-muted);font-size:10px;">${escapeHtml(t('maxBudget'))}</label><input id="assign-budget" placeholder="$5" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:var(--pf-muted);font-size:10px;">${escapeHtml(t('turnTime'))}</label><input id="assign-turn-time" placeholder="5m" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:var(--pf-muted);font-size:10px;">${escapeHtml(t('totalTime'))}</label><input id="assign-total-time" placeholder="1h" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:var(--pf-muted);font-size:10px;">${escapeHtml(t('maxReschedules'))}</label><input id="assign-max-resched" placeholder="50" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
     </div></details>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
-    <button onclick="_submitAssign('${taskDefName}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>
+    <button onclick="_submitAssign('${taskDefName}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('assign'))}</button>
   </div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -2408,7 +2408,7 @@ function _submitAssign(taskDefName) {
   const context = (document.getElementById('assign-context').value || '').trim();
   const interval = (document.getElementById('assign-interval').value || '').trim();
   const varsText = (document.getElementById('assign-vars').value || '').trim();
-  if (!agent) { alert('Agent is required'); return; }
+  if (!agent) { alert(t('agentRequired')); return; }
   const params = { agent_name: agent, task_def_name: taskDefName };
   if (context && context !== 'isolated') params.context = context;
   if (interval) params.interval = interval;
@@ -2430,7 +2430,7 @@ function _submitAssign(taskDefName) {
   if (_rv.trim()) params.max_reschedules = parseInt(_rv) || 0;
   action$('assign_task', params).subscribe(d => {
     if (d.error) addMsg('error', d.error);
-    else { addMsg('system', d.result || 'Task assigned.'); loadResources(); }
+    else { addMsg('system', d.result || t('taskAssigned')); loadResources(); }
     document.getElementById('resourceEditorOverlay').remove();
   });
 }

@@ -335,7 +335,7 @@ def test_context_command_exposes_full_agent_context_usage():
     assert "load_agent_context_page" in get_context
     assert '"computed_from": "persisted_context_usage"' in context_src
     assert '"context_usage": _context_usage' in get_context
-    assert "context gauge:" in ui_src
+    assert "t('contextGauge') + ': '" in ui_src
     assert "used.toLocaleString() + ' / ' + max.toLocaleString()" in ui_src
 
 

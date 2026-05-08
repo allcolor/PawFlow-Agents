@@ -4,7 +4,7 @@ let _fe={overlay:null,svc:'',path:'.',entries:[],clip:null,sel:new Set(),svcs:[]
 function openExplorer(){
   if(_fe.overlay)return;
   const o=document.createElement('div');o.className='fe-overlay';
-  o.innerHTML=`<div class="fe-panel"><div class="fe-toolbar"><select id="feSvcSel" onchange="_feSelSvc(this.value)"></select><div class="fe-bc" id="feBc"></div><input class="fe-search" placeholder="Search..." onkeydown="if(event.key==='Enter')_feSearch(this.value)"><button class="btn" onclick="_feRefresh()" title="Refresh">&#x21bb;</button><button class="btn" onclick="_feUpload()">&#x2B06; Upload</button><button class="btn" onclick="closeExplorer()">&#x2715;</button></div><div class="fe-content"><table class="fe-table"><thead><tr><th></th><th onclick="_feSortBy('name')">Name</th><th onclick="_feSortBy('size')">Size</th><th onclick="_feSortBy('modified')">Modified</th></tr></thead><tbody id="feTbody"></tbody></table></div><div class="fe-status"><span id="feCount"></span><span id="feClip" class="fe-clip"></span></div></div>`;
+  o.innerHTML=`<div class="fe-panel"><div class="fe-toolbar"><select id="feSvcSel" onchange="_feSelSvc(this.value)"></select><div class="fe-bc" id="feBc"></div><input class="fe-search" placeholder="' + t('searchPlaceholder') + '" onkeydown="if(event.key==='Enter')_feSearch(this.value)"><button class="btn" onclick="_feRefresh()" title="' + t('refresh') + '">&#x21bb;</button><button class="btn" onclick="_feUpload()">&#x2B06; ' + t('upload') + '</button><button class="btn" onclick="closeExplorer()">&#x2715;</button></div><div class="fe-content"><table class="fe-table"><thead><tr><th></th><th onclick="_feSortBy('name')">' + t('fileName') + '</th><th onclick="_feSortBy('size')">' + t('fileSize') + '</th><th onclick="_feSortBy('modified')">' + t('modified') + '</th></tr></thead><tbody id="feTbody"></tbody></table></div><div class="fe-status"><span id="feCount"></span><span id="feClip" class="fe-clip"></span></div></div>`;
   o.addEventListener('click',e=>{if(e.target===o)closeExplorer();});
   document.body.appendChild(o);_fe.overlay=o;
   document.addEventListener('keydown',_feKeys);
@@ -32,7 +32,7 @@ function _feLoadSvcs(){
     const sel=document.getElementById('feSvcSel');if(!sel)return;
     sel.innerHTML=_fe.svcs.map(s=>`<option value="${s.id}">${s.id} (${s.type})</option>`).join('');
     if(_fe.svcs.length>0){_fe.svc=_fe.svcs[0].id;_feNav('.');}
-    else{document.getElementById('feTbody').innerHTML='<tr><td colspan=4 class="fe-empty">No filesystem services available</td></tr>';}
+    else{document.getElementById('feTbody').innerHTML='<tr><td colspan=4 class="fe-empty">' + t('noFilesystemServices') + '</td></tr>';}
   });
 }
 
@@ -41,7 +41,7 @@ function _feSelSvc(id){_fe.svc=id;_feNav('.');}
 function _feNav(path){
   _fe.path=path;_fe.sel.clear();
   const tb=document.getElementById('feTbody');
-  tb.innerHTML='<tr><td colspan=4 class="fe-loading">Loading...</td></tr>';
+  tb.innerHTML='<tr><td colspan=4 class="fe-loading">' + t('loading') + '</td></tr>';
   action$('fs_list_dir',{service:_fe.svc,path}).subscribe(d => {
     if(d.error){tb.innerHTML=`<tr><td colspan=4 class="fe-empty">Error: ${d.error}</td></tr>`;_feBc();return;}
     _fe.entries=d.entries||[];_feRender();_feBc();
@@ -59,7 +59,7 @@ function _feRender(){
     return String(va||'').localeCompare(String(vb||''))*a;
   });
   const tb=document.getElementById('feTbody');
-  if(entries.length===0){tb.innerHTML='<tr><td colspan=4 class="fe-empty">Empty directory</td></tr>';_feStatus();return;}
+  if(entries.length===0){tb.innerHTML='<tr><td colspan=4 class="fe-empty">' + t('emptyDirectory') + '</td></tr>';_feStatus();return;}
   tb.innerHTML=entries.map(e=>{
     const icon=e.kind==='directory'?'&#128193;':_feIcon(e.name);
     const sz=e.kind==='directory'?'&mdash;':_feFmtSz(e.size);
@@ -88,14 +88,14 @@ function _feStatus(){
   const c=document.getElementById('feCount');
   const cl=document.getElementById('feClip');
   if(c){
-    let t=_fe.entries.length+' items';
-    if(_fe.sel.size>0)t+=' ('+_fe.sel.size+' selected)';
+    let t=t('itemsCount', { n: _fe.entries.length });
+    if(_fe.sel.size>0)t+=' (' + t('itemsSelected', { n: _fe.sel.size }) + ')';
     c.textContent=t;
   }
   if(cl){
     if(_fe.clip&&_fe.clip.items){
       const names=_fe.clip.items.map(i=>i.name);
-      const label=names.length>2?names[0]+' + '+(names.length-1)+' more':names.join(', ');
+      const label=names.length>2?names[0]+' + '+ t('moreCount', { n: names.length - 1 }):names.join(', ');
       cl.textContent=_fe.clip.action+': '+label;
     } else cl.textContent='';
   }
@@ -119,24 +119,24 @@ function _feCtx(e,name,kind){
   const m=document.createElement('div');m.className='fe-ctx';
   let items='';
   if(kind==='directory'){
-    items+=`<div onclick="_feDbl('${_feEsc(name)}','directory')">&#128193; Open</div>`;
-    items+=`<div onclick="_feZipDir('${_feEsc(name)}')" title="Download directory as zip">&#128230; Download as zip</div>`;
+    items+=`<div onclick="_feDbl('${_feEsc(name)}','directory')">&#128193; ${t('open')}</div>`;
+    items+=`<div onclick="_feZipDir('${_feEsc(name)}')" title="${t('downloadZipTitle')}">&#128230; ${t('downloadZip')}</div>`;
   } else {
-    items+=`<div onclick="_fePreview('${_feEsc(name)}')">&#128065; Preview</div>`;
-    items+=`<div onclick="_feDl('${_feEsc(name)}')">&#11015; Download</div>`;
-    items+=`<div onclick="_feCopyToStore('${_feEsc(name)}')">&#128230; Copy to FileStore</div>`;
+    items+=`<div onclick="_fePreview('${_feEsc(name)}')">&#128065; ${t('preview')}</div>`;
+    items+=`<div onclick="_feDl('${_feEsc(name)}')">&#11015; ${t('download')}</div>`;
+    items+=`<div onclick="_feCopyToStore('${_feEsc(name)}')">&#128230; ${t('copyToFileStore')}</div>`;
   }
   items+=`<hr>`;
   const selCount=_fe.sel.size;
-  items+=`<div onclick="_feCopySelected()">&#128203; Copy${selCount>1?' ('+selCount+')':''}</div>`;
-  items+=`<div onclick="_feCutSelected()">&#9986; Cut${selCount>1?' ('+selCount+')':''}</div>`;
-  if(_fe.clip)items+=`<div onclick="_fePaste()">&#128203; Paste here (${_fe.clip.items.length})</div>`;
+  items+=`<div onclick="_feCopySelected()">&#128203; ${t('copy')}${selCount>1?' ('+selCount+')':''}</div>`;
+  items+=`<div onclick="_feCutSelected()">&#9986; ${t('cut')}${selCount>1?' ('+selCount+')':''}</div>`;
+  if(_fe.clip)items+=`<div onclick="_fePaste()">&#128203; ${t('pasteHere', { n: _fe.clip.items.length })}</div>`;
   items+=`<hr>`;
-  items+=`<div onclick="_feRenameStart('${_feEsc(name)}')">&#9998; Rename</div>`;
-  items+=`<div onclick="_feDel('${_feEsc(name)}')">&#128465; Delete</div>`;
+  items+=`<div onclick="_feRenameStart('${_feEsc(name)}')">&#9998; ${t('rename')}</div>`;
+  items+=`<div onclick="_feDel('${_feEsc(name)}')">&#128465; ${t('delete')}</div>`;
   items+=`<hr>`;
-  items+=`<div onclick="_feNewFile()">&#128196; New file</div>`;
-  items+=`<div onclick="_feNewDir()">&#128193; New folder</div>`;
+  items+=`<div onclick="_feNewFile()">&#128196; ${t('newFile')}</div>`;
+  items+=`<div onclick="_feNewDir()">&#128193; ${t('newFolder')}</div>`;
   m.innerHTML=items;
   m.style.left=e.clientX+'px';m.style.top=e.clientY+'px';
   document.body.appendChild(m);_fe.ctx=m;
@@ -176,7 +176,7 @@ function _fePaste(){
     }
     const dest=_fePath(destName);
     action$('fs_copy',{source_service:_fe.clip.service,source_path:item.path,dest_service:_fe.svc,dest_path:dest}).subscribe(d => {
-      if(d.error){addMsg('error','Paste failed: '+d.error);return;}
+      if(d.error){addMsg('error', t('pasteFailed', { error: d.error }));return;}
       if(_fe.clip.action==='cut'){
         action$('fs_delete',{service:_fe.clip.service,path:item.path}).subscribe(() => {
           idx++;
@@ -192,7 +192,7 @@ function _fePaste(){
 }
 
 function _feDel(name){
-  if(!confirm('Delete "'+name+'"? This cannot be undone.'))return;
+  if(!confirm(t('deleteFileConfirm', { name: name })))return;
   action$('fs_delete',{service:_fe.svc,path:_fePath(name)}).subscribe(() => {
     _feNav(_fe.path);
   });
@@ -201,8 +201,8 @@ function _feDel(name){
 function _feDelSelected(){
   const names=[..._fe.sel];
   if(!names.length)return;
-  const label=names.length===1?'"'+names[0]+'"':names.length+' items';
-  if(!confirm('Delete '+label+'? This cannot be undone.'))return;
+  const label=names.length===1?'"'+names[0]+'"':t('itemsLabel', { n: names.length });
+  if(!confirm(t('deleteItemsConfirm', { label: label })))return;
   let idx = 0;
   const delNext = () => {
     if (idx >= names.length) { _feNav(_fe.path); return; }
@@ -234,14 +234,14 @@ function _feRenameStart(name){
 }
 
 function _feNewFile(){
-  const name=prompt('New file name:');if(!name)return;
+  const name=prompt(t('newFilePrompt'));if(!name)return;
   action$('fs_write_file',{service:_fe.svc,path:_fePath(name),content:'',encoding:'utf-8'}).subscribe(() => {
     _feNav(_fe.path);
   });
 }
 
 function _feNewDir(){
-  const name=prompt('New folder name:');if(!name)return;
+  const name=prompt(t('newFolderPrompt'));if(!name)return;
   action$('fs_mkdir',{service:_fe.svc,path:_fePath(name)}).subscribe(() => {
     _feNav(_fe.path);
   });
@@ -249,7 +249,7 @@ function _feNewDir(){
 
 function _feDl(name){
   action$('fs_read_file',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
-    if(d.error){alert('Error: '+d.error);return;}
+    if(d.error){alert(t('errorMessage', { error: d.error }));return;}
     let blob;
     if(d.encoding==='base64'){
       const bin=atob(d.content);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
@@ -289,18 +289,18 @@ function _feUploadFiles(files){
 
 function _feCopyToStore(name){
   action$('fs_copy_to_store',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
-    if(d.error){alert('Error: '+d.error);return;}
-    alert('Stored as: '+d.filename+'\nURL: '+d.url);
+    if(d.error){alert(t('errorMessage', { error: d.error }));return;}
+    alert(t('storedAs', { filename: d.filename, url: d.url }));
   });
 }
 
 function _feZipDir(name){
   const dirPath=_fePath(name);
   const btn=event&&event.target;
-  if(btn)btn.textContent='Zipping...';
+  if(btn)btn.textContent=t('zipping');
   action$('fs_zip_dir',{service:_fe.svc,path:dirPath}).subscribe(d => {
-    if(btn)btn.textContent='\u{1F4E6} Download as zip';
-    if(d.error){alert('Zip error: '+d.error);return;}
+    if(btn)btn.textContent='\u{1F4E6} ' + t('downloadZip');
+    if(d.error){alert(t('zipError', { error: d.error }));return;}
     const a=document.createElement('a');
     a.href=d.url;
     a.download=d.filename;
@@ -313,10 +313,10 @@ function _feZipDir(name){
 function _fePreview(name){
   if(_fe.preview){_fe.preview.remove();_fe.preview=null;}
   const p=document.createElement('div');p.className='fe-preview-pane';
-  p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)}</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><div class="fe-loading">Loading...</div>`;
+  p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)}</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><div class="fe-loading">${t('loading')}</div>`;
   document.body.appendChild(p);_fe.preview=p;
   action$('fs_read_file',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
-    if(d.error){p.querySelector('.fe-loading').textContent='Error: '+d.error;return;}
+    if(d.error){p.querySelector('.fe-loading').textContent=t('errorMessage', { error: d.error });return;}
     const ext=name.split('.').pop().toLowerCase();
     const imgExts=['png','jpg','jpeg','gif','webp','svg','bmp','ico'];
     if(imgExts.includes(ext)&&d.encoding==='base64'){
@@ -332,13 +332,13 @@ function _fePreview(name){
 function _feSearch(q){
   if(!q){_feNav(_fe.path);return;}
   const tb=document.getElementById('feTbody');
-  tb.innerHTML='<tr><td colspan=4 class="fe-loading">Searching...</td></tr>';
+  tb.innerHTML='<tr><td colspan=4 class="fe-loading">' + t('searching') + '</td></tr>';
   action$('fs_search',{service:_fe.svc,path:_fe.path,pattern:'*'+q+'*'}).subscribe(d => {
     if(d.error){tb.innerHTML=`<tr><td colspan=4 class="fe-empty">Error: ${d.error}</td></tr>`;return;}
     const results=(d.results||[]).slice(0,100);
-    if(results.length===0){tb.innerHTML='<tr><td colspan=4 class="fe-empty">No matches</td></tr>';return;}
+    if(results.length===0){tb.innerHTML='<tr><td colspan=4 class="fe-empty">' + t('noMatches') + '</td></tr>';return;}
     tb.innerHTML=results.map(r=>`<tr class="fe-row" ondblclick="_feNavToFile('${_feEsc(r)}')"><td>&#128196;</td><td>${_feEsc(r)}</td><td></td><td></td></tr>`).join('');
-    document.getElementById('feCount').textContent=results.length+' results';
+    document.getElementById('feCount').textContent=t('resultsCount', { n: results.length });
   });
 }
 

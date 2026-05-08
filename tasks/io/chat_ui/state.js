@@ -181,7 +181,7 @@ async function newChat() {
       loadConversations();
       resumeConv(data.conversation_id, true);
     } else {
-      addMsg('error', data.error || 'Failed to create conversation');
+      addMsg('error', data.error || t('failedToCreateConversation'));
     }
   });
 }

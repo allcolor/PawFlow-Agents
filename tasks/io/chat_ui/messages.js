@@ -688,7 +688,7 @@ function addMsg(role, text, extra) {
     const details = document.createElement('details');
     const summary = document.createElement('summary');
     summary.style.cssText = 'cursor:pointer;font-size:12px;color:#6b7280;user-select:none;';
-    summary.textContent = 'Thought';
+    summary.textContent = t('thought');
     details.appendChild(summary);
     const content = document.createElement('div');
     content.style.cssText = 'font-size:12px;color:#9ca3af;font-style:italic;white-space:pre-wrap;max-height:300px;overflow-y:auto;';
@@ -953,12 +953,12 @@ function backgroundTool(tcId) {
         const btn = tcEl.querySelector('.tc-bg-btn');
         if (btn) btn.remove();
         const bullet = tcEl.querySelector('.tc-bullet');
-        if (bullet) { bullet.classList.add('bg'); bullet.title = 'Running in background'; }
+        if (bullet) { bullet.classList.add('bg'); bullet.title = t('runningInBackground'); }
         // Add Kill button
         const klBtn = document.createElement('button');
         klBtn.className = 'tc-kl-btn';
         klBtn.onclick = () => killTool(tcId);
-        klBtn.title = 'Kill background task';
+        klBtn.title = t('killBackgroundTask');
         klBtn.textContent = '\u2717 KL';
         const preEl = tcEl.querySelector('pre');
         if (preEl) tcEl.insertBefore(klBtn, preEl);
@@ -975,7 +975,7 @@ function killTool(tcId) {
   if (tcEl) {
     tcEl.querySelectorAll('.tc-kl-btn, .tc-bg-btn').forEach(b => b.remove());
     const bullet = tcEl.querySelector('.tc-bullet');
-    if (bullet) { bullet.classList.remove('bg', 'pending'); bullet.classList.add('done'); bullet.style.color = '#e94560'; bullet.title = 'Killed'; }
+    if (bullet) { bullet.classList.remove('bg', 'pending'); bullet.classList.add('done'); bullet.style.color = '#e94560'; bullet.title = t('killed'); }
   }
   // Kill via tool relay (in-flight tools) AND background system
   fireAction('kill_tool', { tc_id: tcId });
@@ -1291,7 +1291,7 @@ function inlineImageHtml(url, filename, sizeInfo) {
   _imageFlushTimer = setTimeout(_flushPendingImages, 100);
   return '<div class="img-wrapper" style="margin:6px 0;">'
     + '<img id="' + imgId + '" style="display:none;max-width:512px;max-height:512px;border-radius:8px;cursor:pointer;border:1px solid #0f3460;" '
-    + 'onclick="openFileViewer(\'' + url + '\')" title="Click to view full size" />'
+    + 'onclick="openFileViewer(\'' + url + '\')" title="' + t('clickFullSize') + '" />'
     + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
     + '\uD83D\uDCC4 ' + escapeHtml(filename || 'image') + (sizeInfo ? ' (' + sizeInfo + ')' : '')
     + '</div></div>';

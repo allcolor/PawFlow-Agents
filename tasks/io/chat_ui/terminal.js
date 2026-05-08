@@ -137,7 +137,7 @@ async function cmdTerminal(text, parts) {
         return true;
       }
     } catch (e) {
-      addMsg('system', 'Failed to list relays: ' + e.message);
+      addMsg('system', t('failedToListRelays', { error: e.message }));
       return true;
     }
   }
@@ -176,7 +176,7 @@ async function cmdTerminal(text, parts) {
       _initXterm(container, sessionId, token);
     },
     error: (e) => {
-      addMsg('system', 'Failed to open terminal: ' + e.message);
+      addMsg('system', t('failedToOpenTerminal', { error: e.message }));
     },
   });
   return true;
@@ -270,11 +270,11 @@ async function cmdCode(text, parts) {
       allRelays = await _getRelays();
       relayId = await _pickRelay(allRelays);
       if (!relayId) {
-        addMsg('system', 'No connected relay found. Usage: /code <relay_name>');
+        addMsg('system', t('codeNoRelayUsage'));
         return true;
       }
     } catch (e) {
-      addMsg('system', 'Failed to list relays: ' + e.message);
+      addMsg('system', t('failedToListRelays', { error: e.message }));
       return true;
     }
   }
@@ -288,7 +288,7 @@ async function cmdCode(text, parts) {
     }
   }
 
-  addMsg('system', 'Starting code-server on ' + relayId + (localMode ? ' (local)' : '') + '...');
+  addMsg('system', t('startingCodeServer', { relay: relayId, mode: localMode ? ' (' + t('local') + ')' : '' }));
   action$('open_code_server', { relay_id: relayId, local: localMode }).subscribe({
     next: (resp) => {
       if (resp.error) {
@@ -297,10 +297,10 @@ async function cmdCode(text, parts) {
       }
 
       addVSCodeTab(relayId, resp.url || '/code/' + relayId + '/');
-      addMsg('system', 'code-server started. Loading editor...');
+      addMsg('system', t('codeServerStartedLoading'));
     },
     error: (e) => {
-      addMsg('system', 'Failed: ' + e.message);
+      addMsg('system', t('failed', { error: e.message }));
     },
   });
   return true;
@@ -317,7 +317,7 @@ async function cmdDesktop(text, parts) {
       const btn = document.querySelector('.tab-btn[data-tab^="desktop-"]');
       if (btn) closeDesktopTab(btn.dataset.tab);
     }
-    addMsg('system', 'Desktop tab closed (desktop still running). Use /desktop stop to shut down.');
+    addMsg('system', t('desktopTabClosed'));
     return true;
   }
 
@@ -335,10 +335,10 @@ async function cmdDesktop(text, parts) {
       }
     }
     if (!_stopRelayId) {
-      addMsg('system', 'No active desktop to stop. Usage: /desktop stop [relay_id]');
+      addMsg('system', t('desktopStopUsage'));
       return true;
     }
-    addMsg('system', 'Stopping desktop on ' + _stopRelayId + '...');
+    addMsg('system', t('stoppingDesktop', { relay: _stopRelayId }));
     fireAction('close_desktop', { relay_id: _stopRelayId });
     // Close all desktop tabs for this relay
     document.querySelectorAll('[id^="tabContent_desktop-"]').forEach(p => {
@@ -347,7 +347,7 @@ async function cmdDesktop(text, parts) {
         closeDesktopTab(tId);
       }
     });
-    addMsg('system', 'Desktop stopped.');
+    addMsg('system', t('desktopStopped'));
     return true;
   }
 
@@ -365,11 +365,11 @@ async function cmdDesktop(text, parts) {
       const relays = await _getRelays();
       relayId = await _pickRelay(relays);
       if (!relayId) {
-        addMsg('system', 'No connected relay found. Usage: /desktop <relay_name>');
+        addMsg('system', t('desktopNoRelayUsage'));
         return true;
       }
     } catch (e) {
-      addMsg('system', 'Failed to list relays: ' + e.message);
+      addMsg('system', t('failedToListRelays', { error: e.message }));
       return true;
     }
   }
@@ -386,7 +386,7 @@ async function cmdDesktop(text, parts) {
     }
   }
 
-  addMsg('system', 'Starting ' + (localScreen ? 'local screen' : 'desktop') + ' on ' + relayId + '...');
+  addMsg('system', t('startingDesktop', { target: localScreen ? t('localScreen') : t('desktopLower'), relay: relayId }));
   action$('open_desktop', { relay_id: relayId, local_screen: localScreen }).subscribe({
     next: (resp) => {
       if (resp.error) {
@@ -407,7 +407,7 @@ async function cmdDesktop(text, parts) {
       // the capability token in the path the proxy returns 401/403,
       // so a hand-built fallback URL would never work anyway.
       if (!resp.url) {
-        addMsg('error', 'Desktop ready but server did not return a URL');
+        addMsg('error', t('desktopNoUrl'));
         return;
       }
       addDesktopTab(_tabLabel, resp.url);
@@ -419,10 +419,10 @@ async function cmdDesktop(text, parts) {
       } else if (resp.audio_session) {
         console.warn('[audio] desktop returned audio session without capability token; skipping websocket');
       }
-      addMsg('system', (localScreen ? 'Local screen' : 'Desktop') + ' ready.');
+      addMsg('system', localScreen ? t('localScreenReady') : t('desktopReady'));
     },
     error: (e) => {
-      addMsg('system', 'Failed: ' + e.message);
+      addMsg('system', t('failed', { error: e.message }));
     },
   });
   return true;
@@ -436,9 +436,9 @@ async function cmdAudio(text, parts) {
     if (audioTab) {
       const tId = audioTab.id.replace('tabContent_', '');
       closeAudioTab(tId);
-      addMsg('system', 'Audio tab closed.');
+      addMsg('system', t('audioTabClosed'));
     } else {
-      addMsg('system', 'No audio tab open.');
+      addMsg('system', t('noAudioTabOpen'));
     }
     return true;
   }
@@ -449,16 +449,16 @@ async function cmdAudio(text, parts) {
       const relays = await _getRelays();
       relayId = await _pickRelay(relays);
       if (!relayId) {
-        addMsg('system', 'No connected relay found.');
+        addMsg('system', t('noConnectedRelay'));
         return true;
       }
     } catch (e) {
-      addMsg('system', 'Failed to list relays: ' + e.message);
+      addMsg('system', t('failedToListRelays', { error: e.message }));
       return true;
     }
   }
 
-  addMsg('system', 'Starting audio on ' + relayId + '...');
+  addMsg('system', t('startingAudio', { relay: relayId }));
   action$('open_desktop', { relay_id: relayId }).subscribe({
     next: (resp) => {
       if (resp.error) {
@@ -468,15 +468,15 @@ async function cmdAudio(text, parts) {
       if (resp.audio_session && resp.audio_token) {
         addAudioTab(relayId, resp.audio_session, resp.audio_token);
         audioConnect(resp.audio_session, resp.audio_token);
-        addMsg('system', 'Audio streaming from ' + relayId + '.');
+        addMsg('system', t('audioStreamingFrom', { relay: relayId }));
       } else if (resp.audio_session) {
-        addMsg('system', '\u26a0 Audio source is available but no capability token was returned.');
+        addMsg('system', '\u26a0 ' + t('audioNoToken'));
       } else {
-        addMsg('system', '\u26a0 No audio available on this relay.');
+        addMsg('system', '\u26a0 ' + t('audioUnavailable'));
       }
     },
     error: (e) => {
-      addMsg('system', 'Failed: ' + e.message);
+      addMsg('system', t('failed', { error: e.message }));
     },
   });
   return true;
@@ -494,14 +494,14 @@ async function cmdPortForward(text, parts) {
       next: (resp) => {
         const fwds = resp.forwards || [];
         if (!fwds.length) {
-          addMsg('system', 'No active port forwards.');
+          addMsg('system', t('noActivePortForwards'));
         } else {
           const lines = fwds.map(f => f.relay_id + ':' + f.int_port + (f.int_port !== f.ext_port ? ' (ext ' + f.ext_port + ')' : '') + ' \u2192 ' + f.url);
-          addMsg('system', 'Active forwards:\n' + lines.join('\n'));
+          addMsg('system', t('activeForwards', { lines: lines.join('\n') }));
         }
       },
       error: (e) => {
-        addMsg('system', 'Failed: ' + e.message);
+        addMsg('system', t('failed', { error: e.message }));
       },
     });
     return true;
@@ -516,17 +516,17 @@ async function cmdPortForward(text, parts) {
       try {
         const relays = await _getRelays();
         if (!relays.length) {
-          addMsg('system', 'No connected relay found.');
+          addMsg('system', t('noConnectedRelay'));
           return true;
         }
         relayId = relayId || await _pickRelay(relays);
         if (!relayId) return true;
         if (!port) {
-          port = prompt('Port to forward from ' + relayId + ':');
+          port = prompt(t('portPrompt', { relay: relayId }));
           if (!port) return true;
         }
       } catch (e) {
-        addMsg('system', 'Failed: ' + e.message);
+        addMsg('system', t('failed', { error: e.message }));
         return true;
       }
     }
@@ -539,11 +539,11 @@ async function cmdPortForward(text, parts) {
         if (resp.error) {
           addMsg('system', '\u26a0 ' + resp.error);
         } else {
-          addMsg('system', 'Port forward added: ' + relayId + ':' + port + ' \u2192 ' + resp.url);
+          addMsg('system', t('portForwardAdded', { relay: relayId, port: port, url: resp.url }));
         }
       },
       error: (e) => {
-        addMsg('system', 'Failed: ' + e.message);
+        addMsg('system', t('failed', { error: e.message }));
       },
     });
     return true;
@@ -553,7 +553,7 @@ async function cmdPortForward(text, parts) {
     const relayId = parts[2] || '';
     const port = parts[3] || '';
     if (!relayId || !port) {
-      addMsg('system', 'Usage: /port-forward remove <relay_id> <ext_port>');
+      addMsg('system', t('portForwardRemoveUsage'));
       return true;
     }
     action$('port_forward_remove', { relay_id: relayId, ext_port: parseInt(port) }).subscribe({
@@ -561,11 +561,11 @@ async function cmdPortForward(text, parts) {
         if (resp.error) {
           addMsg('system', '\u26a0 ' + resp.error);
         } else {
-          addMsg('system', 'Port forward removed.');
+          addMsg('system', t('portForwardRemoved'));
         }
       },
       error: (e) => {
-        addMsg('system', 'Failed: ' + e.message);
+        addMsg('system', t('failed', { error: e.message }));
       },
     });
     return true;
@@ -575,7 +575,7 @@ async function cmdPortForward(text, parts) {
     const relayId = parts[2] || '';
     const port = parts[3] || '';
     if (!relayId || !port) {
-      addMsg('system', 'Usage: /port-forward open <relay_id> <port>');
+      addMsg('system', t('portForwardOpenUsage'));
       return true;
     }
     // The URL now embeds a capability token — look it up via
@@ -587,17 +587,17 @@ async function cmdPortForward(text, parts) {
         const match = entries.find((e) =>
           e.relay_id === relayId && Number(e.ext_port) === Number(port));
         if (!match) {
-          addMsg('system', '⚠ No forward for ' + relayId + ':' + port + ' — add it first.');
+          addMsg('system', '\u26a0 ' + t('noForwardFor', { relay: relayId, port: port }));
           return;
         }
         addBrowserTab(relayId + ':' + port, match.url);
       },
-      error: (e) => addMsg('system', 'Failed: ' + e.message),
+      error: (e) => addMsg('system', t('failedWithError', { error: e.message })),
     });
     return true;
   }
 
-  addMsg('system', 'Usage: /port-forward <add|remove|list|open> [relay_id] [port] [ext_port]');
+  addMsg('system', t('portForwardUsage'));
   return true;
 }
 
@@ -610,14 +610,14 @@ function cmdVm(text, parts) {
     action$('list_vms', {}).subscribe(data => {
       const vms = data.vms || [];
       if (vms.length === 0) {
-        addMsg('system', 'No active Docker containers.');
+        addMsg('system', t('noActiveDockerContainers'));
         return;
       }
-      let lines = ['**Docker Containers** (' + vms.length + '):\n'];
+      let lines = [t('dockerContainersHeader', { n: vms.length })];
       for (const vm of vms) {
         const ownerBadge = vm.owner === 'server'
-          ? '\u{1F5A5} server'
-          : '\u{1F4BB} client';
+          ? '\u{1F5A5} ' + t('serverOwner')
+          : '\u{1F4BB} ' + t('clientOwner');
         lines.push(
           '  `' + vm.id.slice(0, 12) + '` '
           + '**' + vm.name + '** '
@@ -626,7 +626,7 @@ function cmdVm(text, parts) {
           + '*' + vm.image + '*'
         );
       }
-      lines.push('\nUse `/vm kill <id>` to stop a container.');
+      lines.push('\n' + t('vmListHint'));
       addMsg('system', lines.join('\n'));
     });
     return true;
@@ -635,12 +635,12 @@ function cmdVm(text, parts) {
   if (sub === 'kill' || sub === 'rm' || sub === 'stop') {
     const target = parts[2] || '';
     if (!target) {
-      addMsg('system', 'Usage: /vm kill <container_id or name>');
+      addMsg('system', t('vmKillUsage'));
       return true;
     }
     action$('kill_vm', { container_id: target }).subscribe(data => {
       if (data.error) addMsg('error', data.error);
-      else addMsg('system', '\u2705 Container killed: ' + (data.killed || target));
+      else addMsg('system', t('containerKilled', { target: data.killed || target }));
     });
     return true;
   }
@@ -649,7 +649,7 @@ function cmdVm(text, parts) {
     action$('list_vms', {}).subscribe(data => {
       const vms = data.vms || [];
       if (vms.length === 0) {
-        addMsg('system', 'No containers to kill.');
+        addMsg('system', t('noContainersToKill'));
         return;
       }
       let killed = 0;
@@ -657,14 +657,11 @@ function cmdVm(text, parts) {
         fireAction('kill_vm', { container_id: vm.id });
         killed++;
       }
-      addMsg('system', '\u2705 Killing ' + killed + ' container(s)...');
+      addMsg('system', t('killingContainers', { n: killed }));
     });
     return true;
   }
 
-  addMsg('system', 'Usage: /vm <list|kill|killall> [container_id]\n'
-    + '  /vm list              \u2014 List all PawFlow Docker containers\n'
-    + '  /vm kill <id>         \u2014 Kill a specific container\n'
-    + '  /vm killall           \u2014 Kill all PawFlow containers');
+  addMsg('system', t('vmUsage'));
   return true;
 }

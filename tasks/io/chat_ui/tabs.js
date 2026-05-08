@@ -33,7 +33,7 @@ function addTerminalTab(sessionId, relayId) {
   const btn = document.createElement('button');
   btn.className = 'tab-btn';
   btn.dataset.tab = tabId;
-  btn.title = 'Terminal ' + _terminalCounter;
+  btn.title = t('terminalTabTitle', { n: _terminalCounter });
   btn.onclick = (e) => {
     if (e.target.classList.contains('tab-close')) return;
     switchTab(tabId);
@@ -102,7 +102,7 @@ function addVSCodeTab(relayId, iframeSrc) {
   const btn = document.createElement('button');
   btn.className = 'tab-btn';
   btn.dataset.tab = tabId;
-  btn.title = 'VS Code (' + relayId + ')';
+  btn.title = t('vsCodeTabTitle', { relay: relayId });
   btn.onclick = (e) => {
     if (e.target.classList.contains('tab-close')) return;
     switchTab(tabId);
@@ -158,7 +158,7 @@ function addDesktopTab(relayId, iframeSrc) {
   const btn = document.createElement('button');
   btn.className = 'tab-btn';
   btn.dataset.tab = tabId;
-  btn.title = 'Desktop (' + relayId + ')';
+  btn.title = t('desktopTabTitle', { relay: relayId });
   btn.onclick = (e) => {
     if (e.target.classList.contains('tab-close')) return;
     switchTab(tabId);
@@ -179,7 +179,7 @@ function addDesktopTab(relayId, iframeSrc) {
   const fsBtn = document.createElement('button');
   fsBtn.className = 'desktop-fs-btn';
   fsBtn.innerHTML = '\u26F6';
-  fsBtn.title = 'Fullscreen (Escape to exit)';
+  fsBtn.title = t('fullscreenTitle');
   fsBtn.onclick = function() { toggleDesktopFullscreen(tabId); };
   panel.appendChild(fsBtn);
 
@@ -217,7 +217,7 @@ function addAudioTab(relayId, audioSession, audioToken) {
   const btn = document.createElement('button');
   btn.className = 'tab-btn';
   btn.dataset.tab = tabId;
-  btn.title = 'Audio (' + relayId + ')';
+  btn.title = t('audioTabTitle', { relay: relayId });
   btn.onclick = (e) => {
     if (e.target.classList.contains('tab-close')) return;
     switchTab(tabId);
@@ -236,12 +236,12 @@ function addAudioTab(relayId, audioSession, audioToken) {
   panel.dataset.audioToken = audioToken || '';
   panel.innerHTML = '<div class="audio-tab-panel">'
     + '<div class="audio-tab-controls">'
-    + '<div class="audio-title">\uD83D\uDD0A Audio \u2014 ' + relayId + '</div>'
+    + '<div class="audio-title">\uD83D\uDD0A ' + t('audioTitleRelay', { relay: relayId }) + '</div>'
     + '<div class="audio-btns">'
-    + '<button onclick="toggleAudioMute()" id="audioTabMuteBtn">Mute</button>'
-    + '<button onclick="audioRestart()">Restart</button>'
+    + '<button onclick="toggleAudioMute()" id="audioTabMuteBtn">' + t('mute') + '</button>'
+    + '<button onclick="audioRestart()">' + t('restart') + '</button>'
     + '</div>'
-    + '<div class="audio-status">Streaming from relay</div>'
+    + '<div class="audio-status">' + t('streamingFromRelay') + '</div>'
     + '</div></div>';
 
   document.querySelector('.main').appendChild(panel);

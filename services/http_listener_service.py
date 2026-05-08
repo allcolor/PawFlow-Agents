@@ -33,7 +33,7 @@ _SECURITY_HEADERS = {
     # default 'self'-only policy doesn't break the page on first load.
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: "
         "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
         "style-src 'self' 'unsafe-inline' "
         "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "

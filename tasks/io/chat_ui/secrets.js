@@ -9,7 +9,7 @@ function cmdListSecrets() {
         addMsg('system', result);
       }
     },
-    error: (e) => addMsg('error', 'Failed: ' + e.message),
+    error: (e) => addMsg('error', t('failed', { error: e.message })),
   });
 }
 
@@ -19,7 +19,7 @@ function cmdAddVariable(name, value) {
       if (data.error) { addMsg('error', data.error); return; }
       addMsg('system', t('variableAdded', { name, ref: data.key || name, short: name }));
     },
-    error: (e) => addMsg('error', 'Failed: ' + e.message),
+    error: (e) => addMsg('error', t('failed', { error: e.message })),
   });
 }
 
@@ -33,7 +33,7 @@ function cmdListVariables() {
         addMsg('system', result);
       }
     },
-    error: (e) => addMsg('error', 'Failed: ' + e.message),
+    error: (e) => addMsg('error', t('failed', { error: e.message })),
   });
 }
 
@@ -69,12 +69,12 @@ function _formatFileDate(epochSeconds) {
 function loadConvFiles() {
   if (!conversationId) return;
   const list = document.getElementById('filesList');
-  list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
+  list.innerHTML = '<span style="color:#808090;font-size:12px">' + t('loading') + '</span>';
   action$('list_conv_files', { conversation_id: conversationId }).subscribe({
     next: (data) => {
       const files = (data.files || []).slice();
       if (files.length === 0) {
-        list.innerHTML = '<span style="color:#808090;font-size:12px">No files in this conversation.</span>';
+        list.innerHTML = '<span style="color:#808090;font-size:12px">' + t('noFilesInConversation') + '</span>';
         return;
       }
       // Newest-first. Server pre-sorts, but re-sort defensively.
@@ -84,10 +84,10 @@ function loadConvFiles() {
       table.className = 'files-table';
       const thead = document.createElement('thead');
       thead.innerHTML = '<tr>'
-        + '<th class="col-name">Name</th>'
-        + '<th class="col-type">Type</th>'
-        + '<th class="col-size">Size</th>'
-        + '<th class="col-date">Date</th>'
+        + '<th class="col-name">' + t('fileName') + '</th>'
+        + '<th class="col-type">' + t('fileType') + '</th>'
+        + '<th class="col-size">' + t('fileSize') + '</th>'
+        + '<th class="col-date">' + t('fileDate') + '</th>'
         + '</tr>';
       table.appendChild(thead);
       const tbody = document.createElement('tbody');
@@ -101,11 +101,11 @@ function loadConvFiles() {
           const a = document.createElement('a');
           a.href = href;
           a.target = '_blank';
-          a.title = 'Download';
+          a.title = t('download');
           a.textContent = f.filename || f.file_id;
           nameTd.appendChild(a);
         } else {
-          nameTd.textContent = (f.filename || f.file_id) + ' (missing)';
+          nameTd.textContent = t('missingItem', { value: f.filename || f.file_id });
         }
         const typeTd = document.createElement('td');
         typeTd.className = 'col-type';
@@ -129,7 +129,7 @@ function loadConvFiles() {
       list.appendChild(table);
     },
     error: () => {
-      list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load files</span>';
+      list.innerHTML = '<span style="color:#e94560;font-size:12px">' + escapeHtml(t('failedToLoadFiles')) + '</span>';
     },
   });
 }

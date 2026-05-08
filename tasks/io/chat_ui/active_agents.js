@@ -25,7 +25,7 @@ function renderCtxGauge(usage, opts) {
   const maxK = Math.round(usage.max / 1000);
   const color = (pct >= 0.80) ? '#f0ad4e' : '#4ecdc4';
   const barPx = Math.round(pct * width);
-  const title = 'Context ' + usedK + 'k/' + maxK + 'k (' + pctInt + '%)';
+  const title = t('contextGaugeTitle', { used: usedK, max: maxK, pct: pctInt });
   return '<span class="ctx-gauge" title="' + title + '" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
     + '<span style="display:inline-block;width:' + width + 'px;height:6px;background:#222;border-radius:3px;overflow:hidden;">'
     + '<span style="display:block;width:' + barPx + 'px;height:100%;background:' + color + ';"></span>'
@@ -280,8 +280,11 @@ function updateActivePanel() {
         : Math.floor(lived / 60) + 'm' + (lived % 60) + 's';
       const cliLabel = liveCli === 'cc' ? 'Claude Code'
                      : liveCli === 'codex' ? 'Codex' : 'Gemini';
-      const liveTitle = cliLabel + ' reused (lived ' + livedStr
-        + ', reuse #' + reuseCount + ')';
+      const liveTitle = t('cliSessionReusedTitle', {
+        cli: cliLabel,
+        lived: livedStr,
+        count: reuseCount,
+      });
       liveBadge = '<span class="a-cc-live" title="' + liveTitle
         + '" style="display:inline-block;padding:1px 5px;margin-right:4px;'
         + 'font-size:9px;font-weight:bold;color:#0f0;border:1px solid #0f0;'
@@ -289,7 +292,7 @@ function updateActivePanel() {
       const restartFn = liveCli === 'cc' ? 'ccRestartSingle'
                       : liveCli === 'codex' ? 'codexRestartSingle'
                       : 'geminiRestartSingle';
-      restartBtn = '<button class="btn-cc-restart" title="Restart ' + cliLabel + ' (kill warm session)"'
+      restartBtn = '<button class="btn-cc-restart" title="' + escapeHtml(t('restartCliTitle', { cli: cliLabel })) + '"'
         + ' onclick="' + restartFn + '(\'' + escapeHtml(apiName) + '\')"'
         + '>&#x21BB;</button>';
     }

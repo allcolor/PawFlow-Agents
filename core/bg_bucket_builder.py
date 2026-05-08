@@ -91,7 +91,12 @@ _BUCKET_COMPACT_INSTRUCTIONS = (
     "attribution in the narrative. End the summary with a "
     "`## Files & operations` section listing files touched (edited / "
     "read / created / deleted), commands run, delegations. Copy file "
-    "paths VERBATIM when you have them — never paraphrase paths."
+    "paths VERBATIM when you have them — never paraphrase paths. If a "
+    "message quotes a compacted context block or provider context dump "
+    "for debugging, describe it as quoted evidence; do not reproduce "
+    "`<conversation_history>`, `</conversation_history>`, `Recent "
+    "messages below`, or file-restore postambles verbatim as current "
+    "conversation state."
 )
 
 # Extra compact_instructions for rollup/collapse (N → 1 consolidation).
@@ -100,7 +105,9 @@ _ROLLUP_COMPACT_INSTRUCTIONS = (
     "conversation into one super-summary. Keep decisions, user intent "
     "evolution, agent handoffs. UNION the `## Files & operations` "
     "lists — deduplicate file paths, keep the most-touched up to 30. "
-    "Be denser than the sources."
+    "Be denser than the sources. If a source summary mentions quoted "
+    "compact/provider context dumps, preserve the diagnosis but do not "
+    "copy wrapper markers or file-restore postambles verbatim."
 )
 
 
@@ -719,13 +726,23 @@ class BgBucketBuilder:
                     "bucket_msg_count": len(chunk),
                 })
 
-                if self._maybe_rollup(store, client, user_id, ctx_max, cid,
-                                      cfg=cfg):
+                _fired = self._rollup_until_stable(
+                    store, client, user_id, ctx_max, cid, cfg=cfg)
+                for _ in range(_fired):
                     rollups_fired += 1
                     self._publish_progress(cid, "rollup_merging", {
                         "rollups_fired": rollups_fired,
                         "object_count": store.object_count,
                     })
+
+            _fired = self._rollup_until_stable(
+                store, client, user_id, ctx_max, cid, cfg=cfg)
+            for _ in range(_fired):
+                rollups_fired += 1
+                self._publish_progress(cid, "rollup_merging", {
+                    "rollups_fired": rollups_fired,
+                    "object_count": store.object_count,
+                })
         finally:
             with self._pending_lock:
                 self._pending.discard(cid)
@@ -741,6 +758,21 @@ class BgBucketBuilder:
                 "[bg-bucket] build_now_sync done cid=%s: %s",
                 cid[:8], result)
         return result
+
+    def _rollup_until_stable(self, store: BucketStore, client: Any,
+                             user_id: str, ctx_max: int, cid: str,
+                             cfg: Optional[Dict[str, Any]] = None) -> int:
+        """Run rollup/collapse until the pyramid no longer changes.
+
+        A conversation can already be over the header budget when no new
+        shared chunk is bucketable. In that state the old code never called
+        _maybe_rollup(), so /compact assembled an oversized header forever.
+        """
+        fired = 0
+        while self._maybe_rollup(store, client, user_id, ctx_max, cid,
+                                 cfg=cfg):
+            fired += 1
+        return fired
 
     # ── Internals ─────────────────────────────────────────────────
 
@@ -906,6 +938,7 @@ class BgBucketBuilder:
         cfg = self._bg_compact_config(cid, user_id)
 
         built = 0
+        rollups_fired = 0
         while True:
             shared_msgs = self._load_shared_since(cid, store.last_seq)
             # allow_partial=True: trigger fires on seq gap (captures
@@ -927,8 +960,11 @@ class BgBucketBuilder:
                     cfg=cfg):
                 break
             built += 1
-            self._maybe_rollup(store, client, user_id, ctx_max, cid,
-                               cfg=cfg)
+            rollups_fired += self._rollup_until_stable(
+                store, client, user_id, ctx_max, cid, cfg=cfg)
+
+        rollups_fired += self._rollup_until_stable(
+            store, client, user_id, ctx_max, cid, cfg=cfg)
 
         if built:
             self._publish_built(cid, built, store)

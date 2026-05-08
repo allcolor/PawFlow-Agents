@@ -22,7 +22,7 @@ function showProjectGraphOverlay() {
     + '<button onclick="document.getElementById(\'pgOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:auto">&times;</button>'
     + '</div>'
     + '<div style="display:flex;gap:6px;margin-bottom:10px">'
-    + '<input id="pgSearchInput" type="text" placeholder="Search nodes/edges..." style="flex:1;background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:5px 10px;font-size:12px" onkeydown="if(event.key===\'Enter\')pgSearch()">'
+    + '<input id="pgSearchInput" type="text" placeholder="' + escapeHtml(t('searchNodesEdges')) + '" style="flex:1;background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:5px 10px;font-size:12px" onkeydown="if(event.key===\'Enter\')pgSearch()">'
     + '<button onclick="pgSearch()" style="background:#2a2a4a;color:#a0a0c0;border:1px solid #444;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px">Search</button>'
     + '</div>'
     + '<div id="pg-content" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117;padding:12px">'
@@ -68,9 +68,9 @@ function pgBuild() {
           msg += ' (reparsed=' + (reparsed || 0) + ', removed=' + (removed || 0) + ')';
         }
       } else if (status === 'skipped') {
-        msg = 'Skipped — ' + (data.reason || 'no reason given');
+        msg = t('projectGraphSkipped', { reason: data.reason || t('noReasonGiven') });
       } else if (status === 'error') {
-        msg = 'Error — ' + (data.reason || 'unknown error');
+        msg = t('projectGraphErrorStatus', { error: data.reason || t('unknownError') });
       } else {
         msg = JSON.stringify(data);
       }
@@ -79,7 +79,7 @@ function pgBuild() {
         + ';padding:8px;white-space:pre-wrap">' + escapeHtml(msg) + '</div>');
     },
     error: function(e) {
-      _pgSetContent('<div style="color:#e74c3c;padding:8px">Build failed: ' + escapeHtml(e.message) + '</div>');
+      _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(t('projectGraphBuildFailed', { error: e.message })) + '</div>');
     },
   });
 }
@@ -87,7 +87,7 @@ function pgBuild() {
 function pgReport() {
   var content = document.getElementById('pg-content');
   if (content) {
-    content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">Loading report...</div>';
+    content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('loadingReport')) + '</div>';
   }
   action$('project_graph_report', {}).subscribe({
     next: function(data) {
@@ -99,14 +99,14 @@ function pgReport() {
       _pgRenderReport(data);
     },
     error: function(e) {
-      _pgSetContent('<div style="color:#e74c3c;padding:8px">Failed to load report: ' + escapeHtml(e.message) + '</div>');
+      _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(t('projectGraphReportLoadFailed', { error: e.message })) + '</div>');
     },
   });
 }
 
 function _pgRenderReport(data) {
   if (!data.has_graph) {
-    _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">No project graph built yet. Click <b>Build</b> to index the codebase.</div>');
+    _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('projectGraphEmptyBuildHint')) + '</div>');
     return;
   }
   var report = data.report || '';
@@ -135,7 +135,7 @@ function _pgRenderReport(data) {
   // Confidence breakdown
   if (lines[2] && lines[2].startsWith('Confidence:')) {
     html += '<div style="margin-bottom:12px">';
-    html += '<div style="color:#a0a0c0;font-size:12px;margin-bottom:4px">Confidence Breakdown</div>';
+    html += '<div style="color:#a0a0c0;font-size:12px;margin-bottom:4px">' + escapeHtml(t('confidenceBreakdown')) + '</div>';
     var confStr = lines[2].replace('Confidence: ', '');
     var confParts = confStr.split(',').map(function(s) { return s.trim(); });
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
@@ -160,7 +160,7 @@ function _pgRenderReport(data) {
   var godIdx = lines.findIndex(function(l) { return l.includes('God nodes'); });
   if (godIdx >= 0) {
     html += '<div style="margin-bottom:8px">';
-    html += '<div style="color:#a0a0c0;font-size:12px;margin-bottom:6px">Most Connected Nodes</div>';
+    html += '<div style="color:#a0a0c0;font-size:12px;margin-bottom:6px">' + escapeHtml(t('mostConnectedNodes')) + '</div>';
     for (var i = godIdx + 1; i < lines.length; i++) {
       var line = lines[i].trim();
       if (!line) continue;
@@ -173,7 +173,7 @@ function _pgRenderReport(data) {
           + 'style="padding:4px 8px;border-bottom:1px solid #222;cursor:pointer;display:flex;align-items:center;gap:8px" '
           + 'onmouseover="this.style.background=\'#1e1e3a\'" onmouseout="this.style.background=\'transparent\'">'
           + '<span style="color:#e0e0e0;font-size:12px;font-weight:600">' + escapeHtml(label) + '</span>'
-          + '<span style="color:#6c6c8a;font-size:11px;margin-left:auto">' + deg + ' connections</span>'
+          + '<span style="color:#6c6c8a;font-size:11px;margin-left:auto">' + escapeHtml(t('connectionsCount', { n: deg })) + '</span>'
           + '</div>';
       }
     }
@@ -191,7 +191,7 @@ function pgSearch() {
 
   var content = document.getElementById('pg-content');
   if (content) {
-    content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">Searching...</div>';
+    content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('searching')) + '</div>';
   }
   action$('project_graph_query', { question: query }).subscribe({
     next: function(data) {
@@ -203,17 +203,17 @@ function pgSearch() {
       _pgRenderEdges(_pgQueryCache, query);
     },
     error: function(e) {
-      _pgSetContent('<div style="color:#e74c3c;padding:8px">Query failed: ' + escapeHtml(e.message) + '</div>');
+      _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(t('projectGraphQueryFailed', { error: e.message })) + '</div>');
     },
   });
 }
 
 function _pgRenderEdges(edges, query) {
   if (edges.length === 0) {
-    _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">No connections found for: ' + escapeHtml(query) + '</div>');
+    _pgSetContent('<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('noConnectionsFoundFor', { query: query })) + '</div>');
     return;
   }
-  var html = '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px">' + edges.length + ' edges for "' + escapeHtml(query) + '"</div>';
+  var html = '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px">' + escapeHtml(t('edgesForQuery', { n: edges.length, query: query })) + '</div>';
   edges.forEach(function(e) {
     var source = e.source || '?';
     var relation = e.relation || '?';
@@ -227,11 +227,11 @@ function _pgRenderEdges(edges, query) {
       + ';padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">' + conf + '</span>';
 
     html += '<div style="padding:5px 8px;border-bottom:1px solid #222;display:flex;align-items:center;gap:6px">'
-      + '<span onclick="pgNodeDetail(\'' + escapeHtml(source).replace(/'/g, "\\'") + '\')" style="color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted #444" title="View node">' + escapeHtml(source) + '</span>'
+      + '<span onclick="pgNodeDetail(\'' + escapeHtml(source).replace(/'/g, "\\'") + '\')" style="color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted #444" title="' + escapeHtml(t('viewNode')) + '">' + escapeHtml(source) + '</span>'
       + '<span style="color:#6c6c8a;font-size:11px">\u2192</span>'
       + '<span style="color:#a0a0c0;font-size:12px">' + escapeHtml(relation) + '</span>'
       + '<span style="color:#6c6c8a;font-size:11px">\u2192</span>'
-      + '<span onclick="pgNodeDetail(\'' + escapeHtml(target).replace(/'/g, "\\'") + '\')" style="color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted #444" title="View node">' + escapeHtml(target) + '</span>'
+      + '<span onclick="pgNodeDetail(\'' + escapeHtml(target).replace(/'/g, "\\'") + '\')" style="color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted #444" title="' + escapeHtml(t('viewNode')) + '">' + escapeHtml(target) + '</span>'
       + '<span style="margin-left:auto">' + confBadge + '</span>'
       + '</div>';
   });
@@ -241,7 +241,7 @@ function _pgRenderEdges(edges, query) {
 function pgNodeDetail(label) {
   var content = document.getElementById('pg-content');
   if (content) {
-    content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">Loading node...</div>';
+    content.innerHTML = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + escapeHtml(t('loadingNode')) + '</div>';
   }
   action$('project_graph_node', { label: label }).subscribe({
     next: function(data) {
@@ -253,14 +253,14 @@ function pgNodeDetail(label) {
       _pgRenderNode(data);
     },
     error: function(e) {
-      _pgSetContent('<div style="color:#e74c3c;padding:8px">Failed to load node: ' + escapeHtml(e.message) + '</div>');
+      _pgSetContent('<div style="color:#e74c3c;padding:8px">' + escapeHtml(t('projectGraphNodeLoadFailed', { error: e.message })) + '</div>');
     },
   });
 }
 
 function _pgRenderNode(node) {
   var html = '<div style="margin-bottom:10px">'
-    + '<button onclick="pgReport()" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:11px;padding:0">\u2190 Back to report</button>'
+    + '<button onclick="pgReport()" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:11px;padding:0">\u2190 ' + escapeHtml(t('backToReport')) + '</button>'
     + '</div>';
 
   html += '<div style="margin-bottom:12px">';
@@ -269,26 +269,26 @@ function _pgRenderNode(node) {
 
   if (node.source_file) {
     html += '<span style="background:#1e1e3a;color:#a0a0c0;padding:2px 8px;border-radius:6px;font-size:11px">'
-      + '<span style="color:#6c6c8a">File:</span> <span style="color:#e0e0e0">' + escapeHtml(node.source_file) + '</span></span>';
+      + '<span style="color:#6c6c8a">' + escapeHtml(t('file')) + ':</span> <span style="color:#e0e0e0">' + escapeHtml(node.source_file) + '</span></span>';
   }
   if (node.file_type) {
     html += '<span style="background:#1e1e3a;color:#a0a0c0;padding:2px 8px;border-radius:6px;font-size:11px">'
-      + '<span style="color:#6c6c8a">Type:</span> <span style="color:#e0e0e0">' + escapeHtml(node.file_type) + '</span></span>';
+      + '<span style="color:#6c6c8a">' + escapeHtml(t('type')) + ':</span> <span style="color:#e0e0e0">' + escapeHtml(node.file_type) + '</span></span>';
   }
   if (node.source_location) {
     html += '<span style="background:#1e1e3a;color:#a0a0c0;padding:2px 8px;border-radius:6px;font-size:11px">'
-      + '<span style="color:#6c6c8a">Location:</span> <span style="color:#e0e0e0">' + escapeHtml(node.source_location) + '</span></span>';
+      + '<span style="color:#6c6c8a">' + escapeHtml(t('location')) + ':</span> <span style="color:#e0e0e0">' + escapeHtml(node.source_location) + '</span></span>';
   }
   if (node.neighbors !== undefined) {
     html += '<span style="background:#1e1e3a;color:#a0a0c0;padding:2px 8px;border-radius:6px;font-size:11px">'
-      + '<span style="color:#6c6c8a">Neighbors:</span> <span style="color:#e0e0e0">' + node.neighbors + '</span></span>';
+      + '<span style="color:#6c6c8a">' + escapeHtml(t('neighbors')) + ':</span> <span style="color:#e0e0e0">' + node.neighbors + '</span></span>';
   }
   html += '</div></div>';
 
   // Neighbor edges
   var edges = node.neighbor_edges || [];
   if (edges.length > 0) {
-    html += '<div style="color:#a0a0c0;font-size:12px;margin-bottom:6px">Connections (' + edges.length + (edges.length >= 20 ? '+' : '') + ')</div>';
+    html += '<div style="color:#a0a0c0;font-size:12px;margin-bottom:6px">' + escapeHtml(t('connectionsHeading', { n: edges.length + (edges.length >= 20 ? '+' : '') })) + '</div>';
     edges.forEach(function(e) {
       var isSource = e.source === node.id;
       var other = isSource ? e.target : e.source;
@@ -306,12 +306,12 @@ function _pgRenderNode(node) {
         + '<span style="color:#6c6c8a;font-size:11px">' + direction + '</span>'
         + '<span style="color:#a0a0c0;font-size:12px">' + escapeHtml(relation) + '</span>'
         + '<span style="color:#6c6c8a;font-size:11px">' + direction + '</span>'
-        + '<span onclick="pgNodeDetail(\'' + escapeHtml(other).replace(/'/g, "\\'") + '\')" style="color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted #444" title="View node">' + escapeHtml(other) + '</span>'
+        + '<span onclick="pgNodeDetail(\'' + escapeHtml(other).replace(/'/g, "\\'") + '\')" style="color:#e0e0e0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline dotted #444" title="' + escapeHtml(t('viewNode')) + '">' + escapeHtml(other) + '</span>'
         + '<span style="margin-left:auto">' + confBadge + '</span>'
         + '</div>';
     });
   } else {
-    html += '<div style="color:#6c6c8a;font-size:12px">No connections found.</div>';
+    html += '<div style="color:#6c6c8a;font-size:12px">' + escapeHtml(t('noConnectionsFound')) + '</div>';
   }
 
   _pgSetContent(html);

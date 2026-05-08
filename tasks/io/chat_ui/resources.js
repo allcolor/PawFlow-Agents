@@ -285,16 +285,16 @@ function _showRelayInfoDialog(relayId, details) {
   var localHtml = '';
   if (d.allow_local) {
     var convLocal = dl['*'];
-    var convLabel = convLocal === true ? t('local') : convLocal === false ? 'Docker' : t('notSet');
+    var convLabel = convLocal === true ? t('local') : convLocal === false ? t('docker') : t('notSet');
     var convColor = convLocal === true ? 'var(--pf-success)' : convLocal === false ? 'var(--pf-danger)' : 'var(--pf-muted)';
     localHtml += '<div style="margin-top:8px;font-size:12px;font-weight:600;color:var(--pf-accent);">' + escapeHtml(t('defaultExecutionMode')) + '</div>';
     localHtml += '<div style="display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12px;">'
       + '<span style="color:var(--pf-muted);min-width:80px;">' + escapeHtml(t('conversation')) + ':</span>'
       + '<span style="color:' + convColor + ';">' + convLabel + '</span>'
       + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-success);cursor:pointer;" '
-      + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'\')">Local</button>'
+      + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'\')">' + escapeHtml(t('local')) + '</button>'
       + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-danger);cursor:pointer;" '
-      + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'\')">Docker</button>'
+      + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'\')">' + escapeHtml(t('docker')) + '</button>'
       + '</div>';
     // Per-agent toggles (from conversation agents)
     try {
@@ -309,15 +309,15 @@ function _showRelayInfoDialog(relayId, details) {
       }
       rpAgents.forEach(function(agentName) {
         var aLocal = dl[agentName];
-        var aLabel = aLocal === true ? t('local') : aLocal === false ? 'Docker' : t('notSet');
+        var aLabel = aLocal === true ? t('local') : aLocal === false ? t('docker') : t('notSet');
         var aColor = aLocal === true ? 'var(--pf-success)' : aLocal === false ? 'var(--pf-danger)' : 'var(--pf-muted)';
         localHtml += '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px;">'
           + '<span style="color:var(--pf-muted);min-width:80px;">@' + escapeHtml(agentName) + ':</span>'
           + '<span style="color:' + aColor + ';">' + aLabel + '</span>'
           + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-success);cursor:pointer;" '
-          + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'' + escapeHtml(agentName) + '\')">Local</button>'
+          + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'' + escapeHtml(agentName) + '\')">' + escapeHtml(t('local')) + '</button>'
           + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-danger);cursor:pointer;" '
-          + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'' + escapeHtml(agentName) + '\')">Docker</button>'
+          + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'' + escapeHtml(agentName) + '\')">' + escapeHtml(t('docker')) + '</button>'
           + '</div>';
       });
     } catch(e) {}
@@ -326,7 +326,7 @@ function _showRelayInfoDialog(relayId, details) {
   var overlay = document.createElement('div');
   overlay.className = 'exec-overlay';
   overlay.innerHTML = '<div class="exec-dialog" style="min-width:340px;">'
-    + '<h3>Relay: ' + escapeHtml(relayId) + '</h3>'
+    + '<h3>' + escapeHtml(t('relayTitle', { id: relayId })) + '</h3>'
     + infoHtml + localHtml
     + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('close')) + '</button></div>'
     + '</div>';
@@ -336,7 +336,7 @@ function _showRelayInfoDialog(relayId, details) {
 function _setRelayLocal(relayId, local, agent) {
   action$('relay_set_local', {relay_id: relayId, local: local, agent: agent}).subscribe(function(data) {
     if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', data.message || 'OK');
+    addMsg('system', data.message || t('ok'));
     // Close dialog and refresh
     var ov = document.querySelector('.exec-overlay');
     if (ov) ov.remove();
@@ -714,7 +714,7 @@ async function _renderResourcesData(data) {
             if (s !== '*') agentTags += ' <span style="font-size:9px;color:var(--pf-accent);background:color-mix(in srgb, var(--pf-accent) 14%, var(--pf-panel));padding:1px 4px;border-radius:3px;">' + escapeHtml(s) + '</span>';
           });
           agentDefaults.forEach(function(a) {
-            agentTags += ' <span style="font-size:9px;color:var(--pf-success);" title="Default for ' + escapeHtml(a) + '">\u2605' + escapeHtml(a) + '</span>';
+            agentTags += ' <span style="font-size:9px;color:var(--pf-success);" title="' + escapeHtml(t('defaultForAgent', { agent: a })) + '">\u2605' + escapeHtml(a) + '</span>';
           });
           var color = isConvDefault ? 'var(--pf-success)' : 'var(--pf-muted)';
           var icon = isConvDefault ? '\u25C9' : '\u25CB';
@@ -1375,24 +1375,24 @@ function showAgentMenu(e, name, scope, autoconv) {
   };
   const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;'; menu.appendChild(s); };
 
-  item('\u{1F441} View definition...', () => showResourceEditor('agent', name, true));
-  if (_canEditScope(scope)) item('\u270F Edit definition...', () => showResourceEditor('agent', name));
-  item('\u2699 Configure in conversation...', () => _showAgentConvConfigDialog(name));
-  item('\u2699 Tools / MCP override...', () => _showToolMcpFilterDialog(name, 'agent'));
-  item('\u25B6 Select', () => cmdAgentSelect(name).then(loadResources));
-  item('\u{1F9E9} Manage skills...', () => _showAgentSkillsDialog(name));
+  item('\u{1F441} ' + t('viewDefinitionMenu'), () => showResourceEditor('agent', name, true));
+  if (_canEditScope(scope)) item('\u270F ' + t('editDefinitionMenu'), () => showResourceEditor('agent', name));
+  item('\u2699 ' + t('configureConversationMenu'), () => _showAgentConvConfigDialog(name));
+  item('\u2699 ' + t('toolsMcpOverrideMenu'), () => _showToolMcpFilterDialog(name, 'agent'));
+  item('\u25B6 ' + t('select'), () => cmdAgentSelect(name).then(loadResources));
+  item('\u{1F9E9} ' + t('manageSkillsMenu'), () => _showAgentSkillsDialog(name));
   if (autoconv) {
-    item('\u23F9 Autoconv off', () => { action$('random_thought', { sub: 'off', agent: name }).subscribe(d => { addMsg('system', d.error || 'Autoconv disabled for ' + name); loadResources(); }); });
+    item('\u23F9 ' + t('autoconvOff'), () => { action$('random_thought', { sub: 'off', agent: name }).subscribe(d => { addMsg('system', d.error || t('autoconvDisabledFor', { agent: name })); loadResources(); }); });
   } else {
-    item('\u{1F504} Autoconv on...', () => { const freq = prompt('Frequency (e.g. 6/1m, 2-3/h, 1/2h):', '6/1m'); if (!freq) return; action$('random_thought', { sub: 'on', agent: name, frequency: freq }).subscribe(d => { addMsg('system', d.error || 'Autoconv enabled for ' + name + ' (' + freq + ')'); loadResources(); }); });
+    item('\u{1F504} ' + t('autoconvOnMenu'), () => { const freq = prompt(t('autoconvFrequencyPrompt'), '6/1m'); if (!freq) return; action$('random_thought', { sub: 'on', agent: name, frequency: freq }).subscribe(d => { addMsg('system', d.error || t('autoconvEnabledFor', { agent: name, freq: freq })); loadResources(); }); });
   }
   sep();
-  if (_isAdmin()) item('\u2191 Copy to Global', () => _copyResource('agent', name, 'global'));
-  if (scope !== 'user') item('\u2191 Copy to User', () => _copyResource('agent', name, 'user'));
+  if (_isAdmin()) item('\u2191 ' + t('copyToGlobal'), () => _copyResource('agent', name, 'global'));
+  if (scope !== 'user') item('\u2191 ' + t('copyToUser'), () => _copyResource('agent', name, 'user'));
   sep();
-  item('\u2716 Remove from conversation', () => _removeAgentFromConv(name), true);
+  item('\u2716 ' + t('removeFromConversation'), () => _removeAgentFromConv(name), true);
   if (_canEditScope(scope)) {
-    item('\u{1F5D1} Delete definition', () => _deleteResource('agent', name, scope), true);
+    item('\u{1F5D1} ' + t('deleteDefinitionMenu'), () => _deleteResource('agent', name, scope), true);
   }
   setTimeout(() => document.addEventListener('click', function _close() { menu.remove(); document.removeEventListener('click', _close); }), 0);
 }
@@ -1405,7 +1405,7 @@ function _showSkillAssignDialog(skillName) {
     overlay.className = 'exec-overlay';
     var options = agents.map(a => '<option value="' + escapeHtml(a.name) + '">' + escapeHtml(a.name) + '</option>').join('');
     overlay.innerHTML = '<div class="exec-dialog" style="min-width:320px;">'
-      + '<h3 style="margin:0 0 12px;">Assign skill \u201C' + escapeHtml(skillName) + '\u201D to agent</h3>'
+      + '<h3 style="margin:0 0 12px;">' + escapeHtml(t('skillAssignTitle', { skill: skillName })) + '</h3>'
       + '<select id="_skAssignAgent" style="width:100%;padding:8px;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;font-size:13px;">' + options + '</select>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">'
       + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
@@ -1531,7 +1531,7 @@ function _showAgentSkillsDialog(agentName) {
         + '</label>';
     }).join('');
     overlay.innerHTML = '<div class="exec-dialog" style="min-width:360px;">'
-      + '<h3 style="margin:0 0 12px;">Skills for \u201C' + escapeHtml(agentName) + '\u201D</h3>'
+      + '<h3 style="margin:0 0 12px;">' + escapeHtml(t('agentSkillsTitle', { agent: agentName })) + '</h3>'
       + '<div style="max-height:200px;overflow-y:auto;background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:8px;">' + checkboxes + '</div>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">'
       + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
@@ -1868,29 +1868,29 @@ function _previewVoice(url) {
   try { if (window._voicePreviewAudio) window._voicePreviewAudio.pause(); } catch (e) {}
   const a = new Audio(url);
   window._voicePreviewAudio = a;
-  a.play().catch(err => addMsg('system', 'Audio preview failed: ' + err.message));
+  a.play().catch(err => addMsg('system', t('audioPreviewFailed', { error: err.message })));
 }
 
 function _deleteVoiceClone(name) {
-  if (!confirm('Delete voice clone "' + name + '"?\n\nThis cascade-deletes:\n  • the provider voice_id (if paradigm A)\n  • the reference audio\n  • every cached TTS rendering')) return;
+  if (!confirm(t('deleteVoiceConfirm', { name: name }))) return;
   action$('delete_voice_clone', { name }).subscribe(res => {
-    if (res.error) { addMsg('system', 'Delete failed: ' + res.error); return; }
+    if (res.error) { addMsg('system', t('deleteFailed', { error: res.error })); return; }
     const parts = [];
-    if (res.voice_id_deleted) parts.push('provider voice_id freed');
-    if (res.ref_audio_deleted) parts.push('ref audio purged');
-    if (res.tts_cached_purged) parts.push(res.tts_cached_purged + ' cached rendering(s) purged');
-    addMsg('system', 'Voice "' + name + '" deleted' + (parts.length ? ' (' + parts.join(', ') + ')' : ''));
+    if (res.voice_id_deleted) parts.push(t('providerVoiceFreed'));
+    if (res.ref_audio_deleted) parts.push(t('refAudioPurged'));
+    if (res.tts_cached_purged) parts.push(t('cachedRenderingsPurged', { n: res.tts_cached_purged }));
+    addMsg('system', t('voiceDeleted', { name: name, details: parts.length ? ' (' + parts.join(', ') + ')' : '' }));
     setTimeout(loadResources, 200);
   });
 }
 
 function _renameVoiceClone(name) {
-  const newName = prompt('Rename voice clone "' + name + '" to:', name);
+  const newName = prompt(t('renameVoicePrompt', { name: name }), name);
   if (!newName || newName === name) return;
   action$('rename_voice_clone', { name, new_name: newName }).subscribe(res => {
-    if (res.error) { addMsg('system', 'Rename failed: ' + res.error); return; }
-    if (res.unchanged) { addMsg('system', 'Voice name unchanged.'); return; }
-    addMsg('system', 'Voice renamed: "' + name + '" → "' + res.name + '".');
+    if (res.error) { addMsg('system', t('renameFailed', { error: res.error })); return; }
+    if (res.unchanged) { addMsg('system', t('voiceNameUnchanged')); return; }
+    addMsg('system', t('voiceRenamed', { old: name, name: res.name }));
     setTimeout(loadResources, 200);
   });
 }
@@ -1920,11 +1920,11 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
   const roS = readonly ? 'opacity:0.7;cursor:not-allowed;' : '';
   let html = '';
   if (isNew) {
-    html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Name</label><input id="res-name" value="" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>';
+    html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + t('name') + '</label><input id="res-name" value="" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/></div>';
     if (rtype !== '_tool') {
-      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Scope</label><select id="res-scope" style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
-        + (_isAdmin() ? '<option value="global">Global</option>' : '')
-        + '<option value="user">User</option><option value="conversation">Conversation</option></select></div>';
+      html += '<div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">' + t('scope') + '</label><select id="res-scope" style="background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">'
+        + (_isAdmin() ? '<option value="global">' + t('global') + '</option>' : '')
+        + '<option value="user">' + t('user') + '</option><option value="conversation">' + t('conversation') + '</option></select></div>';
     }
   }
   for (const [key, type] of fields) {
@@ -2038,7 +2038,7 @@ function _loadSkillsPicker(container, selected, readonly) {
   action$('list_skills', {}).subscribe(data => {
     const skills = data.skills || [];
     if (!skills.length) {
-      container.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">No skills defined</div>';
+      container.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + t('noSkillsDefined') + '</div>';
       return;
     }
     const dis = readonly ? ' disabled' : '';
@@ -2195,7 +2195,7 @@ function _saveResourceCreate(rtype) {
 function _removeAgentFromConv(name) {
   var convAgents = document.querySelectorAll('#res-section-agent > div');
   if (convAgents.length <= 1) {
-    if (!confirm('Remove the last agent from this conversation?')) return;
+    if (!confirm(t('removeLastAgentConfirm'))) return;
   }
   cmdResourceAction('remove_agent_from_conv', {name: name, conversation_id: conversationId})
     .then(loadResources);
@@ -2456,27 +2456,25 @@ function showTaskInstanceMenu(e, taskId, agent, status) {
   const _taskAction = (action) => {
     action$(action + '_task', { task_id: taskId }).subscribe(d => {
       if (d.error) addMsg('error', d.error);
-      else addMsg('system', `Task ${taskId} ${action}d.`);
+      else addMsg('system', t('taskActionDone', { id: taskId, action: action }));
       loadResources();
     });
   };
   // View task log
-  item('\u{1F4CB} View Log', () => {
+  item('\u{1F4CB} ' + t('viewLogMenu'), () => {
     action$('task_log', { name: taskId }).subscribe(d => {
       const log = d.log || [];
-      if (!log.length) { addMsg('system', 'No log entries for ' + taskId); return; }
+      if (!log.length) { addMsg('system', t('noLogEntriesFor', { id: taskId })); return; }
       const lines = log.map(l => (l.ts ? new Date(l.ts*1000).toLocaleTimeString() + ' ' : '') + (l.event || '') + (l.detail ? ': ' + l.detail : '')).join('\n');
-      addMsg('system', '\u{1F4CB} Task log ' + taskId + ':\n' + lines);
+      addMsg('system', t('taskLogTitle', { id: taskId, lines: lines }));
     });
   });
   // View task details
-  item('\u{1F441} View Details', () => {
+  item('\u{1F441} ' + t('viewDetails'), () => {
     action$('list_resources', {}).subscribe(d => {
       const task = (d.all_tasks || []).find(t => t.task_id === taskId);
-      if (!task) { addMsg('system', 'Task not found: ' + taskId); return; }
-      const info = [`Task: ${task.task_id}`, `Agent: ${task.agent}`, `Status: ${task.status}`,
-        `Iterations: ${task.iterations}/${task.max_iterations}`, `Definition: ${task.task_def_name || '-'}`,
-        `Prompt: ${task.task}`].join('\n');
+      if (!task) { addMsg('system', t('taskNotFound', { id: taskId })); return; }
+      const info = t('taskDetails', { id: task.task_id, agent: task.agent, status: task.status, iterations: task.iterations, max: task.max_iterations, definition: task.task_def_name || '-', prompt: task.task });
       addMsg('system', info);
     });
   });
@@ -2484,7 +2482,7 @@ function showTaskInstanceMenu(e, taskId, agent, status) {
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
   menu.appendChild(sep);
-  item('\u{1F5D1} Delete', () => _taskAction('delete'), true);
+  item('\u{1F5D1} ' + t('delete'), () => _taskAction('delete'), true);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
@@ -2509,40 +2507,40 @@ function showRunningTaskMenu(e, taskId, agent, status) {
   const _taskAction = (action) => {
     action$(action + '_task', { task_id: taskId }).subscribe(d => {
       if (d.error) addMsg('error', d.error);
-      else addMsg('system', `Task ${taskId} ${action}d.`);
+      else addMsg('system', t('taskActionDone', { id: taskId, action: action }));
       loadResources();
     });
   };
   // View task log
-  item('\u{1F4CB} View Log', () => {
+  item('\u{1F4CB} ' + t('viewLogMenu'), () => {
     action$('task_log', { name: taskId }).subscribe(d => {
       const log = d.log || [];
-      if (!log.length) { addMsg('system', 'No log entries for ' + taskId); return; }
+      if (!log.length) { addMsg('system', t('noLogEntriesFor', { id: taskId })); return; }
       const lines = log.map(l => (l.ts ? new Date(l.ts*1000).toLocaleTimeString() + ' ' : '') + (l.event || '') + (l.detail ? ': ' + l.detail : '')).join('\n');
-      addMsg('system', '\u{1F4CB} Task log ' + taskId + ':\n' + lines);
+      addMsg('system', t('taskLogTitle', { id: taskId, lines: lines }));
     });
   });
   // Edit limits
-  item('\u270F Edit Limits', () => _showEditLimitsDialog(taskId));
+  item('\u270F ' + t('editLimits'), () => _showEditLimitsDialog(taskId));
   // Status-specific actions
   if (status === 'active') {
-    item('\u23F8 Pause', () => _taskAction('pause'));
+    item('\u23F8 ' + t('pause'), () => _taskAction('pause'));
   } else if (status === 'paused') {
-    item('\u25B6 Resume', () => _taskAction('resume'));
+    item('\u25B6 ' + t('resume'), () => _taskAction('resume'));
   } else if (status === 'cancelled' || status === 'failed') {
-    item('\u25B6 Restart', () => _taskAction('resume'));
+    item('\u25B6 ' + t('restart'), () => _taskAction('resume'));
   }
   if (status === 'active' || status === 'paused') {
     const sep = document.createElement('div');
     sep.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
     menu.appendChild(sep);
-    item('\u{1F5D1} Cancel', () => _taskAction('cancel'), true);
+    item('\u{1F5D1} ' + t('cancel'), () => _taskAction('cancel'), true);
   }
   // Delete: remove task instance entirely
   const sep2 = document.createElement('div');
   sep2.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
   menu.appendChild(sep2);
-  item('\u{1F5D1} Delete', () => _taskAction('delete'), true);
+  item('\u{1F5D1} ' + t('delete'), () => _taskAction('delete'), true);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
@@ -2550,7 +2548,7 @@ function _showEditLimitsDialog(taskId) {
   // Fetch current task data
   action$('task_status', {}).subscribe(d => {
     const task = (d.tasks || []).find(t => t.task_id === taskId);
-    if (!task) { addMsg('error', 'Task not found: ' + taskId); return; }
+    if (!task) { addMsg('error', t('taskNotFound', { id: taskId })); return; }
     const overlay = document.createElement('div');
     overlay.id = 'resourceEditorOverlay';
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:var(--pf-shadow);z-index:9999;display:flex;align-items:center;justify-content:center;';
@@ -2558,14 +2556,14 @@ function _showEditLimitsDialog(taskId) {
     const panel = document.createElement('div');
     panel.style.cssText = 'background:var(--pf-panel);border:1px solid var(--pf-border);border-radius:8px;padding:20px;min-width:340px;max-width:420px;color:var(--pf-text);';
     const _f = (id, label, val, ph) => `<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--pf-muted);">${label}</label><input id="${id}" value="${val||''}" placeholder="${ph}" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
-    panel.innerHTML = `<div style="font-weight:bold;margin-bottom:12px;">Edit Limits — ${taskId}</div>`
-      + _f('el-budget', 'Max Budget ($)', task.max_budget || '', '$5.00')
-      + _f('el-turn', 'Max Turn Time', task.timeout ? task.timeout+'s' : '', '5m')
-      + _f('el-total', 'Max Total Time', task.max_total_time ? task.max_total_time+'s' : '', '1h')
-      + _f('el-resched', 'Max Reschedules', task.max_reschedules || '', '50')
-      + _f('el-maxiter', 'Max Iterations', task.max_iterations || '', '50')
-      + `<div style="font-size:10px;color:var(--pf-muted);margin-bottom:8px;">Current: cost=$${(task.total_cost||0).toFixed(4)}, reschedules=${task.reschedule_count||0}</div>`
-      + `<div style="display:flex;gap:8px;justify-content:flex-end;"><button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button><button id="el-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>`;
+    panel.innerHTML = `<div style="font-weight:bold;margin-bottom:12px;">${escapeHtml(t('editLimitsTitle', { id: taskId }))}</div>`
+      + _f('el-budget', t('maxBudget'), task.max_budget || '', '$5.00')
+      + _f('el-turn', t('maxTurnTime'), task.timeout ? task.timeout+'s' : '', '5m')
+      + _f('el-total', t('maxTotalTime'), task.max_total_time ? task.max_total_time+'s' : '', '1h')
+      + _f('el-resched', t('maxReschedules'), task.max_reschedules || '', '50')
+      + _f('el-maxiter', t('maxIterations'), task.max_iterations || '', '50')
+      + `<div style="font-size:10px;color:var(--pf-muted);margin-bottom:8px;">${escapeHtml(t('currentTaskLimits', { cost: (task.total_cost||0).toFixed(4), reschedules: task.reschedule_count||0 }))}</div>`
+      + `<div style="display:flex;gap:8px;justify-content:flex-end;"><button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button><button id="el-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextSave'))}</button></div>`;
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
     document.getElementById('el-save').onclick = () => {
@@ -2582,7 +2580,7 @@ function _showEditLimitsDialog(taskId) {
       if (mv) params.max_iterations = parseInt(mv) || 0;
       action$('edit_task', params).subscribe(data => {
         if (data.error) addMsg('error', data.error);
-        else addMsg('system', 'Task limits updated: ' + (data.changed||[]).join(', '));
+        else addMsg('system', t('taskLimitsUpdated', { changes: (data.changed||[]).join(', ') }));
         overlay.remove();
         loadResources();
       });
@@ -2594,19 +2592,19 @@ function _showTaskDefLog(defName) {
   // Show all task instances for this definition, with their logs
   action$('list_resources', {}).subscribe(d => {
     const instances = (d.all_tasks || []).filter(t => t.task_def_name === defName);
-    if (!instances.length) { addMsg('system', 'No task instances for definition "' + defName + '"'); return; }
+    if (!instances.length) { addMsg('system', t('noTaskInstancesForDefinition', { name: defName })); return; }
     let lines = instances.map(t => {
       const icon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : t.status === 'completed' ? '\u2705' : t.status === 'cancelled' ? '\u2718' : '\u26A0';
       return icon + ' ' + t.task_id + ' (' + t.agent + ') — ' + t.status + ' [' + t.iterations + '/' + t.max_iterations + ']';
     }).join('\n');
-    addMsg('system', '\u{1F4DC} Instances of "' + defName + '":\n' + lines);
+    addMsg('system', t('taskInstancesTitle', { name: defName, lines: lines }));
     // Also fetch logs for each instance
     for (const inst of instances) {
       action$('task_log', { name: inst.task_id }).subscribe(ld => {
         const log = ld.log || [];
         if (log.length) {
           const logLines = log.map(l => (l.ts ? new Date(l.ts*1000).toLocaleTimeString() + ' ' : '') + (l.event || '') + (l.detail ? ': ' + l.detail : '')).join('\n');
-          addMsg('system', '\u{1F4CB} Log ' + inst.task_id + ':\n' + logLines);
+          addMsg('system', t('logTitle', { id: inst.task_id, lines: logLines }));
         }
       });
     }
@@ -2630,11 +2628,11 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  item('\u{1F441} View config...', () => showServiceEditForm(serviceId, scope, true));
+  item('\u{1F441} ' + t('viewConfigMenu'), () => showServiceEditForm(serviceId, scope, true));
   if (_canEditScope(scope)) {
-    item('\u270F Edit...', () => showServiceEditForm(serviceId, scope));
+    item('\u270F ' + t('editWithEllipsis'), () => showServiceEditForm(serviceId, scope));
   }
-  item(enabled ? '\u23F8 Disable' : '\u25B6 Enable', () => {
+  item(enabled ? '\u23F8 ' + t('blocked') : '\u25B6 ' + t('enabled'), () => {
     action$('toggle_service', { service_id: serviceId, scope, enabled: !enabled, conversation_id: conversationId }).subscribe(d => {
       if (d.error) addMsg('error', d.error);
       else loadResources();
@@ -2644,11 +2642,11 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     const sep = document.createElement('div');
     sep.style.cssText = 'height:1px;background:var(--pf-border);margin:4px 0;';
     menu.appendChild(sep);
-    item('\u{1F5D1} Delete', () => {
-      if (!confirm(`Delete service '${serviceId}'?`)) return;
+    item('\u{1F5D1} ' + t('delete'), () => {
+      if (!confirm(t('deleteServiceConfirm', { id: serviceId }))) return;
       action$('delete_service', { service_id: serviceId, scope, conversation_id: conversationId }).subscribe(d => {
         if (d.error) addMsg('error', d.error);
-        else { addMsg('system', `Service '${serviceId}' deleted.`); loadResources(); }
+        else { addMsg('system', t('serviceDeleted', { id: serviceId })); loadResources(); }
       });
     }, true);
   }
@@ -2694,7 +2692,7 @@ function _renderSchemaFields(schema, values, readonly) {
     } else if (pdef.sensitive) {
       html += '<div style="display:flex;gap:4px;align-items:center;">'
         + '<input id="svc-p-' + pname + '" type="password" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + 'flex:1;"/>'
-        + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + pname + '\',this)" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="Show/hide">\u{1F441}</button>'
+        + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + pname + '\',this)" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="' + escapeHtml(t('showHide')) + '">\u{1F441}</button>'
         + '</div>';
     } else {
       html += '<input id="svc-p-' + pname + '" type="text" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '"/>';
@@ -2845,10 +2843,10 @@ function cmdClaudeLoginServer(parts) {
   if (sub === 'pool') {
     var svcId = stripTarget(parts[2]) || 'claude_code_llm_service';
     action$('claude_pool_list', { service_id: svcId }).subscribe(data => {
-      if (!data.pool || !data.pool.length) { addMsg('system', 'No credentials in pool.'); return; }
-      var lines = ['**Credentials Pool** (' + data.count + '):'];
+      if (!data.pool || !data.pool.length) { addMsg('system', t('noCredentialsInPool')); return; }
+      var lines = ['**' + t('credentialsPoolHeader', { count: data.count }) + '**'];
       data.pool.forEach(function(c) {
-        lines.push('  ' + c.index + '. ' + (c.account || '(unknown)') + ' — expires: ' + c.expires_in);
+        lines.push('  ' + c.index + '. ' + (c.account || t('unknown')) + ' — ' + t('expiresLabel', { value: c.expires_in }));
       });
       addMsg('system', lines.join('\n'));
     });
@@ -2859,7 +2857,7 @@ function cmdClaudeLoginServer(parts) {
   if (sub === 'reset') {
     var svcId2 = stripTarget(parts[2]) || 'claude_code_llm_service';
     action$('claude_pool_reset', { service_id: svcId2 }).subscribe(data => {
-      addMsg('system', data.message || data.error || 'Done');
+      addMsg('system', data.message || data.error || t('done'));
     });
     return true;
   }
@@ -2868,19 +2866,19 @@ function cmdClaudeLoginServer(parts) {
   if (sub === 'remove') {
     var idx = parseInt(parts[2] || '-1', 10);
     var svcId3 = stripTarget(parts[3]) || 'claude_code_llm_service';
-    if (idx < 0) { addMsg('error', 'Usage: /cls remove <index> [@service]'); return true; }
+    if (idx < 0) { addMsg('error', t('claudeRemoveUsage')); return true; }
     action$('claude_pool_remove', { service_id: svcId3, index: idx }).subscribe(data => {
-      addMsg('system', data.message || data.error || 'Done');
+      addMsg('system', data.message || data.error || t('done'));
     });
     return true;
   }
 
   // /cls <service> — login (add credential to pool)
   var serviceId = stripTarget(sub);
-  if (!serviceId) { addMsg('error', 'Usage: /cls @<service> | /cls pool | /cls reset | /cls remove <N>'); return true; }
-  if (window._clsLoginPending) { addMsg('system', 'Login already in progress...'); return true; }
+  if (!serviceId) { addMsg('error', t('claudeUsage')); return true; }
+  if (window._clsLoginPending) { addMsg('system', t('loginAlreadyInProgress')); return true; }
   window._clsLoginPending = true;
-  addMsg('system', 'Starting Claude Code login for ' + serviceId + '... (container starting, please wait)');
+  addMsg('system', t('startingClaudeLogin', { service: serviceId }));
   fireAction('claude_code_server_login', { service_id: serviceId });
   // Reset after 60s (container timeout)
   setTimeout(function() { window._clsLoginPending = false; }, 60000);
@@ -2890,7 +2888,7 @@ function cmdClaudeLoginServer(parts) {
 function cmdClaudeLoginRelay(parts) {
   const serviceId = stripTarget(parts[1]);
   const relayId = stripTarget(parts[2]);
-  if (!serviceId) { addMsg('error', 'Usage: /claude-login-relay <service_name> [relay_name]'); return true; }
+  if (!serviceId) { addMsg('error', t('claudeRelayUsage')); return true; }
 
   if (relayId) {
     _startRelayLogin(serviceId, relayId);
@@ -2900,12 +2898,11 @@ function cmdClaudeLoginRelay(parts) {
   // No relay specified — list and auto-select if single
   action$('claude_code_list_relays', { service_id: serviceId }).subscribe(resp => {
     const relays = resp.relays || [];
-    if (relays.length === 0) { addMsg('error', 'No relay connected.'); return; }
+    if (relays.length === 0) { addMsg('error', t('noRelayConnected')); return; }
     if (relays.length === 1) {
       _startRelayLogin(serviceId, relays[0].relay_id);
     } else {
-      addMsg('system', 'Multiple relays available. Specify one:\n'
-        + relays.map(r => '  ' + r.relay_id + ' (' + r.platform + ')').join('\n'));
+      addMsg('system', t('multipleRelaysAvailable', { relays: relays.map(r => '  ' + r.relay_id + ' (' + r.platform + ')').join('\n') }));
     }
   });
   return true;
@@ -2913,14 +2910,14 @@ function cmdClaudeLoginRelay(parts) {
 
 function cmdClaudeLoginCredentials(text, parts) {
   const serviceId = stripTarget(parts[1]);
-  if (!serviceId) { addMsg('error', 'Usage: /claude-login-credentials <service_name> <credentials_json>'); return true; }
+  if (!serviceId) { addMsg('error', t('claudeCredentialsUsage')); return true; }
   const jsonStart = text.indexOf(parts[1]) + parts[1].length;
   const credsJson = text.substring(jsonStart).trim();
-  if (!credsJson) { addMsg('error', 'Missing credentials JSON. Paste the content of .credentials.json'); return true; }
+  if (!credsJson) { addMsg('error', t('missingCredentialsJson')); return true; }
   try {
     JSON.parse(credsJson);
   } catch (e) {
-    addMsg('error', 'Invalid JSON: ' + e.message);
+    addMsg('error', t('invalidJsonMessage', { error: e.message }));
     return true;
   }
   fireAction('claude_code_login_code', { service_id: serviceId, credentials: credsJson });
@@ -2948,7 +2945,7 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli) {
     'claude': 'Claude Code Login',
     'codex':  'Codex Login',
     'gemini': 'Gemini Login',
-  }[cli] || 'Login';
+  }[cli] || t('loginTitle');
 
   window._clsLoginPending = false;
   // Create overlay dialog 80%x80%
@@ -2968,7 +2965,7 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli) {
   iframe.allow = 'clipboard-read; clipboard-write';
   const status = document.createElement('div');
   status.style.cssText = 'padding:6px 16px;color:var(--pf-muted);font-size:11px;background:var(--pf-panel);';
-  status.textContent = 'Waiting for authorization...';
+  status.textContent = t('waitingAuthorization');
 
   dialog.appendChild(header);
   dialog.appendChild(iframe);
@@ -2980,7 +2977,7 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli) {
     clearInterval(pollInterval);
     overlay.remove();
     if (triggerBtn) {
-      triggerBtn.textContent = 'Login via server';
+      triggerBtn.textContent = t('loginViaServer');
       triggerBtn.disabled = false;
       triggerBtn.style.display = '';
     }
@@ -2997,10 +2994,10 @@ function _openVncLoginDialog(sessionId, serviceId, token, triggerBtn, cli) {
     try {
       const st = await rxjs.firstValueFrom(action$(_statusAction, {
         session_id: sessionId, service_id: serviceId }));
-      if (st.ok) { closeDialog(st.message || (_title + ' successful!')); }
-      else if (st.error) { closeDialog('Login error: ' + st.error); }
-      else if (st.status === 'starting') { status.textContent = 'Starting container...'; }
-      else if (st.status === 'pending') { status.textContent = 'Waiting for authorization...'; }
+      if (st.ok) { closeDialog(st.message || t('loginSuccessful', { title: _title })); }
+      else if (st.error) { closeDialog(t('loginError', { error: st.error })); }
+      else if (st.status === 'starting') { status.textContent = t('startingContainer'); }
+      else if (st.status === 'pending') { status.textContent = t('waitingAuthorization'); }
     } catch (e) { /* ignore */ }
   }, 3000);
 }
@@ -3017,7 +3014,7 @@ function _resolveRelayLoginAction(cli) {
 function _startRelayLogin(serviceId, relayId, cli) {
   cli = cli || 'claude';
   const _label = ({ 'claude': 'Claude Code', 'codex': 'Codex', 'gemini': 'Gemini' })[cli] || 'Claude Code';
-  addMsg('system', 'Starting ' + _label + ' login via relay — authorize in the browser...');
+  addMsg('system', t('startingRelayLogin', { label: _label }));
   fireAction(_resolveRelayLoginAction(cli), { service_id: serviceId, relay_id: relayId });
 }
 
@@ -3041,7 +3038,7 @@ async function _renderCredentialPoolTable(serviceId, anchorBtn) {
     panel.style.cssText = 'margin-top:8px;border:1px solid var(--pf-border);border-radius:6px;padding:8px;background:var(--pf-panel);';
     container.appendChild(panel);
   }
-  panel.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">Loading credentials...</div>';
+  panel.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + t('loadingCredentials') + '</div>';
 
   const load = async () => {
     const resp = await rxjs.firstValueFrom(action$('llm_credential_pool_list', { service_id: serviceId }));
@@ -3051,25 +3048,25 @@ async function _renderCredentialPoolTable(serviceId, anchorBtn) {
     }
     const rows = resp.pool || [];
     let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-      + '<strong style="color:var(--pf-text);font-size:12px;">' + escapeHtml(resp.provider || 'OAuth') + ' credentials</strong>'
-      + '<span style="color:var(--pf-muted);font-size:11px;">' + rows.length + ' login(s)</span></div>';
+      + '<strong style="color:var(--pf-text);font-size:12px;">' + escapeHtml(t('providerCredentials', { provider: resp.provider || 'OAuth' })) + '</strong>'
+      + '<span style="color:var(--pf-muted);font-size:11px;">' + t('loginCount', { n: rows.length }) + '</span></div>';
     if (!rows.length) {
-      html += '<div style="color:var(--pf-muted);font-size:11px;">No credentials saved.</div>';
+      html += '<div style="color:var(--pf-muted);font-size:11px;">' + t('noCredentialsSaved') + '</div>';
     } else {
       html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:var(--pf-text);">'
-        + '<thead><tr style="color:var(--pf-muted);text-align:left;"><th>#</th><th>Account</th><th>Status</th><th>Expires</th><th></th></tr></thead><tbody>';
+        + '<thead><tr style="color:var(--pf-muted);text-align:left;"><th>#</th><th>' + t('account') + '</th><th>' + t('status') + '</th><th>' + t('expires') + '</th><th></th></tr></thead><tbody>';
       for (const r of rows) {
         const idx = Number(r.index || 0);
-        const status = r.valid ? 'valid' : 'expired';
+        const status = r.valid ? t('valid') : t('expired');
         const statusColor = r.valid ? 'var(--pf-success)' : 'var(--pf-danger)';
         html += '<tr data-cred-index="' + idx + '" style="border-top:1px solid var(--pf-border);">'
           + '<td style="padding:5px 4px;">' + idx + '</td>'
-          + '<td style="padding:5px 4px;">' + escapeHtml(r.account || '(unknown)') + '</td>'
+          + '<td style="padding:5px 4px;">' + escapeHtml(r.account || t('unknownAccount')) + '</td>'
           + '<td style="padding:5px 4px;color:' + statusColor + ';">' + status + '</td>'
           + '<td style="padding:5px 4px;">' + escapeHtml(r.expires_in || '') + '</td>'
           + '<td style="padding:5px 4px;text-align:right;white-space:nowrap;">'
-          + '<button type="button" data-cred-refresh="' + idx + '" style="background:color-mix(in srgb, var(--pf-accent-2) 18%, var(--pf-panel));color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:4px;padding:3px 7px;margin-right:4px;cursor:pointer;font-size:11px;">Refresh</button>'
-          + '<button type="button" data-cred-delete="' + idx + '" style="background:color-mix(in srgb, var(--pf-danger) 16%, var(--pf-panel));color:var(--pf-danger);border:1px solid var(--pf-danger);border-radius:4px;padding:3px 7px;cursor:pointer;font-size:11px;">Delete</button>'
+          + '<button type="button" data-cred-refresh="' + idx + '" style="background:color-mix(in srgb, var(--pf-accent-2) 18%, var(--pf-panel));color:var(--pf-text);border:1px solid var(--pf-accent-2);border-radius:4px;padding:3px 7px;margin-right:4px;cursor:pointer;font-size:11px;">' + t('refresh') + '</button>'
+          + '<button type="button" data-cred-delete="' + idx + '" style="background:color-mix(in srgb, var(--pf-danger) 16%, var(--pf-panel));color:var(--pf-danger);border:1px solid var(--pf-danger);border-radius:4px;padding:3px 7px;cursor:pointer;font-size:11px;">' + t('delete') + '</button>'
           + '</td></tr>';
       }
       html += '</tbody></table>';
@@ -3077,14 +3074,14 @@ async function _renderCredentialPoolTable(serviceId, anchorBtn) {
     panel.innerHTML = html;
     panel.querySelectorAll('[data-cred-refresh]').forEach(b => b.addEventListener('click', async () => {
       b.disabled = true;
-      b.textContent = 'Refreshing...';
+      b.textContent = t('refreshing');
       const res = await rxjs.firstValueFrom(action$('llm_credential_pool_refresh', { service_id: serviceId, index: Number(b.dataset.credRefresh) }));
       if (res.error) addMsg('error', res.error);
       await load();
     }));
     panel.querySelectorAll('[data-cred-delete]').forEach(b => b.addEventListener('click', async () => {
       const idx = Number(b.dataset.credDelete);
-      if (!confirm('Delete credential #' + idx + '?')) return;
+      if (!confirm(t('deleteCredentialConfirm', { index: idx }))) return;
       b.disabled = true;
       const res = await rxjs.firstValueFrom(action$('llm_credential_pool_remove', { service_id: serviceId, index: idx }));
       if (res.error) addMsg('error', res.error);
@@ -3099,13 +3096,13 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   const _cli = _flowToCli(flow);
   if (flow === 'credential_table') {
     try { await _renderCredentialPoolTable(serviceId, btn); }
-    catch (e) { addMsg('error', 'Action failed: ' + e.message); }
+    catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
   } else if (flow === 'claude_login_server' || flow === 'codex_login_server' || flow === 'gemini_login_server') {
     try {
-      if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
+      if (btn) { btn.disabled = true; btn.textContent = t('starting'); }
       fireAction(serverAction, { service_id: serviceId });
       // Dialog opens when SSE vnc_login_ready arrives (with `cli` field)
-    } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
+    } catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
   } else if (flow === 'claude_login_relay' || flow === 'codex_login_relay' || flow === 'gemini_login_relay') {
     try {
       // Step 1: list relays
@@ -3113,14 +3110,14 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
       if (resp.error) { addMsg('error', resp.error); return; }
       const relays = resp.relays || [];
       if (relays.length === 0) {
-        addMsg('system', 'No relay connected. Use "Set credentials" instead.');
+        addMsg('system', t('noRelayUseCredentials'));
         return;
       }
       // Single relay → skip selector, start directly
       if (relays.length === 1) {
-        if (btn) { btn.disabled = true; btn.textContent = 'Waiting for authorization...'; }
+        if (btn) { btn.disabled = true; btn.textContent = t('waitingForAuthorization'); }
         await _startRelayLogin(serviceId, relays[0].relay_id, _cli);
-        if (btn) { btn.disabled = false; btn.textContent = 'Login via relay'; }
+        if (btn) { btn.disabled = false; btn.textContent = t('loginViaRelay'); }
         return;
       }
       // Multiple relays → show selector
@@ -3136,7 +3133,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
       selectHtml += '</select>';
       div.innerHTML = selectHtml
         + '<button type="button" id="svc-relay-login-btn" style="background:var(--pf-accent);color:var(--pf-bg);border:none;'
-        + 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Start login</button>'
+        + 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">' + escapeHtml(t('startLogin')) + '</button>'
         + '<div id="svc-relay-status" style="color:var(--pf-muted);font-size:11px;margin-top:4px;"></div>';
       container.appendChild(div);
 
@@ -3145,17 +3142,17 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         const statusEl = document.getElementById('svc-relay-status');
         const loginBtn = document.getElementById('svc-relay-login-btn');
         loginBtn.disabled = true;
-        loginBtn.textContent = 'Waiting for authorization...';
-        statusEl.textContent = 'A browser window should open on the relay machine. Authorize there.';
+        loginBtn.textContent = t('waitingForAuthorization');
+        statusEl.textContent = t('relayBrowserAuthorizeHint');
 
         fireAction(_resolveRelayLoginAction(_cli), {
           service_id: serviceId,
           relay_id: relayId,
         });
-        statusEl.textContent = 'Authorize in the browser that opens on the relay...';
+        statusEl.textContent = t('authorizeInRelayBrowser');
         // Result arrives via SSE command_result
       });
-    } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
+    } catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
   } else if (flow === 'oauth_code') {
     try {
       // Step 1: get instructions
@@ -3168,9 +3165,9 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         const loginDiv = document.createElement('div');
         loginDiv.style.cssText = 'margin-top:8px;';
         loginDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;white-space:pre-line;margin-bottom:6px;">' + escapeHtml(resp.message) + '</div>'
-          + '<textarea id="svc-creds-input" placeholder="Paste .credentials.json content here..." '
+          + '<textarea id="svc-creds-input" placeholder="' + escapeHtml(t('pasteCredentialsJson')) + '" '
           + 'style="' + _svcInputStyle + 'min-height:80px;font-family:monospace;font-size:11px;"></textarea>'
-          + '<button type="button" id="svc-creds-submit" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Save Credentials</button>';
+          + '<button type="button" id="svc-creds-submit" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">' + escapeHtml(t('saveCredentials')) + '</button>';
         container.appendChild(loginDiv);
 
         const submitBtn = document.getElementById('svc-creds-submit');
@@ -3182,9 +3179,9 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
           try {
             const result = await rxjs.firstValueFrom(action$(serverAction.replace('_url', '_code'), { service_id: serviceId, credentials: creds }));
             if (result.ok) {
-              loginDiv.innerHTML = '<span style="color:var(--pf-success);font-size:12px;">\u2714 ' + (result.message || 'Saved!') + '</span>';
+              loginDiv.innerHTML = '<span style="color:var(--pf-success);font-size:12px;">\u2714 ' + escapeHtml(result.message || t('saved')) + '</span>';
             } else {
-              submitBtn.textContent = 'Save Credentials';
+              submitBtn.textContent = t('saveCredentials');
               submitBtn.disabled = false;
               loginDiv.insertAdjacentHTML('beforeend',
                 '<div style="color:var(--pf-danger);font-size:11px;margin-top:4px;">' + escapeHtml(result.error) + '</div>');
@@ -3194,9 +3191,9 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
           }
         });
       }
-    } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
+    } catch (e) { addMsg('error', t('actionFailed', { error: e.message })); }
   } else {
-    if (flow === 'confirm' && !confirm('Execute ' + actionId + '?')) return;
+    if (flow === 'confirm' && !confirm(t('executeActionConfirm', { action: actionId }))) return;
     try {
       const resp = await rxjs.firstValueFrom(action$(serverAction, { service_id: serviceId }));
       addMsg('system', resp.message || resp.error || JSON.stringify(resp));
@@ -3230,7 +3227,7 @@ async function showServiceInstallForm() {
     if (data.error) { addMsg('error', data.error); return; }
     serviceTypes = data.service_types || [];
   } catch (e) { addMsg('error', e.message); return; }
-  if (!serviceTypes.length) { addMsg('error', 'No service types available.'); return; }
+  if (!serviceTypes.length) { addMsg('error', t('noServiceTypesAvailable')); return; }
 
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();
@@ -3246,23 +3243,23 @@ async function showServiceInstallForm() {
   }
 
   panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-    + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">Install Service</h3>'
+    + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + escapeHtml(t('installService')) + '</h3>'
     + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>'
     + '</div>'
-    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Name <span style="color:var(--pf-danger);">*</span></label>'
+    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">' + escapeHtml(t('name')) + ' <span style="color:var(--pf-danger);">*</span></label>'
     + '<input id="svc-install-name" style="' + _svcInputStyle + '" placeholder="my_service"/></div>'
-    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Type <span style="color:var(--pf-danger);">*</span></label>'
+    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">' + escapeHtml(t('type')) + ' <span style="color:var(--pf-danger);">*</span></label>'
     + '<select id="svc-install-type" style="' + _svcInputStyle + '">' + typeOpts + '</select></div>'
-    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Description</label>'
-    + '<input id="svc-install-desc" style="' + _svcInputStyle + '" placeholder="Optional description"/></div>'
-    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Scope</label>'
+    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">' + escapeHtml(t('description')) + '</label>'
+    + '<input id="svc-install-desc" style="' + _svcInputStyle + '" placeholder="' + escapeHtml(t('optionalDescription')) + '"/></div>'
+    + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">' + escapeHtml(t('scope')) + '</label>'
     + '<select id="svc-install-scope" style="' + _svcInputStyle + '">'
-    + (_isAdmin() ? '<option value="global">Global</option>' : '')
-    + '<option value="user">User</option></select></div>'
+    + (_isAdmin() ? '<option value="global">' + t('global') + '</option>' : '')
+    + '<option value="user">' + escapeHtml(t('user')) + '</option></select></div>'
     + '<div id="svc-install-params" style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;"></div>'
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-    + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-    + '<button id="svc-install-btn" onclick="_submitServiceInstall()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Install</button>'
+    + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('cancel')) + '</button>'
+    + '<button id="svc-install-btn" onclick="_submitServiceInstall()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('install')) + '</button>'
     + '</div>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -3270,16 +3267,16 @@ async function showServiceInstallForm() {
   const typeSelect = document.getElementById('svc-install-type');
   const loadParams = async () => {
     const paramsDiv = document.getElementById('svc-install-params');
-    paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">Loading parameters...</div>';
+    paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('loadingParameters')) + '</div>';
     const schemaData = await _fetchServiceSchema(typeSelect.value);
     panel.dataset.schema = JSON.stringify(schemaData.parameters || {});
     panel.dataset.rules = JSON.stringify(schemaData.rules || []);
     panel.dataset.actions = JSON.stringify(schemaData.actions || []);
     const params = schemaData.parameters || {};
     if (Object.keys(params).length === 0) {
-      paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">No configurable parameters for this service type.</div>';
+      paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;">' + escapeHtml(t('noConfigurableParametersForServiceType')) + '</div>';
     } else {
-      paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>'
+      paramsDiv.innerHTML = '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('parameters')) + '</div>'
         + _renderSchemaFields(params, {})
         + _renderServiceActions(schemaData.actions || [], '');
       _applyRules(paramsDiv, schemaData.rules || [], schemaData.actions || [], '');
@@ -3296,19 +3293,19 @@ async function _submitServiceInstall() {
   const svcType = document.getElementById('svc-install-type').value;
   const desc = (document.getElementById('svc-install-desc').value || '').trim();
   const scope = document.getElementById('svc-install-scope').value;
-  if (!name) { alert('Service name is required'); return; }
+  if (!name) { alert(t('serviceNameRequired')); return; }
   const panel = document.querySelector('#resourceEditorOverlay > div');
   const schema = JSON.parse(panel.dataset.schema || '{}');
   const config = _collectSchemaValues(schema);
   const btn = document.getElementById('svc-install-btn');
-  btn.disabled = true; btn.textContent = 'Installing...';
+  btn.disabled = true; btn.textContent = t('installing');
   try {
     const data = await rxjs.firstValueFrom(action$('service_install', { service_name: name, service_type: svcType, description: desc, config, scope, conversation_id: conversationId }));
-    if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = 'Install'; return; }
-    addMsg('system', 'Service \'' + name + '\' installed successfully.');
+    if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = t('install'); return; }
+    addMsg('system', t('serviceInstalledSuccessfully', { service: name }));
     document.getElementById('resourceEditorOverlay').remove();
     loadResources();
-  } catch (e) { addMsg('error', e.message); btn.disabled = false; btn.textContent = 'Install'; }
+  } catch (e) { addMsg('error', e.message); btn.disabled = false; btn.textContent = t('install'); }
 }
 
 async function showServiceEditForm(serviceId, scope, readonly) {
@@ -3334,17 +3331,17 @@ async function showServiceEditForm(serviceId, scope, readonly) {
     const panel = document.createElement('div');
     panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
 
-    const title = ro ? 'View Service: ' : 'Edit Service: ';
+    const title = ro ? t('viewServiceTitle') : t('editServiceTitle');
     let formHtml = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
       + '<h3 style="margin:0;color:var(--pf-text);font-size:14px;">' + title + serviceId + ' ' + _scopeBadge(scope) + '</h3>'
       + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>'
       + '</div>';
-    formHtml += '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Type</label>'
+    formHtml += '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">' + escapeHtml(t('type')) + '</label>'
       + '<input value="' + svcType + '" disabled style="' + _svcInputStyle + 'opacity:0.6;cursor:not-allowed;"/></div>';
 
     if (Object.keys(schema).length > 0) {
       formHtml += '<div style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;">'
-        + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>'
+        + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('parameters')) + '</div>'
         + _renderSchemaFields(schema, config, ro)
         + (ro ? '' : _renderServiceActions(actions, serviceId))
         + '</div>';
@@ -3357,7 +3354,7 @@ async function showServiceEditForm(serviceId, scope, readonly) {
           formHtml += '<div style="margin-bottom:6px;"><label style="' + _svcLabelStyle + '">' + k + '</label>'
             + '<div style="display:flex;gap:4px;align-items:center;">'
             + '<input id="svc-p-' + k + '" type="password" value="' + val + '"' + disabledAttr + ' style="' + _svcInputStyle + roStyle + 'flex:1;"/>'
-            + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + k + '\',this)" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="Show/hide">\u{1F441}</button>'
+            + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + k + '\',this)" style="background:none;border:1px solid var(--pf-border);color:var(--pf-muted);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="' + t('showHide') + '">\u{1F441}</button>'
             + '</div></div>';
         } else {
           formHtml += '<div style="margin-bottom:6px;"><label style="' + _svcLabelStyle + '">' + k + '</label>'
@@ -3368,13 +3365,13 @@ async function showServiceEditForm(serviceId, scope, readonly) {
 
     if (!ro) {
       formHtml += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-        + '<button id="svc-save-btn" onclick="_submitServiceEdit(\'_SVC_ID_\',\'_SVC_SCOPE_\')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
+        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + t('contextCancel') + '</button>'
+        + '<button id="svc-save-btn" onclick="_submitServiceEdit(\'_SVC_ID_\',\'_SVC_SCOPE_\')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + t('contextSave') + '</button>'
         + '</div>';
       formHtml = formHtml.replace('_SVC_ID_', serviceId).replace('_SVC_SCOPE_', scope);
     } else {
       formHtml += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Close</button>'
+        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + t('close') + '</button>'
         + '</div>';
     }
 
@@ -3395,12 +3392,12 @@ async function _submitServiceEdit(serviceId, scope) {
   const schema = JSON.parse(panel.dataset.schema || '{}');
   const config = _collectSchemaValues(schema);
   const btn = document.getElementById('svc-save-btn');
-  btn.disabled = true; btn.textContent = 'Saving...';
+  btn.disabled = true; btn.textContent = t('saving');
   try {
     const data = await rxjs.firstValueFrom(action$('update_service', { service_id: serviceId, scope, config, conversation_id: conversationId }));
-    if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = 'Save'; return; }
-    addMsg('system', 'Service \'' + serviceId + '\' updated.');
+    if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = t('contextSave'); return; }
+    addMsg('system', t('serviceUpdated', { service: serviceId }));
     document.getElementById('resourceEditorOverlay').remove();
     loadResources();
-  } catch (e) { addMsg('error', e.message); btn.disabled = false; btn.textContent = 'Save'; }
+  } catch (e) { addMsg('error', e.message); btn.disabled = false; btn.textContent = t('contextSave'); }
 }

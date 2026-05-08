@@ -8,9 +8,9 @@ function showFileMenu(e, fileId, filename) {
   _positionMenu(menu, e);
   const href = window.location.origin + '/files/' + fileId;
   menu.innerHTML =
-    '<div class="ctx-menu-item" onclick="event.stopPropagation();openFileViewer(\'' + href + '\');closeFileMenu();">&#x1F441; View</div>' +
-    '<div class="ctx-menu-item" onclick="event.stopPropagation();window.open(\'' + href + '\',\'_blank\');closeFileMenu();">&#x2B07; Download</div>' +
-    '<div class="ctx-menu-item danger" onclick="event.stopPropagation();deleteFile(\'' + fileId + '\');closeFileMenu();">&#x1F5D1; Delete</div>';
+    '<div class="ctx-menu-item" onclick="event.stopPropagation();openFileViewer(\'' + href + '\');closeFileMenu();">&#x1F441; ' + escapeHtml(t('view')) + '</div>' +
+    '<div class="ctx-menu-item" onclick="event.stopPropagation();window.open(\'' + href + '\',\'_blank\');closeFileMenu();">&#x2B07; ' + escapeHtml(t('download')) + '</div>' +
+    '<div class="ctx-menu-item danger" onclick="event.stopPropagation();deleteFile(\'' + fileId + '\');closeFileMenu();">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
   setTimeout(() => document.addEventListener('click', closeFileMenu, {once: true}), 0);
 }
 
@@ -22,11 +22,11 @@ function closeFileMenu() {
 function deleteFile(fileId) {
   action$('delete_file', { file_id: fileId }).subscribe(data => {
     if (data.error) {
-      addMsg('system', 'Delete failed: ' + (data.error || 'unknown'));
+      addMsg('system', t('deleteFailed', { error: data.error || t('unknownError') }));
     } else if (data.ok) {
       loadConvFiles();
     } else {
-      addMsg('system', 'Delete failed: unknown');
+      addMsg('system', t('deleteFailedUnknown'));
     }
   });
 }
@@ -41,11 +41,11 @@ function showFlowMenu(e, flowId, flowStatus) {
   _positionMenu(menu, e);
 
   if (flowStatus === 'running') {
-    menu.innerHTML = '<div class="ctx-menu-item" onclick="flowAction(\'' + flowId + '\', \'stop\')">&#x23F9; Stop</div>' +
-      '<div class="ctx-menu-item danger" onclick="flowAction(\'' + flowId + '\', \'delete\')">&#x1F5D1; Delete</div>';
+    menu.innerHTML = '<div class="ctx-menu-item" onclick="flowAction(\'' + flowId + '\', \'stop\')">&#x23F9; ' + escapeHtml(t('flowStop')) + '</div>' +
+      '<div class="ctx-menu-item danger" onclick="flowAction(\'' + flowId + '\', \'delete\')">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
   } else {
-    menu.innerHTML = '<div class="ctx-menu-item" onclick="flowAction(\'' + flowId + '\', \'start\')">&#x25B6; Start</div>' +
-      '<div class="ctx-menu-item danger" onclick="flowAction(\'' + flowId + '\', \'delete\')">&#x1F5D1; Delete</div>';
+    menu.innerHTML = '<div class="ctx-menu-item" onclick="flowAction(\'' + flowId + '\', \'start\')">&#x25B6; ' + escapeHtml(t('flowStart')) + '</div>' +
+      '<div class="ctx-menu-item danger" onclick="flowAction(\'' + flowId + '\', \'delete\')">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
   }
   setTimeout(() => document.addEventListener('click', closeFlowMenu, {once: true}), 0);
 }
@@ -64,7 +64,7 @@ function flowAction(flowId, action) {
     if (data.error) {
       addMsg('system', '\u274C ' + data.error);
     } else {
-      addMsg('system', '\u2705 ' + (data.message || action + ' done'));
+      addMsg('system', '\u2705 ' + (data.message || t('flowActionDone', { action: action })));
     }
     loadResources();
   });
@@ -84,15 +84,15 @@ async function toggleSchedsPanel() {
 function loadConvScheds() {
   if (!conversationId) return;
   const list = document.getElementById('schedsList');
-  list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
+  list.innerHTML = '<span style="color:#808090;font-size:12px">' + t('loading') + '</span>';
   action$('list_schedules').subscribe(data => {
     if (data.error) {
-      list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load schedules</span>';
+      list.innerHTML = '<span style="color:#e94560;font-size:12px">' + t('failedToLoadSchedules') + '</span>';
       return;
     }
     const scheds = data.schedules || [];
     if (scheds.length === 0) {
-      list.innerHTML = '<span style="color:#808090;font-size:12px">No scheduled tasks.</span>';
+      list.innerHTML = '<span style="color:#808090;font-size:12px">' + t('noScheduledTasks') + '</span>';
       return;
     }
     list.innerHTML = scheds.map(s => {
@@ -100,8 +100,8 @@ function loadConvScheds() {
       const now = Date.now();
       const isPast = at.getTime() < now;
       const timeStr = at.toLocaleString();
-      const relative = isPast ? 'overdue' : formatRelative(at.getTime() - now);
-      const reason = s.reason ? escapeHtml(s.reason) : 'recheck';
+      const relative = isPast ? t('overdue') : formatRelative(at.getTime() - now);
+      const reason = s.reason ? escapeHtml(s.reason) : t('recheck');
       return '<span class="sched-chip">' +
         '<span class="sched-icon">&#x23F0;</span> ' +
         escapeHtml(reason) +
@@ -130,7 +130,7 @@ async function uploadFileToStore(file) {
   if (typeof currentConvId !== 'undefined' && currentConvId) fd.append('conversation_id', currentConvId);
   const resp = await fetch('/api/upload', { method: 'POST', body: fd, headers: {'Authorization': getAuthHeaders()['Authorization'] || ''}, credentials: 'same-origin' });
   const data = await resp.json();
-  if (!data.ok || !data.files || !data.files.length) throw new Error(data.error || 'Upload failed');
+  if (!data.ok || !data.files || !data.files.length) throw new Error(data.error || t('uploadFailed'));
   return data.files[0];
 }
 
@@ -142,10 +142,10 @@ function handleFiles(fileList) {
       const textReader = new FileReader();
       textReader.onload = (e) => {
         const source = e.target.result;
-        addMsg('system', `Installing tool from ${file.name}...`);
+        addMsg('system', t('installingToolFrom', { file: file.name }));
         action$('install_tool', { filename: file.name, source }).subscribe(data => {
-          if (data.error) { addMsg('error', 'Install failed: ' + data.error); }
-          else { addMsg('system', `Tool **${data.tool_name}** installed: ${data.description}`); }
+          if (data.error) { addMsg('error', t('installFailed', { error: data.error })); }
+          else { addMsg('system', t('toolInstalled', { tool: data.tool_name, description: data.description })); }
         });
       };
       textReader.readAsText(file);
@@ -172,7 +172,7 @@ function handleFiles(fileList) {
         renderAttachments();
       }
     }).catch(err => {
-      addMsg('error', `Upload failed for ${file.name}: ${err.message}`);
+      addMsg('error', t('uploadFailedFor', { file: file.name, error: err.message }));
       const i = pendingFiles.indexOf(placeholder);
       if (i >= 0) { pendingFiles.splice(i, 1); renderAttachments(); }
     });

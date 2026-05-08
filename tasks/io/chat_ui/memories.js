@@ -10,7 +10,7 @@ function cmdShowMemories() {
       _memoryCache = data.memories || [];
       showMemoryOverlay(_memoryCache);
     },
-    error: (e) => addMsg('error', 'Failed to load memories: ' + e.message),
+    error: (e) => addMsg('error', t('failedLoadMemories', { error: e.message })),
   });
 }
 
@@ -26,8 +26,8 @@ function showMemoryOverlay(memories) {
 
   // Filter dropdown
   let filterHtml = '<select id="memAgentFilter" onchange="memFilterChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
-  filterHtml += '<option value="__all__"' + (_memoryAgentFilter === null ? ' selected' : '') + '>All</option>';
-  filterHtml += '<option value=""' + (_memoryAgentFilter === '' ? ' selected' : '') + '>Global only</option>';
+  filterHtml += '<option value="__all__"' + (_memoryAgentFilter === null ? ' selected' : '') + '>' + t('all') + '</option>';
+  filterHtml += '<option value=""' + (_memoryAgentFilter === '' ? ' selected' : '') + '>' + t('globalOnly') + '</option>';
   for (const a of agents) {
     if (a) filterHtml += '<option value="' + a + '"' + (_memoryAgentFilter === a ? ' selected' : '') + '>' + a + '</option>';
   }
@@ -36,7 +36,7 @@ function showMemoryOverlay(memories) {
   // Build memory rows
   let msgsHtml = '';
   if (memories.length === 0) {
-    msgsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">No memories stored.</div>';
+    msgsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + t('noMemoriesStored') + '</div>';
   } else {
     memories.forEach((m, i) => {
       // Scope badge: private (agent+conv), conversation, agent, global
@@ -44,11 +44,11 @@ function showMemoryOverlay(memories) {
       if (m.agent && m.conversation_id) {
         scopeBadge = '<span style="background:#5a1a1a;color:#ff6b6b;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F512} ' + m.agent + '</span>';
       } else if (m.conversation_id) {
-        scopeBadge = '<span style="background:#1a3a5a;color:#74b9ff;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F4AC} conv</span>';
+        scopeBadge = '<span style="background:#1a3a5a;color:#74b9ff;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F4AC} ' + t('conversationShort') + '</span>';
       } else if (m.agent) {
         scopeBadge = '<span style="background:#1e3a5f;color:#4fc3f7;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F916} ' + m.agent + '</span>';
       } else {
-        scopeBadge = '<span style="background:#1b4332;color:#52b788;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F310} global</span>';
+        scopeBadge = '<span style="background:#1b4332;color:#52b788;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F310} ' + t('globalLower') + '</span>';
       }
       const tagsHtml = (m.tags || []).map(t =>
         '<span style="background:#2a2a4a;color:#a0a0c0;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:3px">' + t + '</span>'
@@ -113,7 +113,7 @@ function memEdit(idx) {
     + '<label style="color:#6c6c8a;font-size:11px">' + escapeHtml(t('tags')) + ':</label>'
     + '<input id="mem-edit-tags" value="' + (m.tags || []).join(', ') + '" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
     + '<label style="color:#6c6c8a;font-size:11px">' + escapeHtml(t('agent')) + ':</label>'
-    + '<input id="mem-edit-agent" value="' + (m.agent || '') + '" placeholder="(global)" style="width:80px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<input id="mem-edit-agent" value="' + (m.agent || '') + '" placeholder="' + t('globalLower') + '" style="width:80px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
     + '<button onclick="memSaveEdit(\'' + m.id + '\')" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + escapeHtml(t('contextSave')) + '</button>'
     + '<button onclick="cmdShowMemories()" style="background:#333;color:#aaa;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + escapeHtml(t('contextCancel')) + '</button>'
     + '</div></div>';
@@ -135,13 +135,13 @@ function memAddNew() {
   if (!list) return;
   const form = document.createElement('div');
   form.style.cssText = 'padding:8px;border-bottom:1px solid #444;background:#1a1a2e';
-  form.innerHTML = '<textarea id="mem-new-text" placeholder="Memory text..." style="width:100%;min-height:50px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px;font-size:12px;resize:vertical"></textarea>'
+  form.innerHTML = '<textarea id="mem-new-text" placeholder="' + t('memoryTextPlaceholder') + '" style="width:100%;min-height:50px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px;font-size:12px;resize:vertical"></textarea>'
     + '<div style="display:flex;gap:6px;margin-top:4px;align-items:center">'
-    + '<label style="color:#6c6c8a;font-size:11px">Tags:</label>'
+    + '<label style="color:#6c6c8a;font-size:11px">' + t('tags') + ':</label>'
     + '<input id="mem-new-tags" placeholder="tag1, tag2" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
-    + '<label style="color:#6c6c8a;font-size:11px">Agent:</label>'
-    + '<input id="mem-new-agent" placeholder="(global)" style="width:80px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
-    + '<button onclick="memSaveNew()" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Add</button>'
+    + '<label style="color:#6c6c8a;font-size:11px">' + t('agent') + ':</label>'
+    + '<input id="mem-new-agent" placeholder="' + t('globalLower') + '" style="width:80px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<button onclick="memSaveNew()" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">' + t('add') + '</button>'
     + '</div>';
   list.insertBefore(form, list.firstChild);
   document.getElementById('mem-new-text').focus();
@@ -166,6 +166,6 @@ function cmdAddSecret(name, value) {
       if (data.error) { addMsg('error', data.error); return; }
       addMsg('system', t('secretAdded', { name, ref: data.key || name, short: name }));
     },
-    error: (e) => addMsg('error', 'Failed: ' + e.message),
+    error: (e) => addMsg('error', t('failed', { error: e.message })),
   });
 }

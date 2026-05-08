@@ -502,7 +502,7 @@ function connectSSE(cid, onReady, opts) {
       const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
       subSummary.innerHTML = '\u25b8 <span class="delegate-dst">' + escapeHtml(displayAgentName(dstAgent)) + '</span>'
         + svcLabel
-        + ' <button class="delegate-cancel-btn" data-task-id="' + escapeHtml(taskId) + '" title="Cancel this agent">\u2715</button>';
+        + ' <button class="delegate-cancel-btn" data-task-id="' + escapeHtml(taskId) + '" title="' + escapeHtml(t('cancelThisAgent')) + '">\u2715</button>';
       subEl.appendChild(subSummary);
       subContent = document.createElement('div');
       subContent.className = 'delegate-sub-body';
@@ -517,7 +517,7 @@ function connectSSE(cid, onReady, opts) {
         const btn = document.createElement('button');
         btn.className = 'delegate-cancel-btn';
         btn.dataset.taskId = taskId;
-        btn.title = 'Cancel this agent';
+        btn.title = t('cancelThisAgent');
         btn.textContent = '\u2715';
         subSummary.appendChild(btn);
       }
@@ -742,7 +742,7 @@ function connectSSE(cid, onReady, opts) {
         extra.ts = data.ts;
         addMsg('assistant', data.response, extra);
       } else if (data.error) {
-        addMsg('agent-result', 'Error: ' + data.error, agent);
+        addMsg('agent-result', t('errorWithMessage', { error: data.error }), agent);
       }
       scrollBottom();
     }
@@ -908,10 +908,15 @@ function connectSSE(cid, onReady, opts) {
         : (data.before !== undefined ? data.before : '?');
       const after = data.after !== undefined ? data.after : '?';
       const tokAfter = data.tokens_after !== undefined ? data.tokens_after : '?';
-      addMsg('system', agent + ': ' + total + ' messages \u2192 ' + after + ' messages (~' + tokAfter + ' tokens)');
+      addMsg('system', t('contextCompactedStatus', {
+        agent: agent,
+        before: total,
+        after: after,
+        tokens: tokAfter,
+      }));
     } else if (data.stage === 'error') {
       hideContextOp();
-      addMsg('error', 'Context operation failed: ' + data.error);
+      addMsg('error', t('contextOperationFailed', { error: data.error }));
     }
   });
 
@@ -920,14 +925,14 @@ function connectSSE(cid, onReady, opts) {
     const data = JSON.parse(e.data);
     const agent = displayAgentName(data.agent || '?');
     if (data.stage === 'assigned') {
-      const v = data.verifier ? ' (verifier: ' + displayAgentName(data.verifier) + ')' : '';
-      addMsg('system', '\u{1F4CB} Task assigned to ' + agent + v + ': ' + (data.task || '').substring(0, 150));
+      const v = data.verifier ? t('taskVerifierSuffix', { verifier: displayAgentName(data.verifier) }) : '';
+      addMsg('system', '\u{1F4CB} ' + t('taskAssignedTo', { agent: agent, verifier: v, task: (data.task || '').substring(0, 150) }));
     } else if (data.stage === 'verified') {
       const icon = data.approved ? '\u2705' : '\u274C';
       const verifier = displayAgentName(data.verifier || '?');
-      addMsg('system', icon + ' Task for ' + agent + (data.approved ? ' approved' : ' rejected') + ' by ' + verifier + (data.reason ? ': ' + data.reason : ''));
+      addMsg('system', icon + ' ' + t(data.approved ? 'taskApprovedBy' : 'taskRejectedBy', { agent: agent, verifier: verifier, reason: data.reason ? ': ' + data.reason : '' }));
     } else if (data.done) {
-      addMsg('system', '\u2705 Task complete (' + agent + '): ' + (data.result || data.progress || ''));
+      addMsg('system', '\u2705 ' + t('taskCompleteFor', { agent: agent, result: data.result || data.progress || '' }));
       if (data.task_id) {
         _finalizeTaskBlock(data.task_id, data.iterations, '\u2713 done', '#4ecdc4');
       }
@@ -1318,7 +1323,7 @@ function connectSSE(cid, onReady, opts) {
   eventSource.addEventListener('interrupting', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    addMsg('system', 'Interrupting ' + displayAgentName(data.agent) + ' — requesting immediate response...');
+    addMsg('system', t('interruptingAgentImmediateResponse', { agent: displayAgentName(data.agent) }));
     scrollBottom();
   });
 
@@ -1600,14 +1605,14 @@ async function showPrompts() {
   try {
     const data = await rxjs.firstValueFrom(action$('list_skills'));
     const skills = data.skills || [];
-    if (!skills.length) { addMsg('system', 'No skills available. Create skills via /skill or manage_resource.'); return; }
+    if (!skills.length) { addMsg('system', t('noSkillsAvailableCreateHint')); return; }
     let overlay = document.getElementById('promptOverlay');
     if (overlay) overlay.remove();
     overlay = document.createElement('div');
     overlay.id = 'promptOverlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
     let html = '<div style="background:#1a1a2e;border:1px solid #0f3460;border-radius:12px;max-width:500px;width:90%;max-height:70vh;overflow-y:auto;padding:20px">';
-    html += '<h3 style="margin:0 0 12px;color:#e94560">Skills</h3>';
+    html += '<h3 style="margin:0 0 12px;color:#e94560">' + escapeHtml(t('skills')) + '</h3>';
     for (const s of skills) {
       html += '<div class="prompt-item" data-name="' + escapeHtml(s.name) + '" style="padding:10px;margin:4px 0;background:#16213e;border-radius:8px;cursor:pointer;border:1px solid transparent" onmouseenter="this.style.borderColor=\'#e94560\'" onmouseleave="this.style.borderColor=\'transparent\'">';
       html += '<div style="font-weight:600;color:#fff">' + escapeHtml(s.name) + '</div>';
@@ -1615,7 +1620,7 @@ async function showPrompts() {
       if (s.preview) html += '<div style="font-size:11px;color:#666;margin-top:4px">' + escapeHtml(s.preview) + '...</div>';
       html += '</div>';
     }
-    html += '<button onclick="document.getElementById(\'promptOverlay\').remove()" style="margin-top:12px;padding:6px 16px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer">Close</button>';
+    html += '<button onclick="document.getElementById(\'promptOverlay\').remove()" style="margin-top:12px;padding:6px 16px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer">' + escapeHtml(t('close')) + '</button>';
     html += '</div>';
     overlay.innerHTML = html;
     overlay.querySelectorAll('.prompt-item').forEach(item => {
@@ -1627,10 +1632,10 @@ async function showPrompts() {
             document.getElementById('input').value = d2.prompt;
             document.getElementById('input').focus();
           }
-        } catch(e) { addMsg('error', 'Failed to load skill: ' + e.message); }
+        } catch(e) { addMsg('error', t('skillLoadFailed', { error: e.message })); }
         overlay.remove();
       });
     });
     document.body.appendChild(overlay);
-  } catch (e) { addMsg('error', 'Failed to list prompts: ' + e.message); }
+  } catch (e) { addMsg('error', t('promptsListFailed', { error: e.message })); }
 }

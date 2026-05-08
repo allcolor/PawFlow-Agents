@@ -138,6 +138,7 @@ class _FakeBuilder(BgBucketBuilder):
             return
         cfg = self._bg_compact_config(cid, user_id)
         built = 0
+        rollups_fired = 0
         while True:
             shared_msgs = self._load_shared_since(cid, store.last_seq)
             chunk = self._pick_chunk(shared_msgs, store.object_count,
@@ -148,8 +149,10 @@ class _FakeBuilder(BgBucketBuilder):
                                             client, ctx_max, cfg=cfg):
                 break
             built += 1
-            self._maybe_rollup(store, client, user_id, ctx_max, cid,
-                               cfg=cfg)
+            rollups_fired += self._rollup_until_stable(
+                store, client, user_id, ctx_max, cid, cfg=cfg)
+        rollups_fired += self._rollup_until_stable(
+            store, client, user_id, ctx_max, cid, cfg=cfg)
         if built:
             self._publish_built(cid, built, store)
 
@@ -181,9 +184,10 @@ class _FakeBuilder(BgBucketBuilder):
                                                 client, ctx_max, cfg=cfg):
                     break
                 buckets_built += 1
-                if self._maybe_rollup(store, client, user_id, ctx_max, cid,
-                                      cfg=cfg):
-                    rollups_fired += 1
+                rollups_fired += self._rollup_until_stable(
+                    store, client, user_id, ctx_max, cid, cfg=cfg)
+            rollups_fired += self._rollup_until_stable(
+                store, client, user_id, ctx_max, cid, cfg=cfg)
         finally:
             with self._pending_lock:
                 self._pending.discard(cid)
@@ -470,6 +474,41 @@ def test_build_now_sync_no_partial_when_forbidden(fake_builder):
                                            allow_partial=False)
     assert result["buckets_built"] == 0
     assert calls == []
+
+
+def test_build_now_sync_collapses_existing_over_budget_header(fake_builder, monkeypatch):
+    def _resolve(template, owner=None, conversation_id=None):
+        values = {
+            "${pawflow.bg_compact.header_budget_tokens}": "1000",
+            "${pawflow.bg_compact.header_char_multiplier}": "3.0",
+        }
+        return values.get(template, template)
+
+    monkeypatch.setattr("core.expression.resolve_expression", _resolve)
+    store = BucketStore.get(fake_builder._conv_dir)
+    store.add_bucket(1, 10, 100.0, 110.0, "old " * 1200,
+                     first_msg_id="m000001", last_msg_id="m000010",
+                     msg_count=10)
+    store.add_bucket(11, 20, 111.0, 120.0, "recent " * 1200,
+                     first_msg_id="m000011", last_msg_id="m000020",
+                     msg_count=10)
+    assert store.object_count == 2
+    assert store.estimated_header_chars() > 3000
+
+    summarize_fn, calls = _make_summarize_fn(
+        "collapsed history under budget\n\n## Files & operations\nnone")
+    fake_builder.set_summarizer_resolver(
+        lambda uid: (_fake_client(), 128000, "svc-test"))
+    fake_builder.set_summarize_fn(summarize_fn)
+
+    result = fake_builder.build_now_sync("cid_test", "user_test")
+
+    assert result["buckets_built"] == 0
+    assert result["rollups_fired"] == 1
+    assert result["final_object_count"] == 1
+    assert len(calls) == 1
+    docs = BucketStore.get(fake_builder._conv_dir).get_all_summaries()
+    assert docs[0]["summary"].startswith("collapsed history under budget")
 
 
 def test_build_now_sync_no_resolver_is_noop(fake_builder):

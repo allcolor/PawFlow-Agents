@@ -32,11 +32,11 @@ function setConversationWorking(cid, isWorking) {
     if (!dot) {
       dot = document.createElement('span');
       dot.className = 'conv-status active';
-      dot.title = 'Working';
+      dot.title = t('working');
       preview.insertBefore(dot, preview.firstChild);
     } else {
       dot.className = 'conv-status active';
-      dot.title = 'Working';
+      dot.title = t('working');
     }
   } else if (dot) {
     dot.remove();
@@ -206,7 +206,7 @@ function onTechnicalGroupingToggle() {
       updateTechnicalGroupingToggle(next);
       resumeConv(conversationId, true);
     },
-    error: e => addMsg('error', 'Failed to update technical grouping: ' + e.message),
+    error: e => addMsg('error', t('failedToUpdateTechnicalGrouping', { error: e.message })),
     complete: () => { if (btn) btn.disabled = false; },
   });
 }
@@ -584,7 +584,7 @@ function exportConversation() {
         }
         addMsg('system', t('exported'));
       } catch (e) {
-        addMsg('error', 'Export failed: ' + e.message);
+        addMsg('error', t('exportFailed', { error: e.message }));
       }
       document.getElementById('status').textContent = t('ready');
     });
@@ -614,23 +614,23 @@ function importConversation() {
     if (!file) return;
     const ext = file.name.split('.').pop().toLowerCase();
     const fmt = ext === 'zip' ? 'pawflow' : ext === 'jsonl' ? 'claude_code' : null;
-    if (!fmt) { addMsg('error', 'Unsupported format. Use .zip (PawFlow) or .jsonl (Claude Code)'); return; }
-    var progress = _showImportProgress('Uploading ' + file.name + '\u2026');
-    document.getElementById('status').textContent = 'Uploading...';
+    if (!fmt) { addMsg('error', t('unsupportedImportFormat')); return; }
+    var progress = _showImportProgress(t('uploadingFile', { file: file.name }));
+    document.getElementById('status').textContent = t('uploading');
     try {
       const info = await uploadFileToStore(file);
-      progress.setLabel('Analyzing conversation\u2026');
-      document.getElementById('status').textContent = 'Analyzing...';
+      progress.setLabel(t('analyzingConversation'));
+      document.getElementById('status').textContent = t('analyzing');
       action$('conv_import_analyze', { file_id: info.file_id, format: fmt }).subscribe(result => {
         progress.close();
         document.getElementById('status').textContent = t('ready');
-        if (result.error) { addMsg('error', 'Import failed: ' + result.error); return; }
+        if (result.error) { addMsg('error', t('importFailed', { error: result.error })); return; }
         _showImportConvDialog(result, fmt);
       });
     } catch(e) {
       progress.close();
       document.getElementById('status').textContent = t('ready');
-      addMsg('error', 'Upload failed: ' + e.message);
+      addMsg('error', t('uploadFailed', { error: e.message }));
     }
   };
   input.click();
@@ -924,20 +924,20 @@ function showExportDialog() {
 
 function exportPawflow() {
   if (!conversationId) return;
-  document.getElementById('status').textContent = 'Exporting...';
+  document.getElementById('status').textContent = t('exporting');
   action$('conv_export_pawflow', { conversation_id: conversationId }).subscribe(data => {
-    if (data.error) { addMsg('error', 'Export failed: ' + data.error); }
-    else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', 'Exported: ' + data.filename); }
+    if (data.error) { addMsg('error', t('exportFailed', { error: data.error })); }
+    else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', t('exportedFile', { file: data.filename })); }
     document.getElementById('status').textContent = t('ready');
   });
 }
 
 function exportClaudeCode() {
   if (!conversationId) return;
-  document.getElementById('status').textContent = 'Exporting...';
+  document.getElementById('status').textContent = t('exporting');
   action$('conv_export_claude_code', { conversation_id: conversationId }).subscribe(data => {
-    if (data.error) { addMsg('error', 'Export failed: ' + data.error); }
-    else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', 'Exported: ' + data.filename); }
+    if (data.error) { addMsg('error', t('exportFailed', { error: data.error })); }
+    else { const a = document.createElement('a'); a.href = data.url; a.download = data.filename; a.click(); addMsg('system', t('exportedFile', { file: data.filename })); }
     document.getElementById('status').textContent = t('ready');
   });
 }
@@ -1113,30 +1113,30 @@ function showConvMenu(e, cid, status) {
 
 function convFork(cid) {
   action$('conv_fork', { conversation_id: cid }).subscribe(data => {
-    if (data.error) { addMsg('system', '\u26a0 Fork failed: ' + data.error); return; }
-    addMsg('system', 'Forked \u2192 ' + data.conversation_id.slice(0, 8));
+    if (data.error) { addMsg('system', '\u26a0 ' + t('forkFailed', { error: data.error })); return; }
+    addMsg('system', t('forkedConversation', { id: data.conversation_id.slice(0, 8) }));
     loadConversations();
     resumeConv(data.conversation_id);
   });
 }
 
 function convBranchPrompt(cid) {
-  const name = prompt('Branch name:');
+  const name = prompt(t('branchNamePrompt'));
   if (!name || !name.trim()) return;
   action$('conv_branch', { conversation_id: cid, branch_name: name.trim() }).subscribe(data => {
     if (data.error) { addMsg('system', '\u26a0 ' + data.error); return; }
-    addMsg('system', 'Branch created: ' + name.trim());
+    addMsg('system', t('branchCreated', { name: name.trim() }));
     loadConversations();
     if (cid === conversationId) resumeConv(conversationId, true);
   });
 }
 
 function convTagPrompt(cid) {
-  const name = prompt('Tag name:');
+  const name = prompt(t('tagNamePrompt'));
   if (!name || !name.trim()) return;
   action$('conv_tag', { conversation_id: cid, tag_name: name.trim() }).subscribe(data => {
     if (data.error) { addMsg('system', '\u26a0 ' + data.error); return; }
-    addMsg('system', 'Tagged: ' + name.trim());
+    addMsg('system', t('taggedConversation', { name: name.trim() }));
   });
 }
 
@@ -1144,14 +1144,14 @@ function convSwitchBranchDialog(cid) {
   action$('conv_list_branches', { conversation_id: cid }).subscribe(data => {
     if (data.error) { addMsg('system', '\u26a0 ' + data.error); return; }
     const branches = data.branches || [];
-    if (branches.length <= 1) { addMsg('system', 'No other branches.'); return; }
-    _showGitDialog('Switch Branch', branches.map(b => {
-      const current = b.current ? ' \u2190 current' : '';
+    if (branches.length <= 1) { addMsg('system', t('noOtherBranches')); return; }
+    _showGitDialog(t('switchBranch'), branches.map(b => {
+      const current = b.current ? ' \u2190 ' + t('currentBranchLabel') : '';
       return { label: b.name + current, value: b.name, disabled: b.current };
     }), (selected) => {
       action$('conv_switch_branch', { conversation_id: cid, branch_name: selected }).subscribe(res => {
         if (res.error) { addMsg('system', '\u26a0 ' + res.error); return; }
-        addMsg('system', 'Switched to branch: ' + selected);
+        addMsg('system', t('switchedToBranch', { name: selected }));
         loadConversations();
         if (cid === conversationId) resumeConv(conversationId, true);
       });
@@ -1163,14 +1163,14 @@ function convDeleteBranchDialog(cid) {
   action$('conv_list_branches', { conversation_id: cid }).subscribe(data => {
     if (data.error) { addMsg('system', '\u26a0 ' + data.error); return; }
     const branches = (data.branches || []).filter(b => !b.current);
-    if (branches.length === 0) { addMsg('system', 'No branches to delete (only current branch exists).'); return; }
-    _showGitDialog('Delete Branch', branches.map(b => {
+    if (branches.length === 0) { addMsg('system', t('noBranchesToDelete')); return; }
+    _showGitDialog(t('deleteBranch'), branches.map(b => {
       return { label: b.name, value: b.name };
     }), (selected) => {
-      if (!confirm('Delete branch "' + selected + '"? This cannot be undone.')) return;
+      if (!confirm(t('deleteBranchConfirm', { name: selected }))) return;
       action$('conv_delete_branch', { conversation_id: cid, branch_name: selected }).subscribe(res => {
         if (res.error) { addMsg('system', '\u26a0 ' + res.error); return; }
-        addMsg('system', 'Branch deleted: ' + selected);
+        addMsg('system', t('branchDeleted', { name: selected }));
         loadConversations();
       });
     });
@@ -1181,21 +1181,21 @@ function convCompareBranchesDialog(cid) {
   action$('conv_list_branches', { conversation_id: cid }).subscribe(data => {
     if (data.error) { addMsg('system', '\u26a0 ' + data.error); return; }
     const branches = data.branches || [];
-    if (branches.length < 2) { addMsg('system', 'Need at least 2 branches to compare.'); return; }
+    if (branches.length < 2) { addMsg('system', t('needTwoBranchesToCompare')); return; }
     const current = data.current || branches[0].name;
     const other = branches.find(b => b.name !== current);
-    const a = prompt('Branch A:', current);
+    const a = prompt(t('branchAPrompt'), current);
     if (!a) return;
-    const b = prompt('Branch B:', other ? other.name : '');
+    const b = prompt(t('branchBPrompt'), other ? other.name : '');
     if (!b) return;
     action$('conv_compare_branches', { conversation_id: cid, branch_a: a, branch_b: b }).subscribe(res => {
       if (res.error) { addMsg('system', '\u26a0 ' + res.error); return; }
       const lines = [
-        '**Branch comparison: ' + a + ' vs ' + b + '**',
-        'Commits ahead: ' + (res.commits_ahead || 0),
-        'Commits behind: ' + (res.commits_behind || 0),
-        'Messages in ' + a + ': ' + (res.messages_a || 0),
-        'Messages in ' + b + ': ' + (res.messages_b || 0),
+        '**' + t('branchComparisonHeader', { a: a, b: b }) + '**',
+        t('commitsAhead', { count: res.commits_ahead || 0 }),
+        t('commitsBehind', { count: res.commits_behind || 0 }),
+        t('messagesInBranch', { branch: a, count: res.messages_a || 0 }),
+        t('messagesInBranch', { branch: b, count: res.messages_b || 0 }),
       ];
       addMsg('system', lines.join('\n'));
     });
@@ -1206,7 +1206,7 @@ function convRollbackDialog(cid) {
   action$('conv_git_log', { conversation_id: cid, limit: 30 }).subscribe(data => {
     if (data.error) { addMsg('system', '\u26a0 ' + data.error); return; }
     const commits = data.commits || [];
-    if (commits.length === 0) { addMsg('system', 'No commits found.'); return; }
+    if (commits.length === 0) { addMsg('system', t('noCommitsFound')); return; }
 
     const old = document.querySelector('.git-dialog-overlay');
     if (old) old.remove();
@@ -1216,7 +1216,7 @@ function convRollbackDialog(cid) {
     const dialog = document.createElement('div');
     dialog.style.cssText = 'background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:20px;min-width:500px;max-width:700px;max-height:70vh;display:flex;flex-direction:column;';
 
-    let html = '<div style="font-size:14px;font-weight:600;color:#e0e0e0;margin-bottom:12px;">Rollback Conversation' + (data.branch ? ' (' + escapeHtml(data.branch) + ')' : '') + '</div>';
+    let html = '<div style="font-size:14px;font-weight:600;color:#e0e0e0;margin-bottom:12px;">' + escapeHtml(t('rollbackConversation')) + (data.branch ? ' (' + escapeHtml(data.branch) + ')' : '') + '</div>';
     html += '<div style="overflow-y:auto;flex:1;margin-bottom:12px;">';
     for (let i = 0; i < commits.length; i++) {
       const c = commits[i];
@@ -1232,12 +1232,12 @@ function convRollbackDialog(cid) {
     html += '</div>';
     html += '<div style="margin-bottom:12px;"><label style="font-size:12px;color:#e0e0e0;cursor:pointer;">'
       + '<input type="checkbox" id="gitRollbackFiles" style="margin-right:6px;">'
-      + 'Also rewind user files (via checkpoints)</label>'
+      + escapeHtml(t('alsoRewindUserFiles')) + '</label>'
       + '<div style="font-size:11px;color:#e94560;margin-top:4px;padding-left:20px;">'
-      + '\u26a0 Risky: will attempt to restore files modified by agents on the relay. May fail if files were changed externally.</div></div>';
+      + '\u26a0 ' + escapeHtml(t('rewindFilesRiskWarning')) + '</div></div>';
     html += '<div style="display:flex;gap:8px;justify-content:flex-end;">'
-      + '<button onclick="this.closest(\'.git-dialog-overlay\').remove()" style="padding:6px 16px;background:#333;color:#e0e0e0;border:none;border-radius:4px;cursor:pointer;">Cancel</button>'
-      + '<button id="gitRollbackBtn" disabled style="padding:6px 16px;background:#6c5ce7;color:#fff;border:none;border-radius:4px;cursor:pointer;opacity:0.5;">Rollback</button></div>';
+      + '<button onclick="this.closest(\'.git-dialog-overlay\').remove()" style="padding:6px 16px;background:#333;color:#e0e0e0;border:none;border-radius:4px;cursor:pointer;">' + escapeHtml(t('cancel')) + '</button>'
+      + '<button id="gitRollbackBtn" disabled style="padding:6px 16px;background:#6c5ce7;color:#fff;border:none;border-radius:4px;cursor:pointer;opacity:0.5;">' + escapeHtml(t('rollback')) + '</button></div>';
 
     dialog.innerHTML = html;
     overlay.appendChild(dialog);
@@ -1260,13 +1260,13 @@ function convRollbackDialog(cid) {
       if (!selectedHash) return;
       const rewindFiles = document.getElementById('gitRollbackFiles').checked;
       overlay.remove();
-      addMsg('system', 'Rolling back to ' + selectedHash.slice(0, 7) + '...');
+      addMsg('system', t('rollingBackTo', { hash: selectedHash.slice(0, 7) }));
       action$('conv_rollback', { conversation_id: cid, commit_hash: selectedHash, rewind_files: rewindFiles }).subscribe(res => {
         if (res.error) { addMsg('system', '\u26a0 ' + res.error); return; }
-        let msg = 'Rolled back to ' + selectedHash.slice(0, 7);
+        let msg = t('rolledBackTo', { hash: selectedHash.slice(0, 7) });
         if (res.files) {
-          if (res.files.error) msg += '\nFile rewind: ' + res.files.error;
-          else msg += '\nFiles: ' + (res.files.restored || 0) + ' restored, ' + (res.files.deleted || 0) + ' deleted';
+          if (res.files.error) msg += '\n' + t('fileRewindError', { error: res.files.error });
+          else msg += '\n' + t('filesRewindSummary', { restored: res.files.restored || 0, deleted: res.files.deleted || 0 });
         }
         addMsg('system', msg);
         loadConversations();

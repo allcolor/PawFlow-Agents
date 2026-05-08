@@ -115,14 +115,14 @@ function ctxRefresh() {
 }
 
 async function ctxEditMessage(msgId) {
-  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
+  if (_ctxIsReadonly()) { addMsg('error', t('contextReadonly')); return; }
   let msg = _ctxVisibleById.get(msgId);
   if (!msg) {
     const full = await ctxLoadFull();
     if (full.error) { addMsg('error', full.error); return; }
     msg = (full.context || []).find(m => (m.msg_id || m.trace_id) === msgId);
   }
-  if (!msg) { addMsg('error', 'Message not found — refresh the context'); return; }
+  if (!msg) { addMsg('error', t('contextMessageNotFoundRefresh')); return; }
   // Scope the row lookup to the context overlay — the chat timeline
   // also uses data-msgid on its message rows, and querySelector would
   // otherwise pick the chat row and render the edit form there.
@@ -188,12 +188,12 @@ function ctxLoadMore() {
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const content = _ctxDisplayContent(m);
-      const editBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
-      const delBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
+      const editBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('edit')) + '">&#9998;</button>';
+      const delBtn = readonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + escapeHtml(t('delete')) + '">&#128465;</button>';
       const row = document.createElement('div');
       row.dataset.msgid = mid;
       row.style.cssText = 'padding:6px 8px;border-bottom:1px solid #222;cursor:pointer';
-      row.title = 'Click to expand full message';
+      row.title = t('contextExpandTitle');
       row.onmousedown = function(event) { if (event.shiftKey || event.ctrlKey) event.preventDefault(); };
       row.onclick = function(event) {
         if (event.ctrlKey || event.shiftKey) {
@@ -216,7 +216,7 @@ function ctxLoadMore() {
       more.id = 'ctxLoadMore';
       more.style.cssText = 'text-align:center;padding:12px';
       more.innerHTML = '<button onclick="ctxLoadMore()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:12px">'
-        + '\u25BC Load older (' + _ctxCurrentOffset + ' of ' + _ctxTotalCount + ')</button>';
+        + escapeHtml(t('contextLoadOlder', { shown: _ctxCurrentOffset, total: _ctxTotalCount })) + '</button>';
       list.appendChild(more);
     }
   });
@@ -244,7 +244,7 @@ async function ctxSaveEdit(msgId) {
 }
 
 async function ctxDeleteMessage(msgId) {
-  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
+  if (_ctxIsReadonly()) { addMsg('error', t('contextReadonly')); return; }
   if (!confirm(t('contextDeleteConfirm'))) return;
   if (_ctxAgentFilter === 'transcript') {
     await _ctxMutate({action: 'delete_message', msg_id: msgId});
@@ -256,7 +256,7 @@ async function ctxDeleteMessage(msgId) {
 }
 
 async function ctxAddMessage() {
-  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
+  if (_ctxIsReadonly()) { addMsg('error', t('contextReadonly')); return; }
   const container = document.getElementById('ctx-add-form');
   if (container) { container.remove(); return; }
   const list = document.getElementById('ctx-msg-list');
@@ -276,9 +276,9 @@ async function ctxAddMessage() {
 }
 
 async function ctxSaveNewMessage() {
-  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
+  if (_ctxIsReadonly()) { addMsg('error', t('contextReadonly')); return; }
   if (_ctxAgentFilter === 'transcript') {
-    addMsg('error', 'Switch to Shared or an agent context before adding context messages.');
+    addMsg('error', t('contextAddSharedRequired'));
     return;
   }
   const role = document.getElementById('ctx-add-role')?.value || 'user';
@@ -290,9 +290,9 @@ async function ctxSaveNewMessage() {
 }
 
 async function ctxReplaceAll() {
-  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
+  if (_ctxIsReadonly()) { addMsg('error', t('contextReadonly')); return; }
   if (_ctxAgentFilter === 'transcript') {
-    addMsg('error', 'Transcript cannot be replaced from the context editor.');
+    addMsg('error', t('contextTranscriptReplaceBlocked'));
     return;
   }
   const full = await ctxLoadFull();
@@ -316,7 +316,7 @@ async function ctxSaveReplaceAll() {
   if (!ta) return;
   let parsed;
   try { parsed = JSON.parse(ta.value); } catch (e) { addMsg('error', t('contextInvalidJson') + ': ' + e.message); return; }
-  if (!Array.isArray(parsed)) { addMsg('error', t('contextInvalidJson') + ': expected array'); return; }
+  if (!Array.isArray(parsed)) { addMsg('error', t('contextInvalidJson') + ': ' + t('contextExpectedArray')); return; }
   if (!confirm(t('contextReplaceConfirm'))) return;
   _ctxMutate(
     _ctxScopedMutation({action: 'replace_context', context: parsed}),
@@ -331,19 +331,19 @@ function _buildCtxAgentDropdown(data) {
     names.sort();
   }
   const sharedStatus = agents['*'] || 'messages';
-  const sharedLabel = 'Shared' + (sharedStatus === 'diverged' ? ' \u2733' : '');
+  const sharedLabel = t('contextShared') + (sharedStatus === 'diverged' ? ' \u2733' : '');
   let html = '<select id="ctxAgentFilter" onchange="ctxAgentChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
-  html += '<option value="transcript"' + (_ctxAgentFilter === 'transcript' ? ' selected' : '') + '>Transcript</option>';
+  html += '<option value="transcript"' + (_ctxAgentFilter === 'transcript' ? ' selected' : '') + '>' + t('contextTranscript') + '</option>';
   html += '<option value=""' + (!_ctxAgentFilter ? ' selected' : '') + '>' + sharedLabel + '</option>';
   for (const n of names) {
     const status = agents[n] || 'messages';
     let label;
     if (n.startsWith('cc_session:')) {
-      label = n.replace('cc_session:', '') + ' (CC session \uD83D\uDC33)';
+      label = n.replace('cc_session:', '') + ' (' + t('contextCcSession') + ' \uD83D\uDC33)';
     } else if (n.startsWith('codex_session:')) {
-      label = n.replace('codex_session:', '') + ' (Codex session)';
+      label = n.replace('codex_session:', '') + ' (' + t('contextCodexSession') + ')';
     } else if (n.startsWith('gemini_session:')) {
-      label = n.replace('gemini_session:', '') + ' (Gemini session)';
+      label = n.replace('gemini_session:', '') + ' (' + t('contextGeminiSession') + ')';
     } else {
       label = n + (status === 'diverged' ? ' \u2733' : '');
     }
@@ -360,12 +360,12 @@ async function ctxAgentChanged() {
 async function ctxDeleteContext() {
   if (!_ctxAgentFilter) return;
   const msg = _ctxIsReadonly()
-    ? 'Invalidate runtime session "' + _ctxAgentFilter + '"? This will force a fresh session next turn.'
-    : 'Delete the entire "' + _ctxAgentFilter + '" context? This cannot be undone.';
+    ? t('contextInvalidateRuntimeConfirm', { name: _ctxAgentFilter })
+    : t('contextDeleteContextConfirm', { name: _ctxAgentFilter });
   if (!confirm(msg)) return;
   const name = _ctxAgentFilter;
   _ctxAgentFilter = 'transcript';  // switch to transcript after delete
-  _ctxMutate({action: 'delete_agent_context', agent_name: name}, 'Context "' + name + '" deleted.');
+  _ctxMutate({action: 'delete_agent_context', agent_name: name}, t('contextDeleted', { name: name }));
 }
 
 const _ctxSelected = new Set();
@@ -410,10 +410,10 @@ function ctxToggleSelect(row, event) {
   }
   const bar = document.getElementById('ctxSelectBar');
   if (bar) bar.style.display = _ctxSelected.size > 0 ? 'flex' : 'none';
-  if (bar) bar.querySelector('span').textContent = _ctxSelected.size + ' selected';
+  if (bar) bar.querySelector('span').textContent = t('contextSelectedCount', { n: _ctxSelected.size });
 }
 async function ctxDeleteSelected() {
-  if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
+  if (_ctxIsReadonly()) { addMsg('error', t('contextReadonly')); return; }
   if (!_ctxSelected.size) return;
   const mids = Array.from(_ctxSelected);
   _ctxSelected.clear();
@@ -448,11 +448,11 @@ function showContextOverlay(data) {
     const pctTxt = Math.round(pct * 1000) / 10;
     const updated = usage.updated_at ? new Date(Number(usage.updated_at) * 1000).toLocaleTimeString() : '';
     usageHtml = '<div style="margin:-4px 0 10px 0;padding:8px 10px;border:1px solid #26324a;border-radius:8px;background:#101827;color:#aeb7d8;font-size:12px;font-family:monospace">'
-      + 'context gauge: ' + used.toLocaleString() + ' / ' + max.toLocaleString()
+      + t('contextGauge') + ': ' + used.toLocaleString() + ' / ' + max.toLocaleString()
       + ' = ' + pctTxt + '%'
-      + ' · messages=' + (usage.message_count || data.message_count || 0)
-      + ' · source=' + _ctxEscape(usage.source || 'context_command')
-      + (updated ? ' · updated=' + _ctxEscape(updated) : '')
+      + ' · ' + t('contextUsageMessages') + '=' + (usage.message_count || data.message_count || 0)
+      + ' · ' + t('contextUsageSource') + '=' + _ctxEscape(usage.source || 'context_command')
+      + (updated ? ' · ' + t('contextUsageUpdated') + '=' + _ctxEscape(updated) : '')
       + '</div>';
   }
   const roleColors = {system:'#6c6c8a',user:'#4fc3f7',assistant:'#4ecdc4',tool:'#f4a261'};
@@ -473,7 +473,7 @@ function showContextOverlay(data) {
       const content = _ctxDisplayContent(m);
       const editBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxEditMessage(\'' + mid + '\')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
       const delBtn = _isReadonly ? '' : '<button onclick="event.stopPropagation();ctxDeleteMessage(\'' + mid + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
-      msgsHtml += '<div data-msgid="' + mid + '" title="Click to expand full message" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{if(event.target&&event.target.closest(\'.ctx-preview,.ctx-full\'))return;this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
+      msgsHtml += '<div data-msgid="' + mid + '" title="' + t('contextExpandTitle') + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onmousedown="if(event.shiftKey||event.ctrlKey)event.preventDefault()" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{if(event.target&&event.target.closest(\'.ctx-preview,.ctx-full\'))return;this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
         + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
         + '<div class="ctx-preview" style="color:#c0c0d0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:96px;overflow-y:auto;border:1px solid #1d2636;border-radius:6px;padding:6px;background:#0a0f18">' + content + '</div>'
         + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:min(60vh,640px);overflow-y:auto;border:1px solid #222;border-radius:6px;padding:8px;background:#090d14">' + content + '</div>'
@@ -483,7 +483,7 @@ function showContextOverlay(data) {
     if (_ctxHasMore) {
       msgsHtml += '<div id="ctxLoadMore" style="text-align:center;padding:12px">'
         + '<button onclick="ctxLoadMore()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:12px">'
-        + '\u25BC Load older (' + _ctxCurrentOffset + ' of ' + _ctxTotalCount + ')</button></div>';
+        + escapeHtml(t('contextLoadOlder', { shown: _ctxCurrentOffset, total: _ctxTotalCount })) + '</button></div>';
     }
   }
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
@@ -493,15 +493,15 @@ function showContextOverlay(data) {
     + _buildCtxAgentDropdown(data)
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
     + (_isTranscript || _isReadonly ? '' : '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>')
-    + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + (_isReadonly ? 'Invalidate this runtime session' : 'Delete this context entirely') + '">\u{1F5D1} ' + (_isReadonly ? 'Invalidate' : 'Delete') + '</button>' : '')
+    + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + (_isReadonly ? t('contextInvalidateRuntimeTitle') : t('contextDeleteContextTitle')) + '">\u{1F5D1} ' + (_isReadonly ? t('contextInvalidate') : t('contextDelete')) + '</button>' : '')
     + '<button onclick="ctxClose()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'
     + usageHtml
     + '<div id="ctx-msg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
     + '<div id="ctxSelectBar" style="display:none;padding:6px 0;align-items:center;gap:8px;justify-content:center">'
-    + '<span style="color:#6c5ce7;font-size:12px">0 selected</span>'
-    + (_isReadonly ? '' : '<button onclick="ctxDeleteSelected()" style="background:#e94560;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px">Delete selected</button>')
-    + '<button onclick="document.querySelectorAll(\'.ctx-selected\').forEach(r=>{r.classList.remove(\'ctx-selected\');r.style.outline=\'\'});_ctxSelected.clear();document.getElementById(\'ctxSelectBar\').style.display=\'none\'" style="background:transparent;color:#aaa;border:1px solid #555;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px">Cancel</button>'
+    + '<span style="color:#6c5ce7;font-size:12px">' + t('contextSelectedCount', { n: 0 }) + '</span>'
+    + (_isReadonly ? '' : '<button onclick="ctxDeleteSelected()" style="background:#e94560;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px">' + t('contextDeleteSelected') + '</button>')
+    + '<button onclick="document.querySelectorAll(\'.ctx-selected\').forEach(r=>{r.classList.remove(\'ctx-selected\');r.style.outline=\'\'});_ctxSelected.clear();document.getElementById(\'ctxSelectBar\').style.display=\'none\'" style="background:transparent;color:#aaa;border:1px solid #555;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px">' + t('contextCancel') + '</button>'
     + '</div>'
     + (_isTranscript || _isReadonly ? '' : '<div style="padding:8px 0 0 0;text-align:center"><button onclick="ctxAddMessage()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:8px;padding:6px 18px;cursor:pointer;font-size:13px">+ ' + t('contextAdd') + '</button></div>')
     + '</div>';
@@ -519,7 +519,7 @@ function _parseToolCall(text) {
   //   tool {"key": "value"}               — JSON
   //   tool()                              — no args
   const nameMatch = text.match(/^(\w+)/);
-  if (!nameMatch) return { error: 'No tool name found' };
+  if (!nameMatch) return { error: t('noToolNameFound') };
   const name = nameMatch[1];
   let rest = text.slice(name.length).trim();
 
@@ -528,7 +528,7 @@ function _parseToolCall(text) {
   // JSON object format
   if (rest.startsWith('{')) {
     try { return { name, args: JSON.parse(rest), positional: [] }; }
-    catch (e) { return { error: 'Invalid JSON: ' + e.message }; }
+    catch (e) { return { error: t('invalidJsonMessage', { error: e.message }) }; }
   }
 
   // Strip outer parens

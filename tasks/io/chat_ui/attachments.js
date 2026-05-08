@@ -202,7 +202,7 @@ async function send() {
   // Capture and clear attachments
   // Wait for any uploads still in progress
   if (pendingFiles.some(f => f.uploading)) {
-    addMsg('system', 'Files still uploading, please wait...');
+    addMsg('system', t('filesStillUploading'));
     return;
   }
   const attachments = pendingFiles.map(f => ({
@@ -283,7 +283,7 @@ async function send() {
 
     if (!resp.ok) {
       const errText = await resp.text();
-      addMsg('error', 'Error ' + resp.status + ': ' + errText);
+      addMsg('error', t('httpErrorWithStatus', { status: resp.status, error: errText }));
       sending = false;
       document.getElementById('status').textContent = t('error');
       return;
@@ -354,7 +354,7 @@ function handleKey(e) {
     e.preventDefault();
     if (!selectedAgent) {
       console.error('BUG: selectedAgent is empty — this should never happen');
-      addMsg('error', 'BUG: no agent selected (selectedAgent is empty)');
+      addMsg('error', t('bugNoAgentSelected'));
       return;
     }
     const target = selectedAgent;
@@ -363,11 +363,11 @@ function handleKey(e) {
     _lastEscapeTarget = target;
     _lastEscapeTime = now;
     if (isRepeat) {
-      addMsg('system', 'Force stopping ' + target + '...');
+      addMsg('system', t('forceStopping', { agent: target }));
       fireAction('cancel', { agent_name: target, force: true });
       _lastEscapeTarget = '';  // reset so next Escape is graceful again
     } else {
-      addMsg('system', 'Interrupting ' + target + '... (press Escape again to force stop)');
+      addMsg('system', t('interruptEscape', { agent: target }));
       fireAction('interrupt', { agent_name: target });
     }
     return;

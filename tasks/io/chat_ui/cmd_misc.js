@@ -6,13 +6,13 @@
 
 function cmdHelp(topic) {
   if (!topic) {
-    let lines = ['<b>Available commands:</b>', ''];
+    let lines = ['<b>' + escapeHtml(t('availableCommands')) + '</b>', ''];
     const cmds = Object.keys(HELP_DATA).sort();
     for (const cmd of cmds) {
       const h = HELP_DATA[cmd];
       lines.push('<code>' + cmd + '</code> — ' + escapeHtml(h.short));
     }
-    lines.push('', 'Type <code>/help &lt;command&gt;</code> for detailed documentation.');
+    lines.push('', escapeHtml(t('helpCommandHint')).replace('/help <command>', '<code>/help &lt;command&gt;</code>'));
     const el = addMsg('system', '');
     el.innerHTML = lines.join('<br>');
   } else {
@@ -28,13 +28,13 @@ function cmdHelp(topic) {
     const key = topic.startsWith('/') ? topic : '/' + topic;
     const h = HELP_DATA[key];
     if (!h) {
-      addMsg('system', 'Unknown command: ' + key + '. Type /help to see available commands.');
+      addMsg('system', t('unknownCommandHelp', { command: key }));
       return;
     }
     let lines = [
       '<b>' + escapeHtml(key) + '</b>',
       '',
-      '<b>Usage:</b> <code>' + escapeHtml(h.usage) + '</code>',
+      '<b>' + escapeHtml(t('usage')) + ':</b> <code>' + escapeHtml(h.usage) + '</code>',
       '',
       '<pre style="margin:8px 0;white-space:pre-wrap;font-size:12px;background:rgba(255,255,255,0.05);padding:8px;border-radius:4px;">' + escapeHtml(h.detail) + '</pre>',
     ];
@@ -46,13 +46,13 @@ function cmdHelp(topic) {
 function cmdHelpToolList() {
   action$('get_tool_schemas', {}).subscribe(data => {
     const tools = (data.tools || []).sort((a, b) => a.name.localeCompare(b.name));
-    let lines = ['<b>Available tools for /call:</b>', ''];
+    let lines = ['<b>' + escapeHtml(t('availableToolsForCall')) + '</b>', ''];
     for (const t of tools) {
       const params = t.parameters?.properties ? Object.keys(t.parameters.properties) : [];
       const paramStr = params.length ? '(' + params.join(', ') + ')' : '()';
       lines.push('  <code>' + t.name + paramStr + '</code> — ' + escapeHtml((t.description || '').substring(0, 80)));
     }
-    lines.push('', 'Type <code>/help call &lt;toolname&gt;</code> for detailed parameter info.');
+    lines.push('', escapeHtml(t('helpCallHint')).replace('/help call <toolname>', '<code>/help call &lt;toolname&gt;</code>'));
     const el = addMsg('system', '');
     el.innerHTML = lines.join('<br>');
   });
@@ -64,7 +64,7 @@ function cmdHelpTool(toolName) {
     const tool = tools.find(t => t.name === toolName);
     if (!tool) {
       const names = tools.map(t => t.name).sort();
-      addMsg('system', 'Tool "' + toolName + '" not found. Available tools:\n' + names.map(n => '  \u2022 ' + n).join('\n'));
+      addMsg('system', t('toolNotFoundAvailable', { tool: toolName }) + '\n' + names.map(n => '  \u2022 ' + n).join('\n'));
       return;
     }
     const params = tool.parameters || {};
@@ -75,7 +75,7 @@ function cmdHelpTool(toolName) {
       '',
       '<span style="color:#a0a0c0">' + escapeHtml(tool.description) + '</span>',
       '',
-      '<b>Parameters:</b>',
+      '<b>' + escapeHtml(t('parameters')) + ':</b>',
     ];
     for (const [key, schema] of Object.entries(props)) {
       const req = required.includes(key) ? '<span style="color:#e74c3c">*</span>' : '';
@@ -107,14 +107,14 @@ function cmdUsage() {
     for (const [uid, u] of Object.entries(usage)) {
       const totalIn = (u.total_in || 0).toLocaleString();
       const totalOut = (u.total_out || 0).toLocaleString();
-      lines.push(`**${uid}**: ${totalIn} in / ${totalOut} out`);
+      lines.push(`**${uid}**: ${t('tokenInOut', { in: totalIn, out: totalOut })}`);
       const models = u.models || {};
       for (const [model, m] of Object.entries(models)) {
-        lines.push(`  \u2022 ${model}: ${m.in.toLocaleString()} in / ${m.out.toLocaleString()} out`);
+        lines.push(`  \u2022 ${model}: ${t('tokenInOut', { in: m.in.toLocaleString(), out: m.out.toLocaleString() })}`);
       }
     }
-    if (lines.length === 0) { addMsg('system', 'No token usage recorded yet.'); }
-    else { addMsg('system', 'Token usage:\n' + lines.join('\n')); }
+    if (lines.length === 0) { addMsg('system', t('noTokenUsageRecorded')); }
+    else { addMsg('system', t('tokenUsageHeader') + '\n' + lines.join('\n')); }
   });
 }
 
@@ -133,16 +133,16 @@ function cmdCost(text) {
 
     // Conversation cost (from CostTracker — model-aware pricing)
     if (convData && !convData.error && convData.total_usd) {
-      lines.push('**Conversation cost: $' + convData.total_usd.toFixed(6) + '**');
+      lines.push('**' + t('conversationCostUsd', { cost: convData.total_usd.toFixed(6) }) + '**');
       const byModel = convData.by_model || {};
       for (const [model, m] of Object.entries(byModel)) {
         const tokIn = (m.in || 0).toLocaleString();
         const tokOut = (m.out || 0).toLocaleString();
         const cacheR = m.cache_read || 0;
         const cacheW = m.cache_write || 0;
-        let detail = '  ' + model + ': ' + tokIn + ' in / ' + tokOut + ' out — $' + (m.cost || 0).toFixed(6);
+        let detail = '  ' + model + ': ' + t('tokenInOutCost', { in: tokIn, out: tokOut, cost: (m.cost || 0).toFixed(6) });
         if (cacheR || cacheW) {
-          detail += ' (cache: ' + cacheR.toLocaleString() + ' read, ' + cacheW.toLocaleString() + ' write)';
+          detail += ' (' + t('cacheReadWrite', { read: cacheR.toLocaleString(), write: cacheW.toLocaleString() }) + ')';
         }
         lines.push(detail);
       }
@@ -152,11 +152,11 @@ function cmdCost(text) {
     // User-level cost (existing per-agent breakdown)
     const services = data.services || [];
     if (services.length === 0 && lines.length === 0) {
-      addMsg('system', 'No usage data found.');
+      addMsg('system', t('noUsageDataFound'));
       return;
     }
     if (services.length > 0) {
-      lines.push('**User total (all conversations):**');
+      lines.push('**' + t('userTotalAllConversations') + '**');
       for (const s of services) {
         const svc = s.llm_service || '?';
         const model = s.model || '';
@@ -165,14 +165,14 @@ function cmdCost(text) {
         const cacheR = s.cache_read || 0;
         const cacheW = s.cache_write || 0;
         const calls = s.calls || 0;
-        let line = '  ' + svc + (model ? ' (' + model + ')' : '') + ': ' + tokIn + ' in / ' + tokOut + ' out (' + calls + ' calls)';
+        let line = '  ' + svc + (model ? ' (' + model + ')' : '') + ': ' + t('tokenInOutCalls', { in: tokIn, out: tokOut, calls: calls });
         if (cacheR || cacheW) {
-          line += ' (cache: ' + cacheR.toLocaleString() + ' read, ' + cacheW.toLocaleString() + ' write)';
+          line += ' (' + t('cacheReadWrite', { read: cacheR.toLocaleString(), write: cacheW.toLocaleString() }) + ')';
         }
         if (s.cost !== undefined) {
           line += ' — $' + s.cost.toFixed(6);
         } else {
-          line += ' — cost: not configured';
+          line += ' — ' + t('costNotConfigured');
         }
         lines.push(line);
       }
@@ -182,9 +182,9 @@ function cmdCost(text) {
       const totalCacheW = services.reduce((sum, s) => sum + (s.cache_write || 0), 0);
       const totalCost = services.reduce((sum, s) => sum + (s.cost || 0), 0);
       lines.push('---');
-      let totalLine = 'Total: ' + totalIn.toLocaleString() + ' in / ' + totalOut.toLocaleString() + ' out';
+      let totalLine = t('totalTokenInOut', { in: totalIn.toLocaleString(), out: totalOut.toLocaleString() });
       if (totalCacheR || totalCacheW) {
-        totalLine += ' (cache: ' + totalCacheR.toLocaleString() + ' read, ' + totalCacheW.toLocaleString() + ' write)';
+        totalLine += ' (' + t('cacheReadWrite', { read: totalCacheR.toLocaleString(), write: totalCacheW.toLocaleString() }) + ')';
       }
       lines.push(totalLine + (totalCost > 0 ? ' — $' + totalCost.toFixed(6) : ''));
     }
@@ -202,11 +202,11 @@ function cmdMemory(text, parts) {
     cmdMemoryList(agentFilter);
   } else if (sub === 'del' || sub === 'delete') {
     const memId = parts[2];
-    if (!memId) { addMsg('system', 'Usage: /memory del <memory_id>'); }
+    if (!memId) { addMsg('system', t('usageLine', { usage: '/memory del <memory_id>' })); }
     else { cmdMemoryDel(memId); }
   } else if (sub === 'add') {
     const rest = text.replace(/^\/memory\s+add\s*/i, '');
-    if (!rest.trim()) { addMsg('system', 'Usage: /memory add <text> [#tag1 #tag2] [@agent]'); return true; }
+    if (!rest.trim()) { addMsg('system', t('usageLine', { usage: '/memory add <text> [#tag1 #tag2] [@agent]' })); return true; }
     const agentMatch = rest.match(/@(\S+)\s*$/);
     let agent = '';
     let memText = rest;
@@ -214,23 +214,23 @@ function cmdMemory(text, parts) {
     const tagMatches = memText.match(/#(\S+)/g) || [];
     const tags = tagMatches.map(t => t.slice(1));
     memText = memText.replace(/#\S+/g, '').trim();
-    if (!memText) { addMsg('system', 'Usage: /memory add <text> [#tag1 #tag2] [@agent]'); return true; }
+    if (!memText) { addMsg('system', t('usageLine', { usage: '/memory add <text> [#tag1 #tag2] [@agent]' })); return true; }
     action$('add_memory', { text: memText, tags, agent }).subscribe(data => {
-      addMsg('system', 'Memory added (id: ' + (data.id || '?') + ', agent: ' + (data.agent || 'global') + ')');
+      addMsg('system', t('memoryAdded', { id: data.id || '?', agent: data.agent || t('global') }));
     });
   } else if (sub === 'edit') {
     const memId = parts[2];
     const newText = parts.slice(3).join(' ');
-    if (!memId || !newText) { addMsg('system', 'Usage: /memory edit <id> <new text>'); return true; }
+    if (!memId || !newText) { addMsg('system', t('usageLine', { usage: '/memory edit <id> <new text>' })); return true; }
     action$('edit_memory', { memory_id: memId, text: newText }).subscribe(data => {
-      addMsg('system', data.updated ? 'Memory updated.' : 'Memory not found.');
+      addMsg('system', data.updated ? t('memoryUpdated') : t('memoryNotFound'));
     });
   } else if (sub === 'search') {
     const query = parts.slice(2).join(' ');
-    if (!query) { addMsg('system', 'Usage: /memory search <query>'); return true; }
+    if (!query) { addMsg('system', t('usageLine', { usage: '/memory search <query>' })); return true; }
     cmdMemoryList(null, query);
   } else {
-    addMsg('system', 'Usage: /memory [list [@agent] | add | edit | del | search | panel]');
+    addMsg('system', t('usageLine', { usage: '/memory [list [@agent] | add | edit | del | search | panel]' }));
   }
   return true;
 }
@@ -245,14 +245,14 @@ function cmdMemoryList(agentFilter, searchQuery) {
       mems = mems.filter(m => m.text.toLowerCase().includes(q) || (m.tags || []).some(t => t.includes(q)));
     }
     if (mems.length === 0) {
-      addMsg('system', 'No memories found.' + (searchQuery ? ' Try a different query.' : ''));
+      addMsg('system', searchQuery ? t('noMemoriesFoundTryDifferent') : t('noMemoriesFound'));
     } else {
       const lines = mems.map(m => {
-        const agent = m.agent ? '\u{1F916} ' + m.agent : '\u{1F310} global';
+        const agent = m.agent ? '\u{1F916} ' + m.agent : '\u{1F310} ' + t('global');
         const tags = m.tags && m.tags.length ? ' [' + m.tags.join(', ') + ']' : '';
         return '\u2022 `' + m.id + '` ' + agent + tags + ' \u2014 ' + m.text;
       });
-      const title = searchQuery ? 'Search results' : (agentFilter !== null && agentFilter !== undefined ? 'Memories for ' + (agentFilter || 'global') : 'All memories');
+      const title = searchQuery ? t('searchResults') : (agentFilter !== null && agentFilter !== undefined ? t('memoriesFor', { agent: agentFilter || t('global') }) : t('allMemories'));
       addMsg('system', title + ' (' + mems.length + '):\n' + lines.join('\n'));
     }
   });
@@ -261,7 +261,7 @@ function cmdMemoryList(agentFilter, searchQuery) {
 function cmdMemoryDel(memId) {
   action$('delete_memory', { memory_id: memId }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', data.deleted ? `Memory ${memId} deleted.` : `Memory ${memId} not found.`);
+    addMsg('system', data.deleted ? t('memoryDeleted', { id: memId }) : t('memoryIdNotFound', { id: memId }));
   });
 }
 
@@ -269,12 +269,12 @@ function cmdToolsList() {
   action$('list_tools', {}).subscribe(data => {
     const tools = data.tools || [];
     if (tools.length === 0) {
-      addMsg('system', 'No dynamic tools installed. Use /install to add one.');
+      addMsg('system', t('noDynamicToolsInstalled'));
     } else {
       const lines = tools.map(t =>
         `\u2022 **${t.tool_name}** \u2014 ${t.description} (by ${t.owner})`
       );
-      addMsg('system', 'Dynamic tools:\n' + lines.join('\n'));
+      addMsg('system', t('dynamicToolsHeader') + '\n' + lines.join('\n'));
     }
   });
 }
@@ -282,7 +282,7 @@ function cmdToolsList() {
 function cmdUninstallTool(toolName) {
   action$('uninstall_tool', { tool_name: toolName }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', data.uninstalled ? `Tool '${toolName}' uninstalled.` : `Tool '${toolName}' not found.`);
+    addMsg('system', data.uninstalled ? t('toolUninstalled', { tool: toolName }) : t('toolNotFound', { tool: toolName }));
   });
 }
 
@@ -292,8 +292,8 @@ function cmdLinkAccount(provider, providerId, botToken) {
   action$('link_account', params).subscribe(data => {
     if (data.error) { addMsg('error', data.error); }
     else {
-      let msg = provider + ' account ' + providerId + ' linked successfully!';
-      if (data.bot_username) { msg += ' Bot: @' + data.bot_username; }
+      let msg = t('accountLinkedSuccessfully', { provider: provider, id: providerId });
+      if (data.bot_username) { msg += ' ' + t('botLabel', { bot: '@' + data.bot_username }); }
       if (data.bot_warning) { msg += '\n\u26a0\ufe0f ' + data.bot_warning; }
       addMsg('system', msg);
     }
@@ -302,8 +302,8 @@ function cmdLinkAccount(provider, providerId, botToken) {
 
 function cmdUnlinkAccount(provider) {
   action$('unlink_account', { provider }).subscribe(data => {
-    if (data.unlinked) { addMsg('system', provider + ' account unlinked.'); }
-    else { addMsg('system', 'No ' + provider + ' link found.'); }
+    if (data.unlinked) { addMsg('system', t('accountUnlinked', { provider: provider })); }
+    else { addMsg('system', t('noAccountLinkFound', { provider: provider })); }
   });
 }
 
@@ -311,10 +311,10 @@ function cmdLinkStatus() {
   action$('list_linked_accounts', {}).subscribe(data => {
     const links = data.links || {};
     if (Object.keys(links).length === 0) {
-      addMsg('system', 'No linked accounts. Use /link <provider> <id> to link.');
+      addMsg('system', t('noLinkedAccounts'));
     } else {
       const lines = Object.entries(links).map(function(entry) { return '\u2022 ' + entry[0] + ': ' + entry[1]; });
-      addMsg('system', 'Linked accounts:\n' + lines.join('\n'));
+      addMsg('system', t('linkedAccountsHeader') + '\n' + lines.join('\n'));
     }
   });
 }
@@ -325,13 +325,13 @@ function cmdLink(text, parts) {
     cmdLinkStatus();
   } else if (sub === 'unlink') {
     const provider = parts[2] || '';
-    if (!provider) { addMsg('system', 'Usage: /link unlink <provider>'); return true; }
+    if (!provider) { addMsg('system', t('usageLine', { usage: '/link unlink <provider>' })); return true; }
     cmdUnlinkAccount(provider);
   } else {
     const provider = parts[1];
     const providerId = parts[2] || '';
     const botToken = parts[3] || '';
-    if (!providerId) { addMsg('system', 'Usage: /link <provider> <id> [bot_token]'); return true; }
+    if (!providerId) { addMsg('system', t('usageLine', { usage: '/link <provider> <id> [bot_token]' })); return true; }
     cmdLinkAccount(provider, providerId, botToken);
   }
   return true;
@@ -372,9 +372,9 @@ function cmdModel(text, parts) {
   } else {
     modelName = parts[1] || '';
   }
-  if (!modelName) { addMsg('system', 'Usage: /model [@agent] <name>'); return true; }
+  if (!modelName) { addMsg('system', t('usageLine', { usage: '/model [@agent] <name>' })); return true; }
   action$('model', { model: modelName, agent: agent }).subscribe(data => {
-    addMsg('system', data.message || data.error || 'Model updated');
+    addMsg('system', data.message || data.error || t('modelUpdated'));
   });
   return true;
 }
@@ -394,12 +394,12 @@ function cmdLogin() {
 function cmdCall(text) {
   const callText = text.replace(/^\/call\s+/, '').trim();
   if (!callText) {
-    addMsg('system', 'Usage: /call tool_name(key=value, ...) or /call tool_name {"key": "value"}\nType /help call for details.');
+    addMsg('system', t('usageLine', { usage: '/call tool_name(key=value, ...) or /call tool_name {"key": "value"}\\nType /help call for details.' }));
     return true;
   }
   const parsed = _parseToolCall(callText);
   if (parsed.error) {
-    addMsg('system', 'Parse error: ' + parsed.error + '\nType /help call <toolname> for parameter info.');
+    addMsg('system', t('parseErrorHelpCall', { error: parsed.error }));
     return true;
   }
   action$('call_tool', {
@@ -419,21 +419,21 @@ function cmdAutoconv(text) {
   const qargs = parseQuotedArgs(text);
   const sub = (qargs[1] || '').toLowerCase();
   if (!sub || !['on', 'off', 'status', 'now'].includes(sub)) {
-    addMsg('system', 'Usage: /autoconv <on|off|status|now> @<agent|ALL> [freq]');
+    addMsg('system', t('usageLine', { usage: '/autoconv <on|off|status|now> @<agent|ALL> [freq]' }));
     return true;
   }
   const params = { sub };
   const freqPattern = /^\d+(-\d+)?\/\d*[smhd]$/;
   if (sub === 'on') {
-    if (!qargs[2]) { addMsg('system', 'Usage: /autoconv on @<agent|ALL> [freq]'); return true; }
+    if (!qargs[2]) { addMsg('system', t('usageLine', { usage: '/autoconv on @<agent|ALL> [freq]' })); return true; }
     if (freqPattern.test(qargs[2])) {
-      addMsg('system', 'Usage: /autoconv on @<agent|ALL> [freq]');
+      addMsg('system', t('usageLine', { usage: '/autoconv on @<agent|ALL> [freq]' }));
       return true;
     }
     params.agent = resolveAgentName(stripTarget(qargs[2]));
     params.frequency = qargs[3] || '6/1m';
   } else {
-    if (!qargs[2]) { addMsg('system', 'Usage: /autoconv ' + sub + ' @<agent|ALL>'); return true; }
+    if (!qargs[2]) { addMsg('system', t('usageLine', { usage: '/autoconv ' + sub + ' @<agent|ALL>' })); return true; }
     params.agent = resolveAgentName(stripTarget(qargs[2]));
   }
   action$('random_thought', params).subscribe(data => {
@@ -472,7 +472,7 @@ function cmdSchedules(text, parts) {
   } else if (sub === 'add' && parts[2]) {
     cmdSchedulesAdd(parts[2], parts.slice(3).join(' '));
   } else {
-    addMsg('system', 'Usage: /schedules list | /schedules del | /schedules add YYYYMMDDHHmmss [reason]');
+    addMsg('system', t('usageLine', { usage: '/schedules list | /schedules del | /schedules add YYYYMMDDHHmmss [reason]' }));
   }
   return true;
 }
@@ -483,9 +483,9 @@ function cmdLlm(text, parts) {
   // /llm rotate @service — force rotate API key / CC credential
   if (sub === 'rotate') {
     var svcId = stripTarget(parts[2] || '');
-    if (!svcId) { addMsg('error', 'Usage: /llm rotate @service'); return true; }
+    if (!svcId) { addMsg('error', t('usageLine', { usage: '/llm rotate @service' })); return true; }
     action$('llm_rotate', { service_id: svcId }).subscribe(function(data) {
-      addMsg('system', data.message || data.error || 'Done.');
+      addMsg('system', data.message || data.error || t('done'));
     });
     return true;
   }
@@ -493,13 +493,13 @@ function cmdLlm(text, parts) {
   const agent = stripTarget(parts[1] || '');
   const svc = parts.slice(2).join(' ') || '';
   if (!agent || !svc) {
-    addMsg('system', 'Usage: /llm @<agent> <service> | /llm rotate @<service>');
+    addMsg('system', t('usageLine', { usage: '/llm @<agent> <service> | /llm rotate @<service>' }));
     return true;
   }
   action$('set_llm_service', {
     agent_name: agent, llm_service: svc,
   }).subscribe(data => {
-    addMsg('system', data.result || data.error || 'Done.');
+    addMsg('system', data.result || data.error || t('done'));
   });
   return true;
 }
@@ -525,7 +525,7 @@ function cmdToolsCmd() {
 }
 
 function cmdUsageDeprecated() {
-  addMsg('system', '/usage is deprecated. Use /cost <agent|ALL> instead.');
+  addMsg('system', t('usageDeprecatedUseCost'));
   return true;
 }
 
@@ -538,27 +538,27 @@ function cmdKg(text, parts) {
     const predicate = parts[3] || '';
     const object = parts.slice(4).join(' ');
     if (!subject || !predicate || !object) {
-      addMsg('system', 'Usage: /kg add <subject> <predicate> <object>');
+      addMsg('system', t('usageLine', { usage: '/kg add <subject> <predicate> <object>' }));
       return true;
     }
     kgQuickAdd(subject, predicate, object);
   } else if (sub === 'stats') {
     kgShowStats();
   } else {
-    addMsg('system', 'Usage: /kg [panel | add <subject> <predicate> <object> | stats]');
+    addMsg('system', t('usageLine', { usage: '/kg [panel | add <subject> <predicate> <object> | stats]' }));
   }
   return true;
 }
 
 function cmdLearn(text, parts) {
   const limit = parseInt(parts[1]) || 50;
-  addMsg('system', `Analyzing ${limit} recent user messages...`);
+  addMsg('system', t('analyzingRecentUserMessages', { limit: limit }));
   action$('learn', { limit }).subscribe({
     next: (data) => {
       if (data.error) { addMsg('error', data.error); return; }
-      addMsg('system', data.result || 'No insights extracted.');
+      addMsg('system', data.result || t('noInsightsExtracted'));
     },
-    error: (e) => addMsg('error', 'Learn failed: ' + e.message),
+    error: (e) => addMsg('error', t('learnFailed', { error: e.message })),
   });
   return true;
 }
@@ -572,21 +572,21 @@ function cmdDiary(text, parts) {
     cmdDiaryList(typeFilter);
   } else if (sub === 'add') {
     const rest = text.replace(/^\/diary\s+add\s*/i, '').trim();
-    if (!rest) { addMsg('system', 'Usage: /diary add <text> [#tag1 #tag2]'); return true; }
+    if (!rest) { addMsg('system', t('usageLine', { usage: '/diary add <text> [#tag1 #tag2]' })); return true; }
     const tagMatches = rest.match(/#(\S+)/g) || [];
     const tags = tagMatches.map(t => t.slice(1));
     let entryText = rest.replace(/#\S+/g, '').trim();
-    if (!entryText) { addMsg('system', 'Usage: /diary add <text> [#tag1 #tag2]'); return true; }
+    if (!entryText) { addMsg('system', t('usageLine', { usage: '/diary add <text> [#tag1 #tag2]' })); return true; }
     const args = { entry: entryText, type: 'observation' };
     if (tags.length) args.tags = tags;
     action$('call_tool', { tool_name: 'diary_write', arguments: args }).subscribe({
       next: (data) => {
-        addMsg('system', 'Diary entry added: ' + (data.result || data.text || 'OK'));
+        addMsg('system', t('diaryEntryAdded', { result: data.result || data.text || 'OK' }));
       },
-      error: (e) => addMsg('error', 'Failed: ' + e.message),
+      error: (e) => addMsg('error', t('failedWithError', { error: e.message })),
     });
   } else {
-    addMsg('system', 'Usage: /diary [panel | list [type] | add <text> [#tag1 #tag2]]');
+    addMsg('system', t('usageLine', { usage: '/diary [panel | list [type] | add <text> [#tag1 #tag2]]' }));
   }
   return true;
 }
@@ -596,7 +596,7 @@ function cmdGraph(text, parts) {
   if (!sub || sub === 'panel') {
     showProjectGraphOverlay();
   } else if (sub === 'build') {
-    addMsg('system', 'Building project graph...');
+    addMsg('system', t('buildingProjectGraph'));
     action$('call_tool', {
       tool_name: 'project_graph',
       arguments: { action: 'build' },
@@ -607,35 +607,35 @@ function cmdGraph(text, parts) {
         var text = typeof data === 'string' ? data : (data.result || data.message || JSON.stringify(data));
         addMsg('system', text);
       },
-      error: function(e) { addMsg('error', 'Build failed: ' + e.message); },
+      error: function(e) { addMsg('error', t('projectGraphBuildFailed', { error: e.message })); },
     });
   } else if (sub === 'report') {
     action$('project_graph_report', {}).subscribe({
       next: function(data) {
         if (data.error) { addMsg('error', data.error); return; }
-        if (!data.has_graph) { addMsg('system', 'No project graph built yet. Use /graph build first.'); return; }
-        addMsg('system', data.report || 'No report available.');
+        if (!data.has_graph) { addMsg('system', t('projectGraphMissingUseBuild')); return; }
+        addMsg('system', data.report || t('noReportAvailable'));
       },
-      error: function(e) { addMsg('error', 'Report failed: ' + e.message); },
+      error: function(e) { addMsg('error', t('projectGraphReportFailed', { error: e.message })); },
     });
   } else if (sub === 'query') {
     var question = parts.slice(2).join(' ').trim();
-    if (!question) { addMsg('system', 'Usage: /graph query <question>'); return true; }
+    if (!question) { addMsg('system', t('usageGraphQuery')); return true; }
     action$('project_graph_query', { question: question }).subscribe({
       next: function(data) {
         if (data.error) { addMsg('error', data.error); return; }
         var edges = data.edges || [];
-        if (edges.length === 0) { addMsg('system', 'No connections found for: ' + question); return; }
-        var lines = ['Project graph query "' + question + '" (' + edges.length + ' edges):'];
+        if (edges.length === 0) { addMsg('system', t('noConnectionsFoundFor', { query: question })); return; }
+        var lines = [t('projectGraphQueryHeader', { question: question, n: edges.length })];
         edges.forEach(function(e) {
           lines.push('  ' + (e.source || '?') + ' \u2192 ' + (e.relation || '?') + ' \u2192 ' + (e.target || '?') + ' [' + (e.confidence || 'EXTRACTED') + ']');
         });
         addMsg('system', lines.join('\n'));
       },
-      error: function(e) { addMsg('error', 'Query failed: ' + e.message); },
+      error: function(e) { addMsg('error', t('projectGraphQueryFailed', { error: e.message })); },
     });
   } else {
-    addMsg('system', 'Usage: /graph [panel | build | report | query <question>]');
+    addMsg('system', t('usageGraph'));
   }
   return true;
 }
@@ -651,8 +651,8 @@ function cmdRelay(text, parts) {
     action$('relay_list_available').subscribe(function(data) {
       if (data.error) { addMsg('error', data.error); return; }
       var relays = data.relays || [];
-      if (!relays.length) { addMsg('system', 'No relays available.'); return; }
-      var lines = ['**Available relays:**'];
+      if (!relays.length) { addMsg('system', t('noRelaysAvailable')); return; }
+      var lines = ['**' + t('availableRelays') + '**'];
       relays.forEach(function(r) {
         var info = r.relay_id;
         if (r.host_root) info += ' — local: ' + r.host_root;
@@ -667,31 +667,31 @@ function cmdRelay(text, parts) {
     if (!rid) { _showRelayLinkDialog(); return true; }
     fireAction('relay_link', {relay_id: rid});
     setTimeout(loadResources, 500);
-    addMsg('system', 'Linking relay ' + rid + '...');
+    addMsg('system', t('linkingRelay', { relay: rid }));
   } else if (sub === 'unlink') {
     var rid2 = parts[2];
-    if (!rid2) { addMsg('error', 'Usage: /relay unlink <relay_id>'); return true; }
+    if (!rid2) { addMsg('error', t('usageLine', { usage: '/relay unlink <relay_id>' })); return true; }
     fireAction('relay_unlink', {relay_id: rid2});
     setTimeout(loadResources, 500);
-    addMsg('system', 'Unlinking relay ' + rid2 + '...');
+    addMsg('system', t('unlinkingRelay', { relay: rid2 }));
   } else if (sub === 'default') {
     var rid3 = parts[2];
-    if (!rid3) { addMsg('error', 'Usage: /relay default <relay_id>'); return true; }
+    if (!rid3) { addMsg('error', t('usageLine', { usage: '/relay default <relay_id>' })); return true; }
     fireAction('relay_default', {relay_id: rid3});
     setTimeout(loadResources, 500);
-    addMsg('system', 'Setting default relay to ' + rid3 + '...');
+    addMsg('system', t('settingDefaultRelay', { relay: rid3 }));
   } else if (sub === 'local') {
     // /relay local <relay_id> true|false [@agent]
     var relayForLocal = parts[2] || '';
     var val = (parts[3] || '').toLowerCase();
-    if (!relayForLocal || (val !== 'true' && val !== 'false')) { addMsg('error', 'Usage: /relay local <relay_id> true|false [@agent]'); return true; }
+    if (!relayForLocal || (val !== 'true' && val !== 'false')) { addMsg('error', t('usageLine', { usage: '/relay local <relay_id> true|false [@agent]' })); return true; }
     var agent = (parts[4] || '').replace(/^@/, '');
     action$('relay_set_local', {relay_id: relayForLocal, local: val === 'true', agent: agent}).subscribe(function(data) {
       if (data.error) addMsg('error', data.error);
-      else addMsg('system', data.message || 'OK');
+      else addMsg('system', data.message || t('ok'));
     });
   } else {
-    addMsg('error', 'Unknown /relay subcommand: ' + sub + '. Use: status, list, link, unlink, default, local');
+    addMsg('error', t('unknownRelaySubcommand', { sub: sub }));
   }
   return true;
 }

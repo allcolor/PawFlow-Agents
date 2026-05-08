@@ -125,7 +125,7 @@ async function loadThemeSelector() {
     const effectiveRef = convRef || globalRef;
     await applyThemeRef(effectiveRef, false);
   } catch (e) {
-    addMsg('error', 'Theme load failed: ' + e.message);
+    addMsg('error', t('themeLoadFailed', { error: e.message }));
   }
 }
 
@@ -149,7 +149,7 @@ function onGlobalThemeSelectChange(value) {
   _themeSetGlobalRef(value || DEFAULT_THEME_REF);
   loadThemeSelector()
     .then(() => loadResources())
-    .catch(e => addMsg('error', 'Theme apply failed: ' + e.message));
+    .catch(e => addMsg('error', t('themeApplyFailed', { error: e.message })));
 }
 
 function onConversationThemeSelectChange(value) {
@@ -157,7 +157,7 @@ function onConversationThemeSelectChange(value) {
   _themeSetConversationRef(conversationId, value || '');
   loadThemeSelector()
     .then(() => loadResources())
-    .catch(e => addMsg('error', 'Theme apply failed: ' + e.message));
+    .catch(e => addMsg('error', t('themeApplyFailed', { error: e.message })));
 }
 
 function _applyThemeFromResource(ref) {
@@ -182,9 +182,9 @@ function _showThemeMenu(e, ref, builtin, scope) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  item(ref.indexOf('conversation:') === 0 ? 'Apply to conversation' : 'Apply globally', () => _applyThemeFromResource(ref));
+  item(ref.indexOf('conversation:') === 0 ? t('applyToConversation') : t('applyGlobally'), () => _applyThemeFromResource(ref));
   if (!builtin) {
-    item('Delete', () => _deleteTheme(ref), true);
+    item(t('delete'), () => _deleteTheme(ref), true);
   }
   document.body.appendChild(menu);
   requestAnimationFrame(() => {
@@ -207,19 +207,19 @@ function showThemeCreator() {
   panel.style.maxHeight = '85vh';
   panel.style.overflowY = 'auto';
   panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-    + '<h3 style="margin:0;font-size:14px;">Add theme</h3>'
+    + '<h3 style="margin:0;font-size:14px;">' + escapeHtml(t('addTheme')) + '</h3>'
     + '<button onclick="document.getElementById(\'themeCreatorOverlay\').remove()" style="background:none;border:none;cursor:pointer;font-size:18px;">&times;</button></div>'
-    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">Name</label><input id="theme-name" style="width:100%;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
-    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">Title</label><input id="theme-title" style="width:100%;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
-    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">Scope</label><select id="theme-scope" style="width:100%;padding:6px;border-radius:4px;margin-top:2px;">'
-    + (_isAdmin && _isAdmin() ? '<option value="global">Global</option>' : '')
-    + '<option value="user">User</option><option value="conversation">Conversation</option></select></div>'
-    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">CSS or ZIP package</label><input id="theme-file" type="file" accept=".css,.zip,text/css,application/zip" style="width:100%;margin-top:4px;"/></div>'
-    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">CSS override</label><textarea id="theme-css" style="width:100%;min-height:160px;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;"></textarea></div>'
-    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">Description</label><input id="theme-description" style="width:100%;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">' + escapeHtml(t('name')) + '</label><input id="theme-name" style="width:100%;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">' + escapeHtml(t('title')) + '</label><input id="theme-title" style="width:100%;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">' + escapeHtml(t('scope')) + '</label><select id="theme-scope" style="width:100%;padding:6px;border-radius:4px;margin-top:2px;">'
+    + (_isAdmin && _isAdmin() ? '<option value="global">' + escapeHtml(t('global')) + '</option>' : '')
+    + '<option value="user">' + escapeHtml(t('user')) + '</option><option value="conversation">' + escapeHtml(t('conversation')) + '</option></select></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">' + escapeHtml(t('cssOrZipPackage')) + '</label><input id="theme-file" type="file" accept=".css,.zip,text/css,application/zip" style="width:100%;margin-top:4px;"/></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">' + escapeHtml(t('cssOverride')) + '</label><textarea id="theme-css" style="width:100%;min-height:160px;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;"></textarea></div>'
+    + '<div style="margin-bottom:8px;"><label style="font-size:11px;">' + escapeHtml(t('description')) + '</label><input id="theme-description" style="width:100%;padding:6px;border-radius:4px;margin-top:2px;"/></div>'
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-    + '<button onclick="document.getElementById(\'themeCreatorOverlay\').remove()" style="padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-    + '<button onclick="_saveThemeCreate()" style="padding:8px 16px;border-radius:4px;cursor:pointer;">Create</button></div>';
+    + '<button onclick="document.getElementById(\'themeCreatorOverlay\').remove()" style="padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('cancel')) + '</button>'
+    + '<button onclick="_saveThemeCreate()" style="padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('create')) + '</button></div>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 }
@@ -250,20 +250,20 @@ async function _saveThemeCreate() {
   }));
   if (res.error) { addMsg('error', res.error); return; }
   document.getElementById('themeCreatorOverlay').remove();
-  addMsg('system', 'Theme created.');
+  addMsg('system', t('themeCreated'));
   loadThemeSelector();
   loadResources();
 }
 
 function _deleteTheme(ref) {
-  if (!confirm('Delete theme ' + ref + '?')) return;
+  if (!confirm(t('deleteThemeConfirm', { theme: ref }))) return;
   action$('delete_chat_theme', { conversation_id: conversationId, theme_ref: ref }).subscribe(res => {
     if (res.error) { addMsg('error', res.error); return; }
     if (conversationId && _themeGetConversationRef(conversationId) === ref) {
       _themeSetConversationRef(conversationId, '');
     }
     if (_themeGetGlobalRef() === ref) _themeSetGlobalRef(DEFAULT_THEME_REF);
-    addMsg('system', 'Theme deleted.');
+    addMsg('system', t('themeDeleted'));
     loadThemeSelector();
     loadResources();
   });

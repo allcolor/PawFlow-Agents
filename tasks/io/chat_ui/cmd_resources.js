@@ -29,7 +29,7 @@ function cmdTask(text, parts) {
       }
     }
     if (!taskName || !taskPrompt) {
-      addMsg('system', 'Usage: /task create <name> --prompt "..." [--criteria "..."] [--interval XX]\n       /task create <name> "inline prompt" [--criteria "..."]');
+      addMsg('system', t('usageLine', { usage: '/task create <name> --prompt "..." [--criteria "..."] [--interval XX]\\n       /task create <name> "inline prompt" [--criteria "..."]' }));
       return true;
     }
     action$('create_task_def', {
@@ -37,14 +37,14 @@ function cmdTask(text, parts) {
       data: { prompt: taskPrompt, criteria, default_interval: interval || '6/1m' },
     }).subscribe(data => {
       if (data.error) addMsg('error', data.error);
-      else addMsg('system', `Task definition '${taskName}' created.`);
+      else addMsg('system', t('taskDefinitionCreated', { name: taskName }));
     });
   } else if (sub === 'assign') {
     const qargs = parseQuotedArgs(text);
     const taskAgent = stripTarget(qargs[2] || '');
     const taskArg = qargs[3] || '';
     if (!taskAgent || !taskArg) {
-      addMsg('system', 'Usage: /task assign @<agent> <task_def_name> [--interval N] [--max N] [--verifier @agent] [--var key=val]');
+      addMsg('system', t('usageLine', { usage: '/task assign @<agent> <task_def_name> [--interval N] [--max N] [--verifier @agent] [--var key=val]' }));
       return true;
     }
     let interval = null, maxIter = 0, verifier = '';
@@ -77,21 +77,21 @@ function cmdTask(text, parts) {
       ...(autoAllow ? { auto_allow: true } : {}),
     }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
-      else { addMsg('system', data.result || 'Task assigned.'); }
+      else { addMsg('system', data.result || t('taskAssigned')); }
     });
   } else if (sub === 'delete' || sub === 'del') {
     const taskName = parts[2] || '';
-    if (!taskName) { addMsg('system', 'Usage: /task delete <task_def_name|task_id>'); return true; }
+    if (!taskName) { addMsg('system', t('usageLine', { usage: '/task delete <task_def_name|task_id>' })); return true; }
     const isTaskInstance = taskName.startsWith('t_');
     if (isTaskInstance) {
       action$('delete_task', { task_id: taskName }).subscribe(data => {
         if (data.error) addMsg('error', data.error);
-        else addMsg('system', `Task instance '${taskName}' deleted.`);
+        else addMsg('system', t('taskInstanceDeleted', { name: taskName }));
       });
     } else {
       action$('delete_task_def', { name: taskName }).subscribe(data => {
         if (data.error) addMsg('error', data.error);
-        else addMsg('system', `Task definition '${taskName}' deleted.`);
+        else addMsg('system', t('taskDefinitionDeleted', { name: taskName }));
       });
     }
   } else if (sub === 'status' || sub === 'list') {
@@ -103,51 +103,51 @@ function cmdTask(text, parts) {
       const tasks = data.tasks || [];
       const lines = [];
       if (defs.length) {
-        lines.push('**Library:**');
+        lines.push('**' + t('taskLibraryHeader') + '**');
         for (const d of defs) {
           lines.push('\u2022 `' + d.name + '` — ' + (d.description || d.prompt.substring(0, 60)) + ' [' + (d.default_interval || '6/1m') + ']');
         }
       }
-      const formatTask = (t) => {
-        let line = '\u2022 `' + (t.task_id || '?') + '` ' + t.agent + ': ' + t.task.substring(0, 80);
-        const ivLabel = typeof t.interval === 'object' ? (t.interval.spec || t.interval.min + '-' + t.interval.max + 's') : t.interval + 's';
-        const iterLabel = t.max_iterations > 0 ? (t.iterations + '/' + t.max_iterations) : ('' + t.iterations);
-        line += ' [' + t.status + ', iter ' + iterLabel + ', ' + ivLabel + ']';
-        if (t.task_def_name) line += ' (def: ' + t.task_def_name + ')';
-        if (t.verifier) line += ' (verifier: ' + t.verifier + ')';
-        if (t.last_result) line += '\n  Last: ' + t.last_result.substring(0, 100);
+      const formatTask = (task) => {
+        let line = '\u2022 `' + (task.task_id || '?') + '` ' + task.agent + ': ' + task.task.substring(0, 80);
+        const ivLabel = typeof task.interval === 'object' ? (task.interval.spec || task.interval.min + '-' + task.interval.max + 's') : task.interval + 's';
+        const iterLabel = task.max_iterations > 0 ? (task.iterations + '/' + task.max_iterations) : ('' + task.iterations);
+        line += ' [' + task.status + ', ' + t('taskIterLabel', { iter: iterLabel }) + ', ' + ivLabel + ']';
+        if (task.task_def_name) line += ' (' + t('taskDefLabel', { name: task.task_def_name }) + ')';
+        if (task.verifier) line += ' (' + t('taskVerifierLabel', { verifier: task.verifier }) + ')';
+        if (task.last_result) line += '\n  ' + t('taskLastLabel', { result: task.last_result.substring(0, 100) });
         const limits = [];
-        if (t.max_budget) limits.push('budget: $' + t.max_budget + ' (used: $' + (t.total_cost || 0).toFixed(4) + ')');
-        if (t.timeout) limits.push('turn: ' + t.timeout + 's');
-        if (t.max_total_time) limits.push('total: ' + t.max_total_time + 's');
-        if (t.max_reschedules) limits.push('reschedules: ' + (t.reschedule_count || 0) + '/' + t.max_reschedules);
-        if (limits.length) line += '\n  Limits: ' + limits.join(', ');
+        if (task.max_budget) limits.push(t('taskBudgetLimit', { budget: task.max_budget, used: (task.total_cost || 0).toFixed(4) }));
+        if (task.timeout) limits.push(t('taskTurnLimit', { seconds: task.timeout }));
+        if (task.max_total_time) limits.push(t('taskTotalLimit', { seconds: task.max_total_time }));
+        if (task.max_reschedules) limits.push(t('taskRescheduleLimit', { count: task.reschedule_count || 0, max: task.max_reschedules }));
+        if (limits.length) line += '\n  ' + t('taskLimitsLabel', { limits: limits.join(', ') });
         return line;
       };
       const activeTasks = tasks.filter(t => t.status === 'active' || t.status === 'paused');
       if (activeTasks.length) {
         if (lines.length) lines.push('');
-        lines.push('**Running:**');
+        lines.push('**' + t('taskRunningHeader') + '**');
         for (const t of activeTasks) lines.push(formatTask(t));
       }
-      if (!lines.length) addMsg('system', 'No task definitions or running tasks.');
+      if (!lines.length) addMsg('system', t('noTaskDefinitionsOrRunning'));
       else addMsg('system', lines.join('\n'));
     });
   } else if (sub === 'pause' || sub === 'resume' || sub === 'cancel') {
     const taskAgentRaw = parts[2];
-    if (!taskAgentRaw) { addMsg('system', 'Usage: /task ' + sub + ' <task_id|@agent>'); return true; }
+    if (!taskAgentRaw) { addMsg('system', t('usageLine', { usage: '/task ' + sub + ' <task_id|@agent>' })); return true; }
     const taskAgent = stripTarget(taskAgentRaw);
     action$(sub + '_task', {
       task_id: taskAgent.startsWith('t_') ? taskAgent : '',
       agent_name: taskAgent.startsWith('t_') ? '' : taskAgent,
     }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
-      else { addMsg('system', 'Task ' + sub + 'd for ' + taskAgent + '.'); }
+      else { addMsg('system', t('taskActionFor', { action: sub + 'd', target: taskAgent })); }
     });
   } else if (sub === 'edit' || sub === 'set') {
     const taskId = parts[2] || '';
     if (!taskId || !taskId.startsWith('t_')) {
-      addMsg('system', 'Usage: /task edit <task_id> [--budget $X] [--turn-time Xm] [--total-time Xh] [--max-reschedules N] [--max N] [--interval X]');
+      addMsg('system', t('usageLine', { usage: '/task edit <task_id> [--budget $X] [--turn-time Xm] [--total-time Xh] [--max-reschedules N] [--max N] [--interval X]' }));
       return true;
     }
     const eqargs = parseQuotedArgs(text);
@@ -162,10 +162,10 @@ function cmdTask(text, parts) {
     }
     action$('edit_task', editParams).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
-      else { addMsg('system', 'Task updated: ' + (data.changed || []).join(', ')); }
+      else { addMsg('system', t('taskUpdatedFields', { fields: (data.changed || []).join(', ') })); }
     });
   } else {
-    addMsg('system', 'Usage: /task create | assign | list | edit | delete | pause | resume | cancel');
+    addMsg('system', t('usageLine', { usage: '/task create | assign | list | edit | delete | pause | resume | cancel' }));
   }
   return true;
 }
@@ -176,30 +176,30 @@ function cmdVidservice(text, parts) {
     action$('list_video_services', {}).subscribe(data => {
       const services = Array.isArray(data) ? data : (data.services || []);
       if (!services.length) {
-        addMsg('system', 'No video generation services deployed.');
+        addMsg('system', t('noVideoServicesDeployed'));
       } else {
         const lines = services.map(s => {
           let line = '  \u2022 ' + s.id + ' (' + s.type + ', ' + s.scope + ')';
           if (s.selected_for && s.selected_for.length > 0) {
-            line += ' \u2190 selected for: ' + s.selected_for.join(', ');
+            line += ' \u2190 ' + t('selectedFor', { agents: s.selected_for.join(', ') });
           }
           return line;
         });
-        addMsg('system', 'Video services available:\n' + lines.join('\n'));
+        addMsg('system', t('videoServicesAvailable') + '\n' + lines.join('\n'));
       }
     });
   } else if (sub === 'select' && parts[2]) {
     const serviceName = stripTarget(parts[2]);
     const agentName = parts[3] ? stripTarget(parts[3]) : '';
-    if (!agentName) { addMsg('system', 'Usage: /vidservice select @<service> @<agent|ALL>'); return true; }
+    if (!agentName) { addMsg('system', t('usageLine', { usage: '/vidservice select @<service> @<agent|ALL>' })); return true; }
     action$('set_video_service', {
       service_name: serviceName, agent_name: agentName,
     }).subscribe(data => {
       if (data.ok) {
-        const target = agentName === 'ALL' ? 'all agents' : agentName;
-        addMsg('system', 'Video service set to "' + serviceName + '" for ' + target + '.');
+        const target = agentName === 'ALL' ? t('allAgents') : agentName;
+        addMsg('system', t('videoServiceSetFor', { service: serviceName, target: target }));
       } else {
-        addMsg('error', data.error || 'Failed to set video service');
+        addMsg('error', data.error || t('failedToSetVideoService'));
       }
     });
   } else if (sub === 'clear') {
@@ -209,14 +209,14 @@ function cmdVidservice(text, parts) {
     }).subscribe(data => {
       if (data.ok) {
         addMsg('system', agentName
-          ? 'Video service preference cleared for ' + agentName + '.'
-          : 'All video service preferences cleared.');
+          ? t('videoServicePreferenceClearedFor', { agent: agentName })
+          : t('allVideoServicePreferencesCleared'));
       } else {
-        addMsg('error', data.error || 'Failed to clear');
+        addMsg('error', data.error || t('failedToClear'));
       }
     });
   } else {
-    addMsg('system', 'Usage: /vidservice list | select <name> [@agent] | clear [@agent]');
+    addMsg('system', t('usageLine', { usage: '/vidservice list | select <name> [@agent] | clear [@agent]' }));
   }
   return true;
 }
@@ -227,30 +227,30 @@ function cmdImgservice(text, parts) {
     action$('list_image_services', {}).subscribe(data => {
       const services = Array.isArray(data) ? data : (data.services || []);
       if (!services.length) {
-        addMsg('system', 'No image generation services deployed.');
+        addMsg('system', t('noImageServicesDeployed'));
       } else {
         const lines = services.map(s => {
           let line = '  \u2022 ' + s.id + ' (' + s.type + ', ' + s.scope + ')';
           if (s.selected_for && s.selected_for.length > 0) {
-            line += ' \u2190 selected for: ' + s.selected_for.join(', ');
+            line += ' \u2190 ' + t('selectedFor', { agents: s.selected_for.join(', ') });
           }
           return line;
         });
-        addMsg('system', 'Image services available:\n' + lines.join('\n'));
+        addMsg('system', t('imageServicesAvailable') + '\n' + lines.join('\n'));
       }
     });
   } else if (sub === 'select' && parts[2]) {
     const serviceName = stripTarget(parts[2]);
     const agentName = parts[3] ? stripTarget(parts[3]) : '';
-    if (!agentName) { addMsg('system', 'Usage: /imgservice select @<service> @<agent|ALL>'); return true; }
+    if (!agentName) { addMsg('system', t('usageLine', { usage: '/imgservice select @<service> @<agent|ALL>' })); return true; }
     action$('set_image_service', {
       service_name: serviceName, agent_name: agentName,
     }).subscribe(data => {
       if (data.ok) {
-        const target = agentName === 'ALL' ? 'all agents' : agentName;
-        addMsg('system', 'Image service set to "' + serviceName + '" for ' + target + '.');
+        const target = agentName === 'ALL' ? t('allAgents') : agentName;
+        addMsg('system', t('imageServiceSetFor', { service: serviceName, target: target }));
       } else {
-        addMsg('error', data.error || 'Failed to set image service');
+        addMsg('error', data.error || t('failedToSetImageService'));
       }
     });
   } else if (sub === 'clear') {
@@ -260,14 +260,14 @@ function cmdImgservice(text, parts) {
     }).subscribe(data => {
       if (data.ok) {
         addMsg('system', agentName
-          ? 'Image service preference cleared for ' + agentName + '.'
-          : 'All image service preferences cleared.');
+          ? t('imageServicePreferenceClearedFor', { agent: agentName })
+          : t('allImageServicePreferencesCleared'));
       } else {
-        addMsg('error', data.error || 'Failed to clear');
+        addMsg('error', data.error || t('failedToClear'));
       }
     });
   } else {
-    addMsg('system', 'Usage: /imgservice list | select <name> [@agent] | clear [@agent]');
+    addMsg('system', t('usageLine', { usage: '/imgservice list | select <name> [@agent] | clear [@agent]' }));
   }
   return true;
 }
@@ -281,32 +281,32 @@ function cmdSkill(text, parts) {
   } else if (sub === 'add' || sub === 'create') {
     const name = _stripAt(parts[2]);
     const prompt = parts.slice(3).join(' ');
-    if (!name || !prompt) { addMsg('system', 'Usage: /skill add @name <prompt>'); return true; }
+    if (!name || !prompt) { addMsg('system', t('usageLine', { usage: '/skill add @name <prompt>' })); return true; }
     cmdResourceAction('create_skill', {name, prompt});
   } else if (sub === 'del' || sub === 'delete') {
     const name = _stripAt(parts[2]);
-    if (!name) { addMsg('system', 'Usage: /skill del @name'); return true; }
+    if (!name) { addMsg('system', t('usageLine', { usage: '/skill del @name' })); return true; }
     cmdResourceAction('delete_skill', {name});
   } else if (sub === 'assign') {
     const agent = _stripAt(parts[2]);
     const skill = _stripAt(parts[3]);
-    if (!agent || !skill) { addMsg('system', 'Usage: /skill assign @agent @skill'); return true; }
+    if (!agent || !skill) { addMsg('system', t('usageLine', { usage: '/skill assign @agent @skill' })); return true; }
     cmdResourceAction('assign_skill', {agent_name: agent, skill_name: skill}).then(() => {
       loadResources();
     });
   } else if (sub === 'unassign') {
     const agent = _stripAt(parts[2]);
     const skill = _stripAt(parts[3]);
-    if (!agent || !skill) { addMsg('system', 'Usage: /skill unassign @agent @skill'); return true; }
+    if (!agent || !skill) { addMsg('system', t('usageLine', { usage: '/skill unassign @agent @skill' })); return true; }
     cmdResourceAction('unassign_skill', {agent_name: agent, skill_name: skill}).then(() => {
       loadResources();
     });
   } else if (sub === 'assigned') {
     const agent = _stripAt(parts[2]);
-    if (!agent) { addMsg('system', 'Usage: /skill assigned @agent'); return true; }
+    if (!agent) { addMsg('system', t('usageLine', { usage: '/skill assigned @agent' })); return true; }
     cmdSkillAssigned(agent);
   } else {
-    addMsg('system', 'Usage: /skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent');
+    addMsg('system', t('usageLine', { usage: '/skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent' }));
   }
   return true;
 }
@@ -314,7 +314,7 @@ function cmdSkill(text, parts) {
 function cmdAddSkill(text, parts) {
   const name = _stripAt(parts[1]);
   const prompt = parts.slice(2).join(' ');
-  if (!name || !prompt) { addMsg('system', 'Usage: /add-skill @name <prompt>'); return true; }
+  if (!name || !prompt) { addMsg('system', t('usageLine', { usage: '/add-skill @name <prompt>' })); return true; }
   cmdResourceAction('create_skill', {name, prompt});
   return true;
 }
@@ -324,10 +324,10 @@ function cmdSkillAssigned(agentName) {
     if (data.error) { addMsg('error', data.error); return; }
     const skills = data.skills || [];
     if (!skills.length) {
-      addMsg('system', `Agent **${agentName}** has no assigned skills.`);
+      addMsg('system', t('agentHasNoAssignedSkills', { agent: agentName }));
       return;
     }
-    let msg = `Skills assigned to **${agentName}**:\n`;
+    let msg = t('skillsAssignedTo', { agent: agentName }) + '\n';
     skills.forEach(s => {
       msg += `  • **${s.name}**` + (s.description ? ` — ${s.description}` : '') + '\n';
     });
@@ -343,7 +343,7 @@ function cmdResources() {
 function cmdActivate(text, parts) {
   const rtype = parts[1];
   const rname = stripTarget(parts[2]);
-  if (!rtype || !rname) { addMsg('system', 'Usage: /activate <agent|skill|mcp> @<name>'); return true; }
+  if (!rtype || !rname) { addMsg('system', t('usageLine', { usage: '/activate <agent|skill|mcp> @<name>' })); return true; }
   cmdResourceAction('activate_resource', {resource_type: rtype, name: rname});
   return true;
 }
@@ -351,7 +351,7 @@ function cmdActivate(text, parts) {
 function cmdDeactivate(text, parts) {
   const rtype = parts[1];
   const rname = stripTarget(parts[2]);
-  if (!rtype || !rname) { addMsg('system', 'Usage: /deactivate <agent|skill|mcp> @<name>'); return true; }
+  if (!rtype || !rname) { addMsg('system', t('usageLine', { usage: '/deactivate <agent|skill|mcp> @<name>' })); return true; }
   cmdResourceAction('deactivate_resource', {resource_type: rtype, name: rname});
   return true;
 }
@@ -361,7 +361,7 @@ function cmdShare(text, parts) {
   const rname = stripTarget(parts[2]);
   const targetConv = parts[3];
   if (!rtype || !rname || !targetConv) {
-    addMsg('system', 'Usage: /share <agent|skill|mcp> <name> <conversation_id>');
+    addMsg('system', t('usageLine', { usage: '/share <agent|skill|mcp> <name> <conversation_id>' }));
     return true;
   }
   cmdResourceAction('share_resource', {
@@ -372,7 +372,7 @@ function cmdShare(text, parts) {
 
 function cmdView(text, parts) {
   const filename = parts.slice(1).join(' ');
-  if (!filename) { addMsg('system', 'Usage: /view <filename>'); return true; }
+  if (!filename) { addMsg('system', t('usageLine', { usage: '/view <filename>' })); return true; }
   openFileViewer(filename);
   return true;
 }
@@ -386,7 +386,7 @@ function cmdService(text, parts) {
     const svcName = parts[3];
     const configStr = parts.slice(4).join(' ');
     if (!svcType || !svcName) {
-      addMsg('system', 'Usage: /service install <type> <name> [key=val,key2=val2,...]');
+      addMsg('system', t('usageLine', { usage: '/service install <type> <name> [key=val,key2=val2,...]' }));
       return true;
     }
     cmdServiceAction('service_install', {
@@ -394,18 +394,18 @@ function cmdService(text, parts) {
     });
   } else if (sub === 'uninstall') {
     const svcName = parts[2];
-    if (!svcName) { addMsg('system', 'Usage: /service uninstall <name>'); return true; }
+    if (!svcName) { addMsg('system', t('usageLine', { usage: '/service uninstall <name>' })); return true; }
     cmdServiceAction('service_uninstall', {service_id: svcName});
   } else if (sub === 'enable') {
     const svcName = parts[2];
-    if (!svcName) { addMsg('system', 'Usage: /service enable <name>'); return true; }
+    if (!svcName) { addMsg('system', t('usageLine', { usage: '/service enable <name>' })); return true; }
     cmdServiceAction('service_enable', {service_id: svcName});
   } else if (sub === 'disable') {
     const svcName = parts[2];
-    if (!svcName) { addMsg('system', 'Usage: /service disable <name>'); return true; }
+    if (!svcName) { addMsg('system', t('usageLine', { usage: '/service disable <name>' })); return true; }
     cmdServiceAction('service_disable', {service_id: svcName});
   } else {
-    addMsg('system', 'Usage: /service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>');
+    addMsg('system', t('usageLine', { usage: '/service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>' }));
   }
   return true;
 }
@@ -415,32 +415,32 @@ function cmdFlow(text, parts) {
   if (sub === 'list') {
     action$('list_conv_flows', {}).subscribe(data => {
       const flows = data.flows || [];
-      if (!flows.length) { addMsg('system', 'No deployed flows.'); }
+      if (!flows.length) { addMsg('system', t('noDeployedFlows')); }
       else {
         const lines = flows.map(function(f) { return (f.status === 'running' ? '\u25b6' : '\u23f9') + ' ' + f.id + ' \u2014 ' + f.name + ' [' + f.status + ']'; });
-        addMsg('system', 'Flows:\n' + lines.join('\n'));
+        addMsg('system', t('flowsHeader') + '\n' + lines.join('\n'));
       }
     });
   } else if (sub === 'templates') {
     action$('list_available_flows', {}).subscribe(data => {
       const templates = data.templates || [];
-      if (!templates.length) { addMsg('system', 'No flow templates.'); }
+      if (!templates.length) { addMsg('system', t('noFlowTemplates')); }
       else {
-        const lines = templates.map(function(tmpl) { return tmpl.id + (tmpl.version ? ' v' + tmpl.version : '') + ' \u2014 ' + tmpl.name + ' (' + tmpl.tasks_count + ' tasks)'; });
-        addMsg('system', 'Flow templates:\n' + lines.join('\n'));
+        const lines = templates.map(function(tmpl) { return tmpl.id + (tmpl.version ? ' v' + tmpl.version : '') + ' \u2014 ' + tmpl.name + ' (' + t('taskCount', { count: tmpl.tasks_count }) + ')'; });
+        addMsg('system', t('flowTemplatesHeader') + '\n' + lines.join('\n'));
       }
     });
   } else if (sub === 'deploy') {
     const templateId = parts[2];
     const scope = parts[3] || 'user';
-    if (!templateId) { addMsg('system', 'Usage: /flow deploy <template_id> [user|conversation]'); return true; }
+    if (!templateId) { addMsg('system', t('usageLine', { usage: '/flow deploy <template_id> [user|conversation]' })); return true; }
     action$('deploy_flow', { template_id: templateId, scope }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
-      else { addMsg('system', 'Deployed: ' + (data.instance_id || '?') + ' (' + scope + ')'); }
+      else { addMsg('system', t('flowDeployed', { id: data.instance_id || '?', scope: scope })); }
     });
   } else if (sub === 'start') {
     const iid = parts[2];
-    if (!iid) { addMsg('system', 'Usage: /flow start <instance_id> [key=val ...]'); return true; }
+    if (!iid) { addMsg('system', t('usageLine', { usage: '/flow start <instance_id> [key=val ...]' })); return true; }
     const overrides = {};
     for (let i = 3; i < parts.length; i++) {
       if (parts[i].includes('=')) {
@@ -451,7 +451,7 @@ function cmdFlow(text, parts) {
     const startFlow = () => {
       action$('start_flow', { instance_id: iid }).subscribe(data => {
         if (data.error) { addMsg('error', data.error); }
-        else { addMsg('system', 'Flow \'' + iid + '\' started'); }
+        else { addMsg('system', t('flowStarted', { id: iid })); }
       });
     };
     if (Object.keys(overrides).length) {
@@ -461,38 +461,38 @@ function cmdFlow(text, parts) {
     }
   } else if (sub === 'stop') {
     const iid = parts[2];
-    if (!iid) { addMsg('system', 'Usage: /flow stop <instance_id>'); return true; }
+    if (!iid) { addMsg('system', t('usageLine', { usage: '/flow stop <instance_id>' })); return true; }
     action$('stop_flow', { instance_id: iid }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
-      else { addMsg('system', 'Flow \'' + iid + '\' stopped'); }
+      else { addMsg('system', t('flowStopped', { id: iid })); }
     });
   } else if (sub === 'params') {
     const iid = parts[2];
-    if (!iid) { addMsg('system', 'Usage: /flow params <instance_id>'); return true; }
+    if (!iid) { addMsg('system', t('usageLine', { usage: '/flow params <instance_id>' })); return true; }
     action$('get_flow_instance', { instance_id: iid }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else {
         const params = { ...(data.template_parameters || {}), ...(data.parameters || {}) };
         const lines = Object.entries(params).map(function(entry) { return '  ' + entry[0] + ' = ' + entry[1]; });
-        addMsg('system', 'Flow ' + (data.flow_name || iid) + ' [' + (data.status || '?') + ']:\n' + lines.join('\n'));
+        addMsg('system', t('flowStatusHeader', { name: data.flow_name || iid, status: data.status || '?' }) + '\n' + lines.join('\n'));
       }
     });
   } else if (sub === 'undeploy') {
     const iid = parts[2];
-    if (!iid) { addMsg('system', 'Usage: /flow undeploy <instance_id>'); return true; }
+    if (!iid) { addMsg('system', t('usageLine', { usage: '/flow undeploy <instance_id>' })); return true; }
     action$('undeploy_flow', { instance_id: iid }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
-      else { addMsg('system', 'Flow \'' + iid + '\' undeployed'); }
+      else { addMsg('system', t('flowUndeployed', { id: iid })); }
     });
   } else if (sub === 'promote') {
     const iid = parts[2];
-    if (!iid) { addMsg('system', 'Usage: /flow promote <instance_id>'); return true; }
+    if (!iid) { addMsg('system', t('usageLine', { usage: '/flow promote <instance_id>' })); return true; }
     action$('promote_flow', { instance_id: iid, target_scope: 'user' }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
-      else { addMsg('system', 'Flow \'' + iid + '\' promoted to user scope'); }
+      else { addMsg('system', t('flowPromotedToUserScope', { id: iid })); }
     });
   } else {
-    addMsg('system', 'Usage: /flow list | templates | deploy | start | stop | params | undeploy | promote');
+    addMsg('system', t('usageLine', { usage: '/flow list | templates | deploy | start | stop | params | undeploy | promote' }));
   }
   return true;
 }
@@ -502,33 +502,33 @@ function cmdPrompt(text, parts) {
   if (sub === 'list') {
     action$('list_skills', {}).subscribe(data => {
       const skills = data.skills || [];
-      if (!skills.length) { addMsg('system', 'No skills.'); }
+      if (!skills.length) { addMsg('system', t('noSkills')); }
       else {
         const lines = skills.map(function(s) { return '\u2022 ' + s.name + ': ' + (s.description || s.preview || '').slice(0, 60); });
-        addMsg('system', 'Skills:\n' + lines.join('\n'));
+        addMsg('system', t('skillsHeader') + '\n' + lines.join('\n'));
       }
     });
   } else if (sub === 'use') {
     const name = parts[2] || '';
-    if (!name) { addMsg('system', 'Usage: /skill use <name>'); return true; }
+    if (!name) { addMsg('system', t('usageLine', { usage: '/skill use <name>' })); return true; }
     action$('get_skill', { name }).subscribe(data => {
-      if (data.prompt) { addMsg('system', 'Skill \'' + name + '\':\n' + data.prompt); }
-      else { addMsg('error', 'Skill \'' + name + '\' not found'); }
+      if (data.prompt) { addMsg('system', t('skillPromptHeader', { name: name }) + '\n' + data.prompt); }
+      else { addMsg('error', t('skillNotFound', { name: name })); }
     });
   } else {
-    addMsg('system', 'Usage: /skill list | use <name>');
+    addMsg('system', t('usageLine', { usage: '/skill list | use <name>' }));
   }
   return true;
 }
 
 function cmdInstall() {
-  addMsg('system', 'To install a tool, drag & drop a .py file into the chat or paste the code with:\n/install filename.py\n```python\n# your code here\n```');
+  addMsg('system', t('installToolInstructions'));
   return true;
 }
 
 function cmdUninstall(text, parts) {
   const toolName = parts[1];
-  if (!toolName) { addMsg('system', 'Usage: /uninstall <tool_name>'); return true; }
+  if (!toolName) { addMsg('system', t('usageLine', { usage: '/uninstall <tool_name>' })); return true; }
   cmdUninstallTool(toolName);
   return true;
 }

@@ -87,7 +87,7 @@ function loadPlans() {
           stepDiv.appendChild(stepLeft);
           if (canAssign && planStatus !== 'cancelled' && planStatus !== 'completed') {
             const assignBtn = document.createElement('button');
-            assignBtn.title = 'Assign step to agent';
+            assignBtn.title = t('assignStepToAgent');
             assignBtn.textContent = '\u{1F464}';
             assignBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;padding:0 2px;color:#6c5ce7;flex-shrink:0;';
             assignBtn.onclick = (function(planId, stepIdx) {
@@ -147,19 +147,19 @@ function showPlanMenu(e, planId, planStatus) {
   _positionMenu(menu, e);
   let items = '';
   if (planStatus === 'pending_approval') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();planAction(\'approve_plan\',\'' + planId + '\');closePlanMenu();">&#x2705; Approve</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();planAction(\'approve_plan\',\'' + planId + '\');closePlanMenu();">&#x2705; ' + escapeHtml(t('approve')) + '</div>';
   }
   if (planStatus !== 'cancelled' && planStatus !== 'completed') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showAssignPlanDialog(\'' + planId + '\');closePlanMenu();">&#x1F464; Assign to...</div>';
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showSetVerifierDialog(\'' + planId + '\',0);closePlanMenu();">&#x1F50D; Set verifier...</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showAssignPlanDialog(\'' + planId + '\');closePlanMenu();">&#x1F464; ' + escapeHtml(t('assignTo')) + '</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showSetVerifierDialog(\'' + planId + '\',0);closePlanMenu();">&#x1F50D; ' + escapeHtml(t('setVerifier')) + '</div>';
   }
   if (planStatus !== 'cancelled' && planStatus !== 'completed') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();planAction(\'cancel_plan\',\'' + planId + '\');closePlanMenu();">&#x23F9; Cancel</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();planAction(\'cancel_plan\',\'' + planId + '\');closePlanMenu();">&#x23F9; ' + escapeHtml(t('contextCancel')) + '</div>';
   }
   if (planStatus !== 'pending_approval') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();planAction(\'reset_plan\',\'' + planId + '\');closePlanMenu();">&#x1F504; Reset</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();planAction(\'reset_plan\',\'' + planId + '\');closePlanMenu();">&#x1F504; ' + escapeHtml(t('reset')) + '</div>';
   }
-  items += '<div class="ctx-menu-item danger" onclick="event.stopPropagation();planAction(\'delete_plan\',\'' + planId + '\');closePlanMenu();">&#x1F5D1; Delete</div>';
+  items += '<div class="ctx-menu-item danger" onclick="event.stopPropagation();planAction(\'delete_plan\',\'' + planId + '\');closePlanMenu();">&#x1F5D1; ' + escapeHtml(t('delete')) + '</div>';
   menu.innerHTML = items;
   setTimeout(() => document.addEventListener('click', closePlanMenu, {once: true}), 0);
 }
@@ -179,24 +179,24 @@ function showPlanStepMenu(e, planId, stepIndex, currentStatus) {
   _positionMenu(menu, e);
   let items = '';
   if (currentStatus !== 'done') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();updatePlanStep(\'' + planId + '\',' + stepIndex + ',\'done\');closePlanMenu();">&#x2705; Mark Done</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();updatePlanStep(\'' + planId + '\',' + stepIndex + ',\'done\');closePlanMenu();">&#x2705; ' + escapeHtml(t('markDone')) + '</div>';
   }
   if (currentStatus !== 'in_progress') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();updatePlanStep(\'' + planId + '\',' + stepIndex + ',\'in_progress\');closePlanMenu();">&#x25D4; In Progress</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();updatePlanStep(\'' + planId + '\',' + stepIndex + ',\'in_progress\');closePlanMenu();">&#x25D4; ' + escapeHtml(t('inProgress')) + '</div>';
   }
   if (currentStatus !== 'skipped') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();updatePlanStep(\'' + planId + '\',' + stepIndex + ',\'skipped\');closePlanMenu();">&#x2013; Skip</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();updatePlanStep(\'' + planId + '\',' + stepIndex + ',\'skipped\');closePlanMenu();">&#x2013; ' + escapeHtml(t('skip')) + '</div>';
   }
   if (currentStatus !== 'pending') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();updatePlanStep(\'' + planId + '\',' + stepIndex + ',\'pending\');closePlanMenu();">&#x25CB; Reset to Pending</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();updatePlanStep(\'' + planId + '\',' + stepIndex + ',\'pending\');closePlanMenu();">&#x25CB; ' + escapeHtml(t('resetToPending')) + '</div>';
   }
   if (currentStatus === 'pending' || currentStatus === 'in_progress' || currentStatus === 'error') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showAssignStepDialog(\'' + planId + '\',' + stepIndex + ');closePlanMenu();">&#x1F464; Assign to...</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showAssignStepDialog(\'' + planId + '\',' + stepIndex + ');closePlanMenu();">&#x1F464; ' + escapeHtml(t('assignTo')) + '</div>';
   }
-  items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showSetVerifierDialog(\'' + planId + '\',' + stepIndex + ');closePlanMenu();">&#x1F50D; Set verifier...</div>';
+  items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showSetVerifierDialog(\'' + planId + '\',' + stepIndex + ');closePlanMenu();">&#x1F50D; ' + escapeHtml(t('setVerifier')) + '</div>';
   if (currentStatus === 'pending_verification') {
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();verifyPlanStep(\'' + planId + '\',' + stepIndex + ',true);closePlanMenu();">&#x2705; Approve step</div>';
-    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();verifyPlanStep(\'' + planId + '\',' + stepIndex + ',false);closePlanMenu();">&#x274C; Reject step</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();verifyPlanStep(\'' + planId + '\',' + stepIndex + ',true);closePlanMenu();">&#x2705; ' + escapeHtml(t('approveStep')) + '</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();verifyPlanStep(\'' + planId + '\',' + stepIndex + ',false);closePlanMenu();">&#x274C; ' + escapeHtml(t('rejectStep')) + '</div>';
   }
   menu.innerHTML = items;
   setTimeout(() => document.addEventListener('click', closePlanMenu, {once: true}), 0);
@@ -221,9 +221,9 @@ function planAction(action, planId) {
     if (data.error) {
       addMsg('system', '\u274C ' + data.error);
     } else {
-      if (data.plan && data.plan.status === 'approved') addMsg('system', '\u2705 Plan approved');
-      else if (data.plan && data.plan.status === 'cancelled') addMsg('system', '\u23F9 Plan cancelled');
-      else if (data.deleted) addMsg('system', '\u2705 Plan deleted');
+      if (data.plan && data.plan.status === 'approved') addMsg('system', '\u2705 ' + t('planApproved'));
+      else if (data.plan && data.plan.status === 'cancelled') addMsg('system', '\u23F9 ' + t('planCancelled'));
+      else if (data.deleted) addMsg('system', '\u2705 ' + t('planDeleted'));
       loadPlans();
     }
   });
@@ -244,7 +244,7 @@ async function showAssignPlanDialog(planId) {
   let agents = [];
   try {
     agents = await _fetchConvAgents();
-  } catch (e) { addMsg('error', 'Failed to list agents'); return; }
+  } catch (e) { addMsg('error', t('failedToListAgents')); return; }
 
   // Build dialog
   const overlay = document.createElement('div');
@@ -260,16 +260,16 @@ async function showAssignPlanDialog(planId) {
   const panel = document.createElement('div');
   panel.setAttribute('data-overlay', '1');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
-  panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">Assign Plan</h3>'
+  panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">' + escapeHtml(t('assignPlan')) + '</h3>'
     + '<div style="margin-bottom:12px;">'
-    + '<label style="color:#a0a0c0;font-size:12px;">Step range (optional):</label>'
-    + '<input id="assignStepRange" type="text" placeholder="e.g. 1-3, remaining, or empty for all" '
+    + '<label style="color:#a0a0c0;font-size:12px;">' + escapeHtml(t('stepRangeOptional')) + ':</label>'
+    + '<input id="assignStepRange" type="text" placeholder="' + escapeHtml(t('stepRangePlaceholder')) + '" '
     + 'style="width:100%;padding:6px;margin-top:4px;background:#0f1629;color:#e0e0e0;border:1px solid #333;border-radius:4px;font-size:12px;">'
     + '</div>'
-    + '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px;">Select agent:</div>'
+    + '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px;">' + escapeHtml(t('selectAgent')) + ':</div>'
     + agentBtns
     + '<button onclick="this.closest(\'[data-overlay]\').remove();" '
-    + 'style="margin-top:12px;padding:6px 16px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;font-size:12px;">Cancel</button>';
+    + 'style="margin-top:12px;padding:6px 16px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;font-size:12px;">' + escapeHtml(t('contextCancel')) + '</button>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 }
@@ -286,7 +286,7 @@ function assignPlanTo(planId, agent, stepRange) {
     if (data.error) {
       addMsg('system', '\u274C ' + data.error);
     } else {
-      addMsg('system', '\u2705 Plan assigned to ' + agent + (sr ? ' (steps ' + sr + ')' : ''));
+      addMsg('system', '\u2705 ' + t('planAssignedTo', { agent: agent, steps: sr ? t('stepsSuffix', { steps: sr }) : '' }));
       loadPlans();
     }
   });
@@ -296,7 +296,7 @@ async function showAssignStepDialog(planId, stepIndex) {
   let agents = [];
   try {
     agents = await _fetchConvAgents();
-  } catch (e) { addMsg('error', 'Failed to list agents'); return; }
+  } catch (e) { addMsg('error', t('failedToListAgents')); return; }
 
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
@@ -311,11 +311,11 @@ async function showAssignStepDialog(planId, stepIndex) {
   const panel = document.createElement('div');
   panel.setAttribute('data-overlay', '1');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
-  panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">Assign Step ' + stepIndex + '</h3>'
-    + '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px;">Select agent:</div>'
+  panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">' + escapeHtml(t('assignStepTitle', { n: stepIndex })) + '</h3>'
+    + '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px;">' + escapeHtml(t('selectAgent')) + ':</div>'
     + agentBtns
     + '<button onclick="this.closest(\'[data-overlay]\').remove();" '
-    + 'style="margin-top:12px;padding:6px 16px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;font-size:12px;">Cancel</button>';
+    + 'style="margin-top:12px;padding:6px 16px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;font-size:12px;">' + escapeHtml(t('contextCancel')) + '</button>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 }
@@ -328,16 +328,16 @@ async function showCreatePlanDialog() {
   const panel = document.createElement('div');
   panel.setAttribute('data-overlay', '1');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:460px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
-  panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">Create Plan</h3>'
-    + '<label style="color:#a0a0c0;font-size:12px;">Title:</label>'
-    + '<input id="newPlanTitle" type="text" placeholder="Plan title" '
+  panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">' + escapeHtml(t('createPlan')) + '</h3>'
+    + '<label style="color:#a0a0c0;font-size:12px;">' + escapeHtml(t('title')) + ':</label>'
+    + '<input id="newPlanTitle" type="text" placeholder="' + escapeHtml(t('planTitlePlaceholder')) + '" '
     + 'style="width:100%;padding:6px;margin:4px 0 12px 0;background:#0f1629;color:#e0e0e0;border:1px solid #333;border-radius:4px;font-size:13px;">'
-    + '<label style="color:#a0a0c0;font-size:12px;">Steps (one per line):</label>'
-    + '<textarea id="newPlanSteps" rows="8" placeholder="Step 1 description\nStep 2 description\nStep 3 description" '
+    + '<label style="color:#a0a0c0;font-size:12px;">' + escapeHtml(t('stepsOnePerLine')) + ':</label>'
+    + '<textarea id="newPlanSteps" rows="8" placeholder="' + escapeHtml(t('stepsPlaceholder')) + '" '
     + 'style="width:100%;padding:6px;margin:4px 0 12px 0;background:#0f1629;color:#e0e0e0;border:1px solid #333;border-radius:4px;font-size:12px;resize:vertical;font-family:inherit;"></textarea>'
     + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
-    + '<button onclick="this.closest(\'[data-overlay]\').remove();" style="padding:8px 16px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;">Cancel</button>'
-    + '<button onclick="submitCreatePlan();this.closest(\'[data-overlay]\').remove();" style="padding:8px 16px;background:#6c5ce7;color:white;border:none;border-radius:4px;cursor:pointer;">Create</button>'
+    + '<button onclick="this.closest(\'[data-overlay]\').remove();" style="padding:8px 16px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+    + '<button onclick="submitCreatePlan();this.closest(\'[data-overlay]\').remove();" style="padding:8px 16px;background:#6c5ce7;color:white;border:none;border-radius:4px;cursor:pointer;">' + escapeHtml(t('create')) + '</button>'
     + '</div>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -349,7 +349,7 @@ function submitCreatePlan() {
   const stepsText = (document.getElementById('newPlanSteps') || {}).value || '';
   const steps = stepsText.split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
   if (!title || !steps.length) {
-    addMsg('system', 'Title and at least one step are required.');
+    addMsg('system', t('planTitleAndStepRequired'));
     return;
   }
   action$('create_plan_user', {
@@ -359,7 +359,7 @@ function submitCreatePlan() {
     if (data.error) {
       addMsg('system', '\u274C ' + data.error);
     } else {
-      addMsg('system', '\u2705 Plan created: ' + title);
+      addMsg('system', '\u2705 ' + t('planCreated', { title: title }));
       loadPlans();
     }
   });
@@ -369,16 +369,16 @@ async function showSetVerifierDialog(planId, stepIndex) {
   let agents = [];
   try {
     agents = await _fetchConvAgents();
-  } catch (e) { addMsg('error', 'Failed to list agents'); return; }
+  } catch (e) { addMsg('error', t('failedToListAgents')); return; }
 
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
   overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
 
-  const label = stepIndex > 0 ? 'Step ' + stepIndex : 'Plan';
+  const label = stepIndex > 0 ? t('stepLabelTitle', { n: stepIndex }) : t('planTitle');
   let btns = '<button onclick="setPlanVerifier(\'' + escapeHtml(planId) + '\',' + stepIndex + ',\'\');this.closest(\'[data-overlay]\').remove();" '
     + 'style="display:block;width:100%;text-align:left;padding:8px 12px;margin:2px 0;background:#2d1f1f;color:#e08080;border:1px solid #533;border-radius:4px;cursor:pointer;font-size:13px;">'
-    + '\u274C Remove verifier</button>';
+    + '\u274C ' + escapeHtml(t('removeVerifier')) + '</button>';
   btns += agents.map(function(a) {
     return '<button onclick="setPlanVerifier(\'' + escapeHtml(planId) + '\',' + stepIndex + ',\'' + escapeHtml(a) + '\');this.closest(\'[data-overlay]\').remove();" '
       + 'style="display:block;width:100%;text-align:left;padding:8px 12px;margin:2px 0;background:#1e1e3f;color:#e0e0e0;border:1px solid #333;border-radius:4px;cursor:pointer;font-size:13px;">'
@@ -388,11 +388,11 @@ async function showSetVerifierDialog(planId, stepIndex) {
   const panel = document.createElement('div');
   panel.setAttribute('data-overlay', '1');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
-  panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">Set Verifier (' + label + ')</h3>'
-    + '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px;">Select verifier agent:</div>'
+  panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">' + escapeHtml(t('setVerifierTitle', { target: label })) + '</h3>'
+    + '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px;">' + escapeHtml(t('selectVerifierAgent')) + ':</div>'
     + btns
     + '<button onclick="this.closest(\'[data-overlay]\').remove();" '
-    + 'style="margin-top:12px;padding:6px 16px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;font-size:12px;">Cancel</button>';
+    + 'style="margin-top:12px;padding:6px 16px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;font-size:12px;">' + escapeHtml(t('contextCancel')) + '</button>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 }
@@ -406,15 +406,15 @@ function setPlanVerifier(planId, stepIndex, verifier) {
     if (data.error) {
       addMsg('system', '\u274C ' + data.error);
     } else {
-      const label = stepIndex > 0 ? 'step ' + stepIndex : 'plan';
-      addMsg('system', verifier ? '\uD83D\uDD0D Verifier set to ' + verifier + ' for ' + label : '\u274C Verifier removed for ' + label);
+      const label = stepIndex > 0 ? t('stepLabel', { n: stepIndex }) : t('plan');
+      addMsg('system', verifier ? '\uD83D\uDD0D ' + t('verifierSetFor', { verifier: verifier, target: label }) : '\u274C ' + t('verifierRemovedFor', { target: label }));
       loadPlans();
     }
   });
 }
 
 function verifyPlanStep(planId, stepIndex, approved) {
-  const reason = approved ? '' : prompt('Reason for rejection:') || '';
+  const reason = approved ? '' : prompt(t('rejectionReasonPrompt')) || '';
   action$('verify_plan_step', {
     plan_id: planId,
     step: stepIndex,
@@ -424,7 +424,7 @@ function verifyPlanStep(planId, stepIndex, approved) {
     if (data.error) {
       addMsg('system', '\u274C ' + data.error);
     } else {
-      addMsg('system', approved ? '\u2705 Step ' + stepIndex + ' approved' : '\u274C Step ' + stepIndex + ' rejected');
+      addMsg('system', approved ? '\u2705 ' + t('stepApproved', { n: stepIndex }) : '\u274C ' + t('stepRejected', { n: stepIndex }));
       loadPlans();
     }
   });

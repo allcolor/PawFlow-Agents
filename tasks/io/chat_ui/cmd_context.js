@@ -11,7 +11,7 @@ function cmdRestartFrom(text, parts) {
     else { restartAgent = stripTarget(parts[i]); }
   }
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
-  showContextOp('Restarting');
+  showContextOp(t('contextRestarting'));
   const restartParams = { keep_last: restartN };
   if (restartAgent) restartParams.agent_name = restartAgent;
   action$('restart_from', restartParams).subscribe(data => {
@@ -24,8 +24,8 @@ function cmdRestartFrom(text, parts) {
 function cmdResume(text) {
   const rargs = parseQuotedArgs(text);
   const target = resolveAgentName(stripTarget(rargs[1] || ''));
-  if (!target) { addMsg('system', 'Usage: /resume @<agent|ALL>'); return true; }
-  const resumeMsg = rargs.slice(2).join(' ') || 'Continue from where you left off.';
+  if (!target) { addMsg('system', t('resumeUsage')); return true; }
+  const resumeMsg = rargs.slice(2).join(' ') || t('continueFromLast');
   if (target.toUpperCase() === 'ALL') { cmdAgentMsgAll(resumeMsg); }
   else { cmdAgentMsg(target, resumeMsg); }
   return true;
@@ -40,7 +40,7 @@ function cmdSummary(text, parts) {
     else { summaryAgent = stripTarget(parts[i]); }
   }
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
-  const label = summaryAgent ? 'Summarizing (' + summaryAgent + ')' : 'Summarizing';
+  const label = summaryAgent ? t('summarizingAgent', { agent: summaryAgent }) : t('summarizing');
   showContextOp(label);
   const summaryParams = { max_tokens: summaryTokens };
   if (summaryAgent) summaryParams.agent_name = summaryAgent;
@@ -67,28 +67,28 @@ function cmdContextCmd(text, parts) {
 }
 
 function cmdCompact(agentName) {
-  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
   const _compactLabel = agentName || selectedAgent || '';
-  const label = _compactLabel ? 'Compacting (' + _compactLabel + ')' : 'Compacting';
+  const label = _compactLabel ? t('compactingAgent', { agent: _compactLabel }) : t('compacting');
   showContextOp(label);
   const params = {};
   const _compactAgent = (agentName && agentName.toLowerCase() === 'shared') ? '' : (agentName || selectedAgent || '');
   if (_compactAgent) params.agent_name = _compactAgent;
   action$('compact', params).subscribe(data => {
-    if (data.error) addMsg('error', 'Compaction failed: ' + data.error);
+    if (data.error) addMsg('error', t('compactionFailed', { error: data.error }));
     hideContextOp();
   });
 }
 
 function cmdRebuild(agentName) {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
-  const label = agentName ? 'Rebuilding (' + agentName + ')' : 'Rebuilding';
+  const label = agentName ? t('rebuildingAgent', { agent: agentName }) : t('rebuildingShort');
   showContextOp(label);
   const params = {};
   const _rebuildAgent = (agentName && agentName.toLowerCase() === 'shared') ? '' : (agentName || selectedAgent || '');
   if (_rebuildAgent) params.agent_name = _rebuildAgent;
   action$('rebuild', params).subscribe(data => {
-    if (data.error) addMsg('error', 'Rebuild failed: ' + data.error);
+    if (data.error) addMsg('error', t('rebuildFailed', { error: data.error }));
     hideContextOp();
   });
 }

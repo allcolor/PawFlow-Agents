@@ -16,10 +16,10 @@ function showParamMenu(e, key, scope, isSecret) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  item('\u{1F441} View', () => _showParamEditor(key, scope, isSecret, false, true));
+  item('\u{1F441} ' + t('view'), () => _showParamEditor(key, scope, isSecret, false, true));
   if (_canEditScope(scope)) {
-    item('\u270F Edit...', () => _showParamEditor(key, scope, isSecret, false));
-    item('\u{1F5D1} Delete', () => {
+    item('\u270F ' + t('editWithEllipsis'), () => _showParamEditor(key, scope, isSecret, false));
+    item('\u{1F5D1} ' + t('delete'), () => {
       if (!confirm(`Delete ${isSecret ? 'secret' : 'variable'} '${key}' (${scope})?`)) return;
       action$(isSecret ? 'delete_secret' : 'delete_param', { key, scope })
         .subscribe({ next: () => loadResources(), error: e => addMsg('error', e.message) });
@@ -37,21 +37,21 @@ function _showParamEditor(key, scope, isSecret, isNew) {
   const title = isNew ? `New ${isSecret ? 'secret' : 'variable'}` : `Edit ${isSecret ? 'secret' : 'variable'}: ${key}`;
   let formHtml = '';
   if (isNew) {
-    formHtml += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Key</label><input id="pv-key" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
-    formHtml += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="pv-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
-      + (_isAdmin() ? '<option value="global">Global</option>' : '')
-      + '<option value="user">User</option><option value="conversation">Conversation</option></select></div>';
+    formHtml += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">' + t('key') + '</label><input id="pv-key" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
+    formHtml += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">' + t('scope') + '</label><select id="pv-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
+      + (_isAdmin() ? '<option value="global">' + t('global') + '</option>' : '')
+      + '<option value="user">' + t('user') + '</option><option value="conversation">' + t('conversation') + '</option></select></div>';
   }
   const inputType = isSecret ? 'password' : 'text';
-  formHtml += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Value</label><input id="pv-value" type="${inputType}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
+  formHtml += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${t('value')}</label><input id="pv-value" type="${inputType}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
   const panel = document.createElement('div');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:400px;border:1px solid #333;';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${title}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
   </div>` + formHtml + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-    <button onclick="_saveParam('${key}','${scope}',${isSecret},${isNew})" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${t('contextCancel')}</button>
+    <button onclick="_saveParam('${key}','${scope}',${isSecret},${isNew})" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${t('contextSave')}</button>
   </div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -61,7 +61,7 @@ function _saveParam(origKey, origScope, isSecret, isNew) {
   const key = isNew ? (document.getElementById('pv-key').value || '').trim() : origKey;
   const scope = isNew ? (document.getElementById('pv-scope').value || 'conversation') : origScope;
   const value = document.getElementById('pv-value').value;
-  if (!key) { alert('Key is required'); return; }
+  if (!key) { alert(t('keyRequired')); return; }
   const actionName = isSecret ? 'set_secret' : 'set_param';
   action$(actionName, { key, value, scope }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
@@ -79,11 +79,11 @@ function fetchFsFile(service, fpath) {
   // Fetch file from filesystem service and open in viewer
   action$('call_tool', { tool_name: 'read', arguments: { path: fpath, service: service } })
     .subscribe(data => {
-      if (data.error) { addMsg('error', 'Failed to read fs://' + service + '/' + fpath + ': ' + data.error); return; }
+      if (data.error) { addMsg('error', t('failedReadFile', { service: service, path: fpath, error: data.error })); return; }
       const result = data.result || '';
       // Check if it's text or base64 binary
       if (result.startsWith('(binary file')) {
-        addMsg('system', 'Binary file: fs://' + service + '/' + fpath);
+        addMsg('system', t('binaryFile', { service: service, path: fpath }));
       } else {
         // Create blob and open in viewer
         const blob = new Blob([result], { type: 'text/plain' });
@@ -103,7 +103,7 @@ function openFileViewer(filenameOrUrl) {
       <div style="display:flex;align-items:center;padding:8px 16px;gap:12px;background:#2d2d44;">
         <span id="viewerFileName" style="flex:1;color:#ccc;font-size:14px;"></span>
         <span id="viewerFileSize" style="color:#888;font-size:12px;"></span>
-        <a id="viewerDownload" download style="background:#6c5ce7;color:#fff;text-decoration:none;font-size:13px;padding:4px 12px;border-radius:4px;cursor:pointer;display:inline-block;">\u2B07 Download</a>
+        <a id="viewerDownload" download style="background:#6c5ce7;color:#fff;text-decoration:none;font-size:13px;padding:4px 12px;border-radius:4px;cursor:pointer;display:inline-block;">\u2B07 ${t('download')}</a>
         <button onclick="closeFileViewer()" style="background:#ff6b6b;border:none;color:#fff;font-size:13px;padding:4px 10px;border-radius:4px;cursor:pointer;">\u2715</button>
       </div>
       <div id="viewerContent" style="flex:1;overflow:auto;padding:16px;"></div>

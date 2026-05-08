@@ -14,7 +14,7 @@ function cmdInterrupt(text, parts) {
   const parsed = _parseAgentTask(raw);
   if (parsed.taskId) {
     interruptSingle(parsed.agent, parsed.taskId);
-    addMsg('system', 'Interrupting task ' + parsed.taskId + ' (' + parsed.agent + ')...');
+    addMsg('system', t('interruptingTask', { task: parsed.taskId, agent: parsed.agent }));
   } else {
     cmdAgentInterrupt(parsed.agent);
   }
@@ -26,7 +26,7 @@ function cmdForceStop(text, parts) {
   const parsed = _parseAgentTask(raw);
   if (parsed.taskId) {
     stopSingle(parsed.agent, parsed.taskId);
-    addMsg('system', 'Stopping task ' + parsed.taskId + ' (' + parsed.agent + ')...');
+    addMsg('system', t('stoppingTask', { task: parsed.taskId, agent: parsed.agent }));
   } else {
     cancelAgent(parsed.agent);
   }
@@ -45,19 +45,19 @@ function cmdAgent(text, parts) {
     cmdAgentSelect(name);
   } else if (sub === 'delete' || sub === 'del') {
     const name = resolveAgentName(stripTarget(qargs[2]));
-    if (!name) { addMsg('system', 'Usage: /agent delete @<name>'); }
+    if (!name) { addMsg('system', t('agentDeleteUsage')); }
     else { cmdAgentDelete(name); }
   } else if (sub === 'msg' || sub === 'message') {
     const target = resolveAgentName(stripTarget(qargs[2] || ''));
     const msgText = qargs.slice(3).join(' ');
-    if (!target) { addMsg('system', 'Usage: /agent msg @<name|ALL> <message>'); }
-    else if (!msgText) { addMsg('system', 'Usage: /agent msg ' + target + ' <message>'); }
+    if (!target) { addMsg('system', t('agentMsgUsage')); }
+    else if (!msgText) { addMsg('system', t('agentMsgTargetUsage', { target: target })); }
     else if (target.toUpperCase() === 'ALL') { cmdAgentMsgAll(msgText); }
     else { cmdAgentMsg(target, msgText); }
   } else if (sub === 'btw') {
     const target = resolveAgentName(stripTarget(qargs[2] || ''));
     const btwText = qargs.slice(3).join(' ');
-    if (!btwText && !target) { addMsg('system', 'Usage: /agent btw @<name|ALL> <question>'); }
+    if (!btwText && !target) { addMsg('system', t('agentBtwUsage')); }
     else if (!btwText) {
       cmdAgentBtw('', target + ' ' + qargs.slice(3).join(' '));
     } else {
@@ -65,7 +65,7 @@ function cmdAgent(text, parts) {
     }
   } else if (sub === 'resume') {
     const target = resolveAgentName(stripTarget(qargs[2] || ''));
-    const resumeMsg = qargs.slice(3).join(' ') || 'Continue from where you left off.';
+    const resumeMsg = qargs.slice(3).join(' ') || t('continueFromLast');
     if (target.toUpperCase() === 'ALL') { cmdAgentMsgAll(resumeMsg); }
     else if (target) { cmdAgentMsg(target, resumeMsg); }
     else {
@@ -87,7 +87,7 @@ function cmdAgent(text, parts) {
     const realName = stripTarget(qargs2[2] || '');
     const nickname = qargs2[3] || '';
     if (!realName) {
-      addMsg('system', 'Usage: /agent setname @<realname> [nickname]  (omit nickname to reset)');
+      addMsg('system', t('agentSetnameUsage'));
     } else {
       cmdAgentSetname(realName, nickname || realName);
     }
@@ -95,25 +95,25 @@ function cmdAgent(text, parts) {
     fireAction('manage_resource', { resource_type: 'agent', name: stripTarget(parts[2]),
       data: {}, _action: 'disable' });
     fireAction('agent_disable', { agent_name: stripTarget(parts[2]) });
-    addMsg('system', 'Agent disabled.');
+    addMsg('system', t('agentDisabled'));
   } else if (sub === 'enable' && parts[2]) {
     action$('agent_enable', { agent_name: stripTarget(parts[2]) }).subscribe(data => {
-      addMsg('system', data.result || data.error || 'Agent enabled.');
+      addMsg('system', data.result || data.error || t('agentEnabled'));
     });
   } else if (sub === 'promote' && parts[2] && parts[3]) {
     action$('agent_promote', { agent_name: stripTarget(parts[2]), target_scope: parts[3] }).subscribe(data => {
-      addMsg('system', data.result || data.error || 'Agent promoted.');
+      addMsg('system', data.result || data.error || t('agentPromoted'));
     });
   } else if (sub === 'create-conv') {
     const qargs2 = parseQuotedArgs(text);
     const cname = stripTarget(qargs2[2] || '');
     const cprompt = qargs2[3] || '';
-    if (!cname || !cprompt) { addMsg('system', 'Usage: /agent create-conv @<name> "<prompt>"'); return true; }
+    if (!cname || !cprompt) { addMsg('system', t('agentCreateConvUsage')); return true; }
     action$('create_agent', { name: cname, prompt: cprompt, scope: 'conversation' }).subscribe(data => {
-      addMsg('system', data.result || data.error || 'Agent created.');
+      addMsg('system', data.result || data.error || t('agentCreated'));
     });
   } else {
-    addMsg('system', 'Usage: /agent list | create | create-conv | select | delete | msg | disable | enable | promote | setname');
+    addMsg('system', t('agentUsage'));
   }
   return true;
 }
@@ -134,8 +134,8 @@ function cmdMsg(text) {
     target = selectedAgent;
     msgText = margs.slice(1).join(' ');
   }
-  if (!target) { addMsg('system', 'Usage: /msg [@agent|@t_taskid] <message> (defaults to selected agent)'); }
-  else if (!msgText) { addMsg('system', 'Usage: /msg ' + target + ' <message>'); }
+  if (!target) { addMsg('system', t('msgUsage')); }
+  else if (!msgText) { addMsg('system', t('msgTargetUsage', { target: target })); }
   else if (/^t_[0-9a-f]+$/.test(target)) { cmdTaskMsg(target, msgText); }
   else if (target.toUpperCase() === 'ALL') { cmdAgentMsgAll(msgText); }
   else { cmdAgentMsg(target, msgText); }
@@ -155,7 +155,7 @@ function cmdBtw(text) {
     target = selectedAgent;
     btwText = bargs.slice(1).join(' ');
   }
-  if (!btwText && !target) { addMsg('system', 'Usage: /btw [@agent] <question> (defaults to selected agent)'); }
+  if (!btwText && !target) { addMsg('system', t('btwUsage')); }
   else if (!btwText) {
     cmdAgentBtw('', target + ' ' + bargs.slice(2).join(' '));
   } else {
@@ -168,19 +168,19 @@ function cmdSetname(text) {
   const sargs = parseQuotedArgs(text);
   const realName = stripTarget(sargs[1] || '');
   const nickname = sargs[2] || '';
-  if (!realName) { addMsg('system', 'Usage: /setname @<agent> [nickname]  (omit nickname to reset)'); return true; }
+  if (!realName) { addMsg('system', t('setnameUsage')); return true; }
   cmdAgentSetname(realName, nickname || realName);
   return true;
 }
 
 function cmdAgentList() {
-  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
   action$('list_agents').subscribe(data => {
     const agents = data.agents || {};
     const selected = data.selected || '';
     const names = Object.keys(agents);
     if (names.length === 0) {
-      addMsg('system', 'No agents defined. Use /agent create to add one.');
+      addMsg('system', t('noAgentsDefinedUsage'));
     } else {
       const scopeIcons = {'global': '\u{1F310}', 'user': '\u{1F464}', 'conversation': '\u{1F4AC}'};
       const lines = names.map(n => {
@@ -190,7 +190,7 @@ function cmdAgentList() {
         const pr = (a.prompt || '').substring(0, 80);
         return '\u2022 ' + scope + ' **' + n + '**' + marker + ' \u2014 ' + pr + '...';
       });
-      addMsg('system', 'Agents (' + (selected ? 'active: ' + selected : 'none selected') + '):\n' + lines.join('\n'));
+      addMsg('system', t('agentsListTitle', { state: selected ? t('activeAgentState', { agent: selected }) : t('noneSelected'), lines: lines.join('\n') }));
     }
   });
 }
@@ -209,7 +209,7 @@ function updateActiveAgentBadge() {
   const hue = Math.abs(h) % 360;
   badge.style.background = 'hsl(' + hue + ',60%,25%)';
   badge.style.color = 'hsl(' + hue + ',80%,80%)';
-  badge.title = !agent ? 'Default agent' : 'Active: ' + agent + ' — click to switch back';
+  badge.title = !agent ? t('defaultAgentTitle') : t('activeAgentTitle', { agent: agent });
   // Compose label + inline context gauge (if we have a cached value for this agent)
   const label = '\u2192 ' + displayAgentName(agent);
   let gaugeHtml = '';
@@ -225,36 +225,36 @@ function updateActiveAgentBadge() {
 
 function cmdAgentSelect(name) {
   if (!name) {
-    addMsg('error', 'BUG: agent name required for select');
+    addMsg('error', t('bugAgentRequired'));
     return;
   }
   if (!conversationId) {
     pendingAgent = name;
     selectedAgent = name;
     updateActiveAgentBadge();
-    addMsg('system', `Agent '${name}' selected (will activate on first message).`);
+    addMsg('system', t('agentSelectedPending', { name: name }));
     return;
   }
   action$('select_agent', { name }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     selectedAgent = name;
     updateActiveAgentBadge();
-    addMsg('system', `Agent '${name}' selected. Messages now go to ${name}.`);
+    addMsg('system', t('agentSelected', { name: name }));
     loadResources();
   });
 }
 
 function cmdAgentDelete(name) {
-  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
   action$('delete_agent', { name: name }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', data.deleted ? `Agent '${name}' deleted.` : `Agent '${name}' not found.`);
+    addMsg('system', data.deleted ? t('agentDeleted', { name: name }) : t('agentNotFound', { name: name }));
     loadResources();
   });
 }
 
 function cmdAgentSetname(realName, nickname) {
-  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
   action$('set_agent_nickname', { agent_name: realName, nickname: nickname }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     nicknameMap[realName] = nickname;
@@ -264,7 +264,7 @@ function cmdAgentSetname(realName, nickname) {
 
 function cmdAgentMsg(agentName, text) {
   if (pendingFiles.some(f => f.uploading)) {
-    addMsg('system', 'Files still uploading, please wait...'); return;
+    addMsg('system', t('filesUploadingWait')); return;
   }
   const attachments = pendingFiles.map(f => ({
     filename: f.filename, mime_type: f.mime_type, file_id: f.file_id,
@@ -300,29 +300,29 @@ function cmdAgentMsg(agentName, text) {
       if (data.message_count) serverMsgCount = data.message_count;
       _checkServerRestart(data);
     }).catch(e => {
-      addMsg('error', 'Failed to send to agent: ' + e.message);
+      addMsg('error', t('failedSendAgent', { error: e.message }));
       sending = false;
     });
 }
 
 function cmdTaskMsg(taskId, text) {
-  if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
   addMsg('user', text, { source: { type: 'user', name: '', target_task: taskId } });
   action$('msg_task', { task_id: taskId, message: text }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); }
-    else { addMsg('system', 'Message sent to task ' + taskId); }
+    else { addMsg('system', t('messageSentTask', { task: taskId })); }
   });
 }
 
 function cmdAgentMsgAll(text) {
   if (!conversationId) {
-    addMsg('system', 'Start a conversation first before broadcasting.');
+    addMsg('system', t('broadcastFirst'));
     return;
   }
   addMsg('user', text, { source: { type: 'user', name: '', target_agent: 'ALL' } });
   if (typeof _ensureSSEBeforeUserAction === 'function') _ensureSSEBeforeUserAction();
   sending = true;
-  document.getElementById('status').textContent = 'Broadcasting...';
+  document.getElementById('status').textContent = t('broadcasting');
 
   action$('broadcast_agents', { message: text }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); sending = false; }
@@ -330,9 +330,9 @@ function cmdAgentMsgAll(text) {
 }
 
 function cmdAgentInterrupt(target) {
-  if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
   const isAll = target.toUpperCase() === 'ALL';
-  addMsg('system', isAll ? 'Interrupting all agents...' : ('Interrupting ' + (target || 'agent') + '...'));
+  addMsg('system', isAll ? t('interruptingAllAgents') : t('interruptingAgent', { agent: target || t('agent') }));
   if (isAll) {
     fireAction('interrupt', { agent_name: '' });
     action$('list_agents').subscribe(data => {
@@ -346,7 +346,7 @@ function cmdAgentInterrupt(target) {
 }
 
 function cmdAgentBtw(target, question) {
-  if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
   const agent = target || '';
   const isAll = agent.toUpperCase() === 'ALL';
   addMsg('user', question, { source: { type: 'user', name: '', target_agent: agent || '', btw: true } });

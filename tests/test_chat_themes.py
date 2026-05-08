@@ -74,7 +74,7 @@ def test_shipped_themes_are_directory_resources():
         "paper", "nord_light", "sage_light", "rose_light",
         "claude", "chatgpt", "qwen", "deepseek", "grok", "gemini",
         "solarized_dark", "dracula", "midnight_blue", "high_contrast",
-        "commodore_64", "amstrad_cpc", "nintendo", "sega",
+        "commodore_64", "amstrad_cpc", "amstrad_cpc_monochrome", "nintendo", "sega",
         "ubuntu_linux", "steam", "bladerunner",
         "nvidia", "amazon_aws", "windows_11", "kde", "interstellar",
     }

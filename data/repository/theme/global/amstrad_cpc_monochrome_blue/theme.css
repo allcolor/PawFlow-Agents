@@ -1,0 +1,377 @@
+:root {
+  --pf-bg: #000918;
+  --pf-panel: #001438;
+  --pf-sidebar: #00040d;
+  --pf-border: #2aa7ff;
+  --pf-text: #86d7ff;
+  --pf-muted: #3f8fca;
+  --pf-accent: #00a8ff;
+  --pf-accent-2: #c4ecff;
+  --pf-user: #002859;
+  --pf-assistant: #000f2a;
+  --pf-code-bg: #00030a;
+  --pf-danger: #7cd6ff;
+  --pf-warning: #a8e3ff;
+  --pf-success: #00a8ff;
+  --pf-shadow: rgba(0, 0, 0, 0.88);
+  --pf-glow: rgba(0, 168, 255, 0.38);
+  --pf-glow-soft: rgba(134, 215, 255, 0.2);
+  --pf-radius: 6px;
+  --pf-radius-sm: 3px;
+  --pf-font-ui: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  --pf-font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+body {
+  background: var(--pf-bg) !important;
+  color: var(--pf-text) !important;
+  font-family: var(--pf-font-ui) !important;
+  text-shadow: 0 0 6px var(--pf-glow-soft) !important;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483000;
+  background:
+    repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.18) 0, rgba(0, 0, 0, 0.18) 1px, transparent 1px, transparent 4px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.2), transparent 18%, transparent 82%, rgba(0, 0, 0, 0.22)),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.28), transparent 16%, transparent 84%, rgba(0, 0, 0, 0.32));
+  mix-blend-mode: multiply;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 18px;
+  pointer-events: none;
+  z-index: 2147482999;
+  border: 1px solid rgba(0, 168, 255, 0.22);
+  border-radius: 28px;
+  box-shadow: inset 0 0 42px rgba(0, 168, 255, 0.14), 0 0 30px rgba(0, 168, 255, 0.08);
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #00030a; }
+::-webkit-scrollbar-thumb { background: var(--pf-border); border-radius: 2px; box-shadow: 0 0 8px var(--pf-glow); }
+::-webkit-scrollbar-thumb:hover { background: var(--pf-accent-2); }
+
+.sidebar,
+.tab-bar,
+.files-panel,
+.fe-toolbar,
+.fe-table th,
+.fe-status,
+.fe-preview-pane .fe-ph,
+.load-more-banner {
+  background: var(--pf-sidebar) !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-text) !important;
+  box-shadow: inset 0 0 18px rgba(0, 168, 255, 0.08) !important;
+}
+
+.main,
+.messages-wrap,
+.tab-content.active,
+.audio-tab-panel,
+.fe-content {
+  background: linear-gradient(180deg, #000d24, var(--pf-bg)) !important;
+  color: var(--pf-text) !important;
+}
+
+.header,
+.input-area,
+.action-menu,
+.ctx-menu,
+.dialog,
+.exec-dialog,
+.active-panel,
+.fe-panel,
+.fe-preview-pane,
+.audio-tab-controls,
+.ask-user-box {
+  background: var(--pf-panel) !important;
+  border: 1px solid var(--pf-border) !important;
+  color: var(--pf-text) !important;
+  box-shadow: inset 0 0 18px rgba(0, 168, 255, 0.08), 0 0 22px var(--pf-shadow) !important;
+}
+
+.sidebar-header,
+.sidebar-settings,
+.header,
+.input-area,
+.files-table th,
+.files-table td,
+.delegate-body,
+.delegate-sub-body,
+.delegate-message,
+.delegate-response,
+.trace-content,
+.msg-meta,
+.action-menu-sep,
+.fe-ctx hr,
+.technical-group-body { border-color: rgba(0, 168, 255, 0.42) !important; }
+
+.header h1,
+.sidebar-header h2,
+.conv-branch,
+.ami-label,
+.delegate-dst,
+.tc-diff .diff-hunk,
+.tc-grep .grep-loc,
+.fe-status .fe-clip,
+.tab-btn.active,
+.action-menu-item:hover,
+a,
+.msg a {
+  color: var(--pf-accent) !important;
+  text-shadow: 0 0 8px var(--pf-glow) !important;
+}
+
+.status,
+.conv-meta,
+.ami-desc,
+.msg.system,
+.msg.system-compact,
+.msg-time,
+.msg-meta,
+.msg-meta .meta-details,
+.delegate-status,
+.delegate-sub-title,
+.tool-result-meta,
+.trace-meta,
+.file-hint,
+.fe-muted,
+.form-help { color: var(--pf-muted) !important; }
+
+button,
+.btn,
+.icon-btn,
+.send-btn,
+.action-btn,
+.dialog button,
+.exec-dialog button,
+.ctx-menu button,
+.tab-btn,
+.chip,
+select,
+input,
+textarea {
+  background: #000918 !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-text) !important;
+  border-radius: var(--pf-radius-sm) !important;
+  font-family: var(--pf-font-ui) !important;
+}
+
+button:hover,
+.btn:hover,
+.icon-btn:hover,
+.action-btn:hover,
+.tab-btn:hover,
+.ctx-menu button:hover,
+select:hover,
+input:focus,
+textarea:focus {
+  background: #002859 !important;
+  color: var(--pf-accent-2) !important;
+  box-shadow: 0 0 10px var(--pf-glow) !important;
+}
+
+.send-btn,
+.primary,
+.btn-primary,
+button.primary,
+button[type='submit'] {
+  background: var(--pf-accent) !important;
+  border-color: var(--pf-accent-2) !important;
+  color: #000918 !important;
+  text-shadow: none !important;
+}
+
+.msg {
+  background: #000b1f !important;
+  border: 1px solid rgba(0, 168, 255, 0.34) !important;
+  color: var(--pf-text) !important;
+  border-radius: var(--pf-radius) !important;
+  box-shadow: inset 0 0 18px rgba(0, 168, 255, 0.06) !important;
+}
+
+.msg.user {
+  background: var(--pf-user) !important;
+  border-color: var(--pf-accent) !important;
+  color: var(--pf-accent-2) !important;
+}
+
+.msg.assistant {
+  background: var(--pf-assistant) !important;
+  border-color: rgba(134, 215, 255, 0.48) !important;
+}
+
+.msg.tool,
+.tool-call,
+.tool-result,
+.technical-group,
+.technical-event {
+  background: #000615 !important;
+  border-color: rgba(0, 168, 255, 0.36) !important;
+  color: var(--pf-text) !important;
+}
+
+pre,
+code,
+.hljs,
+.markdown-body pre,
+.markdown-body code,
+.tool-code,
+.diff-view {
+  background: var(--pf-code-bg) !important;
+  border-color: rgba(0, 168, 255, 0.46) !important;
+  color: var(--pf-accent-2) !important;
+  font-family: var(--pf-font-mono) !important;
+  text-shadow: 0 0 7px rgba(0, 168, 255, 0.24) !important;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.diff-add { color: var(--pf-accent) !important; }
+
+.hljs-string,
+.hljs-title,
+.hljs-name,
+.diff-del { color: var(--pf-accent-2) !important; }
+
+.hljs-comment,
+.hljs-quote { color: var(--pf-muted) !important; }
+
+.files-table,
+.fe-table,
+table {
+  background: #000511 !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-text) !important;
+}
+
+.files-table tr:hover,
+.fe-table tr:hover,
+tr:hover { background: rgba(0, 168, 255, 0.08) !important; }
+
+.badge,
+.pill,
+.tag,
+.ctx-chip,
+.model-badge,
+.permission-badge {
+  background: #001b40 !important;
+  border: 1px solid var(--pf-border) !important;
+  color: var(--pf-accent-2) !important;
+  border-radius: 3px !important;
+}
+
+.toast,
+.notice,
+.banner,
+.error-banner {
+  background: #000f2a !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-accent-2) !important;
+}
+
+.error,
+.danger,
+.status-error,
+.msg.error { color: var(--pf-danger) !important; border-color: var(--pf-danger) !important; }
+
+.warning,
+.status-warning { color: var(--pf-warning) !important; }
+
+.success,
+.status-success { color: var(--pf-success) !important; }
+
+.progress,
+progress,
+.meter { accent-color: var(--pf-accent) !important; }
+
+.delegate-block,
+.delegate-sub-block,
+.branch-block,
+.trace-block {
+  background: #000918 !important;
+  border-color: rgba(0, 168, 255, 0.38) !important;
+  color: var(--pf-text) !important;
+}
+
+.trace-row,
+.trace-line,
+.technical-row { border-color: rgba(0, 168, 255, 0.18) !important; }
+
+.tc-diff .diff-add,
+.diff-line.add { background: rgba(0, 168, 255, 0.12) !important; color: var(--pf-accent-2) !important; }
+
+.tc-diff .diff-del,
+.diff-line.del { background: rgba(134, 215, 255, 0.08) !important; color: var(--pf-muted) !important; }
+
+input::placeholder,
+textarea::placeholder { color: rgba(134, 215, 255, 0.56) !important; }
+
+select option { background: #000918 !important; color: var(--pf-text) !important; }
+
+::selection { background: var(--pf-accent) !important; color: #000918 !important; text-shadow: none !important; }
+
+.markdown-body,
+.markdown-body p,
+.markdown-body li,
+.markdown-body td { color: var(--pf-text) !important; }
+
+.markdown-body blockquote {
+  background: #000615 !important;
+  border-left-color: var(--pf-accent) !important;
+  color: var(--pf-muted) !important;
+}
+
+.markdown-body hr { border-color: rgba(0, 168, 255, 0.35) !important; }
+
+.fe-tree-item,
+.file-row,
+.conv-item {
+  color: var(--pf-text) !important;
+  border-color: transparent !important;
+}
+
+.fe-tree-item:hover,
+.file-row:hover,
+.conv-item:hover,
+.conv-item.active {
+  background: rgba(0, 168, 255, 0.1) !important;
+  border-color: var(--pf-border) !important;
+}
+
+.spinner,
+.loading-dot { color: var(--pf-accent) !important; }
+
+.modal-backdrop,
+.overlay { background: rgba(0, 3, 10, 0.82) !important; }
+
+.panel-title,
+.section-title,
+.form-label,
+label { color: var(--pf-accent-2) !important; }
+
+.kbd,
+kbd {
+  background: #00030a !important;
+  border-color: var(--pf-border) !important;
+  color: var(--pf-accent-2) !important;
+  box-shadow: inset 0 -1px 0 rgba(0, 168, 255, 0.28) !important;
+}
+
+@media (max-width: 720px) {
+  body::after { inset: 8px; border-radius: 18px; }
+  .sidebar { border-right-color: var(--pf-border) !important; }
+  .msg { max-width: 92% !important; }
+  .header,
+  .input-area { padding-left: 14px !important; padding-right: 14px !important; }
+}

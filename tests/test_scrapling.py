@@ -113,9 +113,11 @@ class TestScraplingFetchHandler(unittest.TestCase):
 
         h = ScraplingFetchHandler()
         with patch.dict(sys.modules, {"scrapling": mock_mod}), \
-             patch.object(h, '_stealth_subprocess', return_value=None):
+             patch.object(h, '_stealth_subprocess', return_value=None) as mock_sub, \
+             patch.object(h, '_http_fallback', return_value="(empty page)"):
             result = h.execute({"url": "https://example.com"})
         assert "empty page" in result.lower()
+        mock_sub.assert_called_once()
 
     def test_stealth_mode_uses_subprocess(self):
         """Stealth mode runs via subprocess to avoid Playwright asyncio bug."""

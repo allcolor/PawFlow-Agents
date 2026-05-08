@@ -2201,27 +2201,43 @@ class AgentCoreMixin:
                     if fm:
                         final_model = fm
 
-                # Mark last assistant message as error before persisting
+                # Mark only the assistant message that actually carries the
+                # fatal error. A later provider/restart failure must not
+                # repaint the last valid assistant answer as an error.
                 if _fatal_error:
-                    # Find last assistant msg — may be in new_messages (not yet flushed)
-                    # or in messages (already flushed by turn_callback for claude-code)
+                    _err_text = (_fatal_error_msg or "").strip()
+
+                    def _is_error_message(m: LLMMessage) -> bool:
+                        if not _err_text:
+                            return False
+                        content = (m.content or "").strip()
+                        return bool(content) and (
+                            content == _err_text
+                            or content.startswith(_err_text)
+                            or _err_text in content
+                        )
+
+                    # Find the matching assistant error msg — may be in
+                    # new_messages (not yet flushed) or in messages (already
+                    # flushed by a CLI turn_callback).
                     _err_mid = ""
                     for m in reversed(new_messages):
-                        if m.role == "assistant":
+                        if m.role == "assistant" and _is_error_message(m):
                             m.is_error = True
                             _err_mid = m.msg_id
                             break
                     if not _err_mid:
-                        # Already flushed (claude-code path) — find in full messages
+                        # Already flushed CLI path — find only the matching
+                        # error message in the full message list.
                         for m in reversed(messages):
-                            if m.role == "assistant":
+                            if m.role == "assistant" and _is_error_message(m):
                                 m.is_error = True
                                 _err_mid = m.msg_id
                                 break
-                    if not _err_mid and _fatal_error_msg:
-                        # No assistant message at all — create one
+                    if not _err_mid and _err_text:
+                        # No assistant error message exists — create one.
                         _err_msg = LLMMessage(
-                            role="assistant", content=_fatal_error_msg,
+                            role="assistant", content=_err_text,
                             is_error=True, source=_agent_source(),
                             conversation_id=conversation_id)
                         new_messages.append(_err_msg)

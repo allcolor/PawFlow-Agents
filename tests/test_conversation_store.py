@@ -467,6 +467,24 @@ class TestAgentContext:
     def test_save_on_nonexistent_conv_returns_false(self, store):
         assert store.save_agent_context("fake", "a", [_msg()]) is False
 
+    def test_reload_prunes_context_dirs_not_declared_as_agents(self, conv):
+        store, cid, uid = conv
+        store.set_extra(cid, "conv_agents", {
+            "assistant": {"definition": "assistant", "llm_service": "llm"},
+        }, user_id=uid)
+        store.save_agent_context(cid, "assistant", [_msg(content="valid")])
+        store.save_agent_context(cid, "background", [_msg(content="invalid")])
+        store.save_agent_context(cid, uid, [_msg(content="invalid user")])
+
+        store._reload_cache(cid)
+
+        contexts = store.list_agent_contexts(cid)
+        assert "assistant" in contexts
+        assert "background" not in contexts
+        assert uid not in contexts
+        assert not store._agent_ctx_path(cid, "background").parent.exists()
+        assert not store._agent_ctx_path(cid, uid).parent.exists()
+
 
 # ── append_message (unified router) ────────────────────────────────
 
@@ -626,7 +644,10 @@ class TestAppendMessage:
 
     def test_delegate_request_routes_to_from_to_and_shared(self, conv):
         store, cid, uid = conv
-        # Seed cache: ensure both 'alice' and 'bob' are known agents
+        store.set_extra(cid, "conv_agents", {
+            "alice": {"definition": "alice", "llm_service": "llm"},
+            "bob": {"definition": "bob", "llm_service": "llm"},
+        }, user_id=uid)
         store.save_agent_context(cid, "alice", [])
         store.save_agent_context(cid, "bob", [])
         store._reload_cache(cid)
@@ -654,6 +675,10 @@ class TestAppendMessage:
 
     def test_delegate_reply_stays_private_no_shared(self, conv):
         store, cid, uid = conv
+        store.set_extra(cid, "conv_agents", {
+            "alice": {"definition": "alice", "llm_service": "llm"},
+            "bob": {"definition": "bob", "llm_service": "llm"},
+        }, user_id=uid)
         store.save_agent_context(cid, "alice", [])
         store.save_agent_context(cid, "bob", [])
         store._reload_cache(cid)
@@ -680,6 +705,10 @@ class TestAppendMessage:
 
     def test_broadcast_to_other_agents(self, conv):
         store, cid, uid = conv
+        store.set_extra(cid, "conv_agents", {
+            "alice": {"definition": "alice", "llm_service": "llm"},
+            "bob": {"definition": "bob", "llm_service": "llm"},
+        }, user_id=uid)
         store.save_agent_context(cid, "alice", [])
         store.save_agent_context(cid, "bob", [])
         store._reload_cache(cid)

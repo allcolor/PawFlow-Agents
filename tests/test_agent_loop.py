@@ -623,6 +623,34 @@ class TestAgentLoopTask(unittest.TestCase):
         assert history[3]["content"] == "Still here!"
 
     @patch.object(LLMClient, 'complete')
+    def test_fatal_error_does_not_repaint_prior_assistant_message(
+            self, mock_complete):
+        """A later provider failure must not mark the last valid answer red."""
+        mock_complete.side_effect = LLMClientError("LLM call failed: boom")
+
+        existing_history = json.dumps([
+            {"role": "user", "content": "Previous question"},
+            {"role": "assistant", "content": "Previous valid answer"},
+        ])
+
+        task = AgentLoopTask({
+            "api_key": "test-key",
+            "conversation_attribute": "agent.history",
+        })
+        ff = FlowFile(content=b"Next question")
+        ff.set_attribute("agent.history", existing_history)
+        ff.set_attribute("http.auth.principal", "testuser")
+
+        results = task.execute(ff)
+        history = json.loads(results[0].get_attribute("agent.history"))
+
+        assert history[1]["content"] == "Previous valid answer"
+        assert "is_error" not in history[1]
+        assert history[-1]["role"] == "assistant"
+        assert history[-1]["is_error"] is True
+        assert "LLM call failed" in history[-1]["content"]
+
+    @patch.object(LLMClient, 'complete')
     def test_multiple_tool_calls_in_one_response(self, mock_complete):
         """LLM requests multiple tool calls in a single response."""
         tc1 = LLMToolCall(id="call_1", name="execute_script", arguments={"code": "2+2"})
@@ -1237,6 +1265,75 @@ class TestContextActionsAsync(unittest.TestCase):
         assert isinstance(data["diverged"], bool)
         assert data["message_count"] >= 0
         assert data["token_estimate"] >= 0
+
+    def test_get_context_returns_complete_visible_message_content(self):
+        """Paginated context rows must carry full content, not a 300-char preview."""
+        import time
+        import uuid
+        from core.conversation_store import ConversationStore
+
+        store = ConversationStore.instance()
+        cid = "ctx_full_visible_content"
+        store.save(cid, [{"role": "user", "content": "seed"}], user_id="testuser")
+        msg_id = uuid.uuid4().hex[:12]
+        full_content = "alpha " * 120
+        store.save_context(cid, [{
+            "role": "user",
+            "content": full_content,
+            "msg_id": msg_id,
+            "ts": time.time(),
+            "timestamp": time.time(),
+        }])
+
+        ack, data = self._exec_async(self._make_task(), {
+            "action": "get_context",
+            "conversation_id": cid,
+            "agent_name": "shared",
+            "limit": 50,
+        })
+
+        assert ack["status"] == "accepted"
+        assert data is not None
+        assert data["context"][0]["content"] == full_content
+
+    def test_get_context_hides_system_and_user_named_contexts(self):
+        """System/user context files must not become selectable agent contexts."""
+        import time
+        import uuid
+        from core.conversation_store import ConversationStore
+
+        store = ConversationStore.instance()
+        cid = "ctx_hidden_system_contexts"
+        store.save(cid, [{"role": "user", "content": "seed"}], user_id="testuser")
+        store.set_extra(cid, "conv_agents", {
+            "assistant": {"definition": "assistant", "llm_service": "llm"},
+        }, user_id="testuser")
+
+        def _ctx_msg(content):
+            return {
+                "role": "user",
+                "content": content,
+                "msg_id": uuid.uuid4().hex[:12],
+                "ts": time.time(),
+                "timestamp": time.time(),
+            }
+
+        store.save_agent_context(cid, "background", [_ctx_msg("bg")])
+        store.save_agent_context(cid, "testuser", [_ctx_msg("user ctx")])
+        store.save_agent_context(cid, "assistant", [_ctx_msg("assistant ctx")])
+
+        ack, data = self._exec_async(self._make_task(), {
+            "action": "get_context",
+            "conversation_id": cid,
+            "agent_name": "transcript",
+        })
+
+        assert ack["status"] == "accepted"
+        assert data is not None
+        contexts = data["agent_contexts"]
+        assert "assistant" in contexts
+        assert "background" not in contexts
+        assert "testuser" not in contexts
 
     def test_edit_context_async(self):
         """edit_context modifies a message by msg_id via async path."""

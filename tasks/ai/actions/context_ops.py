@@ -332,6 +332,53 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         else:
             store.invalidate_claude_sessions(conv_id)
 
+    def _ctx_cached_usage(conv_id, agent_name=""):
+        """Read persisted context gauge without recomputing the full context."""
+        _name = _ctx_agent_name(agent_name)
+        if not _name:
+            return None
+        usage_map = store.get_extra(conv_id, "context_usage", user_id=user_id) or {}
+        usage = usage_map.get(_name) if isinstance(usage_map, dict) else None
+        if not isinstance(usage, dict) or int(usage.get("max", 0) or 0) <= 0:
+            return None
+        return {
+            "used": int(usage.get("used", 0) or 0),
+            "max": int(usage.get("max", 0) or 0),
+            "pct": float(usage.get("pct", 0.0) or 0.0),
+            "source": usage.get("source", "context_usage_cache"),
+            "message_count": usage.get("message_count", 0),
+            "cache_mode": usage.get("cache_mode", ""),
+            "updated_at": usage.get("updated_at", 0),
+            "computed_from": "persisted_context_usage",
+        }
+
+    def _ctx_visible_contexts(conv_id, raw_map, selected_agent=""):
+        """Return context selector entries that represent real agents/sessions."""
+        if not isinstance(raw_map, dict):
+            raw_map = {}
+        try:
+            from core.conv_agent_config import get_all_agent_configs
+            active_agents = set((get_all_agent_configs(conv_id) or {}).keys())
+        except Exception:
+            active_agents = set()
+        hidden = {"background", "notification", "system"}
+        if user_id:
+            hidden.add(user_id)
+        try:
+            owner = (store._load_cache(conv_id) or {}).get("user_id", "")
+            if owner:
+                hidden.add(owner)
+        except Exception:
+            pass
+        visible = {"*": raw_map.get("*", "messages")}
+        for name, status in raw_map.items():
+            if not name or name == "*" or name in hidden:
+                continue
+            if active_agents and name not in active_agents and name != selected_agent:
+                continue
+            visible[name] = status
+        return visible
+
     def _ctx_llm_service_config(conv_id, agent_name=""):
         """Return the llm_service config associated with the selected agent."""
         _name = _ctx_agent_name(agent_name)
@@ -810,8 +857,6 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        _usage_context_data = None
-
         # Load paginated context (tail-first like load_page)
         if _ctx_agent == "transcript":
             page = store.load_page(conv_id, limit=_limit, offset=_offset, user_id=user_id)
@@ -823,16 +868,16 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             has_more = page["has_more"]
             diverged = False
         elif not _ctx_agent or _ctx_agent == "shared":
-            # Shared context — load from shared.jsonl (not transcript)
-            context_data = _ctx_load(conv_id, "")
-            if context_data is None:
-                context_data = []
-            _usage_context_data = list(context_data)
-            total_count = len(context_data)
-            end = len(context_data) - _offset
-            start = max(0, end - _limit)
-            context_data = context_data[start:end]
-            has_more = start > 0
+            # Shared context — page shared.jsonl directly instead of loading
+            # thousands of rows just to render the first 50.
+            page = store.load_agent_context_page(
+                conv_id, "", limit=_limit, offset=_offset)
+            if page is None:
+                page = store.load_page(
+                    conv_id, limit=_limit, offset=_offset, user_id=user_id) or {}
+            context_data = page.get("messages") or []
+            total_count = page.get("total_count", len(context_data))
+            has_more = page.get("has_more", False)
             diverged = True
         elif _ctx_agent.startswith("cc_session:"):
             _cc_agent = _ctx_agent[len("cc_session:"):]
@@ -866,18 +911,22 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 has_more = page["has_more"]
             diverged = True
         else:
-            private_ctx = store.load_agent_context(conv_id, _ctx_agent)
-            diverged = private_ctx is not None
-            context_data = private_ctx if private_ctx is not None else _ctx_load(conv_id, _ctx_agent)
-            if context_data is None:
-                context_data = []
-            _usage_context_data = list(context_data)
-            total_count = len(context_data)
-            # Paginate in-memory
-            end = len(context_data) - _offset
-            start = max(0, end - _limit)
-            context_data = context_data[start:end]
-            has_more = start > 0
+            page = store.load_agent_context_page(
+                conv_id, _ctx_agent, limit=_limit, offset=_offset)
+            diverged = page is not None
+            if page is None:
+                context_data = _ctx_load(conv_id, _ctx_agent)
+                if context_data is None:
+                    context_data = []
+                total_count = len(context_data)
+                end = len(context_data) - _offset
+                start = max(0, end - _limit)
+                context_data = context_data[start:end]
+                has_more = start > 0
+            else:
+                context_data = page.get("messages") or []
+                total_count = page.get("total_count", len(context_data))
+                has_more = page.get("has_more", False)
 
         # CC session context is read from CC's own jsonl files — we don't
         # own those entries, they don't have PawFlow's (ts, seq) invariant.
@@ -900,25 +949,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         else:
             deserialized = self._deserialize_messages(context_data, conversation_id=conv_id)
             estimated = self._estimate_tokens(deserialized)
-        _context_usage = None
-        if _usage_context_data is not None and _ctx_agent and _ctx_agent != "shared":
-            try:
-                from tasks.ai.context_usage import compute_context_usage
-                usage = compute_context_usage(
-                    conv_id, _ctx_agent, user_id=user_id, store=store,
-                    owner=self, source="context_command")
-                _context_usage = {
-                    "used": int(usage.get("used", 0) or 0),
-                    "max": int(usage.get("max", 0) or 0),
-                    "pct": float(usage.get("pct", 0.0) or 0.0),
-                    "source": usage.get("source", "context_command"),
-                    "message_count": usage.get("message_count", 0),
-                    "cache_mode": usage.get("cache_mode", "full"),
-                    "updated_at": usage.get("updated_at", 0),
-                    "computed_from": "authoritative_agent_context",
-                }
-            except Exception:
-                logger.debug("context usage calculation failed", exc_info=True)
+        _context_usage = _ctx_cached_usage(conv_id, _ctx_agent)
         # Classify messages for display
         display_msgs = []
         _is_shared_view = (not _ctx_agent or _ctx_agent == "shared")
@@ -945,7 +976,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             display_msgs.append({
                 "role": display_role,
                 "raw_role": role,
-                "content": content[:300] if isinstance(content, str) else str(content)[:300],
+                "content": content if isinstance(content, str) else str(content),
                 "has_tool_calls": has_tool_calls,
                 "tool_calls": m.get("tool_calls") or [],
                 "source": m.get("source"),
@@ -954,7 +985,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         # Include agent context status map (only on first page)
         _agent_ctx_map = {}
         if _offset == 0:
-            _agent_ctx_map = store.list_agent_contexts(conv_id)
+            _agent_ctx_map = _ctx_visible_contexts(
+                conv_id, store.list_agent_contexts(conv_id), _ctx_agent)
             _extras = store.get_extras(conv_id, user_id=user_id) or {}
             for ek, ev in _extras.items():
                 if ek.startswith("claude_session:") and ev:

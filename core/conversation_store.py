@@ -34,6 +34,7 @@ Per-conversation locks ensure atomicity of logical operations.
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -1234,17 +1235,46 @@ class ConversationStore:
             if extras_data.get("_meta_created_at"):
                 c["created_at"] = max(c["created_at"], extras_data["_meta_created_at"])
                 c["updated_at"] = max(c["updated_at"], extras_data["_meta_created_at"])
-        # Scan agent context directories
-        conv_dir = self._conv_dir(cid)
-        if conv_dir.is_dir():
-            for entry in conv_dir.iterdir():
-                if entry.is_dir() and self._jsonl_exists(entry / "context.jsonl"):
-                    agent = entry.name.replace("__", ":")
-                    if agent != "_shared":
-                        c["agents"].add(agent)
+        # Only declared conversation agents are routable agent contexts.
+        # Arbitrary context directories can exist from older bugs/backups;
+        # never let their folder names create pseudo-agents such as
+        # "background" or a user id.
+        conv_agents = c.get("extras", {}).get("conv_agents") or {}
+        declared_agents = set()
+        if isinstance(conv_agents, dict) and conv_agents:
+            declared_agents.update(self._canon_agent(a) for a in conv_agents if a)
+            c["agents"].update(declared_agents)
+            self._prune_invalid_agent_context_dirs(cid, declared_agents)
         with self._cache_lock:
             self._cache[cid] = c
         return c
+
+    def _prune_invalid_agent_context_dirs(self, cid: str,
+                                          declared_agents: set) -> None:
+        """Delete private context dirs that do not belong to declared agents."""
+        conv_dir = self._conv_dir(cid)
+        if not conv_dir.is_dir():
+            return
+        skip = {".git", "transcript", "shared", "summaries",
+                "_jsonl_migration_backup"}
+        for entry in conv_dir.iterdir():
+            if not entry.is_dir() or entry.name in skip:
+                continue
+            agent = self._canon_agent(entry.name.replace("__", ":"))
+            if agent in declared_agents:
+                continue
+            if not (self._jsonl_exists(entry / "context.jsonl")
+                    or (entry / "context").is_dir()):
+                continue
+            try:
+                shutil.rmtree(entry)
+                logger.warning(
+                    "[convstore] pruned invalid agent context dir %s/%s",
+                    cid[:8], agent)
+            except Exception:
+                logger.warning(
+                    "[convstore] failed to prune invalid context dir %s/%s",
+                    cid[:8], agent, exc_info=True)
 
     def _cache_agents_for_append(self, cid: str) -> set:
         """Return known agents without rescanning the transcript hot path."""
@@ -1700,6 +1730,44 @@ class ConversationStore:
                              cid[:8], agent_name or "shared", len(result or []),
                              self._context_cache_chars(result))
         return result
+
+    def load_agent_context_page(self, cid: str, agent_name: str,
+                                limit: int = 50, offset: int = 0) -> Optional[Dict]:
+        """Load a newest-first page from an agent/shared context file.
+
+        Returns None when the context file does not exist. Messages stay
+        chronological inside the page, matching load_page().
+        """
+        agent_name = self._canon_agent(agent_name) if agent_name else ""
+        path = self._agent_ctx_path(cid, agent_name) if agent_name else self._shared_ctx_path(cid)
+        log = SegmentedJsonl(path)
+        if not log.exists():
+            return None
+        try:
+            limit_i = max(1, int(limit or 50))
+        except (TypeError, ValueError):
+            limit_i = 50
+        try:
+            offset_i = max(0, int(offset or 0))
+        except (TypeError, ValueError):
+            offset_i = 0
+        total = log.total_rows()
+        selected = []
+        stop = offset_i + limit_i
+        for idx, row in enumerate(log.iter_rows_reverse()):
+            if idx < offset_i:
+                continue
+            if idx >= stop:
+                break
+            selected.append(row)
+        selected.reverse()
+        return {
+            "messages": selected,
+            "total_count": total,
+            "has_more": stop < total,
+            "offset": offset_i,
+            "limit": limit_i,
+        }
 
     def load_transcript_for_agent(self, cid: str, agent_name: str
                                    ) -> Optional[List[Dict]]:

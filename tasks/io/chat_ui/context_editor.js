@@ -22,6 +22,7 @@ function cmdShowContext(agentName) {
 }
 
 let _ctxFullData = null;
+let _ctxVisibleById = new Map();
 
 function _ctxScopedAgentName() {
   return (_ctxAgentFilter && _ctxAgentFilter !== 'transcript') ? _ctxAgentFilter : '';
@@ -115,9 +116,12 @@ function ctxRefresh() {
 
 async function ctxEditMessage(msgId) {
   if (_ctxIsReadonly()) { addMsg('error', 'Runtime session context is read-only'); return; }
-  const full = await ctxLoadFull();
-  if (full.error) { addMsg('error', full.error); return; }
-  const msg = (full.context || []).find(m => (m.msg_id || m.trace_id) === msgId);
+  let msg = _ctxVisibleById.get(msgId);
+  if (!msg) {
+    const full = await ctxLoadFull();
+    if (full.error) { addMsg('error', full.error); return; }
+    msg = (full.context || []).find(m => (m.msg_id || m.trace_id) === msgId);
+  }
   if (!msg) { addMsg('error', 'Message not found — refresh the context'); return; }
   // Scope the row lookup to the context overlay — the chat timeline
   // also uses data-msgid on its message rows, and querySelector would
@@ -179,6 +183,7 @@ function ctxLoadMore() {
     reversed.forEach((m) => {
       const mid = m.msg_id || m.trace_id || '';
       if (!mid) return;
+      _ctxVisibleById.set(mid, m);
       const color = roleColors[m.role] || '#808090';
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
@@ -422,6 +427,7 @@ async function ctxDeleteSelected() {
 }
 
 function showContextOverlay(data) {
+  _ctxVisibleById = new Map();
   let overlay = document.getElementById('contextOverlay');
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
@@ -459,6 +465,7 @@ function showContextOverlay(data) {
     reversed.forEach((m) => {
       const mid = m.msg_id || m.trace_id || '';
       if (!mid) return;  // cannot edit/delete a message without a stable id
+      _ctxVisibleById.set(mid, m);
       const color = roleColors[m.role] || '#808090';
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';

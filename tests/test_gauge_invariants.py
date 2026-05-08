@@ -322,12 +322,21 @@ def test_context_command_exposes_full_agent_context_usage():
     get_context = context_src[
         context_src.index('if action == "get_context":'):
         context_src.index('if action == "get_context_full":')]
-    assert "_usage_context_data = list(context_data)" in get_context
-    assert "compute_context_usage" in get_context
-    assert '"computed_from": "authoritative_agent_context"' in get_context
+    assert "compute_context_usage" not in get_context
+    assert "load_agent_context_page" in get_context
+    assert '"computed_from": "persisted_context_usage"' in context_src
     assert '"context_usage": _context_usage' in get_context
     assert "context gauge:" in ui_src
     assert "used.toLocaleString() + ' / ' + max.toLocaleString()" in ui_src
+
+
+def test_context_editor_edits_visible_rows_without_full_context_fetch():
+    edit_body = _CONTEXT_EDITOR_JS[
+        _CONTEXT_EDITOR_JS.index("async function ctxEditMessage"):
+        _CONTEXT_EDITOR_JS.index("let _ctxDirty = false")]
+    assert "_ctxVisibleById.get(msgId)" in edit_body
+    assert "ctxLoadFull()" in edit_body
+    assert edit_body.index("_ctxVisibleById.get(msgId)") < edit_body.index("ctxLoadFull()")
 
 
 def test_context_usage_cache_counts_suffix_then_resets():

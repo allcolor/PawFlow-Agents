@@ -163,7 +163,7 @@ Example: `allowed_paths=src,docs` + `denied_paths=src/secret` → can read `src/
 ### Advanced
 - `search(path, pattern, recursive)` — Find files by glob pattern. Patterns support `**` and shell-style brace alternatives such as `{core,services}/**/*.py`.
 - `grep(path, regex, recursive)` — Search file contents by regex. A space-separated `path` containing multiple existing roots scans each root.
-- `find_replace(path, pattern, replacement)` — Regex replace in a file
+- `find_replace(path, pattern, replacement, multiline=false)` — Regex replace in a file; set `multiline=true` so `^` and `$` match line boundaries.
 
 ### Git (relay + server backends only)
 - `git_status(path)` — Branch, staged, modified, untracked files

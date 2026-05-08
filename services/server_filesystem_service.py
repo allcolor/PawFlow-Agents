@@ -137,8 +137,10 @@ class ServerFilesystemBackend(FilesystemBackend):
                     })
         return results
 
-    def find_replace(self, path: str, pattern: str, replacement: str) -> Dict[str, Any]:
-        compiled = re.compile(pattern)
+    def find_replace(self, path: str, pattern: str, replacement: str,
+                     multiline: bool = False) -> Dict[str, Any]:
+        flags = re.MULTILINE if multiline else 0
+        compiled = re.compile(pattern, flags)
         p = self._resolve(path)
         text = p.read_text(encoding="utf-8", errors="replace")
         new_text, count = compiled.subn(replacement, text)
@@ -187,7 +189,7 @@ class ServerFilesystemService(BaseService):
     def exists(self, path): return self._get_connection().exists(path)
     def search(self, path, pattern, recursive=True): return self._get_connection().search(path, pattern, recursive)
     def grep(self, path, regex, recursive=True): return self._get_connection().grep(path, regex, recursive)
-    def find_replace(self, path, pattern, replacement): return self._get_connection().find_replace(path, pattern, replacement)
+    def find_replace(self, path, pattern, replacement, multiline=False): return self._get_connection().find_replace(path, pattern, replacement, multiline=multiline)
 def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "root": {"type": "string", "required": True, "description": "Absolute path to root directory"},

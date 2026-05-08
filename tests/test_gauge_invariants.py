@@ -22,6 +22,8 @@ _ACTIVE_AGENTS_JS = Path(
 _SSE_JS = Path("tasks/io/chat_ui/sse.js").read_text(encoding="utf-8")
 _RESOURCES_JS = Path("tasks/io/chat_ui/resources.js").read_text(encoding="utf-8")
 _SERVICES_JS = Path("tasks/io/chat_ui/services.js").read_text(encoding="utf-8")
+_DIALOGS_JS = Path("tasks/io/chat_ui/dialogs.js").read_text(encoding="utf-8")
+_TERMINAL_JS = Path("tasks/io/chat_ui/terminal.js").read_text(encoding="utf-8")
 _TABS_JS = Path("tasks/io/chat_ui/tabs.js").read_text(encoding="utf-8")
 _FLOW_GRAPH_HTML = Path("tasks/io/chat_ui/flow_graph.html").read_text(encoding="utf-8")
 _MESSAGES_JS = Path("tasks/io/chat_ui/messages.js").read_text(encoding="utf-8")
@@ -81,6 +83,28 @@ def test_flow_graph_opens_reactflow_via_blob_to_avoid_frame_refusal():
     assert '<link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.6.0/dist/style.css">' not in _FLOW_GRAPH_HTML
     assert "panOnDrag: true" in _FLOW_GRAPH_HTML
     assert "zoomOnScroll: true" in _FLOW_GRAPH_HTML
+
+
+def test_core_dialog_labels_use_i18n_catalogs():
+    catalogs = [
+        json.loads(Path("tasks/io/chat_ui/i18n/en.json").read_text(encoding="utf-8")),
+        json.loads(Path("tasks/io/chat_ui/i18n/fr.json").read_text(encoding="utf-8")),
+        json.loads(Path("tasks/io/chat_ui/i18n/es.json").read_text(encoding="utf-8")),
+    ]
+    keys = set(catalogs[0])
+    assert all(set(cat) == keys for cat in catalogs)
+
+    for key in [
+        "flowEditParameters", "flowLoadingParameters", "flowNoParameters",
+        "chooseRelay", "executionMode", "toolNoArguments", "execute",
+    ]:
+        assert all(key in cat for cat in catalogs)
+
+    dialog_sources = _DIALOGS_JS + _SERVICES_JS + _TERMINAL_JS
+    assert "Edit Flow Parameters" not in dialog_sources
+    assert "Loading parameters..." not in dialog_sources
+    assert "Choose relay" not in dialog_sources
+    assert "Execution mode" not in dialog_sources
 
 
 def test_chat_tool_display_unwraps_meta_use_tool_calls():

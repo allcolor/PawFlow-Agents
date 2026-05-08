@@ -24,7 +24,7 @@ Editing preference: use `apply_patch` for patch-shaped changes and `batch_edit` 
 | `edit` | Exact string or line-based file edit. Exact unique replacements no longer require a prior read; whitespace drift is tolerated, and `fuzzy=true` enables one high-confidence fuzzy match. |
 | `batch_edit` | Apply multiple replacements atomically across files, with aggregate replacement totals. |
 | `apply_patch` | Apply a unified diff or `*** Begin Patch` block. `path` is optional when the patch contains file paths. |
-| `find_replace` | Regex find/replace. |
+| `find_replace` | Regex find/replace. `multiline=true` enables `^`/`$` line-boundary matching. |
 | `delete` | Delete a file or directory. |
 | `mkdir` | Create a directory. |
 | `stat` | Get file metadata. |

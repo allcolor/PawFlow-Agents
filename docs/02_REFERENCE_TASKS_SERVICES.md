@@ -834,6 +834,7 @@ PawFlow provides a unified filesystem abstraction layer. See `docs/filesystem.md
 | `pattern` | string | No | Glob pattern (search) or regex (find_replace) |
 | `regex` | string | No | Regex pattern (grep) |
 | `replacement` | string | No | Replacement text (find_replace) |
+| `multiline` | boolean | No | Enable regex line-boundary mode for find_replace |
 | `recursive` | boolean | No | Recursive (search/grep, default: true) |
 
 ### 18.3. Permissions

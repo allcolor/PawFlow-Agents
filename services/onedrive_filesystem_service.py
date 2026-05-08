@@ -233,11 +233,12 @@ class OneDriveBackend(FilesystemBackend):
         return results
 
     def find_replace(self, path: str, pattern: str,
-                     replacement: str) -> dict:
+                     replacement: str, multiline: bool = False) -> dict:
         import re as re_mod
         content = self.read_file(path)
         text = content.decode("utf-8")
-        new_text, count = re_mod.subn(pattern, replacement, text)
+        flags = re_mod.MULTILINE if multiline else 0
+        new_text, count = re_mod.subn(pattern, replacement, text, flags=flags)
         if count > 0:
             self.write_file(path, new_text.encode("utf-8"))
         return {"path": path, "replacements": count}
@@ -341,8 +342,9 @@ class OneDriveService(BaseService):
     def grep(self, path: str, regex: str, recursive: bool = True) -> List[dict]:
         return self._get_connection().grep(path, regex, recursive)
 
-    def find_replace(self, path: str, pattern: str, replacement: str) -> dict:
-        return self._get_connection().find_replace(path, pattern, replacement)
+    def find_replace(self, path: str, pattern: str, replacement: str,
+                     multiline: bool = False) -> dict:
+        return self._get_connection().find_replace(path, pattern, replacement, multiline=multiline)
 
 
 ServiceFactory.register(OneDriveService)

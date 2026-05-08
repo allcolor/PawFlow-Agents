@@ -69,9 +69,9 @@ function _pickRelay(relays) {
     const bg = document.createElement('div');
     bg.className = 'exec-overlay';
     bg.innerHTML = '<div class="exec-dialog" style="min-width:320px;">'
-      + '<h3>Choose relay</h3>'
+      + '<h3>' + escapeHtml(t('chooseRelay')) + '</h3>'
       + '<div id="_relayPickList" style="margin:12px 0;"></div>'
-      + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">Cancel</button></div>'
+      + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('contextCancel')) + '</button></div>'
       + '</div>';
     const list = bg.querySelector('#_relayPickList');
     for (const r of relays) {
@@ -95,12 +95,12 @@ function _pickMode(relayId) {
     const bg = document.createElement('div');
     bg.className = 'exec-overlay';
     bg.innerHTML = '<div class="exec-dialog" style="min-width:280px;">'
-      + '<h3>Execution mode</h3>'
-      + '<div style="margin:12px 0;color:#aaa;">Relay <b>' + escapeHtml(relayId) + '</b> supports both modes.</div>'
+      + '<h3>' + escapeHtml(t('executionMode')) + '</h3>'
+      + '<div style="margin:12px 0;color:#aaa;">' + escapeHtml(t('relaySupportsBothModes', { relay: relayId })).replace(escapeHtml(relayId), '<b>' + escapeHtml(relayId) + '</b>') + '</div>'
       + '<div class="exec-btns" style="flex-direction:column;gap:8px;">'
-      + '<button class="exec-approve" style="width:100%;" onclick="this.closest(\'.exec-overlay\').remove();window._pickModeResolve(\'docker\');">\u{1F433} Docker (sandboxed)</button>'
-      + '<button class="exec-approve" style="width:100%;background:#4ecdc4;" onclick="this.closest(\'.exec-overlay\').remove();window._pickModeResolve(\'local\');">\u{1F4BB} Local (host machine)</button>'
-      + '<button class="exec-deny" style="width:100%;" onclick="this.closest(\'.exec-overlay\').remove();window._pickModeResolve(null);">Cancel</button>'
+      + '<button class="exec-approve" style="width:100%;" onclick="this.closest(\'.exec-overlay\').remove();window._pickModeResolve(\'docker\');">\u{1F433} ' + escapeHtml(t('dockerSandboxed')) + '</button>'
+      + '<button class="exec-approve" style="width:100%;background:#4ecdc4;" onclick="this.closest(\'.exec-overlay\').remove();window._pickModeResolve(\'local\');">\u{1F4BB} ' + escapeHtml(t('localHostMachine')) + '</button>'
+      + '<button class="exec-deny" style="width:100%;" onclick="this.closest(\'.exec-overlay\').remove();window._pickModeResolve(null);">' + escapeHtml(t('contextCancel')) + '</button>'
       + '</div></div>';
     window._pickModeResolve = resolve;
     document.body.appendChild(bg);
@@ -115,9 +115,9 @@ async function cmdTerminal(text, parts) {
     // Close the currently active terminal tab
     if (_activeTab && _activeTab.startsWith('term-')) {
       closeTerminalTab(_activeTab);
-      addMsg('system', 'Terminal closed.');
+      addMsg('system', t('terminalClosed'));
     } else {
-      addMsg('system', 'No active terminal to close.');
+      addMsg('system', t('noActiveTerminal'));
     }
     return true;
   }
@@ -133,7 +133,7 @@ async function cmdTerminal(text, parts) {
       allRelays = await _getRelays();
       relayId = await _pickRelay(allRelays);
       if (!relayId) {
-        addMsg('system', 'No connected relay found. Usage: /terminal <relay_name>');
+        addMsg('system', t('terminalNoRelayUsage'));
         return true;
       }
     } catch (e) {
@@ -152,7 +152,7 @@ async function cmdTerminal(text, parts) {
     }
   }
 
-  addMsg('system', 'Opening terminal on ' + relayId + (localMode ? ' (local)' : '') + '...');
+  addMsg('system', t('openingTerminalOn', { relay: relayId, mode: localMode ? ' (' + t('local') + ')' : '' }));
 
   action$('open_terminal', { relay_id: relayId, cols: 120, rows: 30, local: localMode }).subscribe({
     next: async (resp) => {
@@ -164,7 +164,7 @@ async function cmdTerminal(text, parts) {
       const sessionId = resp.session_id;
       const token = resp.token || '';
       if (!token) {
-        addMsg('system', '⚠ terminal opened but server did not return a capability token');
+        addMsg('system', t('terminalMissingToken'));
         return;
       }
       await _loadXterm();
@@ -221,13 +221,13 @@ function _initXterm(container, sessionId, token) {
       if (msg.type === 'terminal_data') {
         term.write(Uint8Array.from(atob(msg.data), c => c.charCodeAt(0)));
       } else if (msg.type === 'terminal_exit') {
-        term.write('\r\n[Process exited]\r\n');
+        term.write('\r\n[' + t('processExited') + ']\r\n');
       }
     } catch (err) {}
   };
 
   ws.onclose = () => {
-    term.write('\r\n[Disconnected]\r\n');
+    term.write('\r\n[' + t('disconnected') + ']\r\n');
   };
 
   term.onData((data) => {
@@ -255,7 +255,7 @@ async function cmdCode(text, parts) {
       const btn = document.querySelector('.tab-btn[data-tab^="vscode-"]');
       if (btn) closeVSCodeTab(btn.dataset.tab);
     }
-    addMsg('system', 'Code server closed.');
+    addMsg('system', t('codeServerClosed'));
     return true;
   }
 

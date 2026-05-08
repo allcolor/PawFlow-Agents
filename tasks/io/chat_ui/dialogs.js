@@ -3,19 +3,20 @@ function showExecApprovalDialog(data) {
   const { request_id, action, command, risk_level, cwd, editable } = data;
   const overlay = document.createElement('div');
   overlay.className = 'exec-overlay';
-  const riskLabel = risk_level.charAt(0).toUpperCase() + risk_level.slice(1);
+  const riskKey = 'risk.' + risk_level;
+  const riskLabel = t(riskKey) === riskKey ? risk_level.charAt(0).toUpperCase() + risk_level.slice(1) : t(riskKey);
   const cmdHtml = editable
     ? '<textarea id="execCmdEdit">' + escapeHtml(command) + '</textarea>'
     : '<code>' + escapeHtml(command) + '</code>';
   overlay.innerHTML = `
     <div class="exec-dialog">
-      <h3>${escapeHtml(t('exec.approval_title') || 'Command Approval')}
+      <h3>${escapeHtml(t('exec.approval_title'))}
         <span class="exec-risk ${risk_level}">${riskLabel}</span></h3>
-      <div class="exec-cwd">${escapeHtml(t('exec.working_dir') || 'Working directory')}: ${escapeHtml(cwd || '.')}</div>
+      <div class="exec-cwd">${escapeHtml(t('exec.working_dir'))}: ${escapeHtml(cwd || '.')}</div>
       <div class="exec-cmd">${cmdHtml}</div>
       <div class="exec-btns">
-        <button class="exec-deny" onclick="resolveExec('${request_id}', false, this)">${escapeHtml(t('exec.deny') || 'Deny')}</button>
-        <button class="exec-approve" onclick="resolveExec('${request_id}', true, this)">${escapeHtml(t('exec.approve') || 'Approve')}</button>
+        <button class="exec-deny" onclick="resolveExec('${request_id}', false, this)">${escapeHtml(t('exec.deny'))}</button>
+        <button class="exec-approve" onclick="resolveExec('${request_id}', true, this)">${escapeHtml(t('exec.approve'))}</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -54,14 +55,14 @@ function showToolApprovalDialog(data) {
   overlay.className = 'exec-overlay';
   overlay.innerHTML = `
     <div class="exec-dialog">
-      <h3>${escapeHtml(t('tool_approval.title') || 'Tool Permission')}
+      <h3>${escapeHtml(t('tool_approval.title'))}
         <span class="exec-risk medium">${escapeHtml(tool_name)}</span></h3>
-      <div class="exec-cmd">${argsHtml || '<code>No arguments</code>'}</div>
+      <div class="exec-cmd">${argsHtml || '<code>' + escapeHtml(t('toolNoArguments')) + '</code>'}</div>
       <div class="exec-btns" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
-        <button class="exec-deny" onclick="resolveToolApproval('${request_id}', 'deny', this)">${escapeHtml(t('tool_approval.deny') || 'Deny')}</button>
-        <button class="exec-approve" onclick="resolveToolApproval('${request_id}', 'allow_once', this)">${escapeHtml(t('tool_approval.allow_once') || 'Allow Once')}</button>
-        <button class="exec-approve" style="background:#1a7f37" onclick="resolveToolApproval('${request_id}', 'allow_session', this)">${escapeHtml(t('tool_approval.allow_session') || 'Allow for Session')}</button>
-        <button class="exec-approve" style="background:#0d5d20" onclick="resolveToolApproval('${request_id}', 'always_allow', this)">${escapeHtml(t('tool_approval.always_allow') || 'Always Allow')}</button>
+        <button class="exec-deny" onclick="resolveToolApproval('${request_id}', 'deny', this)">${escapeHtml(t('tool_approval.deny'))}</button>
+        <button class="exec-approve" onclick="resolveToolApproval('${request_id}', 'allow_once', this)">${escapeHtml(t('tool_approval.allow_once'))}</button>
+        <button class="exec-approve" style="background:#1a7f37" onclick="resolveToolApproval('${request_id}', 'allow_session', this)">${escapeHtml(t('tool_approval.allow_session'))}</button>
+        <button class="exec-approve" style="background:#0d5d20" onclick="resolveToolApproval('${request_id}', 'always_allow', this)">${escapeHtml(t('tool_approval.always_allow'))}</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -108,7 +109,7 @@ function appendExecOutput(data) {
 function showToolCallDialog(toolName) {
   const tools = window._cachedTools || [];
   const tool = tools.find(t => t.name === toolName);
-  if (!tool) { addMsg('system', 'Tool not found: ' + toolName); return; }
+  if (!tool) { addMsg('system', t('toolNotFound', { tool: toolName })); return; }
 
   const schema = tool.parameters || {};
   const props = schema.properties || {};
@@ -134,7 +135,7 @@ function showToolCallDialog(toolName) {
       const opts = prop.enum.map(v => '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>').join('');
       formHtml += _field(label, '<select id="tc-' + key + '" style="' + inputStyle + '">' + opts + '</select>', desc);
     } else if (prop.type === 'boolean') {
-      formHtml += _field(label, '<label style="cursor:pointer"><input type="checkbox" id="tc-' + key + '"> enabled</label>', desc);
+      formHtml += _field(label, '<label style="cursor:pointer"><input type="checkbox" id="tc-' + key + '"> ' + escapeHtml(t('enabled')) + '</label>', desc);
     } else if (prop.type === 'integer' || prop.type === 'number') {
       formHtml += _field(label, '<input type="number" id="tc-' + key + '" style="' + inputStyle + '">', desc);
     } else if (prop.type === 'object' || prop.type === 'array') {
@@ -163,8 +164,8 @@ function showToolCallDialog(toolName) {
     + '<div style="color:#888;font-size:11px;margin-bottom:12px;">' + escapeHtml(tool.description || '').substring(0, 200) + '</div>'
     + formHtml
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-    + '<button onclick="document.getElementById(\'toolCallOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-    + '<button id="tcExecuteBtn" style="background:#6c5ce7;color:white;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">Execute</button>'
+    + '<button onclick="document.getElementById(\'toolCallOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+    + '<button id="tcExecuteBtn" style="background:#6c5ce7;color:white;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('execute')) + '</button>'
     + '</div>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);

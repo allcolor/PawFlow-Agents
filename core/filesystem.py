@@ -143,7 +143,8 @@ class FilesystemBackend(ABC):
         """Search in file contents. Returns [{path, line_number, line, match}]."""
         raise NotImplementedError("grep not supported by this backend")
 
-    def find_replace(self, path: str, pattern: str, replacement: str) -> Dict[str, Any]:
+    def find_replace(self, path: str, pattern: str, replacement: str,
+                     multiline: bool = False) -> Dict[str, Any]:
         """Replace text in a file. Returns {replacements: int, path: str}."""
         raise NotImplementedError("find_replace not supported by this backend")
 
@@ -266,9 +267,10 @@ class PermissionEnforcedFilesystem:
         p = self._check(path, "grep")
         return self._backend.grep(p, regex, recursive)
 
-    def find_replace(self, path: str, pattern: str, replacement: str) -> Dict[str, Any]:
+    def find_replace(self, path: str, pattern: str, replacement: str,
+                     multiline: bool = False) -> Dict[str, Any]:
         p = self._check(path, "find_replace")
-        return self._backend.find_replace(p, pattern, replacement)
+        return self._backend.find_replace(p, pattern, replacement, multiline=multiline)
 
     def close(self) -> None:
         self._backend.close()

@@ -665,6 +665,48 @@ class TestMetaToolAliases(unittest.TestCase):
         assert list_call[2]["recursive"] is True
         assert list_call[2]["max_entries"] == 5
 
+    def test_find_replace_schema_exposes_multiline_flag(self):
+        from core.handlers.find_replace import FindReplaceHandler
+
+        schema = FindReplaceHandler().parameters_schema
+        assert schema["properties"]["multiline"] == {
+            "type": "boolean",
+            "description": "Enable regex multiline mode so ^ and $ match line boundaries.",
+        }
+
+    def test_find_replace_relay_action_supports_multiline_line_boundaries(self):
+        from tools.fs_actions import action_find_replace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            f = root / "sample.txt"
+            f.write_text("alpha   \nbeta\ngamma\t\n", encoding="utf-8")
+
+            result = action_find_replace(str(root), str(f), {
+                "pattern": r"[ \t]+$",
+                "replacement": "",
+                "multiline": True,
+            })
+
+            assert result["replacements"] == 2
+            assert f.read_text(encoding="utf-8") == "alpha\nbeta\ngamma\n"
+
+    def test_find_replace_relay_action_keeps_default_single_string_boundaries(self):
+        from tools.fs_actions import action_find_replace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            f = root / "sample.txt"
+            f.write_text("alpha   \nbeta\n", encoding="utf-8")
+
+            result = action_find_replace(str(root), str(f), {
+                "pattern": r"[ \t]+$",
+                "replacement": "",
+            })
+
+            assert result["replacements"] == 0
+            assert f.read_text(encoding="utf-8") == "alpha   \nbeta\n"
+
     def test_batch_edit_relay_action_supports_replace_all_defaults(self):
         from tools.fs_actions import action_batch_edit
 

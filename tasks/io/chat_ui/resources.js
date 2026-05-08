@@ -237,7 +237,7 @@ function _showRelayLinkDialog() {
   action$('relay_list_available').subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     var relays = data.relays || [];
-    if (!relays.length) { addMsg('system', 'No relays available. Connect a relay first (PawCode or VS Code extension).'); return; }
+    if (!relays.length) { addMsg('system', t('noRelaysAvailableConnectFirst')); return; }
     var overlay = document.createElement('div');
     overlay.className = 'exec-overlay';
     var options = relays.map(function(r) {
@@ -249,15 +249,15 @@ function _showRelayLinkDialog() {
     }).join('');
     overlay.innerHTML =
       '<div class="exec-dialog" style="min-width:350px;">'
-      + '<h3>Link Relay</h3>'
+      + '<h3>' + escapeHtml(t('linkRelay')) + '</h3>'
       + '<div style="margin:12px 0;">'
       + '<select id="_relayLinkSelect" style="width:100%;padding:8px;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;font-size:13px;">'
       + options
       + '</select>'
       + '</div>'
       + '<div class="exec-btns">'
-      + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">Cancel</button>'
-      + '<button class="exec-approve" onclick="_doRelayLink(this)">Link</button>'
+      + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('contextCancel')) + '</button>'
+      + '<button class="exec-approve" onclick="_doRelayLink(this)">' + escapeHtml(t('link')) + '</button>'
       + '</div>'
       + '</div>';
     document.body.appendChild(overlay);
@@ -268,13 +268,13 @@ function _showRelayInfoDialog(relayId, details) {
   var d = details || {};
   var dl = d._default_local || {};
   var rows = [
-    ['Relay ID', relayId],
-    ['Connected', d.connected ? '\u{1F7E2} Yes' : '\u{1F534} No'],
-    ['Docker root', d.root || '\u2014'],
-    ['Local root', d.host_root || '\u2014'],
-    ['Platform', d.platform || '\u2014'],
-    ['Containerized', d.containerized ? 'Yes' : 'No'],
-    ['Allow local', d.allow_local ? '\u2705 Yes' : '\u274c No'],
+    [t('relayId'), relayId],
+    [t('connected'), d.connected ? '\u{1F7E2} ' + t('yes') : '\u{1F534} ' + t('no')],
+    [t('dockerRoot'), d.root || '\u2014'],
+    [t('localRoot'), d.host_root || '\u2014'],
+    [t('platform'), d.platform || '\u2014'],
+    [t('containerized'), d.containerized ? t('yes') : t('no')],
+    [t('allowLocal'), d.allow_local ? '\u2705 ' + t('yes') : '\u274c ' + t('no')],
   ];
   var infoHtml = '<table style="margin:8px 0;">' + rows.map(function(r) {
     return '<tr><td style="color:var(--pf-muted);padding:3px 12px 3px 0;font-size:12px;white-space:nowrap;">' + escapeHtml(r[0]) + '</td>'
@@ -285,11 +285,11 @@ function _showRelayInfoDialog(relayId, details) {
   var localHtml = '';
   if (d.allow_local) {
     var convLocal = dl['*'];
-    var convLabel = convLocal === true ? 'Local' : convLocal === false ? 'Docker' : 'Not set';
+    var convLabel = convLocal === true ? t('local') : convLocal === false ? 'Docker' : t('notSet');
     var convColor = convLocal === true ? 'var(--pf-success)' : convLocal === false ? 'var(--pf-danger)' : 'var(--pf-muted)';
-    localHtml += '<div style="margin-top:8px;font-size:12px;font-weight:600;color:var(--pf-accent);">Default execution mode</div>';
+    localHtml += '<div style="margin-top:8px;font-size:12px;font-weight:600;color:var(--pf-accent);">' + escapeHtml(t('defaultExecutionMode')) + '</div>';
     localHtml += '<div style="display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12px;">'
-      + '<span style="color:var(--pf-muted);min-width:80px;">Conversation:</span>'
+      + '<span style="color:var(--pf-muted);min-width:80px;">' + escapeHtml(t('conversation')) + ':</span>'
       + '<span style="color:' + convColor + ';">' + convLabel + '</span>'
       + '<button style="font-size:10px;padding:2px 6px;border:1px solid var(--pf-border);border-radius:3px;background:var(--pf-panel);color:var(--pf-success);cursor:pointer;" '
       + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'\')">Local</button>'
@@ -309,7 +309,7 @@ function _showRelayInfoDialog(relayId, details) {
       }
       rpAgents.forEach(function(agentName) {
         var aLocal = dl[agentName];
-        var aLabel = aLocal === true ? 'Local' : aLocal === false ? 'Docker' : 'Not set';
+        var aLabel = aLocal === true ? t('local') : aLocal === false ? 'Docker' : t('notSet');
         var aColor = aLocal === true ? 'var(--pf-success)' : aLocal === false ? 'var(--pf-danger)' : 'var(--pf-muted)';
         localHtml += '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px;">'
           + '<span style="color:var(--pf-muted);min-width:80px;">@' + escapeHtml(agentName) + ':</span>'
@@ -328,7 +328,7 @@ function _showRelayInfoDialog(relayId, details) {
   overlay.innerHTML = '<div class="exec-dialog" style="min-width:340px;">'
     + '<h3>Relay: ' + escapeHtml(relayId) + '</h3>'
     + infoHtml + localHtml
-    + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">Close</button></div>'
+    + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('close')) + '</button></div>'
     + '</div>';
   document.body.appendChild(overlay);
 }
@@ -1228,8 +1228,8 @@ async function _showToolMcpFilterDialog(agentName, mode) {
       + agents.map(function(a) { return '<option value="' + escapeHtml(a) + '"' + (a === selected ? ' selected' : '') + '>@' + escapeHtml(a) + '</option>'; }).join('')
       + '</select><div id="tmf-agent-panel"></div>' : '')
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">'
-    + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-    + '<button onclick="_saveToolMcpFilterDialog()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>';
+    + '<button onclick="document.getElementById(\'toolMcpFilterOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+    + '<button onclick="_saveToolMcpFilterDialog()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextSave')) + '</button></div>';
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   window._toolMcpFilterMode = mode;
@@ -1306,7 +1306,7 @@ function showAgentMenu(e, name, scope, autoconv) {
 function _showSkillAssignDialog(skillName) {
   action$('list_resources', {}).subscribe(data => {
     var agents = (data.agents || []).concat((data.repo_agents || []).filter(a => !a.in_conversation));
-    if (!agents.length) { addMsg('system', 'No agents available.'); return; }
+    if (!agents.length) { addMsg('system', t('noAgentsAvailable')); return; }
     var overlay = document.createElement('div');
     overlay.className = 'exec-overlay';
     var options = agents.map(a => '<option value="' + escapeHtml(a.name) + '">' + escapeHtml(a.name) + '</option>').join('');
@@ -1314,8 +1314,8 @@ function _showSkillAssignDialog(skillName) {
       + '<h3 style="margin:0 0 12px;">Assign skill \u201C' + escapeHtml(skillName) + '\u201D to agent</h3>'
       + '<select id="_skAssignAgent" style="width:100%;padding:8px;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;font-size:13px;">' + options + '</select>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">'
-      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-      + '<button id="_skAssignBtn" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>'
+      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+      + '<button id="_skAssignBtn" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('assign')) + '</button>'
       + '</div></div>';
     document.body.appendChild(overlay);
     document.getElementById('_skAssignBtn').onclick = function() {
@@ -1386,8 +1386,8 @@ function _showAgentConvConfigDialog(agentName) {
       + '<input id="acc-depth" type="number" value="' + (cfg.max_depth || 1000) + '" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;"/>'
       + '</div>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-      + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-      + '<button id="acc-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
+      + '<button onclick="document.getElementById(\'agentConvConfigOverlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+      + '<button id="acc-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextSave')) + '</button>'
       + '</div>';
     panel.innerHTML = html;
     overlay.appendChild(panel);
@@ -1425,7 +1425,7 @@ function _showAgentSkillsDialog(agentName) {
   ]).then(function(results) {
     var allSkills = results[0].skills || [];
     var assigned = (results[1].skills || []).map(s => s.name);
-    if (!allSkills.length) { addMsg('system', 'No skills defined. Create one first with /add-skill.'); return; }
+    if (!allSkills.length) { addMsg('system', t('noSkillsCreateFirst')); return; }
     var overlay = document.createElement('div');
     overlay.className = 'exec-overlay';
     var checkboxes = allSkills.map(s => {
@@ -1440,8 +1440,8 @@ function _showAgentSkillsDialog(agentName) {
       + '<h3 style="margin:0 0 12px;">Skills for \u201C' + escapeHtml(agentName) + '\u201D</h3>'
       + '<div style="max-height:200px;overflow-y:auto;background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:4px;padding:8px;">' + checkboxes + '</div>'
       + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">'
-      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-      + '<button id="_agentSkSave" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
+      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextCancel')) + '</button>'
+      + '<button id="_agentSkSave" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">' + escapeHtml(t('contextSave')) + '</button>'
       + '</div></div>';
     document.body.appendChild(overlay);
     document.getElementById('_agentSkSave').onclick = function() {
@@ -1477,6 +1477,14 @@ function _flowFieldValue(schema, values, key) {
   return spec.default != null ? spec.default : '';
 }
 
+function _flowSchemaEntryFromValue(value) {
+  if (typeof value === 'boolean') return { type: 'boolean', default: value };
+  if (Number.isInteger(value)) return { type: 'integer', default: value };
+  if (typeof value === 'number') return { type: 'float', default: value };
+  if (value && typeof value === 'object') return { type: 'object', default: value };
+  return { type: 'string', default: value == null ? '' : String(value) };
+}
+
 function _renderFlowSchemaFields(schema, values, cssClass, serviceId) {
   let html = '';
   for (const [key, spec0] of Object.entries(schema || {})) {
@@ -1493,7 +1501,7 @@ function _renderFlowSchemaFields(schema, values, cssClass, serviceId) {
     if (type === 'boolean') {
       html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input type="checkbox"'
         + dataAttrs + (value ? ' checked' : '') + ' style="accent-color:var(--pf-accent);">'
-        + '<span style="color:var(--pf-text);font-size:12px;">Enabled</span></label>';
+        + '<span style="color:var(--pf-text);font-size:12px;">' + escapeHtml(t('enabled')) + '</span></label>';
     } else if (type === 'select' && spec.options) {
       html += '<select' + dataAttrs + ' style="' + _svcInputStyle + '">';
       for (const opt0 of spec.options) {
@@ -1559,24 +1567,29 @@ function _onFlowServiceModeChange(sel) {
 }
 
 async function _renderFlowDeploymentConfig(schemaData) {
-  const paramsSchema = schemaData.parameters_schema || {};
-  const paramValues = schemaData.parameter_values || {};
+  const paramsSchema = Object.assign({}, schemaData.parameters_schema || {});
+  const paramValues = Object.assign(
+    {}, schemaData.template_parameters || {}, schemaData.parameter_values || {}, schemaData.parameters || {}
+  );
+  for (const [key, value] of Object.entries(paramValues)) {
+    if (!String(key).startsWith('_') && !paramsSchema[key]) paramsSchema[key] = _flowSchemaEntryFromValue(value);
+  }
   let html = '<div style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;">'
-    + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>';
+    + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('parameters')) + '</div>';
   if (Object.keys(paramsSchema).length) {
     html += _renderFlowSchemaFields(paramsSchema, paramValues, 'flow-param-field');
   } else {
-    html += '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:8px;">No flow parameters.</div>';
+    html += '<div style="color:var(--pf-muted);font-size:12px;margin-bottom:8px;">' + escapeHtml(t('flowNoParameters')) + '</div>';
   }
   html += '</div>';
 
   const services = schemaData.services || {};
   if (Object.keys(services).length) {
     html += '<div style="border-top:1px solid var(--pf-border);padding-top:8px;margin-top:8px;">'
-      + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">Services</div>';
+      + '<div style="color:var(--pf-muted);font-size:11px;margin-bottom:6px;font-weight:600;">' + escapeHtml(t('services')) + '</div>';
     for (const [sid, svc] of Object.entries(services)) {
       const current = svc.override || 'local';
-      let options = '<option value="local"' + (current === 'local' ? ' selected' : '') + '>Configure local service</option>';
+      let options = '<option value="local"' + (current === 'local' ? ' selected' : '') + '>' + escapeHtml(t('flowConfigureLocalService')) + '</option>';
       try {
         const listed = await rxjs.firstValueFrom(listServices$(svc.service_type || ''));
         for (const s of (listed.services || [])) {
@@ -1586,7 +1599,7 @@ async function _renderFlowDeploymentConfig(schemaData) {
         }
       } catch (e) {}
       if (current && current !== 'local' && options.indexOf('value="' + escapeHtml(current) + '"') < 0) {
-        options += '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + ' (missing)</option>';
+        options += '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(t('missingItem', { value: current })) + '</option>';
       }
       const localDisplay = current && current !== 'local' ? 'display:none;' : '';
       html += '<div class="flow-service-card" data-service-id="' + escapeHtml(sid) + '" style="background:var(--pf-sidebar);border:1px solid var(--pf-border);border-radius:6px;padding:8px;margin-bottom:8px;">'
@@ -1612,16 +1625,16 @@ async function showDeployFlowDialog() {
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:560px;max-height:85vh;overflow-y:auto;border:1px solid var(--pf-border);';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">Deploy Flow</h3>
+    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(t('deployFlow'))}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
-  </div><div style="color:var(--pf-muted);font-size:12px;">Loading templates...</div>`;
+  </div><div style="color:var(--pf-muted);font-size:12px;">${escapeHtml(t('loadingTemplates'))}</div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   try {
     const data = await rxjs.firstValueFrom(action$('list_available_flows', {}));
     const templates = data.templates || [];
     if (!templates.length) {
-      panel.querySelector('div:last-child').innerHTML = '<div style="color:var(--pf-muted);font-size:12px;">No flow templates found in flows/ directory.</div>';
+      panel.querySelector('div:last-child').innerHTML = '<div style="color:var(--pf-muted);font-size:12px;">' + escapeHtml(t('noFlowTemplates')) + '</div>';
       return;
     }
     let optionsHtml = templates.map(t => {
@@ -1632,22 +1645,22 @@ async function showDeployFlowDialog() {
         + ' [' + escapeHtml(scopeLabel) + ']</option>';
     }).join('');
     panel.querySelector('div:last-child').innerHTML = `
-      <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Template</label>
+      <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('template'))}</label>
         <select id="deploy-template" onchange="_onDeployTemplateChange()" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">${optionsHtml}</select></div>
       <div id="deploy-scope-info" style="margin-bottom:8px;font-size:11px;color:var(--pf-muted);"></div>
-      <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">Deploy scope</label>
+      <div style="margin-bottom:8px;"><label style="color:var(--pf-muted);font-size:11px;">${escapeHtml(t('deployScope'))}</label>
         <select id="deploy-scope" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:6px;border-radius:4px;margin-top:2px;">
-          <option value="user">User</option>
-          <option value="conversation">Conversation</option>
+          <option value="user">${escapeHtml(t('user'))}</option>
+          <option value="conversation">${escapeHtml(t('conversation'))}</option>
         </select></div>
-      <div id="deploy-config" style="margin-bottom:8px;color:var(--pf-muted);font-size:12px;">Loading deployment schema...</div>
+      <div id="deploy-config" style="margin-bottom:8px;color:var(--pf-muted);font-size:12px;">${escapeHtml(t('loadingDeploymentSchema'))}</div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-        <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-        <button onclick="_submitDeployFlow()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Deploy</button>
+        <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
+        <button onclick="_submitDeployFlow()" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('deploy'))}</button>
       </div>`;
     _onDeployTemplateChange();
   } catch (e) {
-    panel.querySelector('div:last-child').innerHTML = '<div style="color:var(--pf-danger);">Error loading templates: ' + e.message + '</div>';
+    panel.querySelector('div:last-child').innerHTML = '<div style="color:var(--pf-danger);">' + escapeHtml(t('templatesLoadFailed', { error: e.message })) + '</div>';
   }
 }
 function _submitDeployFlow() {
@@ -1657,7 +1670,7 @@ function _submitDeployFlow() {
   try {
     cfg = _collectFlowDeploymentConfig(document.getElementById('deploy-config'));
   } catch (e) {
-    alert('Invalid JSON in parameters: ' + e.message);
+    alert(t('invalidJsonInParameters', { error: e.message }));
     return;
   }
   action$('deploy_flow', {
@@ -1668,7 +1681,7 @@ function _submitDeployFlow() {
     service_configs: cfg.service_configs,
   }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
-    else { addMsg('system', `Flow deployed: ${d.instance_id} (${scope})`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+    else { addMsg('system', t('flowDeployed', { id: d.instance_id, scope: scope })); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
   });
 }
 async function _onDeployTemplateChange() {
@@ -1678,25 +1691,25 @@ async function _onDeployTemplateChange() {
   var info = document.getElementById('deploy-scope-info');
   var scopeSel = document.getElementById('deploy-scope');
   if (flowScope === 'conversation') {
-    info.innerHTML = '<span style="color:var(--pf-warning);">This flow requires a conversation context.</span>';
+    info.innerHTML = '<span style="color:var(--pf-warning);">' + escapeHtml(t('flowRequiresConversationContext')) + '</span>';
     scopeSel.value = 'conversation';
     scopeSel.disabled = true;
   } else if (flowScope === 'user') {
-    info.innerHTML = '<span style="color:var(--pf-accent-2);">This flow requires a user context.</span>';
+    info.innerHTML = '<span style="color:var(--pf-accent-2);">' + escapeHtml(t('flowRequiresUserContext')) + '</span>';
     scopeSel.disabled = false;
   } else {
-    info.innerHTML = '<span style="color:var(--pf-success);">Independent flow - no runtime dependencies.</span>';
+    info.innerHTML = '<span style="color:var(--pf-success);">' + escapeHtml(t('flowIndependentNoDependencies')) + '</span>';
     scopeSel.disabled = false;
   }
   var config = document.getElementById('deploy-config');
   if (!config || !sel.value) return;
-  config.innerHTML = '<div style="color:var(--pf-muted);font-size:12px;">Loading deployment schema...</div>';
+  config.innerHTML = '<div style="color:var(--pf-muted);font-size:12px;">' + escapeHtml(t('loadingDeploymentSchema')) + '</div>';
   try {
     const schema = await rxjs.firstValueFrom(action$('get_flow_deploy_schema', { template_id: sel.value }));
     if (schema.error) { config.innerHTML = '<div style="color:var(--pf-danger);">' + escapeHtml(schema.error) + '</div>'; return; }
     config.innerHTML = await _renderFlowDeploymentConfig(schema);
   } catch (e) {
-    config.innerHTML = '<div style="color:var(--pf-danger);">Error loading deployment schema: ' + escapeHtml(e.message || e) + '</div>';
+    config.innerHTML = '<div style="color:var(--pf-danger);">' + escapeHtml(t('deploymentSchemaLoadFailed', { error: e.message || e })) + '</div>';
   }
 }
 
@@ -1971,19 +1984,19 @@ async function showResourceEditor(rtype, name, readonly) {
   overlay.style.cssText = 'position:fixed;inset:0;background:var(--pf-shadow);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
-  const title = ro ? 'View' : 'Edit';
+  const title = ro ? t('view') : t('contextEdit');
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${title} ${rtype}: ${name} ${_scopeBadge(scope)}</h3>
+    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(title)} ${escapeHtml(rtype)}: ${escapeHtml(name)} ${_scopeBadge(scope)}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
   </div>` + _buildResourceForm(rtype, data, false, ro);
   if (ro) {
     html += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Close</button>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('close'))}</button>
     </div>`;
   } else {
     html += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-    <button onclick="_saveResourceEdit('${rtype}','${name}','${scope}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
+    <button onclick="_saveResourceEdit('${rtype}','${name}','${scope}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextSave'))}</button>
     </div>`;
   }
   panel.innerHTML = html;
@@ -2009,13 +2022,13 @@ function _saveResourceEdit(rtype, name, scope) {
       else if (type === 'checkbox') data[key] = !!el.checked;
       else if (type === 'json') {
         try { data[key] = el.value.trim() ? JSON.parse(el.value) : (key === 'args' ? [] : {}); }
-        catch(e) { alert(key + ' must be valid JSON'); return; }
+        catch(e) { alert(t('fieldMustBeValidJson', { field: key })); return; }
       } else data[key] = el.value;
     }
   }
   action$('update_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
-    else { addMsg('system', `${rtype} '${name}' updated.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+    else { addMsg('system', t('resourceUpdated', { type: rtype, name: name })); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
   });
 }
 
@@ -2031,12 +2044,12 @@ async function showResourceCreator(rtype) {
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--pf-panel);border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid var(--pf-border);';
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">New ${rtype === '_tool' ? 'Tool' : rtype}</h3>
+    <h3 style="margin:0;color:var(--pf-text);font-size:14px;">${escapeHtml(t('newResourceTitle', { type: rtype === '_tool' ? t('tool') : rtype }))}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:var(--pf-muted);cursor:pointer;font-size:18px;">&times;</button>
   </div>` + _buildResourceForm(rtype, {}, true)
     + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-    <button onclick="_saveResourceCreate('${rtype}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Create</button>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
+    <button onclick="_saveResourceCreate('${rtype}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('create'))}</button>
   </div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
@@ -2050,7 +2063,7 @@ function _saveResourceCreate(rtype) {
   const scopeEl = document.getElementById('res-scope');
   const name = (nameEl && nameEl.value || '').trim();
   const scope = scopeEl ? scopeEl.value : 'user';
-  if (!name) { alert('Name is required'); return; }
+  if (!name) { alert(t('nameRequired')); return; }
   const fields = _RESOURCE_FIELDS[rtype] || [];
   const data = {};
   for (const [key, type] of fields) {
@@ -2062,26 +2075,26 @@ function _saveResourceCreate(rtype) {
       else if (type === 'checkbox') data[key] = !!el.checked;
       else if (type === 'json') {
         try { data[key] = el.value.trim() ? JSON.parse(el.value) : (key === 'args' ? [] : {}); }
-        catch(e) { alert(key + ' must be valid JSON'); return; }
+        catch(e) { alert(t('fieldMustBeValidJson', { field: key })); return; }
       } else data[key] = el.value;
     }
   }
   // Dynamic tools use a dedicated action (CreateToolHandler pipeline)
   if (rtype === '_tool') {
     let params = {};
-    try { params = data.parameters ? JSON.parse(data.parameters) : {}; } catch(e) { alert('Parameters must be valid JSON'); return; }
+    try { params = data.parameters ? JSON.parse(data.parameters) : {}; } catch(e) { alert(t('parametersMustBeValidJson')); return; }
     action$('create_dynamic_tool', {
       tool_name: name, tool_description: data.tool_description || '',
       parameters: params, code: data.code || ''
     }).subscribe(d => {
       if (d.error) addMsg('error', d.error);
-      else { addMsg('system', `Tool '${name}' created.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+      else { addMsg('system', t('toolCreated', { name: name })); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
     });
     return;
   }
   action$('create_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
-    else { addMsg('system', `${rtype} '${name}' created.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+    else { addMsg('system', t('resourceCreated', { type: rtype, name: name })); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
   });
 }
 
@@ -2288,7 +2301,7 @@ function _showAssignDialog(taskDefName) {
       <div><label style="color:var(--pf-muted);font-size:10px;">Max Reschedules</label><input id="assign-max-resched" placeholder="50" style="width:100%;background:var(--pf-sidebar);color:var(--pf-text);border:1px solid var(--pf-border);padding:4px;border-radius:4px;font-size:11px;"/></div>
     </div></details>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
     <button onclick="_submitAssign('${taskDefName}')" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>
   </div>`;
   overlay.appendChild(panel);
@@ -2458,7 +2471,7 @@ function _showEditLimitsDialog(taskId) {
       + _f('el-resched', 'Max Reschedules', task.max_reschedules || '', '50')
       + _f('el-maxiter', 'Max Iterations', task.max_iterations || '', '50')
       + `<div style="font-size:10px;color:var(--pf-muted);margin-bottom:8px;">Current: cost=$${(task.total_cost||0).toFixed(4)}, reschedules=${task.reschedule_count||0}</div>`
-      + `<div style="display:flex;gap:8px;justify-content:flex-end;"><button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button><button id="el-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>`;
+      + `<div style="display:flex;gap:8px;justify-content:flex-end;"><button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:var(--pf-border);color:var(--pf-text);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button><button id="el-save" style="background:var(--pf-accent);color:var(--pf-bg);border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>`;
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
     document.getElementById('el-save').onclick = () => {

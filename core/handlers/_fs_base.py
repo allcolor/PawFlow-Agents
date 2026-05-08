@@ -642,13 +642,15 @@ class BaseFsHandler(ToolHandler):
             f.write(new_content)
         return f"Edited {path}: {count} replacement(s)"
 
-    def _workdir_find_replace(self, path: str, pattern: str, replacement: str) -> str:
+    def _workdir_find_replace(self, path: str, pattern: str, replacement: str,
+                              multiline: bool = False) -> str:
         full = self._sandbox_path(path, self._workdir)
         if not os.path.exists(full):
             return f"Error: '{path}' not found"
         with open(full, "r", encoding="utf-8") as f:
             content = f.read()
-        new_content, count = re.subn(pattern, replacement, content)
+        flags = re.MULTILINE if multiline else 0
+        new_content, count = re.subn(pattern, replacement, content, flags=flags)
         with open(full, "w", encoding="utf-8") as f:
             f.write(new_content)
         return f"Replaced {count} occurrences in {path}"

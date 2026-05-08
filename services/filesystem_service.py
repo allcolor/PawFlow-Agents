@@ -1172,9 +1172,10 @@ class RelayService(BaseService):
         return self._request("grep", path, regex=regex, recursive=recursive, **kwargs)
 
     def find_replace(self, path: str, pattern: str, replacement: str,
-                     local: bool = False):
+                     local: bool = False, multiline: bool = False):
         return self._request("find_replace", path, pattern=pattern,
-                             replacement=replacement, local=local)
+                             replacement=replacement, local=local,
+                             multiline=multiline)
 
     def edit(self, path: str, old_string: str, new_string: str,
              replace_all: bool = False, local: bool = False,

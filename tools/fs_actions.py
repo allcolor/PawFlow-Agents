@@ -605,9 +605,10 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 def action_find_replace(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     pattern = req.get("pattern", "")
     replacement = req.get("replacement", "")
+    flags = re.MULTILINE if bool(req.get("multiline", False)) else 0
     if not pattern:
         raise ValueError("Missing 'pattern' parameter")
-    compiled = re.compile(pattern)
+    compiled = re.compile(pattern, flags)
     p = Path(path)
     text = p.read_text(encoding="utf-8", errors="replace")
     new_text, count = compiled.subn(replacement, text)

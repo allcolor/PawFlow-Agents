@@ -22,6 +22,10 @@ class FindReplaceHandler(BaseFsHandler):
                 "path": {"type": "string", "description": "File path"},
                 "pattern": {"type": "string", "description": "Regex pattern to find"},
                 "replacement": {"type": "string", "description": "Replacement string"},
+                "multiline": {
+                    "type": "boolean",
+                    "description": "Enable regex multiline mode so ^ and $ match line boundaries.",
+                },
                 "filesystem": {"type": "string", "description": "Filesystem service name. Omit for default."},
             },
             "required": ["path", "pattern", "replacement"],
@@ -33,6 +37,7 @@ class FindReplaceHandler(BaseFsHandler):
         path = arguments.get("path", "")
         pattern = arguments.get("pattern", "")
         replacement = arguments.get("replacement", "")
+        multiline = bool(arguments.get("multiline", False))
         if not path or not pattern:
             return "Error: 'path' and 'pattern' are required"
         fs = arguments.get("filesystem", "")
@@ -47,7 +52,7 @@ class FindReplaceHandler(BaseFsHandler):
             return "Error: find_replace not supported on FileStore"
 
         if workdir:
-            return self._workdir_find_replace(path, pattern, replacement)
+            return self._workdir_find_replace(path, pattern, replacement, multiline=multiline)
 
         if svc is None:
             return self._no_target_error(fs)
@@ -56,6 +61,7 @@ class FindReplaceHandler(BaseFsHandler):
             service_name = fs or getattr(svc, '_service_id', '')
             self._checkpoint_before(svc, path, service_name=service_name)
             result = svc.find_replace(path, pattern, replacement,
+                                      multiline=multiline,
                                       local=bool(arguments.get("local", False)))
             return f"Replaced {result.get('replacements', 0)} occurrences in {result.get('path', path)}"
         except Exception as e:

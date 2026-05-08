@@ -230,6 +230,10 @@ def _flow_deploy_schema_payload(raw: Dict[str, Any], *, parameters=None,
                                 service_configs=None) -> Dict[str, Any]:
     parameters = parameters or {}
     schema = _normalize_flow_parameters(raw.get("parameters", {}))
+    for name, value in parameters.items():
+        if str(name).startswith("_") or name in schema:
+            continue
+        schema[name] = _schema_entry_from_value(value)
     values = {}
     for name, spec in schema.items():
         if isinstance(spec, dict) and "default" in spec:

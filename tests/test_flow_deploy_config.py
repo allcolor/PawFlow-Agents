@@ -43,6 +43,31 @@ def test_flow_deploy_schema_exposes_parameters_and_services():
     assert svc["parameters_schema"]["custom_option"]["default"] == "kept"
 
 
+def test_flow_deploy_schema_exposes_instance_only_parameters():
+    from tasks.ai.actions.service_flow import _flow_deploy_schema_payload
+
+    raw = {
+        "id": "pawflow-agent",
+        "name": "pawflow_agent",
+        "parameters": {},
+        "services": {},
+    }
+
+    payload = _flow_deploy_schema_payload(
+        raw,
+        parameters={
+            "conversation_ttl": 0,
+            "oauth_provider": "google",
+            "_user_id": "hidden",
+        },
+    )
+
+    assert payload["parameters_schema"]["conversation_ttl"]["type"] == "integer"
+    assert payload["parameters_schema"]["oauth_provider"]["default"] == "google"
+    assert "_user_id" not in payload["parameters_schema"]
+    assert payload["parameter_values"]["conversation_ttl"] == 0
+
+
 def test_set_instance_config_replaces_public_params_and_service_bindings():
     from tasks.ai.actions.service_flow import _set_instance_config
 

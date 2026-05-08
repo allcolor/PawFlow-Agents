@@ -17,18 +17,18 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
     menu.appendChild(d);
   };
   if (status === 'running') {
-    item('\u23F9 Stop', () => _flowAction(instanceId, 'stop_flow'));
+    item('\u23F9 ' + t('stop'), () => _flowAction(instanceId, 'stop_flow'));
   } else {
-    item('\u25B6 Start...', () => _showFlowStartDialog(instanceId));
+    item('\u25B6 ' + t('flowStartMenu'), () => _showFlowStartDialog(instanceId));
   }
-  item('\u270F Edit params...', () => _showFlowStartDialog(instanceId, true));
-  item('\ud83d\udcc8 View graph', () => _openFlowGraphTab(instanceId));
+  item('\u270F ' + t('flowEditParamsMenu'), () => _showFlowStartDialog(instanceId, true));
+  item('\ud83d\udcc8 ' + t('flowViewGraph'), () => _openFlowGraphTab(instanceId));
   if (scope === 'conversation') {
-    item('\u2B06 Promote to user', () => {
+    item('\u2B06 ' + t('flowPromoteToUser'), () => {
       action$('promote_flow', { instance_id: instanceId, target_scope: 'user' }).subscribe({
         next: (d) => {
           if (d.error) addMsg('error', d.error);
-          else { addMsg('system', `Flow '${instanceId}' promoted to user scope`); loadResources(); }
+          else { addMsg('system', t('flowPromotedToUser', { id: instanceId })); loadResources(); }
         },
         error: (e) => addMsg('error', e.message),
       });
@@ -37,8 +37,8 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
   menu.appendChild(sep);
-  item('\u{1F5D1} Undeploy', () => {
-    if (!confirm(`Undeploy flow '${instanceId}'?`)) return;
+  item('\u{1F5D1} ' + t('flowUndeploy'), () => {
+    if (!confirm(t('flowUndeployConfirm', { id: instanceId }))) return;
     _flowAction(instanceId, 'undeploy_flow');
   }, true);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
@@ -54,7 +54,7 @@ async function _openFlowGraphTab(instanceId) {
     html = html.replace('<script type="module">', bootstrap + '<script type="module">');
     addBlobHtmlTab(instanceId, html);
   } catch (e) {
-    addMsg('error', 'Unable to open flow graph: ' + (e.message || e));
+    addMsg('error', t('flowGraphOpenFailed', { error: e.message || e }));
   }
 }
 
@@ -66,10 +66,11 @@ function _showFlowStartDialog(instanceId, editOnly) {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  const title = editOnly ? t('flowEditParameters') : t('flowStart');
   panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${editOnly ? 'Edit Flow Parameters' : 'Start Flow'}: ${instanceId}</h3>
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${escapeHtml(title)}: ${escapeHtml(instanceId)}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
-  </div><div style="color:#888;font-size:12px;">Loading parameters...</div>`;
+  </div><div style="color:#888;font-size:12px;">${escapeHtml(t('flowLoadingParameters'))}</div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   action$('get_flow_instance', { instance_id: instanceId }).subscribe({
@@ -79,21 +80,21 @@ function _showFlowStartDialog(instanceId, editOnly) {
       try {
         fieldsHtml = await _renderFlowDeploymentConfig(data);
       } catch (e) {
-        panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">Error: ' + (e.message || e) + '</div>';
+        panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">' + escapeHtml(t('error')) + ': ' + escapeHtml(e.message || e) + '</div>';
         return;
       }
-      const btnLabel = editOnly ? 'Save' : 'Start';
+      const btnLabel = editOnly ? t('contextSave') : t('flowStart');
       panel.querySelector('div:last-child').innerHTML = '<div id="flow-instance-config">' + fieldsHtml + '</div>'
         + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-          <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-          <button id="flowStartBtn" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${btnLabel}</button>
+          <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(t('contextCancel'))}</button>
+          <button id="flowStartBtn" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${escapeHtml(btnLabel)}</button>
         </div>`;
       document.getElementById('flowStartBtn').onclick = () => {
         let cfg;
         try {
           cfg = _collectFlowDeploymentConfig(document.getElementById('flow-instance-config'));
         } catch (e) {
-          alert('Invalid JSON in parameters: ' + e.message);
+          alert(t('invalidJsonInParameters', { error: e.message }));
           return;
         }
         action$('update_flow_params', {
@@ -106,7 +107,7 @@ function _showFlowStartDialog(instanceId, editOnly) {
           next: (d) => {
             if (d.error) { addMsg('error', d.error); return; }
             if (editOnly) {
-              addMsg('system', 'Flow configuration updated for ' + instanceId);
+              addMsg('system', t('flowConfigurationUpdated', { id: instanceId }));
               document.getElementById('resourceEditorOverlay').remove();
               loadResources();
             } else {
@@ -119,7 +120,7 @@ function _showFlowStartDialog(instanceId, editOnly) {
       };
     },
     error: (e) => {
-      panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">Error: ' + e.message + '</div>';
+      panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">' + escapeHtml(t('error')) + ': ' + escapeHtml(e.message) + '</div>';
     },
   });
 }

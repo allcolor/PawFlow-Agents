@@ -13,6 +13,12 @@ Filesystem-backed tools accept two routing controls in their runtime schema:
 
 Use `get_tool_schema(tool_name)` for the exact native selector names and required fields.
 
+Conversation-linked `rcloneFilesystem` services are mounted by linked relays
+under `/remote/<service_id>` when the relay image has `rclone`. Tools and shell
+commands can use those paths like normal files. Global and native API-backed
+filesystem services are not exported into relays; select them explicitly
+through PawFlow filesystem tool parameters instead.
+
 Discovery preference: use `search` when you need glob filtering, regex matching, and contextual snippets in one call. Use `glob` for file lists and `grep` for simple content matches.
 
 Editing preference: use `apply_patch` for patch-shaped changes and `batch_edit` for coordinated replacements, then `edit` for small targeted changes, then `write` only when creating or fully replacing a file.

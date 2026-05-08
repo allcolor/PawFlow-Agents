@@ -95,7 +95,7 @@ function _scopeBadge(s) {
 // browser reload restores exactly what was open or closed.
 const _RESOURCE_TREE_STATE_KEY = 'pawflow.resource_tree.collapsed.v1';
 const _ALL_SECTIONS = [
-  'agent','_running','_flow','_svc','_relay','_summarizer','_param','_secret',
+  'agent','_running','_flow','_svc','_relay','_remote_fs','_summarizer','_param','_secret',
   '_agent_repo','skill','prompt','theme','voice','task_def','_mcp_repo','_tool','_flow_repo'
 ];
 const _collapsedSections = {};
@@ -138,7 +138,7 @@ function _toggleSection(id) {
   if (arrow) arrow.textContent = isOpening ? '\u25BC' : '\u25B6';
   if (isOpening && _lastResourcesData) _renderResourcesData(_lastResourcesData);
   // Opening a repository or runtime section refreshes from disk after the cached render.
-  if (isOpening && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_summarizer' || id === '_flow')) loadResources();
+  if (isOpening && (id.endsWith('_repo') || id === '_svc' || id === '_relay' || id === '_remote_fs' || id === '_summarizer' || id === '_flow')) loadResources();
 }
 
 
@@ -353,6 +353,64 @@ function _doRelayLink(btn) {
     fireAction('relay_link', {relay_id: rid});
     setTimeout(loadResources, 500);
   }
+}
+
+function _showRemoteFsLinkDialog() {
+  action$('remote_fs_status', { conversation_id: conversationId }).subscribe(data => {
+    if (data.error) { addMsg('error', data.error); return; }
+    var services = (data.available || []).filter(function(s) {
+      return s.service_type === 'rcloneFilesystem';
+    });
+    if (!services.length) { addMsg('system', t('noRemoteFilesystemsAvailable')); return; }
+    window._remoteFsLinkOptions = services;
+    var options = services.map(function(s, idx) {
+      var label = '[' + (s.scope || 'user') + '] ' + s.service_id + ' \u2192 ' + (s.mount_path || '');
+      return '<option value="' + idx + '">' + escapeHtml(label) + '</option>';
+    }).join('');
+    var overlay = document.createElement('div');
+    overlay.className = 'exec-overlay';
+    overlay.innerHTML =
+      '<div class="exec-dialog" style="min-width:350px;">'
+      + '<h3>' + escapeHtml(t('linkFilesystem')) + '</h3>'
+      + '<div style="margin:12px 0;">'
+      + '<select id="_remoteFsLinkSelect" style="width:100%;padding:8px;background:var(--pf-panel);color:var(--pf-text);border:1px solid var(--pf-border);border-radius:4px;font-size:13px;">'
+      + options
+      + '</select>'
+      + '</div>'
+      + '<div class="exec-btns">'
+      + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">' + escapeHtml(t('contextCancel')) + '</button>'
+      + '<button class="exec-approve" onclick="_doRemoteFsLink(this)">' + escapeHtml(t('link')) + '</button>'
+      + '</div>'
+      + '</div>';
+    document.body.appendChild(overlay);
+  });
+}
+
+function _doRemoteFsLink(btn) {
+  var overlay = btn.closest('.exec-overlay');
+  var sel = overlay.querySelector('#_remoteFsLinkSelect');
+  var idx = sel ? Number(sel.value) : -1;
+  var svc = (window._remoteFsLinkOptions || [])[idx];
+  overlay.remove();
+  if (!svc) return;
+  action$('remote_fs_link', {
+    conversation_id: conversationId,
+    service_id: svc.service_id,
+    scope: svc.scope,
+  }).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    loadResources();
+  });
+}
+
+function _unlinkRemoteFs(serviceId) {
+  action$('remote_fs_unlink', {
+    conversation_id: conversationId,
+    service_id: serviceId,
+  }).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    loadResources();
+  });
 }
 
 function _showSummarizerLinkDialog() {
@@ -681,6 +739,42 @@ async function _renderResourcesData(data) {
         });
       } else {
         liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noRelaysLinked')) + '</div>';
+      }
+      liveHtml += _sectionFooter();
+    }
+
+    // Rclone filesystem bindings mounted inside linked relays under /remote.
+    {
+      var fsCollapsed = _isSectionCollapsed('_remote_fs');
+      var fsArrow = fsCollapsed ? '\u25B6' : '\u25BC';
+      var fsDisplay = fsCollapsed ? 'none' : 'block';
+      liveHtml += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
+        + '<span style="cursor:pointer;color:var(--pf-resource-heading, var(--pf-accent));font-weight:600;user-select:none;" onclick="_toggleSection(\'_remote_fs\')">'
+        + '<span id="res-arrow-_remote_fs">' + fsArrow + '</span> ' + escapeHtml(t('remoteFilesystems')) + '</span>'
+        + '<span style="cursor:pointer;font-size:13px;color:var(--pf-accent);padding:0 4px;" onclick="_showRemoteFsLinkDialog()" title="' + escapeHtml(t('linkFilesystem')) + '">+</span>'
+        + '</div><div id="res-section-_remote_fs" style="display:' + fsDisplay + ';">';
+      var _remoteFs = data.remote_filesystems || { linked: [], available: [] };
+      var _linkedFs = (_remoteFs.linked || []).filter(function(s) {
+        return s.service_type === 'rcloneFilesystem';
+      });
+      if (_linkedFs.length) {
+        _linkedFs.forEach(function(s) {
+          var serviceId = escapeHtml(s.service_id || '');
+          var scope = escapeHtml(s.scope || 'user');
+          var mountPath = escapeHtml(s.mount_path || '');
+          var enabledDot = s.enabled === false ? '\u{1F534}' : '\u{1F7E2}';
+          liveHtml += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+            + _scopeBadge(scope)
+            + '<span style="font-size:11px;">' + enabledDot + '</span>'
+            + '<span style="color:var(--pf-text);font-size:12px;flex:1;">' + serviceId + '</span>'
+            + '<span style="font-size:9px;color:var(--pf-muted);background:color-mix(in srgb, var(--pf-muted) 14%, var(--pf-panel));padding:1px 4px;border-radius:3px;">rclone</span>'
+            + '<span style="cursor:pointer;font-size:11px;color:var(--pf-danger);padding:0 3px;" title="' + escapeHtml(t('unlink')) + '"'
+            + ' onclick="_unlinkRemoteFs(this.dataset.serviceId)" data-service-id="' + serviceId + '">&times;</span>'
+            + '</div>'
+            + (mountPath ? '<div style="font-size:10px;color:var(--pf-muted);margin-left:24px;"><code>' + mountPath + '</code></div>' : '');
+        });
+      } else {
+        liveHtml += '<div style="color:var(--pf-muted);font-size:10px;margin-left:8px;">' + escapeHtml(t('noRemoteFilesystemsLinked')) + '</div>';
       }
       liveHtml += _sectionFooter();
     }

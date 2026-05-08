@@ -70,6 +70,40 @@ def test_relay_manager_workspace_permission_flags(monkeypatch, tmp_path):
     assert share["allow_local"] is True
 
 
+def test_relay_manager_stop_workspace_runtime_uninstalls_and_cleans_docker(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAWFLOW_RELAY_HOME", str(tmp_path / "relay-home"))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    manager.add_server("prod", "https://pawflow.example", gateway_key="k")
+    manager.update_server_auth(
+        "prod", gateway_cookie="gw", session_token="session", username="quentin")
+    share = manager.add_workspace("repo", "prod", str(workspace))
+    calls = []
+
+    def fake_api_call(server_url, method, path, body=None, **kwargs):
+        calls.append((server_url, method, path, body, kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr(manager, "api_call", fake_api_call)
+    monkeypatch.setattr(
+        "pawflow_relay.thread.cleanup_relay_containers",
+        lambda relay_id: calls.append(("cleanup", relay_id)) or 2,
+    )
+
+    result = manager.stop_workspace_runtime("repo")
+
+    assert result["relay_id"] == share["relay_id"]
+    assert result["service_uninstalled"] is True
+    assert result["containers_removed"] == 2
+    assert calls[0][0:4] == (
+        "https://pawflow.example", "POST", "/api/ui",
+        {"action": "service_uninstall", "service_id": share["relay_id"]},
+    )
+    assert calls[0][4]["session_token"] == "session"
+    assert calls[0][4]["gateway_cookie"] == "gw"
+    assert calls[1] == ("cleanup", share["relay_id"])
+
+
 def test_host_helper_relative_paths_remain_workspace_scoped(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()

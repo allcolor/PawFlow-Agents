@@ -38,6 +38,7 @@ All backends are wrapped in `PermissionEnforcedFilesystem` which enforces:
 | `filesystem` | Server disk (admin only) | Yes | Admin role |
 | `googleDrive` | Google Drive via REST API | No | OAuth2 authorization |
 | `oneDrive` | OneDrive via Graph API | No | OAuth2 authorization |
+| `rcloneFilesystem` | Rclone remote config for relay-side native mounts | No | user/conversation scope service |
 
 ## Quick Start — Local Filesystem (HTTP Relay)
 
@@ -121,6 +122,44 @@ The `user_id` is automatically injected from the authenticated session. Tokens a
 ```
 /service install oneDrive mydrive mode=read
 ```
+
+## Relay-native remote mounts
+
+Remote filesystem services can be linked to a conversation so every relay linked
+to that conversation mounts them under `/remote/<service_id>`, where the service
+id is sanitized into a directory name. This is intended for shell-native access:
+
+```bash
+cat /remote/mydrive/report.txt
+ls /remote/sftp_prod/logs
+```
+
+Use slash commands from the conversation:
+
+```
+/remote-fs list
+/remote-fs link mydrive
+/remote-fs unlink mydrive
+```
+
+The link is conversation-scoped, not relay-scoped. When a relay reconnects,
+PawFlow rebuilds the manifest from the conversation bindings and asks the relay
+to reconcile `/remote` with `rclone mount`.
+
+Security rules:
+
+- Linking a remote filesystem sends the relay the credentials required by
+  rclone. Only link services to relays you trust.
+- Global filesystem services are never eligible for relay-native mounts. They
+  remain available through PawFlow server-side tools that explicitly select the
+  filesystem service.
+- Only user and conversation-scoped `rcloneFilesystem` services are eligible.
+  Native `googleDrive` and `oneDrive` services stay API-backed and are not
+  mounted into relays.
+
+For S3, SFTP, WebDAV, or other rclone backends, create an `rcloneFilesystem`
+service with either key/value rclone fields or a raw `rclone_config`, then link
+that service to the conversation.
 
 ## Server Filesystem (Admin Only)
 

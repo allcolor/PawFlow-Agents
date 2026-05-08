@@ -694,6 +694,7 @@ class RelayService(BaseService):
                                       "tasks": relay_tasks})
             count = len(self._relay_pool)
         logger.info("Relay pool: %d connection(s) for '%s'", count, self._service_id)
+        self.push_remote_fs_manifest()
         # Notify all SSE clients to refresh resources (relay status changed)
         try:
             from core.conversation_event_bus import ConversationEventBus
@@ -705,6 +706,40 @@ class RelayService(BaseService):
                     "relay_id": self._service_id, "connected": True})
         except Exception:
             pass
+
+    def push_remote_fs_manifest(self, user_id: str = "") -> None:
+        """Push the current conversation remote-FS manifest to all relay sockets."""
+        owner = user_id or self._user_id
+        if not owner:
+            return
+        try:
+            from core.remote_fs_bindings import build_manifest_for_relay
+            manifest = build_manifest_for_relay(self._service_id, owner)
+        except Exception as exc:
+            logger.debug("Remote FS manifest build failed for %s: %s",
+                         self._service_id, exc, exc_info=True)
+            return
+        payload = json.dumps({
+            "type": "remote_mount_manifest",
+            "manifest": manifest,
+        }).encode("utf-8")
+        with self._relay_pool_lock:
+            pool = self._relay_pool[:]
+        for conn in pool:
+            writer, loop = conn["writer"], conn["loop"]
+            send_lock = conn.get("send_lock")
+
+            async def _send(w=writer, lk=send_lock):
+                if lk is not None:
+                    async with lk:
+                        await _ws_send_frame(w, payload)
+                else:
+                    await _ws_send_frame(w, payload)
+            try:
+                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=2)
+            except Exception as exc:
+                logger.warning("[%s] remote FS manifest push failed: %s",
+                               self._service_id, exc)
 
     def _clear_relay(self, reader=None):
         """Remove a connection from the pool (by reader), or all if None."""

@@ -63,6 +63,13 @@ The Electron Relay Desktop slice lives in `pawflow-relay-desktop/`. It uses the 
 - running relay processes and logs;
 - Docker relay images and custom image builds.
 
+Stopping a relay from the desktop UI, or quitting the tray app, stops the
+launcher process and also performs relay runtime cleanup: the registered relay
+service is uninstalled best-effort and Docker containers whose names belong to
+that workspace relay id are removed. This cleanup is independent from Python
+signal handling so Windows process termination cannot leave the relay container
+running after the desktop app exits.
+
 Run it from a checkout:
 
 ```bash

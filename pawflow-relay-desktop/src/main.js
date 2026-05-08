@@ -14,6 +14,8 @@ const runningRelays = new Map();
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
+let shutdownComplete = false;
+let shutdownPromise = null;
 
 function pythonCommand() {
   return process.env.PAWFLOW_RELAY_PYTHON || process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
@@ -286,6 +288,13 @@ function getRelayState() {
   return runPythonJson(managerJson('{"servers": manager.list_servers(), "workspaces": manager.list_workspaces()}'));
 }
 
+function cleanupRelayRuntime(name) {
+  return runPythonJson(
+    'import json, sys\nfrom pawflow_relay.manager import stop_workspace_runtime\nprint(json.dumps(stop_workspace_runtime(sys.argv[1])))',
+    [name || ''],
+  );
+}
+
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
@@ -347,16 +356,38 @@ function startRelay(name) {
   return { ok: true };
 }
 
-function stopRelay(name) {
+async function stopRelay(name) {
   const proc = runningRelays.get(name);
-  if (!proc) {
-    return { ok: true, alreadyStopped: true };
+  if (proc) {
+    appendLog(name, `[relay] stop requested\n`);
+    try {
+      proc.kill(process.platform === 'win32' ? 'SIGTERM' : 'SIGINT');
+    } catch (err) {
+      appendLog(name, `[relay] process stop failed: ${err.message}\n`);
+    }
+    runningRelays.delete(name);
   }
-  proc.kill('SIGINT');
-  runningRelays.delete(name);
-  appendLog(name, `[relay] stop requested\n`);
+  try {
+    const cleanup = await cleanupRelayRuntime(name);
+    appendLog(name, `[relay] runtime cleanup: ${JSON.stringify(cleanup)}\n`);
+  } catch (err) {
+    appendLog(name, `[relay] runtime cleanup failed: ${err.message}\n`);
+  }
   refreshTrayMenu();
-  return { ok: true };
+  return { ok: true, alreadyStopped: !proc };
+}
+
+async function stopAllRelays() {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = Promise.all(Array.from(runningRelays.keys()).map(name => stopRelay(name)));
+  return shutdownPromise;
+}
+
+async function quitApp() {
+  isQuitting = true;
+  await stopAllRelays();
+  shutdownComplete = true;
+  app.quit();
 }
 
 function trayIcon() {
@@ -397,7 +428,7 @@ async function refreshTrayMenu() {
           label: `${workspace.name}${status}`,
           submenu: [
             { label: 'Start', enabled: !active, click: () => startRelay(workspace.name) },
-            { label: 'Stop', enabled: active, click: () => stopRelay(workspace.name) },
+            { label: 'Stop', enabled: active, click: () => stopRelay(workspace.name).catch(err => appendLog(workspace.name, `${err.message}\n`)) },
             { label: 'Open GUI', click: showMainWindow },
           ],
         };
@@ -409,7 +440,11 @@ async function refreshTrayMenu() {
     { label: 'Relays', submenu: relayItems },
     { label: 'Servers', submenu: serverItems },
     { type: 'separator' },
-    { label: 'Quit', click: () => { isQuitting = true; app.quit(); } },
+    { label: 'Quit', click: () => quitApp().catch(err => {
+      appendLog('tray', `[quit] ${err.message}\n`);
+      shutdownComplete = true;
+      app.quit();
+    }) },
   ]));
 }
 
@@ -537,12 +572,15 @@ app.whenReady().then(() => {
   createTray();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', event => {
   isQuitting = true;
-  for (const proc of runningRelays.values()) {
-    proc.kill('SIGINT');
-  }
-  runningRelays.clear();
+  if (shutdownComplete) return;
+  event.preventDefault();
+  quitApp().catch(err => {
+    appendLog('quit', `[quit] ${err.message}\n`);
+    shutdownComplete = true;
+    app.quit();
+  });
 });
 
 app.on('window-all-closed', () => {

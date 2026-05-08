@@ -31,6 +31,13 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert (DESKTOP / "src" / "assets" / "tray-icon.png").is_file()
     assert "function createTray()" in main
     assert "function refreshTrayMenu()" in main
+    assert "function cleanupRelayRuntime(name)" in main
+    assert "async function stopRelay(name)" in main
+    assert "async function stopAllRelays()" in main
+    assert "async function quitApp()" in main
+    assert "stop_workspace_runtime(sys.argv[1])" in main
+    assert "process.platform === 'win32' ? 'SIGTERM' : 'SIGINT'" in main
+    assert "await stopAllRelays()" in main
     assert "win.hide()" in main
     assert "before-quit" in main
     assert "Open PawFlow Relay" in main
@@ -93,6 +100,18 @@ def test_relay_desktop_uses_python_manager_and_safe_preload():
     assert "showContextMenu" in renderer
     assert "serverTree" in renderer
     assert "workspaceTree" in renderer
+
+
+def test_relay_manager_exposes_workspace_runtime_cleanup():
+    manager = (ROOT / "pawflow_relay" / "manager.py").read_text(encoding="utf-8")
+    thread = (ROOT / "pawflow_relay" / "thread.py").read_text(encoding="utf-8")
+
+    assert "def stop_workspace_runtime" in manager
+    assert "service_uninstall" in manager
+    assert "cleanup_relay_containers(relay_id)" in manager
+    assert "def cleanup_relay_containers" in thread
+    assert "finally:" in manager
+    assert "relay.stop()" in manager
 
 
 def test_relay_desktop_uses_webchat_style_tree_shell():

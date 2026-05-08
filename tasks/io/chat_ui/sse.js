@@ -392,6 +392,9 @@ function connectSSE(cid, onReady, opts) {
       // duplicate it. (addMsg would do this on creation; message_meta is
       // the non-creation path.)
       if (typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
+      if (Object.prototype.hasOwnProperty.call(data, 'is_error')) {
+        el.classList.toggle('error', !!data.is_error);
+      }
       const meta = buildMetaLine(data);
       if (meta) {
         const existing = el.querySelector('.msg-meta');

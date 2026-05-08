@@ -449,6 +449,86 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             }).encode())
         return [flowfile]
 
+    if action in ("remote_fs_status", "remote_fs_list_available"):
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "No conversation"}).encode())
+            return [flowfile]
+        from core.remote_fs_bindings import summary
+        data = summary(user_id, conv_id)
+        if action == "remote_fs_list_available":
+            lines = []
+            for item in data.get("available", []):
+                lines.append(
+                    f"- `{item['service_id']}` ({item['service_type']}, {item['scope']}) "
+                    f"→ `{item['mount_path']}`")
+            msg = "## Mountable Filesystems\n" + ("\n".join(lines) if lines else "No mountable user/conversation filesystem services found.")
+        else:
+            lines = []
+            for item in data.get("linked", []):
+                lines.append(
+                    f"- `{item['service_id']}` ({item.get('service_type', '?')}, {item.get('scope', '?')}) "
+                    f"→ `{item.get('mount_path', '')}`")
+            warning = (
+                "Linked filesystems are mounted inside every relay linked to this conversation. "
+                "Those relays receive the credentials required by rclone. Global filesystem "
+                "services cannot be mounted into relays."
+            )
+            msg = "## Remote Filesystem Mounts\n" + ("\n".join(lines) if lines else "No remote filesystems linked.")
+            msg += "\n\n" + warning
+        flowfile.set_content(json.dumps({**data, "message": msg}, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "remote_fs_link":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "No conversation"}).encode())
+            return [flowfile]
+        service_id = body.get("service_id", "").strip()
+        scope = body.get("scope", "").strip()
+        if not service_id:
+            flowfile.set_content(json.dumps({
+                "error": "Usage: /remote-fs link <service_id> [user|conv]",
+            }).encode())
+            return [flowfile]
+        try:
+            from core.remote_fs_bindings import link_filesystem, summary
+            linked = link_filesystem(conv_id, user_id, service_id, scope=scope)
+            data = summary(user_id, conv_id)
+            warning = (
+                f"Filesystem `{service_id}` will be mounted in every linked relay at "
+                f"`{linked['mount_path']}`. The relay receives the credentials needed by rclone."
+            )
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "linked": linked,
+                "remote_filesystems": data,
+                "message": warning,
+            }, ensure_ascii=False).encode())
+        except Exception as exc:
+            flowfile.set_content(json.dumps({"error": str(exc)}, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "remote_fs_unlink":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "No conversation"}).encode())
+            return [flowfile]
+        service_id = body.get("service_id", "").strip()
+        if not service_id:
+            flowfile.set_content(json.dumps({
+                "error": "Usage: /remote-fs unlink <service_id>",
+            }).encode())
+            return [flowfile]
+        from core.remote_fs_bindings import summary, unlink_filesystem
+        removed = unlink_filesystem(conv_id, user_id, service_id)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "removed": removed,
+            "remote_filesystems": summary(user_id, conv_id),
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
     if action == "summarizer_list_available":
         conv_id = body.get("conversation_id", "")
         from core.summarizer_bindings import summary

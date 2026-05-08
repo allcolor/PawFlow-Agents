@@ -686,6 +686,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 result["summarizer"] = _summarizer_summary(user_id, conv_id)
             except Exception:
                 result["summarizer"] = {"binding": {}, "available": [], "effective": None}
+            try:
+                from core.remote_fs_bindings import summary as _remote_fs_summary
+                result["remote_filesystems"] = _remote_fs_summary(user_id, conv_id)
+            except Exception:
+                result["remote_filesystems"] = {"linked": [], "available": []}
         # Relay bindings for this conversation (new per-agent format)
         if conv_id:
             try:

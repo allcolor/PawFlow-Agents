@@ -1571,6 +1571,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _server_fs_swap = None
             _filestore_fs_swap = None
 
+    try:
+        from pawflow_relay.remote_mounts import RemoteMountManager
+        _remote_mount_mgr = RemoteMountManager()
+    except Exception as _rme:
+        sys.stderr.write(f"[RemoteFS] manager init failed: {_rme}\n")
+        _remote_mount_mgr = None
+
     reconnect_delay = 1
 
     while True:
@@ -1856,6 +1863,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         sys.stderr.write(
                             f"[FSRelay] cancel_request rid={_rid} "
                             f"hit={'yes' if _ok else 'no-such-proc'}\n")
+                    continue
+                if _mtype == "remote_mount_manifest":
+                    if _remote_mount_mgr is not None:
+                        try:
+                            _remote_mount_mgr.reconcile(msg.get("manifest") or {})
+                        except Exception as _rme:
+                            sys.stderr.write(f"[RemoteFS] reconcile failed: {_rme}\n")
                     continue
                 if _mtype == "spawn_relay":
                     # Server asks us to create a child relay for a different root

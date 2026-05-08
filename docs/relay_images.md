@@ -21,6 +21,7 @@ not a development language preset; it is the minimum runtime PawFlow needs:
 - Python runtime for `pawflow_relay_launcher.py` and relay workers
 - FUSE support for server session and FileStore mounts
 - `pyfuse3` and `trio`
+- `rclone` for conversation-linked remote filesystem mounts under `/remote`
 - `/workspace`, `/cc_sessions`, `/filestore`, and `/opt/pawflow` mountpoints
 - basic network/TLS and shell tools
 - Docker runtime requirements: `SYS_ADMIN`, `/dev/fuse`, and

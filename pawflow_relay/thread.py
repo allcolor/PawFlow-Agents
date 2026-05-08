@@ -86,6 +86,11 @@ def _kill_relay_containers(relay_id: str) -> int:
     return killed
 
 
+def cleanup_relay_containers(relay_id: str) -> int:
+    """Remove Docker containers owned by one relay id."""
+    return _kill_relay_containers(relay_id)
+
+
 class RelayThread:
     """Manages a background filesystem relay connection.
 

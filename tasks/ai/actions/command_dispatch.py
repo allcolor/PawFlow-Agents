@@ -1180,6 +1180,25 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         # Default: show linked relays
         return {"action": "relay_status", **base}
 
+    # ── Conversation remote filesystem mounts ──
+    if cmd in ("/remote-fs", "/remotefs"):
+        p = arg.strip().split(None, 1)
+        sub = (p[0] if p else "").lower()
+        rest = p[1].strip() if len(p) > 1 else ""
+        if sub == "link":
+            parts = rest.split()
+            return {
+                "action": "remote_fs_link",
+                "service_id": parts[0] if parts else "",
+                "scope": parts[1] if len(parts) > 1 else "",
+                **base,
+            }
+        if sub == "unlink":
+            return {"action": "remote_fs_unlink", "service_id": rest, **base}
+        if sub == "list":
+            return {"action": "remote_fs_list_available", **base}
+        return {"action": "remote_fs_status", **base}
+
     # ── Client-only (not handled server-side) ──
     if cmd in ("/clear-ui", "/connect", "/disconnect", "/exit", "/quit",
                "/copy", "/paste", "/upload", "/files"):

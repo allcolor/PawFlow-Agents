@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends sudo \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates gnupg2 software-properties-common \
     build-essential make cmake pkg-config autoconf automake libtool \
-    jq sqlite3 libsqlite3-dev openssh-client unzip zip \
+    jq sqlite3 libsqlite3-dev openssh-client unzip zip rclone \
     ripgrep fd-find bat tree htop strace ltrace \
     file less man-db chrony \
     libffi-dev libssl-dev zlib1g-dev libbz2-dev libreadline-dev \

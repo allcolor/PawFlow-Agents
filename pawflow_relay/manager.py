@@ -14,8 +14,9 @@ from typing import Any, Dict, List
 import json
 import os
 import re
+import signal
 
-from pawflow_relay.utils import generate_relay_id
+from pawflow_relay.utils import api_call, generate_relay_id
 
 
 _SERVERS_FILE = "servers.json"
@@ -223,6 +224,39 @@ def delete_workspace(name: str) -> Dict[str, Any]:
     return removed
 
 
+def stop_workspace_runtime(name: str) -> Dict[str, Any]:
+    """Best-effort cleanup for a workspace relay runtime.
+
+    This is used by the desktop app after stopping its launcher process. On
+    Windows, Electron can terminate the child process without letting Python run
+    `RelayThread.stop()`, so Docker containers must be cleaned independently.
+    """
+    share = get_workspace(name)
+    server = get_server(share["server"])
+    relay_id = share.get("relay_id") or generate_relay_id(
+        server.get("username") or "client", share["path"])
+    service_uninstalled = False
+    if server.get("session_token"):
+        try:
+            api_call(
+                server["url"], "POST", "/api/ui",
+                body={"action": "service_uninstall", "service_id": relay_id},
+                session_token=server.get("session_token", ""),
+                gateway_cookie=server.get("gateway_cookie", ""),
+            )
+            service_uninstalled = True
+        except Exception:
+            pass
+    from pawflow_relay.thread import cleanup_relay_containers
+    containers_removed = cleanup_relay_containers(relay_id)
+    return {
+        "workspace": name,
+        "relay_id": relay_id,
+        "service_uninstalled": service_uninstalled,
+        "containers_removed": containers_removed,
+    }
+
+
 def start_workspace(name: str):
     """Start a configured workspace relay and block until interrupted."""
     from pawflow_relay.thread import RelayThread
@@ -247,9 +281,27 @@ def start_workspace(name: str):
         allow_local=bool(share.get("allow_local", False)),
         read_only=(share.get("mode") == "ro"),
     )
-    relay.start()
+    previous_handlers = {}
+
+    def _request_stop(_sig, _frame):
+        raise KeyboardInterrupt
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            previous_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, _request_stop)
+        except Exception:
+            pass
     try:
+        relay.start()
         relay.wait()
     except KeyboardInterrupt:
+        pass
+    finally:
         relay.stop()
+        for sig, handler in previous_handlers.items():
+            try:
+                signal.signal(sig, handler)
+            except Exception:
+                pass
     return relay

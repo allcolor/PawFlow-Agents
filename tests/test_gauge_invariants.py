@@ -70,6 +70,15 @@ def test_compact_progress_done_marks_compact_pending():
         "compact_progress 'done' must call markCompactJustHappened")
 
 
+def test_message_meta_syncs_error_class_on_existing_message():
+    """message_meta patches must repaint existing DOM bubbles both ways."""
+    block = _SSE_JS[
+        _SSE_JS.index("eventSource.addEventListener('message_meta'"):
+        _SSE_JS.index("eventSource.addEventListener('iteration_status'")]
+    assert "hasOwnProperty.call(data, 'is_error')" in block
+    assert "el.classList.toggle('error', !!data.is_error)" in block
+
+
 def test_flow_graph_opens_reactflow_via_blob_to_avoid_frame_refusal():
     assert "_openFlowGraphTab(instanceId)" in _SERVICES_JS
     assert "window.__PAWFLOW_FLOW_INSTANCE_ID" in _SERVICES_JS
